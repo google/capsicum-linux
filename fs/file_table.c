@@ -272,6 +272,34 @@ void fput(struct file *file)
 
 EXPORT_SYMBOL(fput);
 
+/*
+ * The LSM might want to change the return value of fget() and friends.
+ * This function is called with the intended return value, and fget()
+ * will /actually/ return whatever is returned from here. We call an
+ * LSM hook, and return what it returns. We adjust the reference counter
+ * if necessary.
+ */
+static struct file *unwrap_file(struct file *orig, int fd, bool update_refcnt)
+{
+	struct file *f;
+
+	if (orig == NULL)
+		return NULL;
+	f = security_file_lookup(orig, fd);
+	if (f != orig && update_refcnt) {
+		/* If we're not returning the original, and the calling code
+		 * has already incremented the refcount on it, we need to
+		 * release that reference and obtain a reference to the new
+		 * return value, if any.
+		 */
+		if (f && !atomic_long_inc_not_zero(&f->f_count))
+			f = NULL;
+		atomic_long_dec(&orig->f_count);
+	}
+
+	return f;
+}
+
 struct file *fget(unsigned int fd)
 {
 	struct file *file;
@@ -285,6 +313,7 @@ struct file *fget(unsigned int fd)
 		    !atomic_long_inc_not_zero(&file->f_count))
 			file = NULL;
 	}
+	file = unwrap_file(file, fd, true);
 	rcu_read_unlock();
 
 	return file;
@@ -304,6 +333,7 @@ struct file *fget_raw(unsigned int fd)
 		if (!atomic_long_inc_not_zero(&file->f_count))
 			file = NULL;
 	}
+	file = unwrap_file(file, fd, true);
 	rcu_read_unlock();
 
 	return file;
@@ -337,6 +367,7 @@ struct file *fget_light(unsigned int fd, int *fput_needed)
 		file = fcheck_files(files, fd);
 		if (file && (file->f_mode & FMODE_PATH))
 			file = NULL;
+		file = unwrap_file(file, fd, false);
 	} else {
 		rcu_read_lock();
 		file = fcheck_files(files, fd);
@@ -348,6 +379,7 @@ struct file *fget_light(unsigned int fd, int *fput_needed)
 				/* Didn't get the reference, someone's freed */
 				file = NULL;
 		}
+		file = unwrap_file(file, fd, true);
 		rcu_read_unlock();
 	}
 
@@ -362,6 +394,7 @@ struct file *fget_raw_light(unsigned int fd, int *fput_needed)
 	*fput_needed = 0;
 	if (atomic_read(&files->count) == 1) {
 		file = fcheck_files(files, fd);
+		file = unwrap_file(file, fd, false);
 	} else {
 		rcu_read_lock();
 		file = fcheck_files(files, fd);
@@ -372,6 +405,7 @@ struct file *fget_raw_light(unsigned int fd, int *fput_needed)
 				/* Didn't get the reference, someone's freed */
 				file = NULL;
 		}
+		file = unwrap_file(file, fd, true);
 		rcu_read_unlock();
 	}
 

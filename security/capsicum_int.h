@@ -16,7 +16,7 @@
 
 int capsicum_is_cap(const struct file *file);
 
-struct file *capsicum_wrap_new(struct file *orig, u64 rights);
+int capsicum_wrap_new_fd(struct file *orig, u64 rights);
 
 struct file *capsicum_unwrap(const struct file *capability, u64 *rights);
 

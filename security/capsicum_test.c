@@ -15,6 +15,9 @@
 #include <linux/module.h>
 #include <linux/debugfs.h>
 #include <linux/file.h>
+#include <linux/fdtable.h>
+#include <linux/sched.h>
+#include <linux/syscalls.h>
 
 #include "capsicum_int.h"
 
@@ -24,64 +27,148 @@
  * These unit tests exercise the Capsicum security module.
  */
 
+
+/* Test the wrapping and unwrapping of file descriptors in capabilities. */
 FIXTURE(new_cap) {
 	struct file *orig;
-	struct file *cap;
+	int cap;
+	struct file *capf;
 };
 
 FIXTURE_SETUP(new_cap) {
 	self->orig = fget(0);
 	ASSERT_NE(self->orig, NULL);
-	self->cap = capsicum_wrap_new(self->orig, 0);
+	self->cap = capsicum_wrap_new_fd(self->orig, 0);
+	ASSERT_GE(self->cap, 0);
+	/* The new capability fd must not be the same as the original (0) */
+	ASSERT_NE(self->cap, 0);
+	self->capf = fcheck(self->cap);
+	ASSERT_NE(self->capf, NULL);
 }
 
 FIXTURE_TEARDOWN(new_cap) {
 	fput(self->orig);
-	fput(self->cap);
+	sys_close(self->cap);
 }
 
 TEST_F(new_cap, init_ok) {
-	u64 rights = -1;
+	u64 rights;
 	struct file *f;
 
 	EXPECT_GT(file_count(self->orig), 1);
-	EXPECT_EQ(file_count(self->cap), 1);
+	EXPECT_EQ(file_count(self->capf), 1);
 
-	EXPECT_NE(self->cap, NULL);
-	f = capsicum_unwrap(self->cap, &rights);
+	rights = (u64)-1;
+	f = capsicum_unwrap(self->capf, &rights);
+	/* Verify that the rights are as we set them in setup. */
 	EXPECT_EQ(rights, 0);
 	EXPECT_EQ(f, self->orig);
 }
 
 TEST_F(new_cap, rewrap) {
-	struct file *f, *uw;
+	/* When we wrap an fd in a capability, then wrap that second fd
+	 * in another capability, the new capability will refer to the same
+	 * original file, and the reference count of the original file
+	 * will be incremented.
+	 */
+	struct file *f, *unwrapped_file;
 	u64 rights;
 
-	int old_count = file_count(self->orig);
+	int old_count, fd;
 
-	f = capsicum_wrap_new(self->cap, -1);
+	old_count = file_count(self->orig);
 
-	uw = capsicum_unwrap(f, &rights);
+	fd = capsicum_wrap_new_fd(self->capf, -1);
+	ASSERT_GT(fd, 0);
+	f = fcheck(fd);
+
+	unwrapped_file = capsicum_unwrap(f, &rights);
 	EXPECT_EQ(rights, -1);
-	EXPECT_EQ(uw, self->orig);
+	EXPECT_EQ(unwrapped_file, self->orig);
 
 	EXPECT_EQ(file_count(self->orig), old_count + 1);
 
-	fput(f);
+	sys_close(fd);
 
 	EXPECT_EQ(file_count(self->orig), old_count);
 }
 
 TEST_F(new_cap, is_cap) {
-	EXPECT_TRUE(capsicum_is_cap(self->cap));
+	EXPECT_TRUE(capsicum_is_cap(self->capf));
 	EXPECT_FALSE(capsicum_is_cap(self->orig));
 }
 
 
+/* Test that the fget() family of functions unwraps capabilites correctly. */
+FIXTURE(fget) {
+	struct file *orig;
+	int cap;
+
+	int orig_refs;
+};
+
+FIXTURE_SETUP(fget) {
+	self->orig = fget(0);
+	self->orig_refs = file_count(self->orig);
+	self->cap = capsicum_wrap_new_fd(self->orig, 0);
+	ASSERT_EQ(file_count(self->orig), self->orig_refs+1);
+	ASSERT_EQ(file_count(fcheck(self->cap)), 1);
+}
+
+FIXTURE_TEARDOWN(fget) {
+	ASSERT_EQ(file_count(self->orig), self->orig_refs+1);
+	sys_close(self->cap);
+	ASSERT_EQ(file_count(self->orig), self->orig_refs);
+	fput(self->orig);
+	ASSERT_EQ(file_count(self->orig), self->orig_refs-1);
+}
+
+TEST_F(fget, fget) {
+	struct file *f = fget(self->cap);
+
+	EXPECT_EQ(f, self->orig);
+	EXPECT_EQ(file_count(fcheck(self->cap)), 1);
+	EXPECT_EQ(file_count(self->orig), self->orig_refs+2);
+
+	fput(f);
+}
+
+TEST_F(fget, fget_light) {
+	int fpn;
+	struct file *f = fget_light(self->cap, &fpn);
+
+	EXPECT_EQ(f, self->orig);
+	EXPECT_FALSE(fpn);
+	EXPECT_EQ(file_count(self->orig), self->orig_refs+1);
+
+	fput_light(f, fpn);
+}
+
+TEST_F(fget, fget_raw) {
+	struct file *f = fget_raw(self->cap);
+
+	EXPECT_EQ(f, self->orig);
+	EXPECT_EQ(file_count(fcheck(self->cap)), 1);
+	EXPECT_EQ(file_count(self->orig), self->orig_refs+2);
+
+	fput(f);
+}
+
+TEST_F(fget, fget_raw_light) {
+	int fpn;
+	struct file *f = fget_raw_light(self->cap, &fpn);
+
+
+	EXPECT_EQ(f, self->orig);
+	EXPECT_EQ(fpn, 0);
+	EXPECT_EQ(file_count(self->orig), self->orig_refs+1);
+
+	fput_light(f, fpn);
+}
+
 /*
  * Below here are the debugfs shims to trigger tests by name.
  */
-
 
 static ssize_t run_test_write(struct file *file, const char __user *ubuf,
 				size_t count, loff_t *ppos)

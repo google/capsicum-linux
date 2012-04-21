@@ -640,6 +640,18 @@ static inline void security_free_mnt_opts(struct security_mnt_opts *opts)
  *	to receive an open file descriptor via socket IPC.
  *	@file contains the file structure being received.
  *	Return 0 if permission is granted.
+ * @file_lookup:
+ *	This hook allows security modules to intercept file descriptor lookups
+ *	and modify the return value for fget(). This allows them to provide
+ *	an illusion that certain file descriptors do not exist (usually
+ *	provoking an -EBADF), or to substitute a new return value for fget().
+ *	@fd is the file descriptor being looked up.
+ *	@file is the file in the process's file table - that is, the one that
+ *	would be returned by default.
+ *	Return @file to permit the lookup, NULL to prevent it, and a different
+ *	file object to substitute a response. This hook is called within an
+ *	rcu_read_lock() section, and is not expected to obtain or release
+ *	references to orig or to any return value.
  *
  * Security hook for dentry
  *
@@ -1499,6 +1511,7 @@ struct security_operations {
 				    struct fown_struct *fown, int sig);
 	int (*file_receive) (struct file *file);
 	int (*dentry_open) (struct file *file, const struct cred *cred);
+	struct file *(*file_lookup) (struct file *orig, unsigned int fd);
 
 	int (*task_create) (unsigned long clone_flags);
 	void (*task_free) (struct task_struct *task);
@@ -1758,6 +1771,7 @@ int security_file_send_sigiotask(struct task_struct *tsk,
 				 struct fown_struct *fown, int sig);
 int security_file_receive(struct file *file);
 int security_dentry_open(struct file *file, const struct cred *cred);
+struct file *security_file_lookup(struct file *orig, unsigned int fd);
 int security_task_create(unsigned long clone_flags);
 void security_task_free(struct task_struct *task);
 int security_cred_alloc_blank(struct cred *cred, gfp_t gfp);
@@ -2232,6 +2246,12 @@ static inline int security_dentry_open(struct file *file,
 				       const struct cred *cred)
 {
 	return 0;
+}
+
+static inline struct file *security_file_lookup(struct file *orig,
+						unsigned int fd)
+{
+	return orig;
 }
 
 static inline int security_task_create(unsigned long clone_flags)

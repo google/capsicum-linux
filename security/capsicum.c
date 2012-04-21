@@ -15,6 +15,7 @@
 #include <linux/fs.h>
 #include <linux/anon_inodes.h>
 #include <linux/slab.h>
+#include <linux/security.h>
 
 #include "capsicum_int.h"
 
@@ -25,9 +26,9 @@
  *    struct file, with some permissions. Direct operations on this
  *    object are an error - it should be unwrapped (and access checks
  *    performed) before anyone tries to do anything with it.
- *  - (TODO) An LSM hook which allows us transparently intercept the
- *    return value of fget(), so we can check permissions and return the
- *    actual underlying file object.
+ *  - An LSM hook which allows us transparently intercept the return value
+ *    of fget(), so we can check permissions and return the actual
+ *    underlying file object.
  *  - (TODO) A seccomp mode which checks all system calls against a table,
  *    and determines whether they have the appropriate rights for any
  *    capability-wrapped file descriptors they're operating on.
@@ -45,10 +46,14 @@ struct capability {
 };
 
 extern const struct file_operations capability_ops;
+static struct security_operations capsicum_security_ops;
 
 static int __init capsicum_init(void)
 {
-	pr_debug("capsicum_init()\n");
+	if (security_module_enable(&capsicum_security_ops)) {
+		pr_debug("Capsicum enabled\n");
+		register_security(&capsicum_security_ops);
+	}
 	return 0;
 }
 __initcall(capsicum_init);
@@ -60,33 +65,31 @@ int capsicum_is_cap(const struct file *file)
 }
 
 /*
- * Create a new file representing a capability, to wrap the original file
- * passed in, with the given rights. If orig is already a capability, the
- * new capability will refer to the underlying capability, rather than
- * creating a chain.
+ * Create a capability-wrapped file with the given rights. If orig is already
+ * wrapped, then return a new wrapped file that refers to the underlying
+ * object. Returns the fd number.
  */
-struct file *capsicum_wrap_new(struct file *orig, u64 rights)
+int capsicum_wrap_new_fd(struct file *orig, u64 rights)
 {
-	struct file *f = NULL;
+	int fd;
 	struct capability *cap;
 
 	if (capsicum_is_cap(orig))
 		orig = capsicum_unwrap(orig, NULL);
-
 	cap = kmalloc(sizeof(*cap), GFP_KERNEL);
 	if (cap == NULL)
-		return NULL;
-
+		return -ENOMEM;
 	cap->rights = rights;
 	cap->underlying = orig;
 	get_file(orig);
 
-	f = anon_inode_getfile("[capability]", &capability_ops, cap, 0);
-
-	if (IS_ERR(f))
+	fd = anon_inode_getfd("[capability]", &capability_ops, cap, 0);
+	if (fd < 0) {
 		kfree(cap);
+		fput(orig);
+	}
 
-	return f;
+	return fd;
 }
 
 /*
@@ -103,7 +106,7 @@ struct file *capsicum_unwrap(const struct file *cap, u64 *rights)
 
 	c = cap->private_data;
 
-	if (rights != NULL)
+	if (rights)
 		*rights = c->rights;
 
 	return c->underlying;
@@ -125,6 +128,18 @@ static int capsicum_release(struct inode *i, struct file *fp)
 	kfree(c);
 
 	return 0;
+}
+
+static struct file *capsicum_file_lookup(struct file *file, unsigned int fd)
+{
+	/* TODO(meredydd) unwrapping is currently unconditional. This needs
+	 * fixing.
+	 */
+	struct file *unwrapped = capsicum_unwrap(file, NULL);
+	if (unwrapped != NULL)
+		file = unwrapped;
+
+	return file;
 }
 
 static void panic_not_unwrapped(void)
@@ -160,4 +175,9 @@ const struct file_operations capability_ops = {
 	.splice_write = panic_ptr,
 	.splice_read = panic_ptr,
 	.setlease = panic_ptr
+};
+
+static struct security_operations capsicum_security_ops = {
+		.name = "capsicum",
+		.file_lookup = capsicum_file_lookup
 };

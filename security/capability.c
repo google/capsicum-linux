@@ -353,6 +353,11 @@ static int cap_dentry_open(struct file *file, const struct cred *cred)
 	return 0;
 }
 
+static struct file *cap_file_lookup(struct file *orig, unsigned int fd)
+{
+	return orig;
+}
+
 static int cap_task_create(unsigned long clone_flags)
 {
 	return 0;
@@ -957,6 +962,7 @@ void __init security_fixup_ops(struct security_operations *ops)
 	set_to_cap_if_null(ops, file_send_sigiotask);
 	set_to_cap_if_null(ops, file_receive);
 	set_to_cap_if_null(ops, dentry_open);
+	set_to_cap_if_null(ops, file_lookup);
 	set_to_cap_if_null(ops, task_create);
 	set_to_cap_if_null(ops, task_free);
 	set_to_cap_if_null(ops, cred_alloc_blank);
