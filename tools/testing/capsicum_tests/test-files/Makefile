@@ -6,7 +6,7 @@
 # it under the terms of the GNU General Public License version 2, as
 # published by the Free Software Foundation.
 
-all: cap_new.test
+all: cap_new.test seccomp.test
 
 %.test: %.c capsicum.h
 	gcc -g -Wall -Werror -I../../../../include -o $@ $<

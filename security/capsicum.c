@@ -28,11 +28,11 @@
  *    struct file, with some permissions. Direct operations on this
  *    object are an error - it should be unwrapped (and access checks
  *    performed) before anyone tries to do anything with it.
- *  - An LSM hook which allows us transparently intercept the return value
- *    of fget(), so we can check permissions and return the actual
+ *  - An LSM hook which allows us transparently intercept the return
+ *    value of fget(), so we can check permissions and return the actual
  *    underlying file object.
- *  - (TODO) A seccomp mode which checks all system calls against a table,
- *    and determines whether they have the appropriate rights for any
+ *  - A seccomp mode which checks all system calls against a table, and
+ *    determines whether they have the appropriate rights for any
  *    capability-wrapped file descriptors they're operating on.
  *  - (TODO) A hook (not necessarily LSM) to prevent upward directory
  *    traversal when using openat() and friends in capability mode.
@@ -41,6 +41,16 @@
  *    capability-wrapped, allowing us to restrict access to the global PID
  *    namespace.
  */
+
+static int require_rights(unsigned long fd, u64 rights);
+
+
+SYSCALL_DEFINE2(cap_new, unsigned int, orig_fd, u64, new_rights);
+
+/* The table is generated code which uses require_rights() and sys_cap_new(),
+ * so we include it here.
+ */
+#include "capsicum_syscall_table.h"
 
 struct capability {
 	u64 rights;
@@ -96,6 +106,44 @@ out_err:
 SYSCALL_DEFINE2(cap_new, unsigned int, orig_fd, u64, new_rights)
 {
 	return sys_cap_new_impl(orig_fd, new_rights);
+}
+
+int capsicum_intercept_syscall(void *syscall_entry, unsigned long *args)
+{
+	int result = run_syscall_table(syscall_entry, args);
+
+	/* TODO custom syscalls here */
+
+	return result;
+}
+
+static int require_rights(unsigned long fd, u64 required_rights)
+{
+	struct file *file;
+	u64 actual_rights = (u64)-1;
+	int result = -1;
+
+	rcu_read_lock();
+
+	file = fcheck(fd);
+
+	if (file == NULL) {
+		result = -EBADF;
+		goto out;
+	}
+
+	capsicum_unwrap(file, &actual_rights);
+
+	/* TODO here - make an anti-TOCTOU record. */
+
+	if ((actual_rights & required_rights) == required_rights)
+		result = 0;
+	else
+		result = -ENOTCAPABLE;
+
+out:
+	rcu_read_unlock();
+	return result;
 }
 
 int capsicum_is_cap(const struct file *file)

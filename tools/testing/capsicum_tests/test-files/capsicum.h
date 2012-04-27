@@ -15,6 +15,7 @@
 #include <sys/prctl.h>
 #include <asm-generic/errno.h>
 #include <../security/test_harness.h>
+#include <../security/capsicum_caps.h>
 
 static inline int cap_enter(void)
 {

@@ -13,6 +13,7 @@
 #define __CAPSICUM_INT_H__
 
 #include <linux/file.h>
+#include "capsicum_caps.h"
 
 int capsicum_is_cap(const struct file *file);
 
@@ -20,5 +21,6 @@ int capsicum_wrap_new_fd(struct file *orig, u64 rights);
 
 struct file *capsicum_unwrap(const struct file *capability, u64 *rights);
 
-#endif /* __CAPSICUM_INT_H__ */
+int capsicum_intercept_syscall(void *syscall_entry, unsigned long *args);
 
+#endif /* __CAPSICUM_INT_H__ */

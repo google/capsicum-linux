@@ -29,6 +29,13 @@
 #include <linux/slab.h>
 #include <linux/tracehook.h>
 #include <linux/uaccess.h>
+#include <linux/ftrace.h>
+
+/* TODO(meredydd) Need to work out whether this is the right interface to
+ * expose, or whether it should be wrapped up in (eg) an LSM hook for syscall
+ * interposition, or an ftrace hook with some sort of interdiction capability.
+ */
+#include "../security/capsicum_int.h"
 
 /**
  * struct seccomp_filter - container for seccomp BPF programs
@@ -436,6 +443,29 @@ int __secure_computing(int this_syscall)
 		break;
 	}
 #endif
+#ifdef CONFIG_CAPSICUM
+	case SECCOMP_MODE_CAPSICUM: {
+		unsigned long args[6];
+		void *syscall_entry = sys_call_table[this_syscall];
+		int ret;
+
+		/* TODO(meredydd) Figure out how to call
+		 * arch_syscall_addr(this_syscall);
+		 */
+
+		syscall_get_arguments(current, task_pt_regs(current), 0, 6,
+				args);
+
+		ret = capsicum_intercept_syscall(syscall_entry, args);
+		if (ret) {
+			syscall_set_return_value(current, task_pt_regs(current),
+						 ret, 0);
+			return -1;
+		} else {
+			return 0;
+		}
+	}
+#endif
 	default:
 		BUG();
 	}
@@ -491,6 +521,10 @@ long prctl_set_seccomp(unsigned long seccomp_mode, char __user *filter)
 		ret = seccomp_attach_user_filter(filter);
 		if (ret)
 			goto out;
+		break;
+#endif
+#ifdef CONFIG_CAPSICUM
+	case SECCOMP_MODE_CAPSICUM:
 		break;
 #endif
 	default:
