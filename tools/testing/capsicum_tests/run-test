@@ -1,0 +1,33 @@
+#!/bin/bash
+# Part of a Linux implementation of Capsicum, a capability API for UNIX.
+#
+# Copyright (C) 2012 The Chromium OS Authors <chromium-os-dev@chromium.org>
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License version 2, as
+# published by the Free Software Foundation.
+cd `dirname $0`
+
+if [ "$1" = "-v" ]; then
+    shift
+    export LOUD=true
+else
+    export LOUD=false
+fi
+
+if expr match "$1" ".*\\.test" >/dev/null ; then
+    make -C test-files || exit 1
+fi
+
+echo "Building..."
+
+if $LOUD; then
+
+    make -C ../../../ -j 14 linux ARCH=um O=build/ && ./run-test-on-last-build "$@"
+
+else
+
+    make -C ../../../ -j 14 linux ARCH=um O=build/ >/dev/null && (./run-test-on-last-build "$@" 2>&1 | sed -n '/---- Executing: .* ----/,$p' | grep -Pv 'remove_umid_dir - remove_files_and_dir failed with err = -16|System halted.')
+
+fi
+

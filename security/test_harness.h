@@ -245,7 +245,7 @@
       int __attribute__((unused)) *_aborted)
 #else
 #  define __TEST_IMPL(test_name, _signal) \
-    static void test_name(struct __test_metadata *_metadata, int ); \
+    static void test_name(struct __test_metadata *_metadata); \
     static struct __test_metadata _##test_name##_object = \
       { name: "global." #test_name, fn: &test_name, termsig: _signal }; \
     static void __attribute__((constructor)) _register_##test_name(void) { \
@@ -379,7 +379,7 @@
 #ifndef __KERNEL__
 #  define _TEST_HARNESS_MAIN \
     int main(int argc, char **argv) { \
-      return test_harness_run(argc > 1 ? argv[0] : NULL); \
+      return test_harness_run(argc > 1 ? argv[1] : ""); \
     }
 #endif
 
@@ -515,8 +515,7 @@ static inline int __bail(int for_realz) {
 #endif
 
 #ifndef __KERNEL__
-static int test_harness_run(const char __attribute__((unused))
-				*test_or_fixture_name) {
+static int test_harness_run(const char * test_name) {
   struct __test_metadata *t;
   int ret = 0;
   unsigned int count = 0;
