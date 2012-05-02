@@ -23,4 +23,14 @@ struct file *capsicum_unwrap(const struct file *capability, u64 *rights);
 
 int capsicum_intercept_syscall(void *syscall_entry, unsigned long *args);
 
+/* Per-thread Capsicum local state. We use this to check that file mappings
+ * haven't changed between calls to our hooks, to prevent a time-of-check/
+ * time-of-use race.
+ */
+struct capsicum_pending_syscalls {
+	struct file *files[6];
+	unsigned int fds[6];
+	int next_free;
+};
+
 #endif /* __CAPSICUM_INT_H__ */

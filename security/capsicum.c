@@ -44,7 +44,6 @@
 
 static int require_rights(unsigned long fd, u64 rights);
 
-
 SYSCALL_DEFINE2(cap_new, unsigned int, orig_fd, u64, new_rights);
 
 /* The table is generated code which uses require_rights() and sys_cap_new(),
@@ -110,9 +109,24 @@ SYSCALL_DEFINE2(cap_new, unsigned int, orig_fd, u64, new_rights)
 
 int capsicum_intercept_syscall(void *syscall_entry, unsigned long *args)
 {
-	int result = run_syscall_table(syscall_entry, args);
+	int result;
+	struct capsicum_pending_syscalls *pending;
 
-	/* TODO custom syscalls here */
+	pending = current_security();
+	if (!pending) {
+		struct cred *cred = prepare_creds();
+		if (!cred)
+			return -ENOMEM;
+		cred->security = kmalloc(sizeof(*pending), GFP_KERNEL);
+		pending = cred->security;
+		commit_creds(cred);
+	}
+
+	pending->next_free = 0;
+
+	result = run_syscall_table(syscall_entry, args);
+
+	/* TODO(meredydd) custom syscalls here */
 
 	return result;
 }
@@ -122,11 +136,11 @@ static int require_rights(unsigned long fd, u64 required_rights)
 	struct file *file;
 	u64 actual_rights = (u64)-1;
 	int result = -1;
+	struct capsicum_pending_syscalls *pending;
 
 	rcu_read_lock();
 
 	file = fcheck(fd);
-
 	if (file == NULL) {
 		result = -EBADF;
 		goto out;
@@ -134,13 +148,22 @@ static int require_rights(unsigned long fd, u64 required_rights)
 
 	capsicum_unwrap(file, &actual_rights);
 
-	/* TODO here - make an anti-TOCTOU record. */
+	/* Make an anti-TOCTOU record. We record the identity of the file
+	 * this fd points to in thread-local data, at the same time as
+	 * we check its permissions. The fget() hook can then check that it's
+	 * looking up the same file we checked permissions on, preventing
+	 * an exploitable race condition.
+	 */
+	pending = current_security();
+	BUG_ON(pending->next_free >= ARRAY_SIZE(pending->files));
+	pending->fds[pending->next_free] = fd;
+	pending->files[pending->next_free] = file;
+	pending->next_free++;
 
 	if ((actual_rights & required_rights) == required_rights)
 		result = 0;
 	else
 		result = -ENOTCAPABLE;
-
 out:
 	rcu_read_unlock();
 	return result;
@@ -219,14 +242,35 @@ static int capsicum_release(struct inode *i, struct file *fp)
 
 static struct file *capsicum_file_lookup(struct file *file, unsigned int fd)
 {
-	/* TODO(meredydd) unwrapping is currently unconditional. This needs
-	 * fixing.
-	 */
-	struct file *unwrapped = capsicum_unwrap(file, NULL);
-	if (unwrapped != NULL)
-		file = unwrapped;
+	struct file *unwrapped;
+	struct capsicum_pending_syscalls *pending;
+	int i;
 
-	return file;
+	unwrapped = capsicum_unwrap(file, NULL);
+	if (unwrapped == NULL)
+		return file;
+
+	/* If we're not in capability mode, don't enforce rights. */
+	if (!test_thread_flag(TIF_SECCOMP) ||
+			current->seccomp.mode != SECCOMP_MODE_CAPSICUM)
+		return unwrapped;
+
+	pending = current_security();
+	BUG_ON(!pending);
+
+	for (i = 0; i < pending->next_free; i++) {
+		if (pending->fds[i] == fd &&
+				pending->files[i] != file) {
+			return NULL;
+		}
+	}
+
+	return unwrapped;
+}
+
+static void capsicum_task_free(struct task_struct *task)
+{
+	kfree(current_security());
 }
 
 static void panic_not_unwrapped(void)
@@ -266,5 +310,6 @@ const struct file_operations capability_ops = {
 
 static struct security_operations capsicum_security_ops = {
 		.name = "capsicum",
-		.file_lookup = capsicum_file_lookup
+		.file_lookup = capsicum_file_lookup,
+		.task_free = capsicum_task_free
 };

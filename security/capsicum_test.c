@@ -40,7 +40,7 @@ FIXTURE_SETUP(new_cap) {
 	ASSERT_NE(self->orig, NULL);
 	self->cap = capsicum_wrap_new_fd(self->orig, 0);
 	ASSERT_GE(self->cap, 0);
-	/* The new capability fd must not be the same as the original (0) */
+	/* The new capability fd must not be the same as the original (0). */
 	ASSERT_NE(self->cap, 0);
 	self->capf = fcheck(self->cap);
 	ASSERT_NE(self->capf, NULL);
@@ -99,7 +99,7 @@ TEST_F(new_cap, is_cap) {
 }
 
 
-/* Test that the fget() family of functions unwraps capabilites correctly. */
+/* Test that the fget() family of functions unwraps capabilities correctly. */
 FIXTURE(fget) {
 	struct file *orig;
 	int cap;
@@ -164,6 +164,61 @@ TEST_F(fget, fget_raw_light) {
 	EXPECT_EQ(file_count(self->orig), self->orig_refs+1);
 
 	fput_light(f, fpn);
+}
+
+/* Simulate a TOCTOU (time-of-check/time-of-use) attack, and verify that it
+ * is prevented. */
+TEST_F(fget, simulate_toctou) {
+	int fd_with_rights;
+	int result;
+	char dest = '\0';
+	unsigned long write_args[3];
+	struct file *retrieved;
+
+	/* This test requires capability mode, but we can't leave our test
+	 * process (/sbin/init) in cap mode, so we need to un-set capability
+	 * mode before the test completes. As there is (by design) no API for
+	 * doing this, we reach in and flip the thread flags manually.
+	 */
+	set_thread_flag(TIF_SECCOMP);
+	current->seccomp.mode = SECCOMP_MODE_CAPSICUM;
+
+	/* Let's pretend we're executing a syscall. We have one
+	 * capability with rights, and one without (self->cap).
+	 */
+	fd_with_rights = capsicum_wrap_new_fd(self->orig, CAP_WRITE|CAP_SEEK);
+
+	/* The process starts to execute a syscall, on our fd with rights. */
+	write_args[0] = fd_with_rights;
+	write_args[1] = (unsigned long)&dest;
+	write_args[2] = 1;
+
+	result = capsicum_intercept_syscall(sys_write, write_args);
+	EXPECT_EQ(result, 0);
+
+	/* But before sys_write() retrieves the file, the dastardly process
+	 * changes the fd to point to something entirely different, to which
+	 * we should have no rights at all.
+	 */
+	sys_dup2(self->cap, fd_with_rights);
+
+	/* sys_write() now tries to retrieve that file. */
+	retrieved = fget(fd_with_rights);
+
+	/* It should detect the change and return nothing. (Logically, we
+	 * just "fell down the cracks" between the unmapping of the old
+	 * fd and the mapping of the new one. If it got anything back, we lose.
+	 */
+	EXPECT_EQ(retrieved, NULL);
+
+	/* Avoid ref-count errors when the test fails. */
+	if (retrieved)
+		fput(retrieved);
+
+	sys_close(fd_with_rights);
+
+	/* Flip the flag to get us out of cap mode (no API for this) */
+	clear_thread_flag(TIF_SECCOMP);
 }
 
 /*
