@@ -1533,6 +1533,10 @@ static int link_path_walk(const char *name, struct nameidata *nd)
  		if (err)
 			break;
 
+		err = security_path_lookup(nd->path.dentry, name);
+		if (err)
+			break;
+
 		len = hash_name(name, &this.hash);
 		this.name = name;
 		this.len = len;
@@ -1630,6 +1634,11 @@ static int path_init(int dfd, const char *name, unsigned int flags,
 	nd->root.mnt = NULL;
 
 	if (*name=='/') {
+
+		retval = security_path_lookup(NULL, "/");
+		if (retval)
+			goto out_fail;
+
 		if (flags & LOOKUP_RCU) {
 			br_read_lock(vfsmount_lock);
 			rcu_read_lock();

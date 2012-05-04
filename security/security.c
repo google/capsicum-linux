@@ -717,6 +717,11 @@ struct file *security_file_lookup(struct file *orig, unsigned int fd)
 	return security_ops->file_lookup(orig, fd);
 }
 
+int security_path_lookup(struct dentry *dentry, const char *name)
+{
+	return security_ops->path_lookup(dentry, name);
+}
+
 int security_task_create(unsigned long clone_flags)
 {
 	return security_ops->task_create(clone_flags);

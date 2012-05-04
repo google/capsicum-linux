@@ -33,4 +33,10 @@ struct capsicum_pending_syscalls {
 	int next_free;
 };
 
+static inline bool capsicum_current_cap_mode(void)
+{
+	return test_thread_flag(TIF_SECCOMP) &&
+			current->seccomp.mode == SECCOMP_MODE_CAPSICUM;
+}
+
 #endif /* __CAPSICUM_INT_H__ */

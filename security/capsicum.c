@@ -34,8 +34,8 @@
  *  - A seccomp mode which checks all system calls against a table, and
  *    determines whether they have the appropriate rights for any
  *    capability-wrapped file descriptors they're operating on.
- *  - (TODO) A hook (not necessarily LSM) to prevent upward directory
- *    traversal when using openat() and friends in capability mode.
+ *  - An LSM hook to prevent upward directory traversal when using openat()
+ *    and friends in capability mode.
  *  - (TODO) A "process descriptor" mechanism which allows processes to
  *    refer to each other with file descriptors, which can then be
  *    capability-wrapped, allowing us to restrict access to the global PID
@@ -251,8 +251,7 @@ static struct file *capsicum_file_lookup(struct file *file, unsigned int fd)
 		return file;
 
 	/* If we're not in capability mode, don't enforce rights. */
-	if (!test_thread_flag(TIF_SECCOMP) ||
-			current->seccomp.mode != SECCOMP_MODE_CAPSICUM)
+	if (!capsicum_current_cap_mode())
 		return unwrapped;
 
 	pending = current_security();
@@ -266,6 +265,26 @@ static struct file *capsicum_file_lookup(struct file *file, unsigned int fd)
 	}
 
 	return unwrapped;
+}
+
+/* In capability mode, we restrict processes' paths by denying absolute
+ * path lookup, and allowing only downward lookups from file descriptors
+ * using openat() and friends. We therefore prevent absolute lookups
+ * and upward traversal (../) in capability mode.
+ */
+static int capsicum_path_lookup(struct dentry *dentry, const char *name)
+{
+	if (!capsicum_current_cap_mode())
+		return 0;
+
+	if (name[0] == '.' && name[1] == '.' &&
+			(name[2] == '\0' || name[2] == '/'))
+		return -ECAPMODE;
+
+	if (name[0] == '/')
+		return -ECAPMODE;
+
+	return 0;
 }
 
 static void capsicum_task_free(struct task_struct *task)
@@ -311,5 +330,6 @@ const struct file_operations capability_ops = {
 static struct security_operations capsicum_security_ops = {
 		.name = "capsicum",
 		.file_lookup = capsicum_file_lookup,
+		.path_lookup = capsicum_path_lookup,
 		.task_free = capsicum_task_free
 };
