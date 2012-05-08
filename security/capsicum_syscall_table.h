@@ -19,6 +19,12 @@ static inline int run_syscall_table(void *call, unsigned long *args)
 	if (call == (void *)sys_write)
 		return require_rights(args[0], CAP_WRITE|CAP_SEEK);
 
+	if (call == (void *)sys_read)
+		return require_rights(args[0], CAP_READ|CAP_SEEK);
+
+	if (call == (void *)sys_close)
+		return 0;
+
 	if (call == (void *)sys_exit)
 		return 0;
 

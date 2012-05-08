@@ -62,6 +62,34 @@ TEST(directory_traversal) {
 	EXPECT_EQ(file, -1);
 }
 
+TEST(inheritance) {
+	int dir, dircap, file, result;
+	char c;
+
+	/* Create a capability on /tmp that does not allow CAP_SEEK,
+	 * and check that this restriction is inherited through openat().
+	 */
+	dir = open("/tmp", O_RDONLY);
+	ASSERT_GE(dir, 0);
+	dircap = cap_new(dir, CAP_READ|CAP_WRITE);
+
+	file = openat(dir, "testfile", O_WRONLY|O_CREAT);
+	ASSERT_GE(file, 0);
+	write(file, "TEST\n", 5);
+	close(file);
+
+	cap_enter();
+	file = openat(dircap, "testfile", O_RDONLY);
+	EXPECT_GE(file, 0);
+
+	/* This should not be permitted, as read() requires CAP_SEEK. */
+	result = read(file, &c, 1);
+	EXPECT_EQ(result, -1);
+	EXPECT_EQ(errno, ENOTCAPABLE);
+
+	close(file);
+}
+
 TEST_HARNESS_MAIN
 
 

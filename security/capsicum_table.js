@@ -10,6 +10,8 @@
 
 syscall_table = [
 	{fn: "sys_write", rights: ["WRITE|SEEK"]},
+	{fn: "sys_read", rights: ["READ|SEEK"]},
+	{fn: "sys_close", rights: []},
 	{fn: "sys_exit", rights: []},
 	{fn: "sys_openat", rights: ["READ|WRITE"]},
 	{fn: "sys_cap_new"},

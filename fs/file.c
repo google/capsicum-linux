@@ -12,6 +12,7 @@
 #include <linux/mmzone.h>
 #include <linux/time.h>
 #include <linux/sched.h>
+#include <linux/security.h>
 #include <linux/slab.h>
 #include <linux/vmalloc.h>
 #include <linux/file.h>
@@ -457,6 +458,10 @@ repeat:
 
 	if (start <= files->next_fd)
 		files->next_fd = fd + 1;
+
+	error = security_fd_alloc(fd);
+	if (error)
+		goto out;
 
 	__set_open_fd(fd, fdt);
 	if (flags & O_CLOEXEC)

@@ -358,6 +358,16 @@ static struct file *cap_file_lookup(struct file *orig, unsigned int fd)
 	return orig;
 }
 
+static struct file *cap_file_install(struct file *orig, unsigned int fd)
+{
+	return orig;
+}
+
+static int cap_fd_alloc(unsigned int fd)
+{
+	return 0;
+}
+
 static int cap_path_lookup(struct dentry *dentry, const char *name)
 {
 	return 0;
@@ -968,6 +978,8 @@ void __init security_fixup_ops(struct security_operations *ops)
 	set_to_cap_if_null(ops, file_receive);
 	set_to_cap_if_null(ops, dentry_open);
 	set_to_cap_if_null(ops, file_lookup);
+	set_to_cap_if_null(ops, fd_alloc);
+	set_to_cap_if_null(ops, file_install);
 	set_to_cap_if_null(ops, path_lookup);
 	set_to_cap_if_null(ops, task_create);
 	set_to_cap_if_null(ops, task_free);

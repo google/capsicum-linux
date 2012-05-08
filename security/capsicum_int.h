@@ -27,8 +27,10 @@ int capsicum_intercept_syscall(void *syscall_entry, unsigned long *args);
  * haven't changed between calls to our hooks, to prevent a time-of-check/
  * time-of-use race.
  */
-struct capsicum_pending_syscalls {
+struct capsicum_pending_syscall {
 	struct file *files[6];
+	struct file *next_new_cap;
+	u64 new_cap_rights;
 	unsigned int fds[6];
 	int next_free;
 };
