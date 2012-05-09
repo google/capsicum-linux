@@ -455,7 +455,6 @@ int __secure_computing(int this_syscall)
 
 		syscall_get_arguments(current, task_pt_regs(current), 0, 6,
 				args);
-
 		ret = capsicum_intercept_syscall(syscall_entry, args);
 		if (ret) {
 			syscall_set_return_value(current, task_pt_regs(current),

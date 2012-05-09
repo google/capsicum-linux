@@ -12,26 +12,173 @@
  * rewritten in Perl, and will be invoked automatically by the build system,
  * and this file will be removed from the repository.
  */
+#include <linux/mman.h>
 
-static inline int run_syscall_table(void *call, unsigned long *args)
+static int run_syscall_table(void *call, unsigned long *args)
 {
 
-	if (call == (void *)sys_write)
-		return require_rights(args[0], CAP_WRITE|CAP_SEEK);
+	if (call == (void *)sys_accept)
+		return require_rights(args[0], CAP_ACCEPT);
+
+	if (call == (void *)sys_accept4)
+		return require_rights(args[0], CAP_ACCEPT);
+
+	if (call == (void *)sys_bind)
+		return require_rights(args[0], CAP_BIND);
+
+	if (call == (void *)sys_connect)
+		return require_rights(args[0], CAP_CONNECT);
+
+	if (call == (void *)sys_sendto)
+		return require_rights(args[0], CAP_WRITE
+					| (((void *)args[4] != NULL) ? CAP_CONNECT : 0));
+
+	if (call == (void *)sys_fremovexattr)
+		return require_rights(args[0], CAP_EXTATTR_DELETE);
+
+	if (call == (void *)sys_fgetxattr)
+		return require_rights(args[0], CAP_EXTATTR_GET);
+
+	if (call == (void *)sys_flistxattr)
+		return require_rights(args[0], CAP_EXTATTR_LIST);
+
+	if (call == (void *)sys_fsetxattr)
+		return require_rights(args[0], CAP_EXTATTR_SET);
+
+	if (call == (void *)sys_fchdir)
+		return require_rights(args[0], CAP_FCHDIR);
+
+	if (call == (void *)sys_fchmod)
+		return require_rights(args[0], CAP_FCHMOD);
+
+	if (call == (void *)sys_fchown)
+		return require_rights(args[0], CAP_FCHOWN);
+
+	if (call == (void *)sys_fcntl)
+		return require_rights(args[0], CAP_FCNTL);
+
+	if (call == (void *)sys_flock)
+		return require_rights(args[0], CAP_FLOCK);
+
+	if (call == (void *)sys_fstat)
+		return require_rights(args[0], CAP_FSTAT);
+
+	if (call == (void *)sys_fsync)
+		return require_rights(args[0], CAP_FSYNC);
+
+	if (call == (void *)sys_fdatasync)
+		return require_rights(args[0], CAP_FSYNC);
+
+	if (call == (void *)sys_ftruncate)
+		return require_rights(args[0], CAP_FTRUNCATE);
+
+	if (call == (void *)sys_utimensat)
+		return require_rights(args[0], CAP_FUTIMES
+					| (((void *)args[1] != NULL) ? CAP_LOOKUP : 0));
+
+	if (call == (void *)sys_getpeername)
+		return require_rights(args[0], CAP_GETPEERNAME);
+
+	if (call == (void *)sys_getsockname)
+		return require_rights(args[0], CAP_GETSOCKNAME);
+
+	if (call == (void *)sys_getsockopt)
+		return require_rights(args[0], CAP_GETSOCKOPT);
+
+	if (call == (void *)sys_ioctl)
+		return require_rights(args[0], CAP_IOCTL);
+
+	if (call == (void *)sys_listen)
+		return require_rights(args[0], CAP_LISTEN);
+
+	if (call == (void *)sys_openat)
+		return require_rights(args[0], CAP_LOOKUP
+					| (args[2] & O_WRONLY ? CAP_WRITE : CAP_READ)
+					| (args[2] & O_RDWR ? CAP_READ|CAP_WRITE : 0)
+					| (args[2] & O_CREAT ? CAP_WRITE : 0)
+					| (args[2] & O_EXCL ? CAP_WRITE : 0)
+					| (args[2] & O_TRUNC ? CAP_WRITE : 0))
+			?: (args[2] & ~(O_WRONLY|O_RDWR|O_CREAT|O_EXCL|O_TRUNC|O_APPEND|FASYNC|O_CLOEXEC|O_DIRECT|O_DIRECTORY|O_LARGEFILE|O_NOATIME|O_NOCTTY|O_NOFOLLOW|O_NONBLOCK|O_SYNC) ? -ECAPMODE : 0);
+
+	if (call == (void *)sys_faccessat)
+		return require_rights(args[0], CAP_LOOKUP);
+
+	if (call == (void *)sys_fchmodat)
+		return require_rights(args[0], CAP_LOOKUP|CAP_FCHMOD);
+
+	if (call == (void *)sys_fchownat)
+		return require_rights(args[0], CAP_LOOKUP|CAP_FCHOWN);
+
+	if (call == (void *)sys_newfstatat)
+		return require_rights(args[0], CAP_LOOKUP|CAP_FSTAT);
+
+	if (call == (void *)sys_futimesat)
+		return require_rights(args[0], CAP_LOOKUP|CAP_FUTIMES);
+
+	if (call == (void *)sys_linkat)
+		return require_rights(args[0], CAP_LOOKUP)
+			?: require_rights(args[2], CAP_LOOKUP|CAP_CREATE);
+
+	if (call == (void *)sys_mkdirat)
+		return require_rights(args[0], CAP_LOOKUP|CAP_MKDIR);
+
+	if (call == (void *)sys_readlinkat)
+		return require_rights(args[0], CAP_LOOKUP|CAP_READ);
+
+	if (call == (void *)sys_renameat)
+		return require_rights(args[0], CAP_LOOKUP|CAP_DELETE)
+			?: require_rights(args[2], CAP_LOOKUP|CAP_CREATE);
+
+	if (call == (void *)sys_symlinkat)
+		return require_rights(args[1], CAP_LOOKUP|CAP_CREATE);
+
+	if (call == (void *)sys_unlinkat)
+		return require_rights(args[0], CAP_LOOKUP|CAP_DELETE);
+
+	if (call == (void *)sys_mmap_pgoff)
+		return require_rights(args[4], CAP_MMAP
+					| (args[3] & PROT_READ ? CAP_READ : 0)
+					| (args[3] & PROT_WRITE ? CAP_WRITE : 0)
+					| (args[3] & PROT_EXEC ? CAP_MAPEXEC : 0))
+			?: (args[3] & ~(PROT_READ|PROT_WRITE|PROT_EXEC|MAP_SHARED|MAP_PRIVATE|MAP_32BIT|MAP_FIXED|MAP_HUGETLB|MAP_NONBLOCK|MAP_NORESERVE|MAP_POPULATE|MAP_STACK) ? -ECAPMODE : 0);
+
+	if (call == (void *)sys_pread64)
+		return require_rights(args[0], CAP_READ);
 
 	if (call == (void *)sys_read)
 		return require_rights(args[0], CAP_READ|CAP_SEEK);
 
+	if (call == (void *)sys_recv)
+		return require_rights(args[0], CAP_READ);
+
+	if (call == (void *)sys_recvfrom)
+		return require_rights(args[0], CAP_READ);
+
+	if (call == (void *)sys_lseek)
+		return require_rights(args[0], CAP_SEEK);
+
+	if (call == (void *)sys_setsockopt)
+		return require_rights(args[0], CAP_SETSOCKOPT);
+
+	if (call == (void *)sys_shutdown)
+		return require_rights(args[0], CAP_SHUTDOWN);
+
+	if (call == (void *)sys_write)
+		return require_rights(args[0], CAP_WRITE|CAP_SEEK);
+
+	if (call == (void *)sys_pwrite64)
+		return require_rights(args[0], CAP_WRITE);
+
+	if (call == (void *)sys_send)
+		return require_rights(args[0], CAP_WRITE);
+
 	if (call == (void *)sys_close)
 		return 0;
 
-	if (call == (void *)sys_exit)
+	if (call == (void *)sys_cap_new)
 		return 0;
 
-	if (call == (void *)sys_openat)
-		return require_rights(args[0], CAP_READ|CAP_WRITE);
-
-	if (call == (void *)sys_cap_new)
+	if (call == (void *)sys_exit)
 		return 0;
 
 	return -ECAPMODE;

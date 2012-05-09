@@ -133,6 +133,16 @@ static int require_rights(unsigned long fd, u64 required_rights)
 	int result = -1;
 	struct capsicum_pending_syscall *pending;
 
+	/* AT_FDCWD is a non-file-descriptor value passed in a file-descriptor
+	 * parameter to openat() and friends, to make them act like open() and
+	 * friends. This is not permitted in cap mode, where every path lookup
+	 * must be governed by a capability, so we provide a more descriptive
+	 * error than we would get by just trying to look it up in the file
+	 * table and failing.
+	 */
+	if (fd == AT_FDCWD)
+		return -ECAPMODE;
+
 	rcu_read_lock();
 
 	file = fcheck(fd);
@@ -140,7 +150,6 @@ static int require_rights(unsigned long fd, u64 required_rights)
 		result = -EBADF;
 		goto out;
 	}
-
 	capsicum_unwrap(file, &actual_rights);
 
 	/* Make an anti-TOCTOU record. We record the identity of the file
@@ -285,6 +294,7 @@ static struct file *capsicum_file_lookup(struct file *file, unsigned int fd)
 	struct file *unwrapped;
 	struct capsicum_pending_syscall *pending;
 	int i;
+	bool found_fd = false;
 
 	pending = capsicum_get_pending_syscall();
 	if (IS_ERR(pending)) {
@@ -306,14 +316,22 @@ static struct file *capsicum_file_lookup(struct file *file, unsigned int fd)
 	 * we were deciding whether to allow this syscall in the first place.
 	 * This is only relevant in capability mode, because we don't check
 	 * otherwise.
+	 *
+	 * Even if we've found a lookup record, we still check all the others,
+	 * to prevent a race where the user could change the identity of a
+	 * single fd passed as two parameters to the same call. If there are
+	 * multiple records of the same fd in pending, we want to check them
+	 * all.
 	 */
 	if (capsicum_current_cap_mode()) {
 		for (i = 0; i < pending->next_free; i++) {
-			if (pending->fds[i] == fd &&
-					pending->files[i] != file) {
-				return NULL;
+			if (pending->fds[i] == fd) {
+				found_fd = true;
+				if (pending->files[i] != file)
+					return NULL;
 			}
 		}
+		BUG_ON(!found_fd);
 	}
 
 	return unwrapped;
