@@ -21,7 +21,7 @@
 
 #include "capsicum_int.h"
 
-#include "test_harness.h"
+#include <misc/test_harness.h>
 
 /*
  * These unit tests exercise the Capsicum security module.
@@ -217,46 +217,8 @@ TEST_F(fget, simulate_toctou) {
 
 	sys_close(fd_with_rights);
 
-	/* Flip the flag to get us out of cap mode (no API for this) */
+	/* Flip the flag to get us out of cap mode (no API for this). */
 	clear_thread_flag(TIF_SECCOMP);
 }
 
-/*
- * Below here are the debugfs shims to trigger tests by name.
- */
-
-static ssize_t run_test_write(struct file *file, const char __user *ubuf,
-				size_t count, loff_t *ppos)
-{
-	char test[128];
-
-	size_t s = min_t(size_t, count, 127);
-
-	copy_from_user(test, ubuf, s);
-	test[s] = '\0';
-	if (s > 0 && test[s-1] == '\n')
-		test[s-1] = '\0';
-
-	printk(KERN_DEBUG "Running tests beginning with '%s':\n", test);
-	test_harness_run(test);
-
-	return count;
-}
-
-static struct file_operations fops;
-
-static int __init capsicum_test_init(void)
-{
-	printk(KERN_DEBUG "capsicum_test_init()");
-
-	fops = debugfs_file_operations;
-	fops.write = run_test_write;
-
-	debugfs_create_file("run_capsicum_tests", 0644, NULL,
-		NULL, &fops);
-
-	return 0;
-}
-__initcall(capsicum_test_init);
-
-
+TEST_HARNESS_DEBUGFS_TRIGGER(capsicum)

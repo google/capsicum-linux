@@ -132,7 +132,11 @@
 /* Use once to append a main() to the test file. E.g.,
  *   TEST_HARNESS_MAIN
  */
+#ifdef __KERNEL__
+#define TEST_HARNESS_DEBUGFS_TRIGGER TEST_API(TEST_HARNESS_DEBUGFS_TRIGGER)
+#else
 #define TEST_HARNESS_MAIN TEST_API(TEST_HARNESS_MAIN)
+#endif
 
 /*
  * Operators for use in TEST and TEST_F.
@@ -376,7 +380,46 @@
 #endif
 
 /* Exports a simple wrapper to run the test harness. */
-#ifndef __KERNEL__
+#ifdef __KERNEL__
+
+static int test_harness_run(const char *name);
+static ssize_t __test_run_write(struct file *file, const char __user *ubuf,
+				size_t count, loff_t *ppos)
+{
+	char test[128];
+
+	size_t s = min_t(size_t, count, 127);
+
+	copy_from_user(test, ubuf, s);
+	test[s] = '\0';
+	if (s > 0 && test[s-1] == '\n')
+		test[s-1] = '\0';
+
+	printk(KERN_DEBUG "Running tests beginning with '%s':\n", test);
+	test_harness_run(test);
+
+	return count;
+}
+
+static struct file_operations __test_run_fops;
+
+
+#define _TEST_HARNESS_DEBUGFS_TRIGGER(testname) \
+static int __init __test_##testname##_init(void) \
+{ \
+	__test_run_fops = debugfs_file_operations; \
+	__test_run_fops.write = __test_run_write; \
+\
+	debugfs_create_file("run_" #testname "_tests", 0644, NULL, \
+		NULL, &__test_run_fops); \
+\
+	return 0; \
+} \
+__initcall(__test_##testname##_init);
+
+
+
+#else
 #  define _TEST_HARNESS_MAIN \
     int main(int argc, char **argv) { \
       return test_harness_run(argc > 1 ? argv[1] : ""); \

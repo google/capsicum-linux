@@ -302,6 +302,18 @@ config FHANDLE
 	  get renamed. Enables open_by_handle_at(2) and name_to_handle_at(2)
 	  syscalls.
 
+config PROCDESC
+	bool "Process descriptors"
+	default y
+	help
+	  Process descriptors are file descriptors which represent a handle
+	  on another process. They are part of the Capsicum capability API
+	  (http://www.cl.cam.ac.uk/research/security/capsicum).
+
+	  They are currently enabled by default for testing.
+
+	  Say N if unsure.
+
 config TASKSTATS
 	bool "Export task/process statistics through netlink (EXPERIMENTAL)"
 	depends on NET
