@@ -15,8 +15,8 @@ else
     export LOUD=false
 fi
 
-if expr match "$1" ".*\\.test" >/dev/null ; then
-    make -C test-files || exit 1
+if expr match "$1" ".*\\.test\\|kt" >/dev/null ; then
+    make --no-print-directory -C test-files $1 || exit 1
 fi
 
 echo "Building..."

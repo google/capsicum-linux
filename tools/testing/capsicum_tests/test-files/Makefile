@@ -6,8 +6,15 @@
 # it under the terms of the GNU General Public License version 2, as
 # published by the Free Software Foundation.
 
-all: cap_new.test seccomp.test
+TESTS=cap_new.test procdesc.test seccomp.test kt
+
+all: $(TESTS)
 
 %.test: %.c capsicum.h
 	gcc -g -Wall -Werror -I../../../../include -o $@ $<
 
+kt: kt.c
+	gcc -g -Wall -Werror -DDEBUGFS_MOUNT='"/debug"' -o $@ $<
+
+clean:
+	rm $(TESTS) *.o -f

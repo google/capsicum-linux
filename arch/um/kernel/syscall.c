@@ -6,7 +6,9 @@
 #include "linux/file.h"
 #include "linux/fs.h"
 #include "linux/mm.h"
+#include "linux/procdesc.h"
 #include "linux/sched.h"
+#include "linux/uaccess.h"
 #include "linux/utsname.h"
 #include "linux/syscalls.h"
 #include "asm/current.h"
@@ -21,7 +23,8 @@ long sys_fork(void)
 
 	current->thread.forking = 1;
 	ret = do_fork(SIGCHLD, UPT_SP(&current->thread.regs.regs),
-		      &current->thread.regs, 0, NULL, NULL);
+		      &current->thread.regs, 0, NULL,
+		      NULL, NULL);
 	current->thread.forking = 0;
 	return ret;
 }
@@ -33,9 +36,52 @@ long sys_vfork(void)
 	current->thread.forking = 1;
 	ret = do_fork(CLONE_VFORK | CLONE_VM | SIGCHLD,
 		      UPT_SP(&current->thread.regs.regs),
-		      &current->thread.regs, 0, NULL, NULL);
+		      &current->thread.regs, 0, NULL,
+		      NULL, NULL);
 	current->thread.forking = 0;
 	return ret;
+}
+
+long sys_pdfork(int __user *fdp, int flags)
+{
+#ifdef CONFIG_PROCDESC
+	long ret;
+	int fd;
+	struct task_struct *task = NULL;
+	struct file *pd;
+
+	fd = get_unused_fd();
+	if (fd < 0)
+		return fd;
+
+	pd = prepare_procdesc();
+	if (IS_ERR(pd)) {
+		ret = PTR_ERR(pd);
+		goto out_putfd;
+	}
+
+	current->thread.forking = 1;
+	ret = do_fork(0, UPT_SP(&current->thread.regs.regs),
+		      &current->thread.regs, 0, &task, NULL, NULL);
+	current->thread.forking = 0;
+
+	if (ret < 0)
+		goto out_fput;
+
+	set_procdesc_task(pd, task);
+	fd_install(fd, pd);
+	put_user(fd, fdp);
+
+	return ret;
+
+out_fput:
+	fput(pd);
+out_putfd:
+	put_unused_fd(fd);
+	return ret;
+#else
+	return -ENOSYS;
+#endif
 }
 
 long old_mmap(unsigned long addr, unsigned long len,

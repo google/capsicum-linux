@@ -1540,11 +1540,16 @@ struct task_struct * __cpuinit fork_idle(int cpu)
  *
  * It copies the process, and if successful kick-starts
  * it and waits for it to finish using the VM if required.
+ *
+ * If @taskp is not NULL, returns a reference to the new
+ * task, and increments its reference count so that reference
+ * will remain valid.
  */
 long do_fork(unsigned long clone_flags,
 	      unsigned long stack_start,
 	      struct pt_regs *regs,
 	      unsigned long stack_size,
+	      struct task_struct **taskp,
 	      int __user *parent_tidptr,
 	      int __user *child_tidptr)
 {
@@ -1604,6 +1609,11 @@ long do_fork(unsigned long clone_flags,
 		if (clone_flags & CLONE_VFORK) {
 			p->vfork_done = &vfork;
 			init_completion(&vfork);
+			get_task_struct(p);
+		}
+
+		if (taskp) {
+			*taskp = p;
 			get_task_struct(p);
 		}
 

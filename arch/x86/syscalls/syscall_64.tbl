@@ -318,7 +318,11 @@
 309	common	getcpu			sys_getcpu
 310	64	process_vm_readv	sys_process_vm_readv
 311	64	process_vm_writev	sys_process_vm_writev
-312 64 cap_new sys_cap_new
+312	64	cap_new			sys_cap_new
+313	64	pdfork			sys_pdfork
+314	64	pdgetpid		sys_pdgetpid
+315	64	pdkill			sys_pdkill
+316	64	pdwait4			sys_pdwait4
 #
 # x32-specific system call numbers start at 512 to avoid cache impact
 # for native 64-bit operation.

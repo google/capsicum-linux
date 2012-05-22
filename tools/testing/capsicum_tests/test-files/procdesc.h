@@ -1,5 +1,5 @@
 /* 
- * Tests for Capsicum, a capability API for UNIX.
+ * Tests for the process descriptor API for Linux.
  *
  * Copyright (C) 2012 The Chromium OS Authors <chromium-os-dev@chromium.org>
  *
@@ -12,20 +12,26 @@
 #define __CAPSICUM_USERSPACE_H__
 
 #include <stdint.h>
-#include <sys/prctl.h>
-#include <asm-generic/errno.h>
 #include <misc/test_harness.h>
-#include <../security/capsicum_caps.h>
-#include <unistd.h>
 
-static inline int cap_enter(void)
+static inline int pdfork(int *fd, int flags)
 {
-	return prctl(PR_SET_SECCOMP, 3);
+	return syscall(313, fd, flags);
 }
 
-static inline int cap_new(unsigned int fd, uint64_t rights)
+static inline int pdgetpid(int fd, pid_t *pidp)
 {
-	return syscall(312, fd, rights);
+	return syscall(314, fd, pidp);
+}
+
+static inline int pdkill(int fd, int signum)
+{
+	return syscall(315, fd, signum);
+}
+
+static inline int pdwait4(int fd, int *status, int options, struct rusage *rusage)
+{
+	return syscall(316, fd, status, options, rusage);
 }
 
 #endif /*__CAPSICUM_USERSPACE_H__*/

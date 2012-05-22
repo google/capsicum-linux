@@ -87,8 +87,8 @@ long sys_clone(unsigned long clone_flags, unsigned long newsp,
 	if (!newsp)
 		newsp = UPT_SP(&current->thread.regs.regs);
 	current->thread.forking = 1;
-	ret = do_fork(clone_flags, newsp, &current->thread.regs, 0, parent_tid,
-		      child_tid);
+	ret = do_fork(clone_flags, newsp, &current->thread.regs, 0, NULL,
+		      parent_tid, child_tid);
 	current->thread.forking = 0;
 	return ret;
 }
