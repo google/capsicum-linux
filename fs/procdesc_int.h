@@ -13,6 +13,11 @@
 #define __PROCDESC_INT_H__
 
 extern const struct file_operations procdesc_ops;
-#define FILE_IS_PROCDESC(f) ((f)->f_ops == procdesc_ops)
+
+/* This structure will need expansion later (eg to hold the PD_DAEMON flag). */
+struct procdesc {
+	struct task_struct *task;
+};
+#define FILE_PD(f) ((struct procdesc *)((f)->private_data))
 
 #endif /* __PROCDEC_INT_H__ */

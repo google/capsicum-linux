@@ -12,7 +12,6 @@
 #define __CAPSICUM_USERSPACE_H__
 
 #include <stdint.h>
-#include <misc/test_harness.h>
 
 static inline int pdfork(int *fd, int flags)
 {

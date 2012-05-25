@@ -860,6 +860,9 @@ static void exit_notify(struct task_struct *tsk, int group_dead)
 
 	tsk->exit_state = autoreap ? EXIT_DEAD : EXIT_ZOMBIE;
 
+	/* Notify anyone who's waiting for us to finish. */
+	wake_up(&tsk->wait_exit);
+
 	/* mt-exec, de_thread() is waiting for group leader */
 	if (unlikely(tsk->signal->notify_count < 0))
 		wake_up_process(tsk->signal->group_exit_task);

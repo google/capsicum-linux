@@ -46,7 +46,7 @@ TEST(pd_create) {
 
 	f = fget(4);
 	ASSERT_TRUE(file_is_procdesc(f));
-	p = f->private_data;
+	p = FILE_PD(f)->task;
 	EXPECT_EQ(p->pid, r);
 	fput(f);
 }

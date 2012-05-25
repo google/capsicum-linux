@@ -265,18 +265,18 @@
 /* Called once per fixture to setup the data and register. */
 #ifdef __KERNEL__
 #  define _FIXTURE(fixture_name) \
-    static void __attribute__((constructor)) \
-        _register_##fixture_name##_data(void) { \
-      __fixture_count++; \
-    } \
-    _FIXTURE_DATA(fixture_name)
-#else
-#  define _FIXTURE(fixture_name) \
     static int _register_##fixture_name##_data(void) { \
       __fixture_count++; \
       return 0; \
     } \
     __initcall(_register_##fixture_name##_data); \
+    _FIXTURE_DATA(fixture_name)
+#else
+#  define _FIXTURE(fixture_name) \
+    static void __attribute__((constructor)) \
+        _register_##fixture_name##_data(void) { \
+      __fixture_count++; \
+    } \
     _FIXTURE_DATA(fixture_name)
 #endif
 
