@@ -38,18 +38,21 @@
 /* Provisional format:
 
    Standard:
-	{fn: <function_name>, rights: [ "arg1right1|arg1right2", "arg2right1", ...]}
+	{fn: <function_name>, rights: [ "arg1right1|arg1right2", "arg2right1", ...],
+	 flags_ok: [ "arg1flag1|arg1flag2", "arg2flag1", ...]}
 	eg:
 	{fn: "sys_write", rights: ["WRITE|SEEK"]}
 
    A "rights" definition can depend on flags present in another argument:
-	rights: [{always: "right1|right2", flags: [{FLAG1:"rightX|rightY",_FLAG2:"rightZ"},
-			flags_ok: "FLAG1|FLAG2|..."}, ...]
+	rights: [{always: "right1|right2",
+		  flags: [{FLAG1:"rightX|rightY",_FLAG2:"rightZ", ok: "FLAG1|FLAG2|..."},
+			  ...] },
+		 ...]
 	(An underscore in front of a flag name means "require this right if this flag
-	 is *not* set. If the syscall is called with a flag not mentioned in the flags: or flags_ok: section,
+	 is *not* set. If the syscall is called with a flag not mentioned in the flags: or ok: section,
          -ECAPMODE will be returned.)
 	eg:
-	{fn: "sys_openat", rights: [{always: "LOOKUP", flags: [null, null, {_O_WRONLY:"READ", O_WRONLY:"WRITE", ...}]}]}
+	{fn: "sys_openat", rights: [{always: "LOOKUP", flags: [null, null, {_O_WRONLY:"READ", O_WRONLY:"WRITE", ..., ok: "O_APPEND|..."}]}]}
 
 	Also, adding {notnull: [null, "CONNECT|BIND"]} to rights: will
 	require CAP_CONNECT and CAP_BIND when args[1] is non-NULL.
@@ -125,9 +128,11 @@ syscall_table = [
 	/* TODO(meredydd): What's the equivalent of FreeBSD's kevent()? */
 	{fn: "sys_listen", rights: ["LISTEN"]},
 	{fn: "sys_openat", rights:
-		[{always: "LOOKUP", flags_ok: "O_APPEND|FASYNC|O_CLOEXEC|O_DIRECT|O_DIRECTORY|O_LARGEFILE|O_NOATIME|O_NOCTTY|O_NOFOLLOW|O_NONBLOCK|O_SYNC",
+		[{always: "LOOKUP",
 			flags: [null,null, {_O_WRONLY:"READ",O_WRONLY:"WRITE",O_RDWR:"READ|WRITE",O_CREAT:"WRITE",
-						O_EXCL:"WRITE",O_TRUNC:"WRITE"}]}]},
+						O_EXCL:"WRITE",O_TRUNC:"WRITE",
+						ok: "O_APPEND|FASYNC|O_CLOEXEC|O_DIRECT|O_DIRECTORY|O_LARGEFILE|O_NOATIME|O_NOCTTY|O_NOFOLLOW|O_NONBLOCK|O_SYNC",
+						}]}]},
 	{fn: "sys_faccessat", rights: ["LOOKUP"]},
 	{fn: "sys_fchmodat", rights: ["LOOKUP|FCHMOD"]},
 	{fn: "sys_fchownat", rights: ["LOOKUP|FCHOWN"]},
@@ -144,9 +149,10 @@ syscall_table = [
 	{fn: "sys_mmap_pgoff", rights:
 		[null, null, null, null,
 		 {always: "MMAP",
-		  flags_ok: "MAP_SHARED|MAP_PRIVATE|MAP_32BIT|MAP_FIXED|MAP_HUGETLB|MAP_NONBLOCK|MAP_NORESERVE|MAP_POPULATE|MAP_STACK",
 		  flags: [null, null, null,
-			  {PROT_READ: "READ", PROT_WRITE: "WRITE", PROT_EXEC: "MAPEXEC"}]}]},
+			  {PROT_READ: "READ", PROT_WRITE: "WRITE", PROT_EXEC: "MAPEXEC",
+			   ok: "MAP_SHARED|MAP_PRIVATE|MAP_32BIT|MAP_FIXED|MAP_HUGETLB|MAP_NONBLOCK|MAP_NORESERVE|MAP_POPULATE|MAP_STACK"
+			  }]}]},
 	/* Omit all the PD* capabilities, because we don't have PDs yet. */
 	/* Omit aio_*() for now */
 	{fn: "sys_pread64", rights: ["READ"]},
@@ -161,6 +167,9 @@ syscall_table = [
 	{fn: "sys_write", rights: ["WRITE|SEEK"]},
 	{fn: "sys_pwrite64", rights: ["WRITE"]},
 	{fn: "sys_send", rights: ["WRITE"]},
+
+	{fn: "sys_pdfork", flags_ok: [null, "0"]},
+	{fn: "sys_pdkill"},
 
 	/* Unconditionally OK. */
 	{fn: "sys_close"},
@@ -205,6 +214,7 @@ for(var i in syscall_table) {
 
 	var spec = syscall_table[i];
 	var first = true;
+	var handled_flags = [];
 
 	out += "\tif (call == (void *)"+spec.fn+")\n\t\treturn ";
 
@@ -219,7 +229,6 @@ for(var i in syscall_table) {
 			out += "require_rights(args["+j+"], " + cap_bits(rspec)+")";
 		} else {
 			var ffirst = true;
-			var handled_flags = [];
 			out += "require_rights(args["+j+"], ";
 			if (rspec.always) {
 				out += cap_bits(rspec.always);
@@ -228,8 +237,14 @@ for(var i in syscall_table) {
 			for (var fn in rspec.flags) {
 				var flags = rspec.flags[fn];
 				if (!flags) { continue; }
+				handled_flags[fn] = [];
 
 				for (var flag in flags) {
+					if (flag == "ok") {
+						handled_flags[fn] = handled_flags[fn].concat(flags[flag]);
+						continue;
+					}
+
 					var inv = "";
 					var caps = cap_bits(flags[flag]);
 					var invcaps = cap_bits(flags["_"+flag]);
@@ -241,11 +256,8 @@ for(var i in syscall_table) {
 						out += "\n\t\t\t\t\t| ";
 					}
 					out += "(args["+fn+"] & "+flag+" ? " + caps + " : " + invcaps +")";
-					handled_flags.push(flag);
+					handled_flags[fn].push(flag);
 					ffirst = false;
-				}
-				if (rspec.flags_ok) {
-					handled_flags = handled_flags.concat(rspec.flags_ok);
 				}
 			}
 			for (var nn in rspec.notnull) {
@@ -260,13 +272,31 @@ for(var i in syscall_table) {
 				out += "(((void *)args["+nn+"] != NULL) ? " + caps + " : 0)";
 			}
 			out += ")";
-			if (rspec.flags) {
-				out += "\n\t\t\t?: (args["+fn+"] & ~("+handled_flags.join("|")+") ? -ECAPMODE : 0)";
-			}
 		}
 	}
 
-	if (!spec.rights || spec.rights.length == 0) {
+	for (var j in spec.flags_ok) {
+		var handled = handled_flags[j];
+		var flags = spec.flags_ok[j];
+
+		if (flags) {
+			if (!handled)
+				handled = [];
+			handled_flags[j] = handled.concat(flags);
+		}
+	}
+
+	for (var fn in handled_flags) {
+		if (handled_flags[fn]) {
+			if (!first) {
+				out += "\n\t\t\t?: ";
+			}
+			first = false;
+			out += "(args["+fn+"] & ~("+handled_flags[fn].join("|")+") ? -ECAPMODE : 0)";
+		}
+	}
+
+	if (first) {
 		out += "0";
 	}
 

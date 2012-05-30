@@ -8,10 +8,11 @@
  * published by the Free Software Foundation.
  */
 
-#ifndef __CAPSICUM_USERSPACE_H__
-#define __CAPSICUM_USERSPACE_H__
+#ifndef __PROCDESC_USERSPACE_H__
+#define __PROCDESC_USERSPACE_H__
 
 #include <stdint.h>
+#include <linux/procdesc.h>
 
 static inline int pdfork(int *fd, int flags)
 {
@@ -33,5 +34,5 @@ static inline int pdwait4(int fd, int *status, int options, struct rusage *rusag
 	return syscall(316, fd, status, options, rusage);
 }
 
-#endif /*__CAPSICUM_USERSPACE_H__*/
+#endif /*__PROCDESC_USERSPACE_H__*/
 

@@ -22,6 +22,7 @@
 #include <misc/test_harness.h>
 
 #include "procdesc.h"
+#include "capsicum.h"
 
 TEST(use_pdfork) {
 	int r, pd = -1;
@@ -155,17 +156,70 @@ static char getstate(int pid)
 	return ret;
 }
 
+#define EXPECT_PID_STATE(pid, state) EXPECT_PID_STATE2(getstate(pid), state, state)
+#define EXPECT_PID_STATE2(pid, state1, state2) \
+	do { \
+		int _ctr = 5; \
+		char _state; \
+		do { \
+			_state = getstate(pid); \
+			if (_state == state1 || _state == state2) \
+				break; \
+			usleep(100000); \
+		} while (--_ctr); \
+		if (!_ctr) { \
+			TH_LOG("Expected " #pid "('%c') in states '%c'/'%c'", \
+				_state, state1, state2); \
+			EXPECT_EQ(_ctr, 0); \
+		} \
+	} while (0)
+
+#define EXPECT_PID_ALIVE(pid) EXPECT_PID_STATE2(pid, 'R', 'S')
+#define EXPECT_PID_DEAD(pid) EXPECT_PID_STATE2(pid, 'Z', '\0')
+
 TEST_F(pdexit, release) {
-	char state;
 	int r = 0;
 
-	state = getstate(self->pid);
-	EXPECT_TRUE(state == 'R' || state == 'S');
+	EXPECT_PID_ALIVE(self->pid);
 
 	write(self->pipe, &r, sizeof(r));
 
-	sleep(1);
-	EXPECT_EQ(getstate(self->pid), 'Z');
+	EXPECT_PID_DEAD(self->pid);
+}
+
+TEST_F(pdexit, close) {
+	EXPECT_PID_ALIVE(self->pid);
+
+	close(self->pd);
+	EXPECT_PID_DEAD(self->pid);
+}
+
+/* Setting PD_DAEMON prevents close() from killing the child. */
+TEST(close_daemon) {
+	int pid, pd = -1;
+
+	pid = pdfork(&pd, PD_DAEMON);
+	ASSERT_GE(pid, 0);
+
+	if (pid == 0) {
+		/* We're the child. */
+		while (1)
+			sleep(1);
+	}
+
+	close(pd);
+	EXPECT_PID_ALIVE(pid);
+}
+
+TEST_F(pdexit, pdkill) {
+	EXPECT_PID_ALIVE(self->pid);
+
+	/* SIGCONT is ignored by default. */
+	pdkill(self->pd, SIGCONT);
+	EXPECT_PID_ALIVE(self->pid);
+
+	pdkill(self->pd, SIGINT);
+	EXPECT_PID_DEAD(self->pid);
 }
 
 /* The exit of a pdfork()ed process should not generate SIGCHLD. */
@@ -175,12 +229,26 @@ static void got_sigchld(int x)
 	abort();
 }
 
-TEST_F(pdexit, no_signal) {
+TEST_F(pdexit, no_sigchld) {
 	int r = 0;
 
 	signal(SIGCHLD, got_sigchld);
 	write(self->pipe, &r, sizeof(r));
 	waitpid(self->pid, &r, 0);
+}
+
+TEST(pdfork_daemon_restricted) {
+	int fd, r;
+
+	cap_enter();
+	r = pdfork(&fd, PD_DAEMON);
+	EXPECT_EQ(r, -1);
+	EXPECT_EQ(errno, ECAPMODE);
+
+	r = pdfork(&fd, 0);
+	if (r == 0)
+		exit(0);
+	EXPECT_GE(r, 0);
 }
 
 TEST_HARNESS_MAIN

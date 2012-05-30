@@ -15,6 +15,7 @@
 #include <linux/init.h>
 #include <linux/kernel.h>
 #include <linux/printk.h>
+#include <linux/procdesc.h>
 #include <linux/slab.h>
 #include <linux/security.h>
 #include <linux/syscalls.h>

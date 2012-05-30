@@ -11,6 +11,7 @@
 #include <linux/anon_inodes.h>
 #include <linux/fs.h>
 #include <linux/fdtable.h>
+#include <linux/file.h>
 #include <linux/init.h>
 #include <linux/kernel.h>
 #include <linux/poll.h>
@@ -38,10 +39,11 @@ struct file *prepare_procdesc(void)
 	return f;
 }
 
-void set_procdesc_task(struct file *f, struct task_struct *task)
+void set_procdesc_task(struct file *f, struct task_struct *task, bool daemon)
 {
 	BUG_ON(!file_is_procdesc(f));
 	FILE_PD(f)->task = task;
+	FILE_PD(f)->daemon = daemon;
 }
 
 bool file_is_procdesc(struct file *f)
@@ -56,9 +58,40 @@ SYSCALL_DEFINE2(pdgetpid, int, fd, pid_t __user *, pidp)
 	return -ENOSYS;
 }
 
+long do_pdkill(struct task_struct *task, int signum)
+{
+	/* This is essentially the sys_kill call path, but with the permission
+	 * checking removed. I've also removed the tasklist read lock, which
+	 * I believe is only necessary for finding the process associated with
+	 * a pid.
+	 */
+	struct siginfo info;
+
+	info.si_signo = signum;
+	info.si_errno = 0;
+	info.si_code = SI_USER;
+	info.si_pid = task_tgid_vnr(current);
+	info.si_uid = current_uid();
+
+	return do_send_sig_info(signum, &info, task, true);
+}
+
 SYSCALL_DEFINE2(pdkill, int, fd, int, signum)
 {
-	return -ENOSYS;
+	struct file *pd;
+	int ret;
+
+	pd = fget(fd);
+
+	if (!pd)
+		return -EBADF;
+	if (!file_is_procdesc(pd))
+		return -EINVAL;
+
+	ret = do_pdkill(FILE_PD(pd)->task, signum);
+	fput(pd);
+
+	return ret;
 }
 
 SYSCALL_DEFINE4(pdwait4, int, fd, int __user *, status, int, options,
@@ -72,6 +105,9 @@ static int procdesc_release(struct inode *inode, struct file *file)
 	struct procdesc *pd = FILE_PD(file);
 
 	if (pd->task) {
+		if (!pd->daemon && !task_is_dead(pd->task))
+			do_pdkill(pd->task, SIGKILL);
+
 		BUG_ON(atomic_read(&pd->task->usage) < 1);
 		put_task_struct(pd->task);
 	}

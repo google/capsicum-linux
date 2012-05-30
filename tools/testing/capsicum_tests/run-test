@@ -27,7 +27,7 @@ if $LOUD; then
 
 else
 
-    make -C ../../../ -j 14 linux ARCH=um O=build/ >/dev/null && (./run-test-on-last-build "$@" 2>&1 | sed -n '/---- Executing: .* ----/,$p' | grep -Pv 'remove_umid_dir - remove_files_and_dir failed with err = -16|System halted.')
+    make -C ../../../ -j 14 linux ARCH=um O=build/ >/dev/null && (./run-test-on-last-build "$@" 2>&1 | sed -n '/---- Executing: .* ----/,$p' | grep -Pav 'remove_umid_dir - remove_files_and_dir failed with err = -16|System halted.')
 
 fi
 

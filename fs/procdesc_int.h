@@ -17,6 +17,7 @@ extern const struct file_operations procdesc_ops;
 /* This structure will need expansion later (eg to hold the PD_DAEMON flag). */
 struct procdesc {
 	struct task_struct *task;
+	bool daemon;
 };
 #define FILE_PD(f) ((struct procdesc *)((f)->private_data))
 

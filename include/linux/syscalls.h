@@ -857,5 +857,7 @@ asmlinkage long sys_process_vm_writev(pid_t pid,
 				      const struct iovec __user *rvec,
 				      unsigned long riovcnt,
 				      unsigned long flags);
+asmlinkage long sys_pdkill(int fd, int signum);
+asmlinkage long sys_pdfork(int __user *pd, int flags);
 
 #endif

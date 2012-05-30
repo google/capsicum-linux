@@ -172,6 +172,12 @@ static int run_syscall_table(void *call, unsigned long *args)
 	if (call == (void *)sys_send)
 		return require_rights(args[0], CAP_WRITE);
 
+	if (call == (void *)sys_pdfork)
+		return (args[1] & ~(0) ? -ECAPMODE : 0);
+
+	if (call == (void *)sys_pdkill)
+		return 0;
+
 	if (call == (void *)sys_close)
 		return 0;
 

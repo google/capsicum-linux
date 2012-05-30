@@ -68,7 +68,7 @@ long sys_pdfork(int __user *fdp, int flags)
 	if (ret < 0)
 		goto out_fput;
 
-	set_procdesc_task(pd, task);
+	set_procdesc_task(pd, task, flags & PD_DAEMON);
 	fd_install(fd, pd);
 	put_user(fd, fdp);
 
