@@ -44,7 +44,6 @@
  */
 
 static int require_rights(unsigned long fd, u64 rights);
-static struct capsicum_pending_syscall *capsicum_get_pending_syscall(void);
 
 SYSCALL_DEFINE2(cap_new, unsigned int, orig_fd, u64, new_rights);
 
@@ -159,7 +158,11 @@ static int require_rights(unsigned long fd, u64 required_rights)
 	 * looking up the same file we checked permissions on, preventing
 	 * an exploitable race condition.
 	 */
-	pending = current_security();
+	pending = capsicum_get_pending_syscall();
+	if (IS_ERR(pending)) {
+		result = PTR_ERR(pending);
+		goto out;
+	}
 	BUG_ON(pending->next_free >= ARRAY_SIZE(pending->files));
 	pending->fds[pending->next_free] = fd;
 	pending->files[pending->next_free] = file;
@@ -375,7 +378,7 @@ static struct file *capsicum_file_install(struct file *file, unsigned int fd)
 	struct capsicum_pending_syscall *pending = current_security();
 	struct file *capf;
 
-	BUG_ON(!pending);
+	BUG_ON(!pending || pending->task != current);
 	if (pending->new_cap_rights == (u64)-1 || capsicum_is_cap(file))
 		return file;
 
@@ -414,34 +417,76 @@ static int capsicum_path_lookup(struct dentry *dentry, const char *name)
 /* Return (and allocate if necessary) the thread-local storage we use to
  * record details of the current system call.
  */
-static struct capsicum_pending_syscall *capsicum_get_pending_syscall(void)
+struct capsicum_pending_syscall *capsicum_get_pending_syscall(void)
 {
 	struct capsicum_pending_syscall *pending = current_security();
 
-	if (!pending) {
+	if (!pending || pending->task != current) {
 		struct cred *cred;
-
-		pending = kmalloc(sizeof(*pending), GFP_KERNEL);
-		if (!pending)
-			return ERR_PTR(-ENOMEM);
 
 		cred = prepare_creds();
 		if (!cred)
 			return ERR_PTR(-ENOMEM);
 
-		cred->security = pending;
+		/* If we're unsharing a cred which already points to some other
+		 * thread's capsicum_pending_syscall, capsicum_cred_prepare()
+		 * will dup that capsicum_pending_syscall into our new cred -
+		 * so the memory we need might already be allocated.
+		 */
+		pending = cred->security;
+		if (!pending) {
+			pending = kmalloc(sizeof(*pending), GFP_KERNEL);
+			if (!pending) {
+				abort_creds(cred);
+				return ERR_PTR(-ENOMEM);
+			}
+			cred->security = pending;
+		}
+
 		commit_creds(cred);
 		pending->new_cap_rights = (u64)-1;
 		pending->next_free = 0;
 		pending->next_new_cap = NULL;
+		pending->task = current;
 	}
 
 	return pending;
 }
 
-static void capsicum_task_free(struct task_struct *task)
+static void capsicum_cred_free(struct cred *cred)
 {
-	kfree(current_security());
+	kfree(cred->security);
+	cred->security = NULL;
+}
+
+static int capsicum_cred_alloc_blank(struct cred *cred, gfp_t gfp)
+{
+	cred->security = kmalloc(sizeof(struct capsicum_pending_syscall), gfp);
+	if (!cred->security)
+		return -ENOMEM;
+	return 0;
+}
+
+static void capsicum_cred_transfer(struct cred *new, const struct cred *old)
+{
+	BUG_ON(!new->security);
+	memcpy(new->security, old->security,
+			sizeof(struct capsicum_pending_syscall));
+}
+
+static int capsicum_cred_prepare(struct cred *new, const struct cred *old,
+		gfp_t gfp)
+{
+	struct capsicum_pending_syscall *pending = old->security;
+
+	if (pending && pending->task == current) {
+		int err = capsicum_cred_alloc_blank(new, gfp);
+		if (err)
+			return err;
+		capsicum_cred_transfer(new, old);
+	}
+
+	return 0;
 }
 
 static void panic_not_unwrapped(void)
@@ -485,5 +530,8 @@ static struct security_operations capsicum_security_ops = {
 		.fd_alloc = capsicum_fd_alloc,
 		.file_install = capsicum_file_install,
 		.path_lookup = capsicum_path_lookup,
-		.task_free = capsicum_task_free
+		.cred_alloc_blank = capsicum_cred_alloc_blank,
+		.cred_free = capsicum_cred_free,
+		.cred_prepare = capsicum_cred_prepare,
+		.cred_transfer = capsicum_cred_transfer
 };

@@ -221,4 +221,47 @@ TEST_F(fget, simulate_toctou) {
 	clear_thread_flag(TIF_SECCOMP);
 }
 
+/* Preparing a new cred duplicates our thread-local state structure. */
+TEST(cred_copy_pending) {
+	const struct cred *old_cred;
+	struct cred *new_cred;
+	struct capsicum_pending_syscall *pending;
+
+	pending = capsicum_get_pending_syscall();
+	old_cred = current_cred();
+	EXPECT_EQ(old_cred->security, pending);
+
+	new_cred = prepare_creds();
+	EXPECT_NE(new_cred->security, NULL);
+	EXPECT_NE(new_cred->security, old_cred->security);
+	EXPECT_TRUE(!memcmp(new_cred->security, old_cred->security,
+			sizeof(struct capsicum_pending_syscall)));
+
+	commit_creds(new_cred);
+	EXPECT_EQ(current_cred(), new_cred);
+}
+
+/* If the thread-local Capsicum state object attached to our cred does not
+ * belong to our thread (ie the cred is shared), capsicum_get_pending_syscall()
+ * will allocate us our own private cred and thread-local object.
+ */
+TEST(unshare_cred) {
+	const struct cred *old_cred;
+	struct capsicum_pending_syscall *old_pending, *new_pending;
+
+	old_pending = capsicum_get_pending_syscall();
+	old_cred = current_cred();
+	ASSERT_EQ(old_cred->security, old_pending);
+
+	/* Spike this object, so that it looks foreign to
+	 * capsicum_get_pending_syscall(), which will allocate a new
+	 * state object and a new cred to hold it.
+	 */
+	old_pending->task = NULL;
+
+	new_pending = capsicum_get_pending_syscall();
+	EXPECT_NE(new_pending, old_pending);
+	EXPECT_NE(current_cred(), old_cred);
+}
+
 TEST_HARNESS_DEBUGFS_TRIGGER(capsicum)

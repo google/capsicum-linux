@@ -15,12 +15,16 @@
 #include <linux/file.h>
 #include "capsicum_caps.h"
 
+/* This is used in seccomp.c; eventually it should move to a public location. */
+struct capsicum_pending_syscall *capsicum_get_pending_syscall(void);
+
+/* Everything else in this file is for use in test code only
+ * (capsicum_test.c).
+ */
+
 int capsicum_is_cap(const struct file *file);
-
 int capsicum_wrap_new_fd(struct file *orig, u64 rights);
-
 struct file *capsicum_unwrap(const struct file *capability, u64 *rights);
-
 int capsicum_intercept_syscall(void *syscall_entry, unsigned long *args);
 
 /* Per-thread Capsicum local state. We use this to check that file mappings
@@ -33,6 +37,10 @@ struct capsicum_pending_syscall {
 	u64 new_cap_rights;
 	unsigned int fds[6];
 	int next_free;
+	/* The back-reference to the task-struct allows us to detect when
+	 * the cred struct gets shared between tasks, and un-share it.
+	 */
+	struct task_struct *task;
 };
 
 static inline bool capsicum_current_cap_mode(void)
