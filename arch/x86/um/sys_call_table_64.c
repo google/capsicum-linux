@@ -30,6 +30,7 @@
 #define stub_clone sys_clone
 #define stub_fork sys_fork
 #define stub_vfork sys_vfork
+#define stub_pdfork sys_pdfork
 #define stub_execve sys_execve
 #define stub_rt_sigsuspend sys_rt_sigsuspend
 #define stub_sigaltstack sys_sigaltstack

@@ -15,19 +15,40 @@ else
     export LOUD=false
 fi
 
+if [ "$1" = "-vm" -o "$1" = "-x86" ];  then
+    shift
+    export VM=true
+else
+    export VM=false
+fi
+
+if [ "$1" = "-kgdb" ]; then
+    shift
+    export KGDB=-kgdb
+    export TARGETS="bzImage vmlinux"
+else
+    export TARGETS=bzImage
+    export KGDB=""
+fi
+
 if expr match "$1" ".*\\.test\\|kt" >/dev/null ; then
     make --no-print-directory -C test-files $1 || exit 1
 fi
 
 echo "Building..."
 
-if $LOUD; then
+if $VM ; then
 
-    make -C ../../../ -j 14 linux ARCH=um O=build/ && ./run-test-on-last-build "$@"
+    make -C ../../../ -j14 $TARGETS O=build-native/ >/dev/null && (./run-vm-test-on-last-build $KGDB "$@" 2>&1 | sed -n '/---- Executing: .* ----/,$p')
 
 else
+    if $LOUD; then
 
-    make -C ../../../ -j 14 linux ARCH=um O=build/ >/dev/null && (./run-test-on-last-build "$@" 2>&1 | sed -n '/---- Executing: .* ----/,$p' | grep -Pav 'remove_umid_dir - remove_files_and_dir failed with err = -16|System halted.')
+	make -C ../../../ -j 14 linux ARCH=um O=build/ && ./run-test-on-last-build "$@"
 
+    else
+
+	make -C ../../../ -j 14 linux ARCH=um O=build/ >/dev/null && (./run-test-on-last-build "$@" 2>&1 | sed -n '/---- Executing: .* ----/,$p' | grep -Pav 'remove_umid_dir - remove_files_and_dir failed with err = -16|System halted.')
+    fi
 fi
 

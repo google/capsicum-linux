@@ -108,7 +108,7 @@ SYSCALL_DEFINE2(cap_new, unsigned int, orig_fd, u64, new_rights)
 	return sys_cap_new_impl(orig_fd, new_rights);
 }
 
-int capsicum_intercept_syscall(void *syscall_entry, unsigned long *args)
+int capsicum_intercept_syscall(int arch, int callnr, unsigned long *args)
 {
 	int result;
 	struct capsicum_pending_syscall *pending;
@@ -119,7 +119,7 @@ int capsicum_intercept_syscall(void *syscall_entry, unsigned long *args)
 
 	pending->next_free = 0;
 	pending->new_cap_rights = 0;
-	result = run_syscall_table(syscall_entry, args);
+	result = run_syscall_table(arch, callnr, args);
 
 	/* TODO(meredydd) custom syscalls here */
 
@@ -355,6 +355,12 @@ static int capsicum_fd_alloc(unsigned int fd)
 	struct file *capf;
 	struct capsicum_pending_syscall *pending;
 
+	/* Optimisation: If we haven't worked with capabilities so far in this
+	 * thread, there is no need to allocate a structure just to say so.
+	 */
+	if (!current_security())
+		return 0;
+
 	pending = capsicum_get_pending_syscall();
 	if (IS_ERR(pending))
 		return PTR_ERR(pending);
@@ -375,10 +381,15 @@ static int capsicum_fd_alloc(unsigned int fd)
  */
 static struct file *capsicum_file_install(struct file *file, unsigned int fd)
 {
-	struct capsicum_pending_syscall *pending = current_security();
+	struct capsicum_pending_syscall *pending;
 	struct file *capf;
 
-	BUG_ON(!pending || pending->task != current);
+	pending = current_security();
+	if (!pending)
+		return file;
+
+	BUG_ON(pending->task != current);
+
 	if (pending->new_cap_rights == (u64)-1 || capsicum_is_cap(file))
 		return file;
 

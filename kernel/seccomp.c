@@ -446,16 +446,12 @@ int __secure_computing(int this_syscall)
 #ifdef CONFIG_CAPSICUM
 	case SECCOMP_MODE_CAPSICUM: {
 		unsigned long args[6];
-		void *syscall_entry = sys_call_table[this_syscall];
-		int ret;
+		int arch, ret;
+		struct pt_regs *regs = task_pt_regs(current);
 
-		/* TODO(meredydd) Figure out how to call
-		 * arch_syscall_addr(this_syscall);
-		 */
-
-		syscall_get_arguments(current, task_pt_regs(current), 0, 6,
-				args);
-		ret = capsicum_intercept_syscall(syscall_entry, args);
+		arch = syscall_get_arch(current, regs);
+		syscall_get_arguments(current, regs, 0, 6, args);
+		ret = capsicum_intercept_syscall(arch, this_syscall, args);
 		if (ret) {
 			syscall_set_return_value(current, task_pt_regs(current),
 						 ret, 0);

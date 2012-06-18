@@ -41,7 +41,7 @@
 	{fn: <function_name>, rights: [ "arg1right1|arg1right2", "arg2right1", ...],
 	 flags_ok: [ "arg1flag1|arg1flag2", "arg2flag1", ...]}
 	eg:
-	{fn: "sys_write", rights: ["WRITE|SEEK"]}
+	{fn: "write", rights: ["WRITE|SEEK"]}
 
    A "rights" definition can depend on flags present in another argument:
 	rights: [{always: "right1|right2",
@@ -52,7 +52,7 @@
 	 is *not* set. If the syscall is called with a flag not mentioned in the flags: or ok: section,
          -ECAPMODE will be returned.)
 	eg:
-	{fn: "sys_openat", rights: [{always: "LOOKUP", flags: [null, null, {_O_WRONLY:"READ", O_WRONLY:"WRITE", ..., ok: "O_APPEND|..."}]}]}
+	{fn: "openat", rights: [{always: "LOOKUP", flags: [null, null, {_O_WRONLY:"READ", O_WRONLY:"WRITE", ..., ok: "O_APPEND|..."}]}]}
 
 	Also, adding {notnull: [null, "CONNECT|BIND"]} to rights: will
 	require CAP_CONNECT and CAP_BIND when args[1] is non-NULL.
@@ -92,61 +92,60 @@
 */
 
 syscall_table = [
-	{fn: "sys_accept", rights: ["ACCEPT"]},
-	{fn: "sys_accept4", rights: ["ACCEPT"]},
+	{fn: "accept", rights: ["ACCEPT"]},
+	{fn: "accept4", rights: ["ACCEPT"]},
 	/* TODO(meredydd): ACL maintenance and checking. */
-	{fn: "sys_bind", rights: ["BIND"]},
-	{fn: "sys_connect", rights: ["CONNECT"]},
-	{fn: "sys_sendto", rights: [{always: "WRITE", notnull: [null, null, null, null, "CONNECT"]}]},
+	{fn: "bind", rights: ["BIND"]},
+	{fn: "connect", rights: ["CONNECT"]},
+	{fn: "sendto", rights: [{always: "WRITE", notnull: [null, null, null, null, "CONNECT"]}]},
 	/* TODO(meredydd): select(), poll(), kevent() */
 	/* TODO(meredydd): fexecve() */
-	{fn: "sys_fremovexattr", rights: ["EXTATTR_DELETE"]},
-	{fn: "sys_fgetxattr", rights: ["EXTATTR_GET"]},
-	{fn: "sys_flistxattr", rights: ["EXTATTR_LIST"]},
-	{fn: "sys_fsetxattr", rights: ["EXTATTR_SET"]},
-	{fn: "sys_fchdir", rights: ["FCHDIR"]},
+	{fn: "fremovexattr", rights: ["EXTATTR_DELETE"]},
+	{fn: "fgetxattr", rights: ["EXTATTR_GET"]},
+	{fn: "flistxattr", rights: ["EXTATTR_LIST"]},
+	{fn: "fsetxattr", rights: ["EXTATTR_SET"]},
+	{fn: "fchdir", rights: ["FCHDIR"]},
 	/* TODO(meredydd): What's the equivalent of FreeBSD's fchflags()? */
-	{fn: "sys_fchmod", rights: ["FCHMOD"]},
-	{fn: "sys_fchown", rights: ["FCHOWN"]},
-	{fn: "sys_fcntl", rights: ["FCNTL"]},
-	{fn: "sys_flock", rights: ["FLOCK"]},
+	{fn: "fchmod", rights: ["FCHMOD"]},
+	{fn: "fchown", rights: ["FCHOWN"]},
+	{fn: "fcntl", rights: ["FCNTL"]},
+	{fn: "flock", rights: ["FLOCK"]},
 	/* TODO(meredydd): fpathconf() needs a closer look
-	   {fn: "sys_fpathconf", rights: ["FPATHCONF"]},
+	   {fn: "fpathconf", rights: ["FPATHCONF"]},
 	*/
 	/* TODO(meredydd): What's the equivalent of FreeBSD's CAP_FSCK? */
-	{fn: "sys_fstat", rights: ["FSTAT"]},
+	{fn: "fstat", rights: ["FSTAT"]},
 	/* TODO(meredydd): Do we need special support for aio_fsync? */
-	{fn: "sys_fsync", rights: ["FSYNC"]},
-	{fn: "sys_fdatasync", rights: ["FSYNC"]},
-	{fn: "sys_ftruncate", rights: ["FTRUNCATE"]},
+	{fn: "fsync", rights: ["FSYNC"]},
+	{fn: "fdatasync", rights: ["FSYNC"]},
+	{fn: "ftruncate", rights: ["FTRUNCATE"]},
 	/* glibc turns futimes() into utimensat() */
-	{fn: "sys_utimensat", rights: [{always: "FUTIMES", notnull: [null, "LOOKUP"]}]},
-	{fn: "sys_getpeername", rights: ["GETPEERNAME"]},
-	{fn: "sys_getsockname", rights: ["GETSOCKNAME"]},
-	{fn: "sys_getsockopt", rights: ["GETSOCKOPT"]},
-	{fn: "sys_ioctl", rights: ["IOCTL"]},
+	{fn: "utimensat", rights: [{always: "FUTIMES", notnull: [null, "LOOKUP"]}]},
+	{fn: "getpeername", rights: ["GETPEERNAME"]},
+	{fn: "getsockname", rights: ["GETSOCKNAME"]},
+	{fn: "getsockopt", rights: ["GETSOCKOPT"]},
+	{fn: "ioctl", rights: ["IOCTL"]},
 	/* TODO(meredydd): What's the equivalent of FreeBSD's kevent()? */
-	{fn: "sys_listen", rights: ["LISTEN"]},
-	{fn: "sys_openat", rights:
+	{fn: "listen", rights: ["LISTEN"]},
+	{fn: "openat", rights:
 		[{always: "LOOKUP",
 			flags: [null,null, {_O_WRONLY:"READ",O_WRONLY:"WRITE",O_RDWR:"READ|WRITE",O_CREAT:"WRITE",
 						O_EXCL:"WRITE",O_TRUNC:"WRITE",
 						ok: "O_APPEND|FASYNC|O_CLOEXEC|O_DIRECT|O_DIRECTORY|O_LARGEFILE|O_NOATIME|O_NOCTTY|O_NOFOLLOW|O_NONBLOCK|O_SYNC",
 						}]}]},
-	{fn: "sys_faccessat", rights: ["LOOKUP"]},
-	{fn: "sys_fchmodat", rights: ["LOOKUP|FCHMOD"]},
-	{fn: "sys_fchownat", rights: ["LOOKUP|FCHOWN"]},
-	{fn: "sys_newfstatat", rights: ["LOOKUP|FSTAT"]},
-	{fn: "sys_futimesat", rights: ["LOOKUP|FUTIMES"]},
-	{fn: "sys_linkat", rights: ["LOOKUP", null, "LOOKUP|CREATE"]},
-	{fn: "sys_mkdirat", rights: ["LOOKUP|MKDIR"]},
-	/*{fn: "sys_mknodat", rights: ["LOOKUP|CREATE"]},*/  /* This needs a security audit! */
-	{fn: "sys_readlinkat", rights: ["LOOKUP|READ"]},
-	{fn: "sys_renameat", rights: ["LOOKUP|DELETE", null, "LOOKUP|CREATE"]},
-	{fn: "sys_symlinkat", rights: [null, "LOOKUP|CREATE"]},
-	{fn: "sys_unlinkat", rights: ["LOOKUP|DELETE"]},
-	/* UML relies on mmap_old */
-	{fn: "sys_mmap_pgoff", rights:
+	{fn: "faccessat", rights: ["LOOKUP"]},
+	{fn: "fchmodat", rights: ["LOOKUP|FCHMOD"]},
+	{fn: "fchownat", rights: ["LOOKUP|FCHOWN"]},
+	{fn: "newfstatat", rights: ["LOOKUP|FSTAT"]},
+	{fn: "futimesat", rights: ["LOOKUP|FUTIMES"]},
+	{fn: "linkat", rights: ["LOOKUP", null, "LOOKUP|CREATE"]},
+	{fn: "mkdirat", rights: ["LOOKUP|MKDIR"]},
+	/*{fn: "mknodat", rights: ["LOOKUP|CREATE"]},*/  /* This needs a security audit! */
+	{fn: "readlinkat", rights: ["LOOKUP|READ"]},
+	{fn: "renameat", rights: ["LOOKUP|DELETE", null, "LOOKUP|CREATE"]},
+	{fn: "symlinkat", rights: [null, "LOOKUP|CREATE"]},
+	{fn: "unlinkat", rights: ["LOOKUP|DELETE"]},
+	{fn: "mmap", rights:
 		[null, null, null, null,
 		 {always: "MMAP",
 		  flags: [null, null, null,
@@ -155,26 +154,29 @@ syscall_table = [
 			  }]}]},
 	/* Omit all the PD* capabilities, because we don't have PDs yet. */
 	/* Omit aio_*() for now */
-	{fn: "sys_pread64", rights: ["READ"]},
-	{fn: "sys_read", rights: ["READ|SEEK"]},
-	{fn: "sys_recv", rights: ["READ"]},
-	{fn: "sys_recvfrom", rights: ["READ"]},
+	{fn: "pread64", rights: ["READ"]},
+	{fn: "read", rights: ["READ|SEEK"]},
+	{fn: "recvfrom", rights: ["READ"]},
 	/* Omit recvmsg() until we have a good story on how to transfer fds. */
 	/* frevoke() does not exist on Linux */
-	{fn: "sys_lseek", rights: ["SEEK"]},
-	{fn: "sys_setsockopt", rights: ["SETSOCKOPT"]},
-	{fn: "sys_shutdown", rights: ["SHUTDOWN"]},
-	{fn: "sys_write", rights: ["WRITE|SEEK"]},
-	{fn: "sys_pwrite64", rights: ["WRITE"]},
-	{fn: "sys_send", rights: ["WRITE"]},
+	{fn: "lseek", rights: ["SEEK"]},
+	{fn: "setsockopt", rights: ["SETSOCKOPT"]},
+	{fn: "shutdown", rights: ["SHUTDOWN"]},
+	{fn: "write", rights: ["WRITE|SEEK"]},
+	{fn: "pwrite64", rights: ["WRITE"]},
+	{fn: "uname"},
+	{fn: "brk"},
+	{fn: "arch_prctl", flags_ok: ["ARCH_SET_FS|ARCH_GET_FS|ARCH_SET_GS|ARCH_GET_GS"]},
+	{fn: "rt_sigaction"},
 
-	{fn: "sys_pdfork", flags_ok: [null, "0"]},
-	{fn: "sys_pdkill"},
+	{fn: "pdfork", flags_ok: [null, "0"]},
+	{fn: "pdkill"},
 
 	/* Unconditionally OK. */
-	{fn: "sys_close"},
-	{fn: "sys_cap_new"},
-	{fn: "sys_exit"},
+	{fn: "close"},
+	{fn: "cap_new"},
+	{fn: "exit"},
+	{fn: "exit_group"},
 ];
 
 
@@ -194,10 +196,15 @@ out = "/*\n\
  * rewritten in Perl, and will be invoked automatically by the build system,\n\
  * and this file will be removed from the repository.\n\
  */\n\
+#include <linux/audit.h>\n\
 #include <linux/mman.h>\n\
+#include <asm/prctl.h>\n\
 \n\
-static int run_syscall_table(void *call, unsigned long *args)\n\
-{\n\n";
+static int run_syscall_table(int arch, int call, unsigned long *args)\n\
+{\n\
+\tif (arch != AUDIT_ARCH_X86_64)\n\
+\t\treturn -ECAPMODE;\n\n\
+\tswitch (call) {\n";
 
 function cap_bits(rstr) {
 	if (!rstr) { return "0"; }
@@ -216,7 +223,7 @@ for(var i in syscall_table) {
 	var first = true;
 	var handled_flags = [];
 
-	out += "\tif (call == (void *)"+spec.fn+")\n\t\treturn ";
+	out += "\tcase (__NR_"+spec.fn+"):\n\t\treturn ";
 
 	for (var j in spec.rights) {
 		var rspec = spec.rights[j];
@@ -304,7 +311,7 @@ for(var i in syscall_table) {
 
 }
 
-out += "\treturn -ECAPMODE;\n";
+out += "\tdefault:\n\t\treturn -ECAPMODE;\n\t}\n";
 
 out += "}\n";
 

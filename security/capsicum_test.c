@@ -11,6 +11,7 @@
 
 #include <linux/init.h>
 #include <linux/kernel.h>
+#include <linux/audit.h>
 #include <linux/printk.h>
 #include <linux/module.h>
 #include <linux/debugfs.h>
@@ -193,7 +194,8 @@ TEST_F(fget, simulate_toctou) {
 	write_args[1] = (unsigned long)&dest;
 	write_args[2] = 1;
 
-	result = capsicum_intercept_syscall(sys_write, write_args);
+	result = capsicum_intercept_syscall(AUDIT_ARCH_X86_64, __NR_write,
+			write_args);
 	EXPECT_EQ(result, 0);
 
 	/* But before sys_write() retrieves the file, the dastardly process

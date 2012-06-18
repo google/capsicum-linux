@@ -7,6 +7,7 @@
 #include <linux/sched.h>
 #include <linux/module.h>
 #include <linux/pm.h>
+#include <linux/procdesc.h>
 #include <linux/clockchips.h>
 #include <linux/random.h>
 #include <linux/user-return-notifier.h>
@@ -15,6 +16,8 @@
 #include <linux/stackprotector.h>
 #include <linux/tick.h>
 #include <linux/cpuidle.h>
+#include <linux/fdtable.h>
+#include <linux/file.h>
 #include <trace/events/power.h>
 #include <linux/hw_breakpoint.h>
 #include <asm/cpu.h>
@@ -255,7 +258,7 @@ void __switch_to_xtra(struct task_struct *prev_p, struct task_struct *next_p,
 
 int sys_fork(struct pt_regs *regs)
 {
-	return do_fork(SIGCHLD, regs->sp, regs, 0, NULL, NULL);
+	return do_fork(SIGCHLD, regs->sp, regs, 0, NULL, NULL, NULL);
 }
 
 /*
@@ -271,7 +274,46 @@ int sys_fork(struct pt_regs *regs)
 int sys_vfork(struct pt_regs *regs)
 {
 	return do_fork(CLONE_VFORK | CLONE_VM | SIGCHLD, regs->sp, regs, 0,
-		       NULL, NULL);
+		       NULL, NULL, NULL);
+}
+
+long sys_pdfork(int __user *fdp, int flags, struct pt_regs *regs)
+{
+#ifdef CONFIG_PROCDESC
+	long ret;
+	int fd;
+	struct task_struct *task = NULL;
+	struct file *pd;
+
+	fd = get_unused_fd();
+	if (fd < 0)
+		return fd;
+
+	pd = prepare_procdesc();
+	if (IS_ERR(pd)) {
+		ret = PTR_ERR(pd);
+		goto out_putfd;
+	}
+
+	ret = do_fork(0, regs->sp, regs, 0, &task, NULL, NULL);
+
+	if (ret < 0)
+		goto out_fput;
+
+	set_procdesc_task(pd, task, flags & PD_DAEMON);
+	fd_install(fd, pd);
+	put_user(fd, fdp);
+
+	return ret;
+
+out_fput:
+	fput(pd);
+out_putfd:
+	put_unused_fd(fd);
+	return ret;
+#else
+	return -ENOSYS;
+#endif
 }
 
 long
@@ -280,7 +322,8 @@ sys_clone(unsigned long clone_flags, unsigned long newsp,
 {
 	if (!newsp)
 		newsp = regs->sp;
-	return do_fork(clone_flags, newsp, regs, 0, parent_tid, child_tid);
+	return do_fork(clone_flags, newsp, regs, 0, NULL,
+			parent_tid, child_tid);
 }
 
 /*
@@ -317,7 +360,8 @@ int kernel_thread(int (*fn)(void *), void *arg, unsigned long flags)
 	regs.flags = X86_EFLAGS_IF | X86_EFLAGS_BIT1;
 
 	/* Ok, create the new process.. */
-	return do_fork(flags | CLONE_VM | CLONE_UNTRACED, 0, &regs, 0, NULL, NULL);
+	return do_fork(flags | CLONE_VM | CLONE_UNTRACED, 0, &regs, 0,
+			NULL, NULL, NULL);
 }
 EXPORT_SYMBOL(kernel_thread);
 

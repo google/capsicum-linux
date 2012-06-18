@@ -431,7 +431,8 @@ asmlinkage long sys32_clone(unsigned int clone_flags, unsigned int newsp,
 
 	if (!newsp)
 		newsp = regs->sp;
-	return do_fork(clone_flags, newsp, regs, 0, parent_tid, child_tid);
+	return do_fork(clone_flags, newsp, regs, 0, NULL,
+			parent_tid, child_tid);
 }
 
 /*

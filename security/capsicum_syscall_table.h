@@ -12,86 +12,91 @@
  * rewritten in Perl, and will be invoked automatically by the build system,
  * and this file will be removed from the repository.
  */
+#include <linux/audit.h>
 #include <linux/mman.h>
+#include <asm/prctl.h>
 
-static int run_syscall_table(void *call, unsigned long *args)
+static int run_syscall_table(int arch, int call, unsigned long *args)
 {
+	if (arch != AUDIT_ARCH_X86_64)
+		return -ECAPMODE;
 
-	if (call == (void *)sys_accept)
+	switch (call) {
+	case (__NR_accept):
 		return require_rights(args[0], CAP_ACCEPT);
 
-	if (call == (void *)sys_accept4)
+	case (__NR_accept4):
 		return require_rights(args[0], CAP_ACCEPT);
 
-	if (call == (void *)sys_bind)
+	case (__NR_bind):
 		return require_rights(args[0], CAP_BIND);
 
-	if (call == (void *)sys_connect)
+	case (__NR_connect):
 		return require_rights(args[0], CAP_CONNECT);
 
-	if (call == (void *)sys_sendto)
+	case (__NR_sendto):
 		return require_rights(args[0], CAP_WRITE
 					| (((void *)args[4] != NULL) ? CAP_CONNECT : 0));
 
-	if (call == (void *)sys_fremovexattr)
+	case (__NR_fremovexattr):
 		return require_rights(args[0], CAP_EXTATTR_DELETE);
 
-	if (call == (void *)sys_fgetxattr)
+	case (__NR_fgetxattr):
 		return require_rights(args[0], CAP_EXTATTR_GET);
 
-	if (call == (void *)sys_flistxattr)
+	case (__NR_flistxattr):
 		return require_rights(args[0], CAP_EXTATTR_LIST);
 
-	if (call == (void *)sys_fsetxattr)
+	case (__NR_fsetxattr):
 		return require_rights(args[0], CAP_EXTATTR_SET);
 
-	if (call == (void *)sys_fchdir)
+	case (__NR_fchdir):
 		return require_rights(args[0], CAP_FCHDIR);
 
-	if (call == (void *)sys_fchmod)
+	case (__NR_fchmod):
 		return require_rights(args[0], CAP_FCHMOD);
 
-	if (call == (void *)sys_fchown)
+	case (__NR_fchown):
 		return require_rights(args[0], CAP_FCHOWN);
 
-	if (call == (void *)sys_fcntl)
+	case (__NR_fcntl):
 		return require_rights(args[0], CAP_FCNTL);
 
-	if (call == (void *)sys_flock)
+	case (__NR_flock):
 		return require_rights(args[0], CAP_FLOCK);
 
-	if (call == (void *)sys_fstat)
+	case (__NR_fstat):
 		return require_rights(args[0], CAP_FSTAT);
 
-	if (call == (void *)sys_fsync)
+	case (__NR_fsync):
 		return require_rights(args[0], CAP_FSYNC);
 
-	if (call == (void *)sys_fdatasync)
+	case (__NR_fdatasync):
 		return require_rights(args[0], CAP_FSYNC);
 
-	if (call == (void *)sys_ftruncate)
+	case (__NR_ftruncate):
 		return require_rights(args[0], CAP_FTRUNCATE);
 
-	if (call == (void *)sys_utimensat)
+	case (__NR_utimensat):
 		return require_rights(args[0], CAP_FUTIMES
 					| (((void *)args[1] != NULL) ? CAP_LOOKUP : 0));
 
-	if (call == (void *)sys_getpeername)
+	case (__NR_getpeername):
 		return require_rights(args[0], CAP_GETPEERNAME);
 
-	if (call == (void *)sys_getsockname)
+	case (__NR_getsockname):
 		return require_rights(args[0], CAP_GETSOCKNAME);
 
-	if (call == (void *)sys_getsockopt)
+	case (__NR_getsockopt):
 		return require_rights(args[0], CAP_GETSOCKOPT);
 
-	if (call == (void *)sys_ioctl)
+	case (__NR_ioctl):
 		return require_rights(args[0], CAP_IOCTL);
 
-	if (call == (void *)sys_listen)
+	case (__NR_listen):
 		return require_rights(args[0], CAP_LISTEN);
 
-	if (call == (void *)sys_openat)
+	case (__NR_openat):
 		return require_rights(args[0], CAP_LOOKUP
 					| (args[2] & O_WRONLY ? CAP_WRITE : CAP_READ)
 					| (args[2] & O_RDWR ? CAP_READ|CAP_WRITE : 0)
@@ -100,92 +105,103 @@ static int run_syscall_table(void *call, unsigned long *args)
 					| (args[2] & O_TRUNC ? CAP_WRITE : 0))
 			?: (args[2] & ~(O_WRONLY|O_RDWR|O_CREAT|O_EXCL|O_TRUNC|O_APPEND|FASYNC|O_CLOEXEC|O_DIRECT|O_DIRECTORY|O_LARGEFILE|O_NOATIME|O_NOCTTY|O_NOFOLLOW|O_NONBLOCK|O_SYNC) ? -ECAPMODE : 0);
 
-	if (call == (void *)sys_faccessat)
+	case (__NR_faccessat):
 		return require_rights(args[0], CAP_LOOKUP);
 
-	if (call == (void *)sys_fchmodat)
+	case (__NR_fchmodat):
 		return require_rights(args[0], CAP_LOOKUP|CAP_FCHMOD);
 
-	if (call == (void *)sys_fchownat)
+	case (__NR_fchownat):
 		return require_rights(args[0], CAP_LOOKUP|CAP_FCHOWN);
 
-	if (call == (void *)sys_newfstatat)
+	case (__NR_newfstatat):
 		return require_rights(args[0], CAP_LOOKUP|CAP_FSTAT);
 
-	if (call == (void *)sys_futimesat)
+	case (__NR_futimesat):
 		return require_rights(args[0], CAP_LOOKUP|CAP_FUTIMES);
 
-	if (call == (void *)sys_linkat)
+	case (__NR_linkat):
 		return require_rights(args[0], CAP_LOOKUP)
 			?: require_rights(args[2], CAP_LOOKUP|CAP_CREATE);
 
-	if (call == (void *)sys_mkdirat)
+	case (__NR_mkdirat):
 		return require_rights(args[0], CAP_LOOKUP|CAP_MKDIR);
 
-	if (call == (void *)sys_readlinkat)
+	case (__NR_readlinkat):
 		return require_rights(args[0], CAP_LOOKUP|CAP_READ);
 
-	if (call == (void *)sys_renameat)
+	case (__NR_renameat):
 		return require_rights(args[0], CAP_LOOKUP|CAP_DELETE)
 			?: require_rights(args[2], CAP_LOOKUP|CAP_CREATE);
 
-	if (call == (void *)sys_symlinkat)
+	case (__NR_symlinkat):
 		return require_rights(args[1], CAP_LOOKUP|CAP_CREATE);
 
-	if (call == (void *)sys_unlinkat)
+	case (__NR_unlinkat):
 		return require_rights(args[0], CAP_LOOKUP|CAP_DELETE);
 
-	if (call == (void *)sys_mmap_pgoff)
+	case (__NR_mmap):
 		return require_rights(args[4], CAP_MMAP
 					| (args[3] & PROT_READ ? CAP_READ : 0)
 					| (args[3] & PROT_WRITE ? CAP_WRITE : 0)
 					| (args[3] & PROT_EXEC ? CAP_MAPEXEC : 0))
 			?: (args[3] & ~(PROT_READ|PROT_WRITE|PROT_EXEC|MAP_SHARED|MAP_PRIVATE|MAP_32BIT|MAP_FIXED|MAP_HUGETLB|MAP_NONBLOCK|MAP_NORESERVE|MAP_POPULATE|MAP_STACK) ? -ECAPMODE : 0);
 
-	if (call == (void *)sys_pread64)
+	case (__NR_pread64):
 		return require_rights(args[0], CAP_READ);
 
-	if (call == (void *)sys_read)
+	case (__NR_read):
 		return require_rights(args[0], CAP_READ|CAP_SEEK);
 
-	if (call == (void *)sys_recv)
+	case (__NR_recvfrom):
 		return require_rights(args[0], CAP_READ);
 
-	if (call == (void *)sys_recvfrom)
-		return require_rights(args[0], CAP_READ);
-
-	if (call == (void *)sys_lseek)
+	case (__NR_lseek):
 		return require_rights(args[0], CAP_SEEK);
 
-	if (call == (void *)sys_setsockopt)
+	case (__NR_setsockopt):
 		return require_rights(args[0], CAP_SETSOCKOPT);
 
-	if (call == (void *)sys_shutdown)
+	case (__NR_shutdown):
 		return require_rights(args[0], CAP_SHUTDOWN);
 
-	if (call == (void *)sys_write)
+	case (__NR_write):
 		return require_rights(args[0], CAP_WRITE|CAP_SEEK);
 
-	if (call == (void *)sys_pwrite64)
+	case (__NR_pwrite64):
 		return require_rights(args[0], CAP_WRITE);
 
-	if (call == (void *)sys_send)
-		return require_rights(args[0], CAP_WRITE);
+	case (__NR_uname):
+		return 0;
 
-	if (call == (void *)sys_pdfork)
+	case (__NR_brk):
+		return 0;
+
+	case (__NR_arch_prctl):
+		return (args[0] & ~(ARCH_SET_FS|ARCH_GET_FS|ARCH_SET_GS|ARCH_GET_GS) ? -ECAPMODE : 0);
+
+	case (__NR_rt_sigaction):
+		return 0;
+
+	case (__NR_pdfork):
 		return (args[1] & ~(0) ? -ECAPMODE : 0);
 
-	if (call == (void *)sys_pdkill)
+	case (__NR_pdkill):
 		return 0;
 
-	if (call == (void *)sys_close)
+	case (__NR_close):
 		return 0;
 
-	if (call == (void *)sys_cap_new)
+	case (__NR_cap_new):
 		return 0;
 
-	if (call == (void *)sys_exit)
+	case (__NR_exit):
 		return 0;
 
-	return -ECAPMODE;
+	case (__NR_exit_group):
+		return 0;
+
+	default:
+		return -ECAPMODE;
+	}
 }
