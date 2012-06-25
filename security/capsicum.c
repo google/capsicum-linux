@@ -64,11 +64,14 @@ static struct security_operations capsicum_security_ops;
 
 static int __init capsicum_init(void)
 {
-	enabled = security_module_enable(&capsicum_security_ops);
-	if (enabled) {
-		pr_debug("Capsicum enabled\n");
-		register_security(&capsicum_security_ops);
-	}
+	int err = register_security(&capsicum_security_ops);
+
+	enabled = !err;
+	if (enabled)
+		printk(KERN_INFO "Capsicum enabled\n");
+	else
+		printk(KERN_WARN "Capsicum enable failed: another security "
+			"module has already been registered.\n");
 
 	return 0;
 }
@@ -105,6 +108,9 @@ out_err:
 
 SYSCALL_DEFINE2(cap_new, unsigned int, orig_fd, u64, new_rights)
 {
+	if (!enabled)
+		return -ENOSYS;
+
 	return sys_cap_new_impl(orig_fd, new_rights);
 }
 
@@ -112,6 +118,9 @@ int capsicum_intercept_syscall(int arch, int callnr, unsigned long *args)
 {
 	int result;
 	struct capsicum_pending_syscall *pending;
+
+	if (!enabled)
+		return 0;
 
 	pending = capsicum_get_pending_syscall();
 	if (IS_ERR(pending))
