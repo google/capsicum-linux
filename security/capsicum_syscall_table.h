@@ -16,7 +16,7 @@
 #include <linux/mman.h>
 #include <asm/prctl.h>
 
-static int run_syscall_table(int arch, int call, unsigned long *args)
+int capsicum_run_syscall_table(int arch, int call, unsigned long *args)
 {
 	if (arch != AUDIT_ARCH_X86_64)
 		return -ECAPMODE;
@@ -141,11 +141,10 @@ static int run_syscall_table(int arch, int call, unsigned long *args)
 		return require_rights(args[0], CAP_LOOKUP|CAP_DELETE);
 
 	case (__NR_mmap):
-		return require_rights(args[4], CAP_MMAP
-					| (args[3] & PROT_READ ? CAP_READ : 0)
-					| (args[3] & PROT_WRITE ? CAP_WRITE : 0)
-					| (args[3] & PROT_EXEC ? CAP_MAPEXEC : 0))
-			?: (args[3] & ~(PROT_READ|PROT_WRITE|PROT_EXEC|MAP_SHARED|MAP_PRIVATE|MAP_32BIT|MAP_FIXED|MAP_HUGETLB|MAP_NONBLOCK|MAP_NORESERVE|MAP_POPULATE|MAP_STACK) ? -ECAPMODE : 0);
+		return check_mmap(arch, call, args);
+
+	case (__NR_munmap):
+		return 0;
 
 	case (__NR_pread64):
 		return require_rights(args[0], CAP_READ);

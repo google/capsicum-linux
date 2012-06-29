@@ -13,6 +13,7 @@
 #include <linux/kernel.h>
 #include <linux/audit.h>
 #include <linux/printk.h>
+#include <linux/mman.h>
 #include <linux/module.h>
 #include <linux/debugfs.h>
 #include <linux/file.h>
@@ -264,6 +265,65 @@ TEST(unshare_cred) {
 	new_pending = capsicum_get_pending_syscall();
 	EXPECT_NE(new_pending, old_pending);
 	EXPECT_NE(current_cred(), old_cred);
+}
+
+/* Custom syscall parsing */
+FIXTURE(customcall) {
+	unsigned long args[6];
+};
+
+FIXTURE_SETUP(customcall) {
+	int i;
+
+	for (i = 0; i < 6; i++)
+		self->args[i] = 0;
+}
+
+FIXTURE_TEARDOWN(customcall) {}
+
+/* capability checks are enforced on file-based mmap() calls, but not anonymous
+ * ones.
+ */
+static int run_table(int call, unsigned long *args)
+{
+	return capsicum_run_syscall_table(AUDIT_ARCH_X86_64, call, args);
+}
+
+TEST_F(customcall, mmap) {
+	int cap_none, cap_mmap, cap_read, cap_both;
+	unsigned long *afd = &(self->args[4]);
+	struct file *file;
+
+	self->args[2] = PROT_READ;
+	file = fget(0);
+	ASSERT_NE(file, NULL);
+
+	/* If we're missing a capability, it will fail. */
+	cap_none = capsicum_wrap_new_fd(file, CAP_NONE);
+	cap_mmap = capsicum_wrap_new_fd(file, CAP_MMAP);
+	cap_read = capsicum_wrap_new_fd(file, CAP_READ);
+	cap_both = capsicum_wrap_new_fd(file, CAP_MMAP | CAP_READ);
+
+	fput(file);
+
+	*afd = cap_none;
+	EXPECT_EQ(-ENOTCAPABLE, run_table(__NR_mmap, self->args));
+
+	*afd = cap_mmap;
+	EXPECT_EQ(-ENOTCAPABLE, run_table(__NR_mmap, self->args));
+
+	*afd = cap_read;
+	EXPECT_EQ(-ENOTCAPABLE, run_table(__NR_mmap, self->args));
+
+	*afd = cap_both;
+	EXPECT_EQ(0, run_table(__NR_mmap, self->args));
+
+	/* But a call with MAP_ANONYMOUS should succeed without any capability
+	 * requirements.
+	 */
+	self->args[3] = MAP_ANONYMOUS;
+	*afd = (unsigned long)-1;
+	EXPECT_EQ(0, run_table(__NR_mmap, self->args));
 }
 
 TEST_HARNESS_DEBUGFS_TRIGGER(capsicum)

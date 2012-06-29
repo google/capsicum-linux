@@ -48,8 +48,9 @@ static int require_rights(unsigned long fd, u64 rights);
 SYSCALL_DEFINE2(cap_new, unsigned int, orig_fd, u64, new_rights);
 
 /* The table is generated code which uses require_rights() and sys_cap_new(),
- * so we include it here.
+ * so we include it here. We also include custom syscall handling code.
  */
+#include "capsicum_custom_syscalls.h"
 #include "capsicum_syscall_table.h"
 
 struct capability {
@@ -128,7 +129,7 @@ int capsicum_intercept_syscall(int arch, int callnr, unsigned long *args)
 
 	pending->next_free = 0;
 	pending->new_cap_rights = 0;
-	result = run_syscall_table(arch, callnr, args);
+	result = capsicum_run_syscall_table(arch, callnr, args);
 
 	/* TODO(meredydd) custom syscalls here */
 

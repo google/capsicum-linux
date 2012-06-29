@@ -26,6 +26,7 @@ int capsicum_is_cap(const struct file *file);
 int capsicum_wrap_new_fd(struct file *orig, u64 rights);
 struct file *capsicum_unwrap(const struct file *capability, u64 *rights);
 int capsicum_intercept_syscall(int arch, int callnr, unsigned long *args);
+int capsicum_run_syscall_table(int arch, int call, unsigned long *args);
 
 /* Per-thread Capsicum local state. We use this to check that file mappings
  * haven't changed between calls to our hooks, to prevent a time-of-check/

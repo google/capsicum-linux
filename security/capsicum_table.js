@@ -38,10 +38,24 @@
 /* Provisional format:
 
    Standard:
-	{fn: <function_name>, rights: [ "arg1right1|arg1right2", "arg2right1", ...],
+	{fn: <syscall_name>, rights: [ "arg1right1|arg1right2", "arg2right1", ...],
 	 flags_ok: [ "arg1flag1|arg1flag2", "arg2flag1", ...]}
 	eg:
 	{fn: "write", rights: ["WRITE|SEEK"]}
+
+
+   If "custom" is set, capsicum_run_syscall_table() will call check_XXX(),
+   where XXX is the syscall name, before performing any other checks. This
+   file is typically defined in capsicum_custom_syscalls.h.
+   For example:
+
+	{fn: "mmap", custom: true}
+
+   calls check_mmap(), which has the same signature as
+   capsicum_run_syscall_table(). If that returns 0, we proceed to any other
+   checks (in this case, there are no other rights specified, so we would
+   return success immediately).
+
 
    A "rights" definition can depend on flags present in another argument:
 	rights: [{always: "right1|right2",
@@ -145,13 +159,8 @@ syscall_table = [
 	{fn: "renameat", rights: ["LOOKUP|DELETE", null, "LOOKUP|CREATE"]},
 	{fn: "symlinkat", rights: [null, "LOOKUP|CREATE"]},
 	{fn: "unlinkat", rights: ["LOOKUP|DELETE"]},
-	{fn: "mmap", rights:
-		[null, null, null, null,
-		 {always: "MMAP",
-		  flags: [null, null, null,
-			  {PROT_READ: "READ", PROT_WRITE: "WRITE", PROT_EXEC: "MAPEXEC",
-			   ok: "MAP_SHARED|MAP_PRIVATE|MAP_32BIT|MAP_FIXED|MAP_HUGETLB|MAP_NONBLOCK|MAP_NORESERVE|MAP_POPULATE|MAP_STACK"
-			  }]}]},
+	{fn: "mmap", custom: true},
+	{fn: "munmap"},
 	/* Omit all the PD* capabilities, because we don't have PDs yet. */
 	/* Omit aio_*() for now */
 	{fn: "pread64", rights: ["READ"]},
@@ -200,7 +209,7 @@ out = "/*\n\
 #include <linux/mman.h>\n\
 #include <asm/prctl.h>\n\
 \n\
-static int run_syscall_table(int arch, int call, unsigned long *args)\n\
+int capsicum_run_syscall_table(int arch, int call, unsigned long *args)\n\
 {\n\
 \tif (arch != AUDIT_ARCH_X86_64)\n\
 \t\treturn -ECAPMODE;\n\n\
@@ -224,6 +233,11 @@ for(var i in syscall_table) {
 	var handled_flags = [];
 
 	out += "\tcase (__NR_"+spec.fn+"):\n\t\treturn ";
+
+	if (spec.custom) {
+		out += "check_"+spec.fn+"(arch, call, args)";
+		first = false;
+	}
 
 	for (var j in spec.rights) {
 		var rspec = spec.rights[j];
