@@ -44,6 +44,23 @@ void start_thread(struct pt_regs *regs, unsigned long eip, unsigned long esp)
 }
 EXPORT_SYMBOL(start_thread);
 
+long sys_fexecve(int fd, const char __user *const __user *argv,
+		const char __user *const __user *env)
+{
+	long error;
+
+	error = do_fexecve(fd, argv, env, &current->thread.regs);
+	if (error == 0) {
+		task_lock(current);
+		current->ptrace &= ~PT_DTRACE;
+#ifdef SUBARCH_EXECVE1
+		SUBARCH_EXECVE1(&current->thread.regs.regs);
+#endif
+		task_unlock(current);
+	}
+	return error;
+}
+
 static long execve1(const char *file,
 		    const char __user *const __user *argv,
 		    const char __user *const __user *env)

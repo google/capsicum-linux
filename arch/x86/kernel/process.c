@@ -393,6 +393,26 @@ long sys_execve(const char __user *name,
 }
 
 /*
+ * sys_fexecve() executes a new program from a file descriptor.
+ */
+long sys_fexecve(int fd,
+		const char __user *const __user *argv,
+		const char __user *const __user *envp, struct pt_regs *regs)
+{
+	long error;
+	error = do_fexecve(fd, argv, envp, regs);
+
+#ifdef CONFIG_X86_32
+	if (error == 0) {
+		/* Make sure we don't return using sysenter.. */
+		set_thread_flag(TIF_IRET);
+	}
+#endif
+
+	return error;
+}
+
+/*
  * Idle related variables and functions
  */
 unsigned long boot_option_idle_override = IDLE_NO_OVERRIDE;

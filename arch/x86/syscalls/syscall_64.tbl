@@ -323,6 +323,7 @@
 314	64	pdgetpid		sys_pdgetpid
 315	64	pdkill			sys_pdkill
 316	64	pdwait4			sys_pdwait4
+317	64	fexecve			stub_fexecve
 #
 # x32-specific system call numbers start at 512 to avoid cache impact
 # for native 64-bit operation.

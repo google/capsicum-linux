@@ -39,7 +39,7 @@
 #define CAP_WRITE               0x0000000000000002ULL   /* write/send */
 #define CAP_MMAP                0x0000000000000004ULL   /* mmap */
 #define CAP_MAPEXEC             0x0000000000000008ULL   /* mmap(2) as exec */
-/*#define CAP_FEXECVE             0x0000000000000010ULL*/
+#define CAP_FEXECVE             0x0000000000000010ULL
 #define CAP_FSYNC               0x0000000000000020ULL
 #define CAP_FTRUNCATE           0x0000000000000040ULL
 #define CAP_SEEK                0x0000000000000080ULL

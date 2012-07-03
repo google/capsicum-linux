@@ -2672,5 +2672,7 @@ static inline void inode_has_no_xattr(struct inode *inode)
 		inode->i_flags |= S_NOSEC;
 }
 
+int may_open(struct path *path, int acc_mode, int flag);
+
 #endif /* __KERNEL__ */
 #endif /* _LINUX_FS_H */

@@ -178,6 +178,8 @@ syscall_table = [
 	{fn: "arch_prctl", flags_ok: ["ARCH_SET_FS|ARCH_GET_FS|ARCH_SET_GS|ARCH_GET_GS"]},
 	{fn: "rt_sigaction"},
 
+	{fn: "fexecve", rights: ["FEXECVE"]},
+
 	{fn: "pdfork", flags_ok: [null, "0"]},
 	{fn: "pdkill"},
 

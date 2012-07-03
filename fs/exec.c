@@ -762,6 +762,21 @@ EXPORT_SYMBOL(setup_arg_pages);
 
 #endif /* CONFIG_MMU */
 
+/*
+ * Perform the extra checks that open_exec() needs over and above a normal
+ * open.
+ */
+static int check_exec_and_deny_write(struct file *file)
+{
+	if (!S_ISREG(file->f_path.dentry->d_inode->i_mode))
+		return -EACCES;
+
+	if (file->f_path.mnt->mnt_flags & MNT_NOEXEC)
+		return -EACCES;
+
+	return deny_write_access(file);
+}
+
 struct file *open_exec(const char *name)
 {
 	struct file *file;
@@ -776,18 +791,11 @@ struct file *open_exec(const char *name)
 	if (IS_ERR(file))
 		goto out;
 
-	err = -EACCES;
-	if (!S_ISREG(file->f_path.dentry->d_inode->i_mode))
-		goto exit;
-
-	if (file->f_path.mnt->mnt_flags & MNT_NOEXEC)
+	err = check_exec_and_deny_write(file);
+	if (err)
 		goto exit;
 
 	fsnotify_open(file);
-
-	err = deny_write_access(file);
-	if (err)
-		goto exit;
 
 out:
 	return file;
@@ -1463,12 +1471,12 @@ EXPORT_SYMBOL(search_binary_handler);
  * sys_execve() executes a new program.
  */
 static int do_execve_common(const char *filename,
+				struct file *file,
 				struct user_arg_ptr argv,
 				struct user_arg_ptr envp,
 				struct pt_regs *regs)
 {
 	struct linux_binprm *bprm;
-	struct file *file;
 	struct files_struct *displaced;
 	bool clear_in_exec;
 	int retval;
@@ -1509,10 +1517,24 @@ static int do_execve_common(const char *filename,
 	clear_in_exec = retval;
 	current->in_execve = 1;
 
-	file = open_exec(filename);
-	retval = PTR_ERR(file);
-	if (IS_ERR(file))
-		goto out_unmark;
+	if (!file) {
+		file = open_exec(filename);
+		retval = PTR_ERR(file);
+		if (IS_ERR(file))
+			goto out_unmark;
+	} else {
+		/* This is an fexecve(). */
+		retval = may_open(&file->f_path, MAY_OPEN | MAY_EXEC,
+				O_RDONLY | __FMODE_EXEC);
+		if (retval)
+			goto out_unmark;
+
+		retval = check_exec_and_deny_write(file);
+		if (retval)
+			goto out_unmark;
+
+		get_file(file);
+	}
 
 	sched_exec();
 
@@ -1596,7 +1618,26 @@ int do_execve(const char *filename,
 {
 	struct user_arg_ptr argv = { .ptr.native = __argv };
 	struct user_arg_ptr envp = { .ptr.native = __envp };
-	return do_execve_common(filename, argv, envp, regs);
+	return do_execve_common(filename, NULL, argv, envp, regs);
+}
+
+int do_fexecve(int fd,
+	const char __user *const __user *__argv,
+	const char __user *const __user *__envp,
+	struct pt_regs *regs)
+{
+	struct user_arg_ptr argv = { .ptr.native = __argv };
+	struct user_arg_ptr envp = { .ptr.native = __envp };
+	int retval;
+	struct file *file = fget(fd);
+
+	if (!file)
+		return -EBADF;
+
+	retval = do_execve_common(file->f_path.dentry->d_name.name, file,
+			argv, envp, regs);
+	fput(file);
+	return retval;
 }
 
 #ifdef CONFIG_COMPAT
@@ -1613,7 +1654,7 @@ int compat_do_execve(char *filename,
 		.is_compat = true,
 		.ptr.compat = __envp,
 	};
-	return do_execve_common(filename, argv, envp, regs);
+	return do_execve_common(filename, NULL, argv, envp, regs);
 }
 #endif
 

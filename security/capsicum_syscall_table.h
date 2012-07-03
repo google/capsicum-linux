@@ -182,6 +182,9 @@ int capsicum_run_syscall_table(int arch, int call, unsigned long *args)
 	case (__NR_rt_sigaction):
 		return 0;
 
+	case (__NR_fexecve):
+		return require_rights(args[0], CAP_FEXECVE);
+
 	case (__NR_pdfork):
 		return (args[1] & ~(0) ? -ECAPMODE : 0);
 

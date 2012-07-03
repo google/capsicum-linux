@@ -2326,6 +2326,9 @@ extern int disallow_signal(int);
 extern int do_execve(const char *,
 		     const char __user * const __user *,
 		     const char __user * const __user *, struct pt_regs *);
+extern int do_fexecve(int,
+		     const char __user * const __user *,
+		     const char __user * const __user *, struct pt_regs *);
 extern long do_fork(unsigned long, unsigned long, struct pt_regs *,
 		    unsigned long, struct task_struct **,
 		    int __user *, int __user *);
