@@ -520,6 +520,7 @@ long prctl_set_seccomp(unsigned long seccomp_mode, char __user *filter)
 #endif
 #ifdef CONFIG_CAPSICUM
 	case SECCOMP_MODE_CAPSICUM:
+		ret = 0;
 		break;
 #endif
 	default:
