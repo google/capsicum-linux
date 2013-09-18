@@ -45,8 +45,6 @@
 
 static int require_rights(unsigned long fd, u64 rights);
 
-SYSCALL_DEFINE2(cap_new, unsigned int, orig_fd, u64, new_rights);
-
 /* The table is generated code which uses require_rights() and sys_cap_new(),
  * so we include it here. We also include custom syscall handling code.
  */
@@ -71,7 +69,7 @@ static int __init capsicum_init(void)
 	if (enabled)
 		printk(KERN_INFO "Capsicum enabled\n");
 	else
-		printk(KERN_WARN "Capsicum enable failed: another security "
+		printk(KERN_WARNING "Capsicum enable failed: another security "
 			"module has already been registered.\n");
 
 	return 0;
