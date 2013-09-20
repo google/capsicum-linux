@@ -186,9 +186,9 @@ static void bt3c_write_wakeup(bt3c_info_t *info)
 		return;
 
 	do {
-		register unsigned int iobase = info->p_dev->resource[0]->start;
+		unsigned int iobase = info->p_dev->resource[0]->start;
 		register struct sk_buff *skb;
-		register int len;
+		int len;
 
 		if (!pcmcia_dev_present(info->p_dev))
 			break;
@@ -638,7 +638,7 @@ static int bt3c_probe(struct pcmcia_device *link)
 	bt3c_info_t *info;
 
 	/* Create new info device */
-	info = kzalloc(sizeof(*info), GFP_KERNEL);
+	info = devm_kzalloc(&link->dev, sizeof(*info), GFP_KERNEL);
 	if (!info)
 		return -ENOMEM;
 
@@ -654,17 +654,14 @@ static int bt3c_probe(struct pcmcia_device *link)
 
 static void bt3c_detach(struct pcmcia_device *link)
 {
-	bt3c_info_t *info = link->priv;
-
 	bt3c_release(link);
-	kfree(info);
 }
 
 static int bt3c_check_config(struct pcmcia_device *p_dev, void *priv_data)
 {
 	int *try = priv_data;
 
-	if (try == 0)
+	if (!try)
 		p_dev->io_lines = 16;
 
 	if ((p_dev->resource[0]->end != 8) || (p_dev->resource[0]->start == 0))
@@ -763,17 +760,4 @@ static struct pcmcia_driver bt3c_driver = {
 	.remove		= bt3c_detach,
 	.id_table	= bt3c_ids,
 };
-
-static int __init init_bt3c_cs(void)
-{
-	return pcmcia_register_driver(&bt3c_driver);
-}
-
-
-static void __exit exit_bt3c_cs(void)
-{
-	pcmcia_unregister_driver(&bt3c_driver);
-}
-
-module_init(init_bt3c_cs);
-module_exit(exit_bt3c_cs);
+module_pcmcia_driver(bt3c_driver);

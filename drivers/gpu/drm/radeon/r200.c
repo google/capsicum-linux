@@ -25,9 +25,8 @@
  *          Alex Deucher
  *          Jerome Glisse
  */
-#include "drmP.h"
-#include "drm.h"
-#include "radeon_drm.h"
+#include <drm/drmP.h>
+#include <drm/radeon_drm.h>
 #include "radeon_reg.h"
 #include "radeon.h"
 #include "radeon_asic.h"
@@ -85,7 +84,7 @@ int r200_copy_dma(struct radeon_device *rdev,
 		  uint64_t src_offset,
 		  uint64_t dst_offset,
 		  unsigned num_gpu_pages,
-		  struct radeon_fence *fence)
+		  struct radeon_fence **fence)
 {
 	struct radeon_ring *ring = &rdev->ring[RADEON_RING_TYPE_GFX_INDEX];
 	uint32_t size;
@@ -120,7 +119,7 @@ int r200_copy_dma(struct radeon_device *rdev,
 	radeon_ring_write(ring, PACKET0(RADEON_WAIT_UNTIL, 0));
 	radeon_ring_write(ring, RADEON_WAIT_DMA_GUI_IDLE);
 	if (fence) {
-		r = radeon_fence_emit(rdev, fence);
+		r = radeon_fence_emit(rdev, fence, RADEON_RING_TYPE_GFX_INDEX);
 	}
 	radeon_ring_unlock_commit(rdev, ring);
 	return r;
@@ -154,7 +153,7 @@ int r200_packet0_check(struct radeon_cs_parser *p,
 	u32 tile_flags = 0;
 	u32 idx_value;
 
-	ib = p->ib->ptr;
+	ib = p->ib.ptr;
 	track = (struct r100_cs_track *)p->track;
 	idx_value = radeon_get_ib_value(p, idx);
 	switch (reg) {
@@ -163,7 +162,7 @@ int r200_packet0_check(struct radeon_cs_parser *p,
 		if (r) {
 			DRM_ERROR("No reloc for ib[%d]=0x%04X\n",
 				  idx, reg);
-			r100_cs_dump_packet(p, pkt);
+			radeon_cs_dump_packet(p, pkt);
 			return r;
 		}
 		break;
@@ -176,11 +175,11 @@ int r200_packet0_check(struct radeon_cs_parser *p,
 			return r;
 		break;
 	case RADEON_RB3D_DEPTHOFFSET:
-		r = r100_cs_packet_next_reloc(p, &reloc);
+		r = radeon_cs_packet_next_reloc(p, &reloc, 0);
 		if (r) {
 			DRM_ERROR("No reloc for ib[%d]=0x%04X\n",
 				  idx, reg);
-			r100_cs_dump_packet(p, pkt);
+			radeon_cs_dump_packet(p, pkt);
 			return r;
 		}
 		track->zb.robj = reloc->robj;
@@ -189,11 +188,11 @@ int r200_packet0_check(struct radeon_cs_parser *p,
 		ib[idx] = idx_value + ((u32)reloc->lobj.gpu_offset);
 		break;
 	case RADEON_RB3D_COLOROFFSET:
-		r = r100_cs_packet_next_reloc(p, &reloc);
+		r = radeon_cs_packet_next_reloc(p, &reloc, 0);
 		if (r) {
 			DRM_ERROR("No reloc for ib[%d]=0x%04X\n",
 				  idx, reg);
-			r100_cs_dump_packet(p, pkt);
+			radeon_cs_dump_packet(p, pkt);
 			return r;
 		}
 		track->cb[0].robj = reloc->robj;
@@ -208,11 +207,11 @@ int r200_packet0_check(struct radeon_cs_parser *p,
 	case R200_PP_TXOFFSET_4:
 	case R200_PP_TXOFFSET_5:
 		i = (reg - R200_PP_TXOFFSET_0) / 24;
-		r = r100_cs_packet_next_reloc(p, &reloc);
+		r = radeon_cs_packet_next_reloc(p, &reloc, 0);
 		if (r) {
 			DRM_ERROR("No reloc for ib[%d]=0x%04X\n",
 				  idx, reg);
-			r100_cs_dump_packet(p, pkt);
+			radeon_cs_dump_packet(p, pkt);
 			return r;
 		}
 		if (!(p->cs_flags & RADEON_CS_KEEP_TILING_FLAGS)) {
@@ -261,11 +260,11 @@ int r200_packet0_check(struct radeon_cs_parser *p,
 	case R200_PP_CUBIC_OFFSET_F5_5:
 		i = (reg - R200_PP_TXOFFSET_0) / 24;
 		face = (reg - ((i * 24) + R200_PP_TXOFFSET_0)) / 4;
-		r = r100_cs_packet_next_reloc(p, &reloc);
+		r = radeon_cs_packet_next_reloc(p, &reloc, 0);
 		if (r) {
 			DRM_ERROR("No reloc for ib[%d]=0x%04X\n",
 				  idx, reg);
-			r100_cs_dump_packet(p, pkt);
+			radeon_cs_dump_packet(p, pkt);
 			return r;
 		}
 		track->textures[i].cube_info[face - 1].offset = idx_value;
@@ -279,11 +278,11 @@ int r200_packet0_check(struct radeon_cs_parser *p,
 		track->zb_dirty = true;
 		break;
 	case RADEON_RB3D_COLORPITCH:
-		r = r100_cs_packet_next_reloc(p, &reloc);
+		r = radeon_cs_packet_next_reloc(p, &reloc, 0);
 		if (r) {
 			DRM_ERROR("No reloc for ib[%d]=0x%04X\n",
 				  idx, reg);
-			r100_cs_dump_packet(p, pkt);
+			radeon_cs_dump_packet(p, pkt);
 			return r;
 		}
 
@@ -356,11 +355,11 @@ int r200_packet0_check(struct radeon_cs_parser *p,
 		track->zb_dirty = true;
 		break;
 	case RADEON_RB3D_ZPASS_ADDR:
-		r = r100_cs_packet_next_reloc(p, &reloc);
+		r = radeon_cs_packet_next_reloc(p, &reloc, 0);
 		if (r) {
 			DRM_ERROR("No reloc for ib[%d]=0x%04X\n",
 				  idx, reg);
-			r100_cs_dump_packet(p, pkt);
+			radeon_cs_dump_packet(p, pkt);
 			return r;
 		}
 		ib[idx] = idx_value + ((u32)reloc->lobj.gpu_offset);

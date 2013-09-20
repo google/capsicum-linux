@@ -36,11 +36,13 @@
 #include <linux/idr.h>
 #include <linux/backing-dev.h>
 #include <linux/gfp.h>
+#include <linux/slab.h>
 
 #include <linux/mtd/mtd.h>
 #include <linux/mtd/partitions.h>
 
 #include "mtdcore.h"
+
 /*
  * backing device capabilities for non-mappable devices (such as NAND flash)
  * - permits private mappings, copies are taken of the data
@@ -96,11 +98,7 @@ EXPORT_SYMBOL_GPL(__mtd_next_device);
 static LIST_HEAD(mtd_notifiers);
 
 
-#if defined(CONFIG_MTD_CHAR) || defined(CONFIG_MTD_CHAR_MODULE)
 #define MTD_DEVT(index) MKDEV(MTD_CHAR_MAJOR, (index)*2)
-#else
-#define MTD_DEVT(index) 0
-#endif
 
 /* REVISIT once MTD uses the driver model better, whoever allocates
  * the mtd_info will probably want to use the release() hook...
@@ -250,6 +248,43 @@ static ssize_t mtd_name_show(struct device *dev,
 }
 static DEVICE_ATTR(name, S_IRUGO, mtd_name_show, NULL);
 
+static ssize_t mtd_ecc_strength_show(struct device *dev,
+				     struct device_attribute *attr, char *buf)
+{
+	struct mtd_info *mtd = dev_get_drvdata(dev);
+
+	return snprintf(buf, PAGE_SIZE, "%u\n", mtd->ecc_strength);
+}
+static DEVICE_ATTR(ecc_strength, S_IRUGO, mtd_ecc_strength_show, NULL);
+
+static ssize_t mtd_bitflip_threshold_show(struct device *dev,
+					  struct device_attribute *attr,
+					  char *buf)
+{
+	struct mtd_info *mtd = dev_get_drvdata(dev);
+
+	return snprintf(buf, PAGE_SIZE, "%u\n", mtd->bitflip_threshold);
+}
+
+static ssize_t mtd_bitflip_threshold_store(struct device *dev,
+					   struct device_attribute *attr,
+					   const char *buf, size_t count)
+{
+	struct mtd_info *mtd = dev_get_drvdata(dev);
+	unsigned int bitflip_threshold;
+	int retval;
+
+	retval = kstrtouint(buf, 0, &bitflip_threshold);
+	if (retval)
+		return retval;
+
+	mtd->bitflip_threshold = bitflip_threshold;
+	return count;
+}
+static DEVICE_ATTR(bitflip_threshold, S_IRUGO | S_IWUSR,
+		   mtd_bitflip_threshold_show,
+		   mtd_bitflip_threshold_store);
+
 static struct attribute *mtd_attrs[] = {
 	&dev_attr_type.attr,
 	&dev_attr_flags.attr,
@@ -260,6 +295,8 @@ static struct attribute *mtd_attrs[] = {
 	&dev_attr_oobsize.attr,
 	&dev_attr_numeraseregions.attr,
 	&dev_attr_name.attr,
+	&dev_attr_ecc_strength.attr,
+	&dev_attr_bitflip_threshold.attr,
 	NULL,
 };
 
@@ -310,17 +347,16 @@ int add_mtd_device(struct mtd_info *mtd)
 	BUG_ON(mtd->writesize == 0);
 	mutex_lock(&mtd_table_mutex);
 
-	do {
-		if (!idr_pre_get(&mtd_idr, GFP_KERNEL))
-			goto fail_locked;
-		error = idr_get_new(&mtd_idr, mtd, &i);
-	} while (error == -EAGAIN);
-
-	if (error)
+	i = idr_alloc(&mtd_idr, mtd, 0, 0, GFP_KERNEL);
+	if (i < 0)
 		goto fail_locked;
 
 	mtd->index = i;
 	mtd->usecount = 0;
+
+	/* default value if not set by driver */
+	if (mtd->bitflip_threshold == 0)
+		mtd->bitflip_threshold = mtd->ecc_strength;
 
 	if (is_power_of_2(mtd->erasesize))
 		mtd->erasesize_shift = ffs(mtd->erasesize) - 1;
@@ -454,7 +490,7 @@ out_error:
  *
  * Returns zero in case of success and a negative error code in case of failure.
  */
-int mtd_device_parse_register(struct mtd_info *mtd, const char **types,
+int mtd_device_parse_register(struct mtd_info *mtd, const char * const *types,
 			      struct mtd_part_parser_data *parser_data,
 			      const struct mtd_partition *parts,
 			      int nr_parts)
@@ -757,12 +793,24 @@ EXPORT_SYMBOL_GPL(mtd_get_unmapped_area);
 int mtd_read(struct mtd_info *mtd, loff_t from, size_t len, size_t *retlen,
 	     u_char *buf)
 {
+	int ret_code;
 	*retlen = 0;
 	if (from < 0 || from > mtd->size || len > mtd->size - from)
 		return -EINVAL;
 	if (!len)
 		return 0;
-	return mtd->_read(mtd, from, len, retlen, buf);
+
+	/*
+	 * In the absence of an error, drivers return a non-negative integer
+	 * representing the maximum number of bitflips that were corrected on
+	 * any one ecc region (if applicable; zero otherwise).
+	 */
+	ret_code = mtd->_read(mtd, from, len, retlen, buf);
+	if (unlikely(ret_code < 0))
+		return ret_code;
+	if (mtd->ecc_strength == 0)
+		return 0;	/* device lacks ecc */
+	return ret_code >= mtd->bitflip_threshold ? -EUCLEAN : 0;
 }
 EXPORT_SYMBOL_GPL(mtd_read);
 
@@ -802,6 +850,27 @@ int mtd_panic_write(struct mtd_info *mtd, loff_t to, size_t len, size_t *retlen,
 	return mtd->_panic_write(mtd, to, len, retlen, buf);
 }
 EXPORT_SYMBOL_GPL(mtd_panic_write);
+
+int mtd_read_oob(struct mtd_info *mtd, loff_t from, struct mtd_oob_ops *ops)
+{
+	int ret_code;
+	ops->retlen = ops->oobretlen = 0;
+	if (!mtd->_read_oob)
+		return -EOPNOTSUPP;
+	/*
+	 * In cases where ops->datbuf != NULL, mtd->_read_oob() has semantics
+	 * similar to mtd->_read(), returning a non-negative integer
+	 * representing max bitflips. In other cases, mtd->_read_oob() may
+	 * return -EUCLEAN. In all cases, perform similar logic to mtd_read().
+	 */
+	ret_code = mtd->_read_oob(mtd, from, ops);
+	if (unlikely(ret_code < 0))
+		return ret_code;
+	if (mtd->ecc_strength == 0)
+		return 0;	/* device lacks ecc */
+	return ret_code >= mtd->bitflip_threshold ? -EUCLEAN : 0;
+}
+EXPORT_SYMBOL_GPL(mtd_read_oob);
 
 /*
  * Method to access the protection register area, present in some flash
@@ -1045,8 +1114,6 @@ EXPORT_SYMBOL_GPL(mtd_kmalloc_up_to);
 /*====================================================================*/
 /* Support for /proc/mtd */
 
-static struct proc_dir_entry *proc_mtd;
-
 static int mtd_proc_show(struct seq_file *m, void *v)
 {
 	struct mtd_info *mtd;
@@ -1084,13 +1151,15 @@ static int __init mtd_bdi_init(struct backing_dev_info *bdi, const char *name)
 
 	ret = bdi_init(bdi);
 	if (!ret)
-		ret = bdi_register(bdi, NULL, name);
+		ret = bdi_register(bdi, NULL, "%s", name);
 
 	if (ret)
 		bdi_destroy(bdi);
 
 	return ret;
 }
+
+static struct proc_dir_entry *proc_mtd;
 
 static int __init init_mtd(void)
 {
@@ -1112,11 +1181,17 @@ static int __init init_mtd(void)
 	if (ret)
 		goto err_bdi3;
 
-#ifdef CONFIG_PROC_FS
 	proc_mtd = proc_create("mtd", 0, NULL, &mtd_proc_ops);
-#endif /* CONFIG_PROC_FS */
+
+	ret = init_mtdchar();
+	if (ret)
+		goto out_procfs;
+
 	return 0;
 
+out_procfs:
+	if (proc_mtd)
+		remove_proc_entry("mtd", NULL);
 err_bdi3:
 	bdi_destroy(&mtd_bdi_ro_mappable);
 err_bdi2:
@@ -1130,10 +1205,9 @@ err_reg:
 
 static void __exit cleanup_mtd(void)
 {
-#ifdef CONFIG_PROC_FS
+	cleanup_mtdchar();
 	if (proc_mtd)
-		remove_proc_entry( "mtd", NULL);
-#endif /* CONFIG_PROC_FS */
+		remove_proc_entry("mtd", NULL);
 	class_unregister(&mtd_class);
 	bdi_destroy(&mtd_bdi_unmappable);
 	bdi_destroy(&mtd_bdi_ro_mappable);

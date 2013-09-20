@@ -34,8 +34,15 @@ static int atmel_trng_read(struct hwrng *rng, void *buf, size_t max,
 	u32 *data = buf;
 
 	/* data ready? */
-	if (readl(trng->base + TRNG_ODATA) & 1) {
+	if (readl(trng->base + TRNG_ISR) & 1) {
 		*data = readl(trng->base + TRNG_ODATA);
+		/*
+		  ensure data ready is only set again AFTER the next data
+		  word is ready in case it got set between checking ISR
+		  and reading ODATA, so we don't risk re-reading the
+		  same word
+		*/
+		readl(trng->base + TRNG_ISR);
 		return 4;
 	} else
 		return 0;
@@ -91,7 +98,7 @@ err_enable:
 	return ret;
 }
 
-static int __devexit atmel_trng_remove(struct platform_device *pdev)
+static int atmel_trng_remove(struct platform_device *pdev)
 {
 	struct atmel_trng *trng = platform_get_drvdata(pdev);
 
@@ -100,8 +107,6 @@ static int __devexit atmel_trng_remove(struct platform_device *pdev)
 	writel(TRNG_KEY, trng->base + TRNG_CR);
 	clk_disable(trng->clk);
 	clk_put(trng->clk);
-
-	platform_set_drvdata(pdev, NULL);
 
 	return 0;
 }
@@ -131,7 +136,7 @@ static const struct dev_pm_ops atmel_trng_pm_ops = {
 
 static struct platform_driver atmel_trng_driver = {
 	.probe		= atmel_trng_probe,
-	.remove		= __devexit_p(atmel_trng_remove),
+	.remove		= atmel_trng_remove,
 	.driver		= {
 		.name	= "atmel-trng",
 		.owner	= THIS_MODULE,

@@ -1,6 +1,6 @@
 /*
  * QLogic iSCSI HBA Driver
- * Copyright (c)  2003-2010 QLogic Corporation
+ * Copyright (c)  2003-2012 QLogic Corporation
  *
  * See LICENSE.qla4xxx for copyright and licensing details.
  */
@@ -64,6 +64,40 @@ struct device_reg_82xx {
 	__le32 host_int;	/* Offset 0x0504 (R/W): Interrupt status. */
 #define ISRX_82XX_RISC_INT	BIT_0 /* RISC interrupt. */
 };
+
+/* ISP 83xx I/O Register Set structure */
+struct device_reg_83xx {
+	__le32 mailbox_in[16];	/* 0x0000 */
+	__le32 reserve1[496];	/* 0x0040 */
+	__le32 mailbox_out[16];	/* 0x0800 */
+	__le32 reserve2[496];
+	__le32 mbox_int;	/* 0x1000 */
+	__le32 reserve3[63];
+	__le32 req_q_out;	/* 0x1100 */
+	__le32 reserve4[63];
+
+	__le32 rsp_q_in;	/* 0x1200 */
+	__le32 reserve5[1919];
+
+	__le32 req_q_in;	/* 0x3000 */
+	__le32 reserve6[3];
+	__le32 iocb_int_mask;	/* 0x3010 */
+	__le32 reserve7[3];
+	__le32 rsp_q_out;	/* 0x3020 */
+	__le32 reserve8[3];
+	__le32 anonymousbuff;	/* 0x3030 */
+	__le32 mb_int_mask;	/* 0x3034 */
+
+	__le32 host_intr;	/* 0x3038 - Host Interrupt Register */
+	__le32 risc_intr;	/* 0x303C - RISC Interrupt Register */
+	__le32 reserve9[544];
+	__le32 leg_int_ptr;	/* 0x38C0 - Legacy Interrupt Pointer Register */
+	__le32 leg_int_trig;	/* 0x38C4 - Legacy Interrupt Trigger Control */
+	__le32 leg_int_mask;	/* 0x38C8 - Legacy Interrupt Mask Register */
+};
+
+#define INT_ENABLE_FW_MB	(1 << 2)
+#define INT_MASK_FW_MB		(1 << 2)
 
 /*  remote register set (access via PCI memory read/write) */
 struct isp_reg {
@@ -254,6 +288,8 @@ union external_hw_config_reg {
 #define FA_GOLD_RISC_CODE_ADDR_82	0x80000
 #define FA_FLASH_ISCSI_CHAP		0x540000
 #define FA_FLASH_CHAP_SIZE		0xC0000
+#define FA_FLASH_ISCSI_DDB		0x420000
+#define FA_FLASH_DDB_SIZE		0x080000
 
 /* Flash Description Table */
 struct qla_fdt_layout {
@@ -314,6 +350,7 @@ struct qla_flt_header {
 #define FLT_REG_BOOT_CODE_82	0x78
 #define FLT_REG_ISCSI_PARAM	0x65
 #define FLT_REG_ISCSI_CHAP	0x63
+#define FLT_REG_ISCSI_DDB	0x6A
 
 struct qla_flt_region {
 	uint32_t code;
@@ -356,6 +393,9 @@ struct qla_flt_region {
 #define LOGOUT_OPTION_CLOSE_SESSION		0x0002
 #define LOGOUT_OPTION_RELOGIN			0x0004
 #define LOGOUT_OPTION_FREE_DDB			0x0008
+#define MBOX_CMD_SET_PARAM			0x0059
+#define SET_DRVR_VERSION			0x200
+#define MAX_DRVR_VER_LEN			24
 #define MBOX_CMD_EXECUTE_IOCB_A64		0x005A
 #define MBOX_CMD_INITIALIZE_FIRMWARE		0x0060
 #define MBOX_CMD_GET_INIT_FW_CTRL_BLOCK		0x0061
@@ -385,6 +425,11 @@ struct qla_flt_region {
 #define MBOX_CMD_GET_IP_ADDR_STATE		0x0091
 #define MBOX_CMD_SEND_IPV6_ROUTER_SOL		0x0092
 #define MBOX_CMD_GET_DB_ENTRY_CURRENT_IP_ADDR	0x0093
+#define MBOX_CMD_MINIDUMP			0x0129
+
+/* Minidump subcommand */
+#define MINIDUMP_GET_SIZE_SUBCOMMAND		0x00
+#define MINIDUMP_GET_TMPLT_SUBCOMMAND		0x01
 
 /* Mailbox 1 */
 #define FW_STATE_READY				0x0000
@@ -411,6 +456,10 @@ struct qla_flt_region {
 #define MBOX_CMD_CONN_OPEN_SESS_LOGIN		0x0074
 #define MBOX_CMD_GET_CRASH_RECORD		0x0076	/* 4010 only */
 #define MBOX_CMD_GET_CONN_EVENT_LOG		0x0077
+
+#define MBOX_CMD_IDC_ACK			0x0101
+#define MBOX_CMD_PORT_RESET			0x0120
+#define MBOX_CMD_SET_PORT_CONFIG		0x0122
 
 /*  Mailbox status definitions */
 #define MBOX_COMPLETION_STATUS			4
@@ -444,10 +493,16 @@ struct qla_flt_region {
 #define MBOX_ASTS_SUBNET_STATE_CHANGE		0x8027
 #define MBOX_ASTS_RESPONSE_QUEUE_FULL		0x8028
 #define MBOX_ASTS_IP_ADDR_STATE_CHANGED		0x8029
+#define MBOX_ASTS_IPV6_DEFAULT_ROUTER_CHANGED	0x802A
 #define MBOX_ASTS_IPV6_PREFIX_EXPIRED		0x802B
 #define MBOX_ASTS_IPV6_ND_PREFIX_IGNORED	0x802C
 #define MBOX_ASTS_IPV6_LCL_PREFIX_IGNORED	0x802D
 #define MBOX_ASTS_ICMPV6_ERROR_MSG_RCVD		0x802E
+#define MBOX_ASTS_INITIALIZATION_FAILED		0x8031
+#define MBOX_ASTS_SYSTEM_WARNING_EVENT		0x8036
+#define MBOX_ASTS_IDC_COMPLETE			0x8100
+#define MBOX_ASTS_IDC_REQUEST_NOTIFICATION	0x8101
+#define MBOX_ASTS_DCBX_CONF_CHANGE		0x8110
 #define MBOX_ASTS_TXSCVR_INSERTED		0x8130
 #define MBOX_ASTS_TXSCVR_REMOVED		0x8131
 
@@ -473,6 +528,10 @@ struct qla_flt_region {
 #define FLASH_OPT_RMW_INIT	1
 #define FLASH_OPT_COMMIT	2
 #define FLASH_OPT_RMW_COMMIT	3
+
+/* Loopback type */
+#define ENABLE_INTERNAL_LOOPBACK	0x04
+#define ENABLE_EXTERNAL_LOOPBACK	0x08
 
 /*************************************************************************/
 
@@ -727,12 +786,41 @@ struct dev_db_entry {
 #define DDB_OPT_IPV6_NULL_LINK_LOCAL		0x800 /* post connection */
 #define DDB_OPT_IPV6_FW_DEFINED_LINK_LOCAL	0x800 /* pre connection */
 
+#define OPT_IS_FW_ASSIGNED_IPV6		11
+#define OPT_IPV6_DEVICE			8
+#define OPT_AUTO_SENDTGTS_DISABLE	6
+#define OPT_DISC_SESSION		4
+#define OPT_ENTRY_STATE			3
 	uint16_t exec_throttle;	/* 02-03 */
 	uint16_t exec_count;	/* 04-05 */
 	uint16_t res0;	/* 06-07 */
 	uint16_t iscsi_options;	/* 08-09 */
+#define ISCSIOPT_HEADER_DIGEST_EN		13
+#define ISCSIOPT_DATA_DIGEST_EN			12
+#define ISCSIOPT_IMMEDIATE_DATA_EN		11
+#define ISCSIOPT_INITIAL_R2T_EN			10
+#define ISCSIOPT_DATA_SEQ_IN_ORDER		9
+#define ISCSIOPT_DATA_PDU_IN_ORDER		8
+#define ISCSIOPT_CHAP_AUTH_EN			7
+#define ISCSIOPT_SNACK_REQ_EN			6
+#define ISCSIOPT_DISCOVERY_LOGOUT_EN		5
+#define ISCSIOPT_BIDI_CHAP_EN			4
+#define ISCSIOPT_DISCOVERY_AUTH_OPTIONAL	3
+#define ISCSIOPT_ERL1				1
+#define ISCSIOPT_ERL0				0
+
 	uint16_t tcp_options;	/* 0A-0B */
+#define TCPOPT_TIMESTAMP_STAT	6
+#define TCPOPT_NAGLE_DISABLE	5
+#define TCPOPT_WSF_DISABLE	4
+#define TCPOPT_TIMER_SCALE3	3
+#define TCPOPT_TIMER_SCALE2	2
+#define TCPOPT_TIMER_SCALE1	1
+#define TCPOPT_TIMESTAMP_EN	0
+
 	uint16_t ip_options;	/* 0C-0D */
+#define IPOPT_FRAGMENT_DISABLE	4
+
 	uint16_t iscsi_max_rcv_data_seg_len;	/* 0E-0F */
 #define BYTE_UNITS	512
 	uint32_t res1;	/* 10-13 */
@@ -764,6 +852,8 @@ struct dev_db_entry {
 					 * much RAM */
 	uint8_t link_local_ipv6_addr[0x10]; /* 1A0-1AF */
 	uint8_t res5[0x10];	/* 1B0-1BF */
+#define DDB_NO_LINK	0xFFFF
+#define DDB_ISNS	0xFFFD
 	uint16_t ddb_link;	/* 1C0-1C1 */
 	uint16_t chap_tbl_idx;	/* 1C2-1C3 */
 	uint16_t tgt_portal_grp; /* 1C4-1C5 */
@@ -1188,6 +1278,33 @@ struct ql_iscsi_stats {
 	uint32_t rx_reject_pdus; /* 0304–0307 */
 
 	uint8_t reserved2[264]; /* 0x0308 - 0x040F */
+};
+
+#define QLA8XXX_DBG_STATE_ARRAY_LEN		16
+#define QLA8XXX_DBG_CAP_SIZE_ARRAY_LEN		8
+#define QLA8XXX_DBG_RSVD_ARRAY_LEN		8
+#define QLA83XX_DBG_OCM_WNDREG_ARRAY_LEN	16
+#define QLA83XX_SS_OCM_WNDREG_INDEX		3
+#define QLA83XX_SS_PCI_INDEX			0
+
+struct qla4_8xxx_minidump_template_hdr {
+	uint32_t entry_type;
+	uint32_t first_entry_offset;
+	uint32_t size_of_template;
+	uint32_t capture_debug_level;
+	uint32_t num_of_entries;
+	uint32_t version;
+	uint32_t driver_timestamp;
+	uint32_t checksum;
+
+	uint32_t driver_capture_mask;
+	uint32_t driver_info_word2;
+	uint32_t driver_info_word3;
+	uint32_t driver_info_word4;
+
+	uint32_t saved_state_array[QLA8XXX_DBG_STATE_ARRAY_LEN];
+	uint32_t capture_size_array[QLA8XXX_DBG_CAP_SIZE_ARRAY_LEN];
+	uint32_t ocm_window_reg[QLA83XX_DBG_OCM_WNDREG_ARRAY_LEN];
 };
 
 #endif /*  _QLA4X_FW_H */

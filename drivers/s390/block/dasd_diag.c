@@ -1,10 +1,9 @@
 /*
- * File...........: linux/drivers/s390/block/dasd_diag.c
  * Author(s)......: Holger Smolinski <Holger.Smolinski@de.ibm.com>
  * Based on.......: linux/drivers/s390/block/mdisk.c
  * ...............: by Hartmunt Penner <hpenner@de.ibm.com>
  * Bugreports.to..: <Linux390@de.ibm.com>
- * (C) IBM Corporation, IBM Deutschland Entwicklung GmbH, 1999,2000
+ * Copyright IBM Corp. 1999, 2000
  *
  */
 
@@ -185,14 +184,14 @@ dasd_start_diag(struct dasd_ccw_req * cqr)
 	private->iob.bio_list = dreq->bio;
 	private->iob.flaga = DASD_DIAG_FLAGA_DEFAULT;
 
-	cqr->startclk = get_clock();
+	cqr->startclk = get_tod_clock();
 	cqr->starttime = jiffies;
 	cqr->retries--;
 
 	rc = dia250(&private->iob, RW_BIO);
 	switch (rc) {
 	case 0: /* Synchronous I/O finished successfully */
-		cqr->stopclk = get_clock();
+		cqr->stopclk = get_tod_clock();
 		cqr->status = DASD_CQR_SUCCESS;
 		/* Indicate to calling function that only a dasd_schedule_bh()
 		   and no timer is needed */
@@ -223,7 +222,7 @@ dasd_diag_term_IO(struct dasd_ccw_req * cqr)
 	mdsk_term_io(device);
 	mdsk_init_io(device, device->block->bp_block, 0, NULL);
 	cqr->status = DASD_CQR_CLEAR_PENDING;
-	cqr->stopclk = get_clock();
+	cqr->stopclk = get_tod_clock();
 	dasd_schedule_device_bh(device);
 	return 0;
 }
@@ -249,7 +248,7 @@ static void dasd_ext_handler(struct ext_code ext_code,
 	default:
 		return;
 	}
-	kstat_cpu(smp_processor_id()).irqs[EXTINT_DSD]++;
+	inc_irq_stat(IRQEXT_DSD);
 	if (!ip) {		/* no intparm: unsolicited interrupt */
 		DBF_EVENT(DBF_NOTICE, "%s", "caught unsolicited "
 			      "interrupt");
@@ -277,7 +276,7 @@ static void dasd_ext_handler(struct ext_code ext_code,
 		return;
 	}
 
-	cqr->stopclk = get_clock();
+	cqr->stopclk = get_tod_clock();
 
 	expires = 0;
 	if ((ext_code.subcode & 0xff) == 0) {
@@ -360,6 +359,7 @@ dasd_diag_check_device(struct dasd_device *device)
 	}
 
 	device->default_expires = DIAG_TIMEOUT;
+	device->default_retries = DIAG_MAX_RETRIES;
 
 	/* Figure out position of label block */
 	switch (private->rdc_data.vdev_class) {
@@ -556,8 +556,8 @@ static struct dasd_ccw_req *dasd_diag_build_cp(struct dasd_device *memdev,
 			recid++;
 		}
 	}
-	cqr->retries = DIAG_MAX_RETRIES;
-	cqr->buildclk = get_clock();
+	cqr->retries = memdev->default_retries;
+	cqr->buildclk = get_tod_clock();
 	if (blk_noretry_request(req) ||
 	    block->base->features & DASD_FEATURE_FAILFAST)
 		set_bit(DASD_CQR_FLAGS_FAILFAST, &cqr->flags);
@@ -583,7 +583,10 @@ dasd_diag_free_cp(struct dasd_ccw_req *cqr, struct request *req)
 
 static void dasd_diag_handle_terminated_request(struct dasd_ccw_req *cqr)
 {
-	cqr->status = DASD_CQR_FILLED;
+	if (cqr->retries < 0)
+		cqr->status = DASD_CQR_FAILED;
+	else
+		cqr->status = DASD_CQR_FILLED;
 };
 
 /* Fill in IOCTL data for device. */

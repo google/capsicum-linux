@@ -25,28 +25,6 @@ config NF_CONNTRACK_IPV6
 
 	  To compile it as a module, choose M here.  If unsure, say N.
 
-config IP6_NF_QUEUE
-	tristate "IP6 Userspace queueing via NETLINK (OBSOLETE)"
-	depends on INET && IPV6 && NETFILTER
-	depends on NETFILTER_ADVANCED
-	---help---
-
-	  This option adds a queue handler to the kernel for IPv6
-	  packets which enables users to receive the filtered packets
-	  with QUEUE target using libipq.
-
-	  This option enables the old IPv6-only "ip6_queue" implementation
-	  which has been obsoleted by the new "nfnetlink_queue" code (see
-	  CONFIG_NETFILTER_NETLINK_QUEUE).
-
-	  (C) Fernando Anton 2001
-	  IPv64 Project - Work based in IPv64 draft by Arturo Azcorra.
-	  Universidad Carlos III de Madrid
-	  Universidad Politecnica de Alcala de Henares
-	  email: <fanton@it.uc3m.es>.
-
-	  To compile it as a module, choose M here.  If unsure, say N.
-
 config IP6_NF_IPTABLES
 	tristate "IP6 tables support (required for filtering)"
 	depends on INET && IPV6
@@ -127,7 +105,7 @@ config IP6_NF_MATCH_MH
 
 config IP6_NF_MATCH_RPFILTER
 	tristate '"rpfilter" reverse path filter match support'
-	depends on NETFILTER_ADVANCED
+	depends on NETFILTER_ADVANCED && (IP6_NF_MANGLE || IP6_NF_RAW)
 	---help---
 	  This option allows you to match packets whose replies would
 	  go out via the interface the packet came in.
@@ -203,8 +181,43 @@ config IP6_NF_SECURITY
        help
          This option adds a `security' table to iptables, for use
          with Mandatory Access Control (MAC) policy.
-        
+
          If unsure, say N.
+
+config NF_NAT_IPV6
+	tristate "IPv6 NAT"
+	depends on NF_CONNTRACK_IPV6
+	depends on NETFILTER_ADVANCED
+	select NF_NAT
+	help
+	  The IPv6 NAT option allows masquerading, port forwarding and other
+	  forms of full Network Address Port Translation. It is controlled by
+	  the `nat' table in ip6tables, see the man page for ip6tables(8).
+
+	  To compile it as a module, choose M here.  If unsure, say N.
+
+if NF_NAT_IPV6
+
+config IP6_NF_TARGET_MASQUERADE
+	tristate "MASQUERADE target support"
+	help
+	  Masquerading is a special case of NAT: all outgoing connections are
+	  changed to seem to come from a particular interface's address, and
+	  if the interface goes down, those connections are lost.  This is
+	  only useful for dialup accounts with dynamic IP address (ie. your IP
+	  address will be different on next dialup).
+
+	  To compile it as a module, choose M here.  If unsure, say N.
+
+config IP6_NF_TARGET_NPT
+	tristate "NPT (Network Prefix translation) target support"
+	help
+	  This option adds the `SNPT' and `DNPT' target, which perform
+	  stateless IPv6-to-IPv6 Network Prefix Translation per RFC 6296.
+
+	  To compile it as a module, choose M here.  If unsure, say N.
+
+endif # NF_NAT_IPV6
 
 endif # IP6_NF_IPTABLES
 

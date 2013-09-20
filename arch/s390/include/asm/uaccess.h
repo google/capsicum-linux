@@ -1,8 +1,6 @@
 /*
- *  include/asm-s390/uaccess.h
- *
  *  S390 version
- *    Copyright (C) 1999,2000 IBM Deutschland Entwicklung GmbH, IBM Corporation
+ *    Copyright IBM Corp. 1999, 2000
  *    Author(s): Hartmut Penner (hp@de.ibm.com),
  *               Martin Schwidefsky (schwidefsky@de.ibm.com)
  *
@@ -50,10 +48,15 @@
 
 #define segment_eq(a,b) ((a).ar4 == (b).ar4)
 
-#define __access_ok(addr, size)	\
-({				\
-	__chk_user_ptr(addr);	\
-	1;			\
+static inline int __range_ok(unsigned long addr, unsigned long size)
+{
+	return 1;
+}
+
+#define __access_ok(addr, size)				\
+({							\
+	__chk_user_ptr(addr);				\
+	__range_ok((unsigned long)(addr), (size));	\
 })
 
 #define access_ok(type, addr, size) __access_ok(addr, size)
@@ -73,8 +76,21 @@
 
 struct exception_table_entry
 {
-        unsigned long insn, fixup;
+	int insn, fixup;
 };
+
+static inline unsigned long extable_insn(const struct exception_table_entry *x)
+{
+	return (unsigned long)&x->insn + x->insn;
+}
+
+static inline unsigned long extable_fixup(const struct exception_table_entry *x)
+{
+	return (unsigned long)&x->fixup + x->fixup;
+}
+
+#define ARCH_HAS_SORT_EXTABLE
+#define ARCH_HAS_SEARCH_EXTABLE
 
 struct uaccess_ops {
 	size_t (*copy_from_user)(size_t, const void __user *, void *);
@@ -236,9 +252,7 @@ static inline unsigned long __must_check
 copy_to_user(void __user *to, const void *from, unsigned long n)
 {
 	might_fault();
-	if (access_ok(VERIFY_WRITE, to, n))
-		n = __copy_to_user(to, from, n);
-	return n;
+	return __copy_to_user(to, from, n);
 }
 
 /**
@@ -299,11 +313,7 @@ copy_from_user(void *to, const void __user *from, unsigned long n)
 		copy_from_user_overflow();
 		return n;
 	}
-	if (access_ok(VERIFY_READ, from, n))
-		n = __copy_from_user(to, from, n);
-	else
-		memset(to, 0, n);
-	return n;
+	return __copy_from_user(to, from, n);
 }
 
 static inline unsigned long __must_check
@@ -316,9 +326,7 @@ static inline unsigned long __must_check
 copy_in_user(void __user *to, const void __user *from, unsigned long n)
 {
 	might_fault();
-	if (__access_ok(from,n) && __access_ok(to,n))
-		n = __copy_in_user(to, from, n);
-	return n;
+	return __copy_in_user(to, from, n);
 }
 
 /*
@@ -327,11 +335,8 @@ copy_in_user(void __user *to, const void __user *from, unsigned long n)
 static inline long __must_check
 strncpy_from_user(char *dst, const char __user *src, long count)
 {
-        long res = -EFAULT;
 	might_fault();
-        if (access_ok(VERIFY_READ, src, 1))
-		res = uaccess.strncpy_from_user(count, src, dst);
-        return res;
+	return uaccess.strncpy_from_user(count, src, dst);
 }
 
 static inline unsigned long
@@ -371,13 +376,9 @@ static inline unsigned long __must_check
 clear_user(void __user *to, unsigned long n)
 {
 	might_fault();
-	if (access_ok(VERIFY_WRITE, to, n))
-		n = uaccess.clear_user(n, to);
-	return n;
+	return uaccess.clear_user(n, to);
 }
 
-extern int memcpy_real(void *, void *, size_t);
-extern void copy_to_absolute_zero(void *dest, void *src, size_t count);
 extern int copy_to_user_real(void __user *dest, void *src, size_t count);
 extern int copy_from_user_real(void *dest, void __user *src, size_t count);
 

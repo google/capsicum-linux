@@ -244,8 +244,7 @@ u16 hostap_tx_callback_register(local_info_t *local,
 	unsigned long flags;
 	struct hostap_tx_callback_info *entry;
 
-	entry = kmalloc(sizeof(*entry),
-							   GFP_ATOMIC);
+	entry = kmalloc(sizeof(*entry), GFP_KERNEL);
 	if (entry == NULL)
 		return 0;
 
@@ -1085,7 +1084,7 @@ int prism2_sta_deauth(local_info_t *local, u16 reason)
 	__le16 val = cpu_to_le16(reason);
 
 	if (local->iw_mode != IW_MODE_INFRA ||
-	    memcmp(local->bssid, "\x00\x00\x00\x00\x00\x00", ETH_ALEN) == 0 ||
+	    is_zero_ether_addr(local->bssid) ||
 	    memcmp(local->bssid, "\x44\x44\x44\x44\x44\x44", ETH_ALEN) == 0)
 		return 0;
 

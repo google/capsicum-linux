@@ -67,12 +67,12 @@ static int part_read(struct mtd_info *mtd, loff_t from, size_t len,
 	stats = part->master->ecc_stats;
 	res = part->master->_read(part->master, from + part->offset, len,
 				  retlen, buf);
-	if (unlikely(res)) {
-		if (mtd_is_bitflip(res))
-			mtd->ecc_stats.corrected += part->master->ecc_stats.corrected - stats.corrected;
-		if (mtd_is_eccerr(res))
-			mtd->ecc_stats.failed += part->master->ecc_stats.failed - stats.failed;
-	}
+	if (unlikely(mtd_is_eccerr(res)))
+		mtd->ecc_stats.failed +=
+			part->master->ecc_stats.failed - stats.failed;
+	else
+		mtd->ecc_stats.corrected +=
+			part->master->ecc_stats.corrected - stats.corrected;
 	return res;
 }
 
@@ -517,6 +517,8 @@ static struct mtd_part *allocate_partition(struct mtd_info *master,
 
 	slave->mtd.ecclayout = master->ecclayout;
 	slave->mtd.ecc_strength = master->ecc_strength;
+	slave->mtd.bitflip_threshold = master->bitflip_threshold;
+
 	if (master->_block_isbad) {
 		uint64_t offs = 0;
 
@@ -692,7 +694,7 @@ EXPORT_SYMBOL_GPL(deregister_mtd_parser);
  * Do not forget to update 'parse_mtd_partitions()' kerneldoc comment if you
  * are changing this array!
  */
-static const char *default_mtd_part_types[] = {
+static const char * const default_mtd_part_types[] = {
 	"cmdlinepart",
 	"ofpart",
 	NULL
@@ -709,6 +711,8 @@ static const char *default_mtd_part_types[] = {
  * partition parsers, specified in @types. However, if @types is %NULL, then
  * the default list of parsers is used. The default list contains only the
  * "cmdlinepart" and "ofpart" parsers ATM.
+ * Note: If there are more then one parser in @types, the kernel only takes the
+ * partitions parsed out by the first parser.
  *
  * This function may return:
  * o a negative error code in case of failure
@@ -716,7 +720,7 @@ static const char *default_mtd_part_types[] = {
  * o a positive number of found partitions, in which case on exit @pparts will
  *   point to an array containing this number of &struct mtd_info objects.
  */
-int parse_mtd_partitions(struct mtd_info *master, const char **types,
+int parse_mtd_partitions(struct mtd_info *master, const char *const *types,
 			 struct mtd_partition **pparts,
 			 struct mtd_part_parser_data *data)
 {
@@ -733,16 +737,17 @@ int parse_mtd_partitions(struct mtd_info *master, const char **types,
 		if (!parser)
 			continue;
 		ret = (*parser->parse_fn)(master, pparts, data);
+		put_partition_parser(parser);
 		if (ret > 0) {
 			printk(KERN_NOTICE "%d %s partitions found on MTD device %s\n",
 			       ret, parser->name, master->name);
+			break;
 		}
-		put_partition_parser(parser);
 	}
 	return ret;
 }
 
-int mtd_is_partition(struct mtd_info *mtd)
+int mtd_is_partition(const struct mtd_info *mtd)
 {
 	struct mtd_part *part;
 	int ispart = 0;
@@ -758,3 +763,13 @@ int mtd_is_partition(struct mtd_info *mtd)
 	return ispart;
 }
 EXPORT_SYMBOL_GPL(mtd_is_partition);
+
+/* Returns the size of the entire flash chip */
+uint64_t mtd_get_device_size(const struct mtd_info *mtd)
+{
+	if (!mtd_is_partition(mtd))
+		return mtd->size;
+
+	return PART(mtd)->master->size;
+}
+EXPORT_SYMBOL_GPL(mtd_get_device_size);

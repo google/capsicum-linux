@@ -16,11 +16,11 @@
 #include <linux/platform_device.h>
 #include <linux/of_platform.h>
 #include <linux/of_gpio.h>
+#include <linux/platform_data/atmel.h>
 
 #include <mach/hardware.h>
 #include <asm/gpio.h>
 
-#include <mach/board.h>
 #include <mach/cpu.h>
 
 #ifndef CONFIG_ARCH_AT91
@@ -41,17 +41,17 @@ extern int usb_disabled(void);
 
 static void at91_start_clock(void)
 {
-	clk_enable(hclk);
-	clk_enable(iclk);
-	clk_enable(fclk);
+	clk_prepare_enable(hclk);
+	clk_prepare_enable(iclk);
+	clk_prepare_enable(fclk);
 	clocked = 1;
 }
 
 static void at91_stop_clock(void)
 {
-	clk_disable(fclk);
-	clk_disable(iclk);
-	clk_disable(hclk);
+	clk_disable_unprepare(fclk);
+	clk_disable_unprepare(iclk);
+	clk_disable_unprepare(hclk);
 	clocked = 0;
 }
 
@@ -94,7 +94,7 @@ static void at91_stop_hc(struct platform_device *pdev)
 
 /*-------------------------------------------------------------------------*/
 
-static void __devexit usb_hcd_at91_remove (struct usb_hcd *, struct platform_device *);
+static void usb_hcd_at91_remove (struct usb_hcd *, struct platform_device *);
 
 /* configure so an HC device and id are always provided */
 /* always called with process context; sleeping is OK */
@@ -108,7 +108,7 @@ static void __devexit usb_hcd_at91_remove (struct usb_hcd *, struct platform_dev
  * then invokes the start() method for the HCD associated with it
  * through the hotplug entry's driver_data.
  */
-static int __devinit usb_hcd_at91_probe(const struct hc_driver *driver,
+static int usb_hcd_at91_probe(const struct hc_driver *driver,
 			struct platform_device *pdev)
 {
 	int retval;
@@ -129,7 +129,7 @@ static int __devinit usb_hcd_at91_probe(const struct hc_driver *driver,
 	if (!hcd)
 		return -ENOMEM;
 	hcd->rsrc_start = pdev->resource[0].start;
-	hcd->rsrc_len = pdev->resource[0].end - pdev->resource[0].start + 1;
+	hcd->rsrc_len = resource_size(&pdev->resource[0]);
 
 	if (!request_mem_region(hcd->rsrc_start, hcd->rsrc_len, hcd_name)) {
 		pr_debug("request_mem_region failed\n");
@@ -203,7 +203,7 @@ static int __devinit usb_hcd_at91_probe(const struct hc_driver *driver,
  * context, "rmmod" or something similar.
  *
  */
-static void __devexit usb_hcd_at91_remove(struct usb_hcd *hcd,
+static void usb_hcd_at91_remove(struct usb_hcd *hcd,
 				struct platform_device *pdev)
 {
 	usb_remove_hcd(hcd);
@@ -222,8 +222,8 @@ static void __devexit usb_hcd_at91_remove(struct usb_hcd *hcd,
 
 /*-------------------------------------------------------------------------*/
 
-static int __devinit
-ohci_at91_start (struct usb_hcd *hcd)
+static int
+ohci_at91_reset (struct usb_hcd *hcd)
 {
 	struct at91_usbh_data	*board = hcd->self.controller->platform_data;
 	struct ohci_hcd		*ohci = hcd_to_ohci (hcd);
@@ -233,9 +233,18 @@ ohci_at91_start (struct usb_hcd *hcd)
 		return ret;
 
 	ohci->num_ports = board->ports;
+	return 0;
+}
+
+static int
+ohci_at91_start (struct usb_hcd *hcd)
+{
+	struct ohci_hcd		*ohci = hcd_to_ohci (hcd);
+	int			ret;
 
 	if ((ret = ohci_run(ohci)) < 0) {
-		err("can't start %s", hcd->self.bus_name);
+		dev_err(hcd->self.controller, "can't start %s\n",
+			hcd->self.bus_name);
 		ohci_stop(hcd);
 		return ret;
 	}
@@ -418,6 +427,7 @@ static const struct hc_driver ohci_at91_hc_driver = {
 	/*
 	 * basic lifecycle operations
 	 */
+	.reset =		ohci_at91_reset,
 	.start =		ohci_at91_start,
 	.stop =			ohci_stop,
 	.shutdown =		ohci_shutdown,
@@ -457,7 +467,8 @@ static irqreturn_t ohci_hcd_at91_overcurrent_irq(int irq, void *data)
 	/* From the GPIO notifying the over-current situation, find
 	 * out the corresponding port */
 	at91_for_each_port(port) {
-		if (gpio_to_irq(pdata->overcurrent_pin[port]) == irq) {
+		if (gpio_is_valid(pdata->overcurrent_pin[port]) &&
+				gpio_to_irq(pdata->overcurrent_pin[port]) == irq) {
 			gpio = pdata->overcurrent_pin[port];
 			break;
 		}
@@ -493,9 +504,7 @@ static const struct of_device_id at91_ohci_dt_ids[] = {
 
 MODULE_DEVICE_TABLE(of, at91_ohci_dt_ids);
 
-static u64 at91_ohci_dma_mask = DMA_BIT_MASK(32);
-
-static int __devinit ohci_at91_of_init(struct platform_device *pdev)
+static int ohci_at91_of_init(struct platform_device *pdev)
 {
 	struct device_node *np = pdev->dev.of_node;
 	int i, gpio;
@@ -511,7 +520,9 @@ static int __devinit ohci_at91_of_init(struct platform_device *pdev)
 	 * Once we have dma capability bindings this can go away.
 	 */
 	if (!pdev->dev.dma_mask)
-		pdev->dev.dma_mask = &at91_ohci_dma_mask;
+		pdev->dev.dma_mask = &pdev->dev.coherent_dma_mask;
+	if (!pdev->dev.coherent_dma_mask)
+		pdev->dev.coherent_dma_mask = DMA_BIT_MASK(32);
 
 	pdata = devm_kzalloc(&pdev->dev, sizeof(*pdata), GFP_KERNEL);
 	if (!pdata)
@@ -537,7 +548,7 @@ static int __devinit ohci_at91_of_init(struct platform_device *pdev)
 	return 0;
 }
 #else
-static int __devinit ohci_at91_of_init(struct platform_device *pdev)
+static int ohci_at91_of_init(struct platform_device *pdev)
 {
 	return 0;
 }
@@ -545,7 +556,7 @@ static int __devinit ohci_at91_of_init(struct platform_device *pdev)
 
 /*-------------------------------------------------------------------------*/
 
-static int __devinit ohci_hcd_at91_drv_probe(struct platform_device *pdev)
+static int ohci_hcd_at91_drv_probe(struct platform_device *pdev)
 {
 	struct at91_usbh_data	*pdata;
 	int			i;
@@ -560,6 +571,16 @@ static int __devinit ohci_hcd_at91_drv_probe(struct platform_device *pdev)
 
 	if (pdata) {
 		at91_for_each_port(i) {
+			/*
+			 * do not configure PIO if not in relation with
+			 * real USB port on board
+			 */
+			if (i >= pdata->ports) {
+				pdata->vbus_pin[i] = -EINVAL;
+				pdata->overcurrent_pin[i] = -EINVAL;
+				break;
+			}
+
 			if (!gpio_is_valid(pdata->vbus_pin[i]))
 				continue;
 			gpio = pdata->vbus_pin[i];
@@ -620,7 +641,7 @@ static int __devinit ohci_hcd_at91_drv_probe(struct platform_device *pdev)
 	return usb_hcd_at91_probe(&ohci_at91_hc_driver, pdev);
 }
 
-static int __devexit ohci_hcd_at91_drv_remove(struct platform_device *pdev)
+static int ohci_hcd_at91_drv_remove(struct platform_device *pdev)
 {
 	struct at91_usbh_data	*pdata = pdev->dev.platform_data;
 	int			i;
@@ -684,7 +705,7 @@ static int ohci_hcd_at91_drv_resume(struct platform_device *pdev)
 	if (!clocked)
 		at91_start_clock();
 
-	ohci_finish_controller_resume(hcd);
+	ohci_resume(hcd, false);
 	return 0;
 }
 #else
@@ -696,7 +717,7 @@ MODULE_ALIAS("platform:at91_ohci");
 
 static struct platform_driver ohci_hcd_at91_driver = {
 	.probe		= ohci_hcd_at91_drv_probe,
-	.remove		= __devexit_p(ohci_hcd_at91_drv_remove),
+	.remove		= ohci_hcd_at91_drv_remove,
 	.shutdown	= usb_hcd_platform_shutdown,
 	.suspend	= ohci_hcd_at91_drv_suspend,
 	.resume		= ohci_hcd_at91_drv_resume,

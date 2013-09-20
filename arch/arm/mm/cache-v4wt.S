@@ -125,6 +125,7 @@ ENTRY(v4wt_coherent_user_range)
 	add	r0, r0, #CACHE_DLINESIZE
 	cmp	r0, r1
 	blo	1b
+	mov	r0, #0
 	mov	pc, lr
 
 /*
@@ -194,6 +195,9 @@ ENTRY(v4wt_dma_map_area)
 	mov	pc, lr
 ENDPROC(v4wt_dma_unmap_area)
 ENDPROC(v4wt_dma_map_area)
+
+	.globl	v4wt_flush_kern_cache_louis
+	.equ	v4wt_flush_kern_cache_louis, v4wt_flush_kern_cache_all
 
 	__INITDATA
 

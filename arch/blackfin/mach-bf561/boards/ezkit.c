@@ -452,18 +452,21 @@ static struct v4l2_input adv7183_inputs[] = {
 		.name = "Composite",
 		.type = V4L2_INPUT_TYPE_CAMERA,
 		.std = V4L2_STD_ALL,
+		.capabilities = V4L2_IN_CAP_STD,
 	},
 	{
 		.index = 1,
 		.name = "S-Video",
 		.type = V4L2_INPUT_TYPE_CAMERA,
 		.std = V4L2_STD_ALL,
+		.capabilities = V4L2_IN_CAP_STD,
 	},
 	{
 		.index = 2,
 		.name = "Component",
 		.type = V4L2_INPUT_TYPE_CAMERA,
 		.std = V4L2_STD_ALL,
+		.capabilities = V4L2_IN_CAP_STD,
 	},
 };
 
@@ -520,19 +523,26 @@ static struct platform_device bfin_i2s = {
 };
 #endif
 
-#if defined(CONFIG_SND_BF5XX_TDM) || defined(CONFIG_SND_BF5XX_TDM_MODULE)
-static struct platform_device bfin_tdm = {
-	.name = "bfin-tdm",
-	.id = CONFIG_SND_BF5XX_SPORT_NUM,
-	/* TODO: add platform data here */
-};
-#endif
-
 #if defined(CONFIG_SND_BF5XX_AC97) || defined(CONFIG_SND_BF5XX_AC97_MODULE)
 static struct platform_device bfin_ac97 = {
 	.name = "bfin-ac97",
 	.id = CONFIG_SND_BF5XX_SPORT_NUM,
 	/* TODO: add platform data here */
+};
+#endif
+
+#if defined(CONFIG_SND_BF5XX_SOC_AD1836) \
+	        || defined(CONFIG_SND_BF5XX_SOC_AD1836_MODULE)
+static const char * const ad1836_link[] = {
+	"bfin-i2s.0",
+	"spi0.4",
+};
+static struct platform_device bfin_ad1836_machine = {
+	.name = "bfin-snd-ad1836",
+	.id = -1,
+	.dev = {
+		.platform_data = (void *)ad1836_link,
+	},
 };
 #endif
 
@@ -593,12 +603,13 @@ static struct platform_device *ezkit_devices[] __initdata = {
 	&bfin_i2s,
 #endif
 
-#if defined(CONFIG_SND_BF5XX_TDM) || defined(CONFIG_SND_BF5XX_TDM_MODULE)
-	&bfin_tdm,
-#endif
-
 #if defined(CONFIG_SND_BF5XX_AC97) || defined(CONFIG_SND_BF5XX_AC97_MODULE)
 	&bfin_ac97,
+#endif
+
+#if defined(CONFIG_SND_BF5XX_SOC_AD1836) || \
+	defined(CONFIG_SND_BF5XX_SOC_AD1836_MODULE)
+	&bfin_ad1836_machine,
 #endif
 };
 

@@ -526,7 +526,7 @@ static void max732x_irq_teardown(struct max732x_chip *chip)
 }
 #endif
 
-static int __devinit max732x_setup_gpio(struct max732x_chip *chip,
+static int max732x_setup_gpio(struct max732x_chip *chip,
 					const struct i2c_device_id *id,
 					unsigned gpio_start)
 {
@@ -574,7 +574,7 @@ static int __devinit max732x_setup_gpio(struct max732x_chip *chip,
 	return port;
 }
 
-static int __devinit max732x_probe(struct i2c_client *client,
+static int max732x_probe(struct i2c_client *client,
 				   const struct i2c_device_id *id)
 {
 	struct max732x_platform_data *pdata;
@@ -589,7 +589,8 @@ static int __devinit max732x_probe(struct i2c_client *client,
 		return -EINVAL;
 	}
 
-	chip = kzalloc(sizeof(struct max732x_chip), GFP_KERNEL);
+	chip = devm_kzalloc(&client->dev, sizeof(struct max732x_chip),
+			GFP_KERNEL);
 	if (chip == NULL)
 		return -ENOMEM;
 	chip->client = client;
@@ -647,11 +648,10 @@ static int __devinit max732x_probe(struct i2c_client *client,
 
 out_failed:
 	max732x_irq_teardown(chip);
-	kfree(chip);
 	return ret;
 }
 
-static int __devexit max732x_remove(struct i2c_client *client)
+static int max732x_remove(struct i2c_client *client)
 {
 	struct max732x_platform_data *pdata = client->dev.platform_data;
 	struct max732x_chip *chip = i2c_get_clientdata(client);
@@ -680,7 +680,6 @@ static int __devexit max732x_remove(struct i2c_client *client)
 	if (chip->client_dummy)
 		i2c_unregister_device(chip->client_dummy);
 
-	kfree(chip);
 	return 0;
 }
 
@@ -690,7 +689,7 @@ static struct i2c_driver max732x_driver = {
 		.owner	= THIS_MODULE,
 	},
 	.probe		= max732x_probe,
-	.remove		= __devexit_p(max732x_remove),
+	.remove		= max732x_remove,
 	.id_table	= max732x_id,
 };
 

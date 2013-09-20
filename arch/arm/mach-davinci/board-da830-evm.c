@@ -28,11 +28,11 @@
 
 #include <mach/cp_intc.h>
 #include <mach/mux.h>
-#include <mach/nand.h>
+#include <linux/platform_data/mtd-davinci.h>
 #include <mach/da8xx.h>
-#include <mach/usb.h>
-#include <mach/aemif.h>
-#include <mach/spi.h>
+#include <linux/platform_data/usb-davinci.h>
+#include <linux/platform_data/mtd-davinci-aemif.h>
+#include <linux/platform_data/spi-davinci.h>
 
 #define DA830_EVM_PHY_ID		""
 /*
@@ -246,7 +246,6 @@ static struct davinci_mmc_config da830_evm_mmc_config = {
 	.wires			= 8,
 	.max_freq		= 50000000,
 	.caps			= MMC_CAP_MMC_HIGHSPEED | MMC_CAP_SD_HIGHSPEED,
-	.version		= MMC_CTLR_VERSION_2,
 };
 
 static inline void da830_evm_init_mmc(void)
@@ -298,11 +297,7 @@ static const short da830_evm_emif25_pins[] = {
 	-1
 };
 
-#if defined(CONFIG_MMC_DAVINCI) || defined(CONFIG_MMC_DAVINCI_MODULE)
-#define HAS_MMC	1
-#else
-#define HAS_MMC	0
-#endif
+#define HAS_MMC		IS_ENABLED(CONFIG_MMC_DAVINCI)
 
 #ifdef CONFIG_DA830_UI_NAND
 static struct mtd_partition da830_evm_nand_partitions[] = {
@@ -652,8 +647,13 @@ static __init void da830_evm_init(void)
 	if (ret)
 		pr_warning("da830_evm_init: rtc setup failed: %d\n", ret);
 
-	ret = da8xx_register_spi(0, da830evm_spi_info,
-				 ARRAY_SIZE(da830evm_spi_info));
+	ret = spi_register_board_info(da830evm_spi_info,
+				      ARRAY_SIZE(da830evm_spi_info));
+	if (ret)
+		pr_warn("%s: spi info registration failed: %d\n", __func__,
+			ret);
+
+	ret = da8xx_register_spi_bus(0, ARRAY_SIZE(da830evm_spi_info));
 	if (ret)
 		pr_warning("da830_evm_init: spi 0 registration failed: %d\n",
 			   ret);
@@ -679,8 +679,9 @@ MACHINE_START(DAVINCI_DA830_EVM, "DaVinci DA830/OMAP-L137/AM17x EVM")
 	.atag_offset	= 0x100,
 	.map_io		= da830_evm_map_io,
 	.init_irq	= cp_intc_init,
-	.timer		= &davinci_timer,
+	.init_time	= davinci_timer_init,
 	.init_machine	= da830_evm_init,
+	.init_late	= davinci_init_late,
 	.dma_zone_size	= SZ_128M,
 	.restart	= da8xx_restart,
 MACHINE_END

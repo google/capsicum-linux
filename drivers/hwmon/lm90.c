@@ -470,8 +470,8 @@ static struct lm90_data *lm90_update_device(struct device *dev)
 
 	mutex_lock(&data->update_lock);
 
-	next_update = data->last_updated
-	  + msecs_to_jiffies(data->update_interval) + 1;
+	next_update = data->last_updated +
+		      msecs_to_jiffies(data->update_interval);
 	if (time_after(jiffies, next_update) || !data->valid) {
 		u8 h, l;
 		u8 alarms;
@@ -931,7 +931,7 @@ static ssize_t set_update_interval(struct device *dev,
 		return err;
 
 	mutex_lock(&data->update_lock);
-	lm90_set_convrate(client, data, SENSORS_LIMIT(val, 0, 100000));
+	lm90_set_convrate(client, data, clamp_val(val, 0, 100000));
 	mutex_unlock(&data->update_lock);
 
 	return count;
@@ -1399,11 +1399,10 @@ static int lm90_probe(struct i2c_client *client,
 	struct lm90_data *data;
 	int err;
 
-	data = kzalloc(sizeof(struct lm90_data), GFP_KERNEL);
-	if (!data) {
-		err = -ENOMEM;
-		goto exit;
-	}
+	data = devm_kzalloc(&client->dev, sizeof(struct lm90_data), GFP_KERNEL);
+	if (!data)
+		return -ENOMEM;
+
 	i2c_set_clientdata(client, data);
 	mutex_init(&data->update_lock);
 
@@ -1474,8 +1473,6 @@ exit_remove_files:
 	lm90_remove_files(client, data);
 exit_restore:
 	lm90_restore_conf(client, data);
-	kfree(data);
-exit:
 	return err;
 }
 
@@ -1487,7 +1484,6 @@ static int lm90_remove(struct i2c_client *client)
 	lm90_remove_files(client, data);
 	lm90_restore_conf(client, data);
 
-	kfree(data);
 	return 0;
 }
 

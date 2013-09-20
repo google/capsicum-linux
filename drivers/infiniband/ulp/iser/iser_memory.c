@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2004, 2005, 2006 Voltaire, Inc. All rights reserved.
+ * Copyright (c) 2013 Mellanox Technologies. All rights reserved.
  *
  * This software is available to you under a choice of one of two
  * licenses.  You may choose to be licensed under the terms of the GNU
@@ -369,10 +370,11 @@ int iser_reg_rdma_mem(struct iscsi_iser_task *iser_task,
 	regd_buf = &iser_task->rdma_regd[cmd_dir];
 
 	aligned_len = iser_data_buf_aligned_len(mem, ibdev);
-	if (aligned_len != mem->dma_nents) {
+	if (aligned_len != mem->dma_nents ||
+	    (!ib_conn->fmr_pool && mem->dma_nents > 1)) {
 		iscsi_conn->fmr_unalign_cnt++;
-		iser_warn("rdma alignment violation %d/%d aligned\n",
-			 aligned_len, mem->size);
+		iser_warn("rdma alignment violation (%d/%d aligned) or FMR not supported\n",
+			  aligned_len, mem->size);
 		iser_data_buf_dump(mem, ibdev);
 
 		/* unmap the command data before accessing it */
@@ -404,7 +406,7 @@ int iser_reg_rdma_mem(struct iscsi_iser_task *iser_task,
 	} else { /* use FMR for multiple dma entries */
 		iser_page_vec_build(mem, ib_conn->page_vec, ibdev);
 		err = iser_reg_page_vec(ib_conn, ib_conn->page_vec, &regd_buf->reg);
-		if (err) {
+		if (err && err != -EAGAIN) {
 			iser_data_buf_dump(mem, ibdev);
 			iser_err("mem->dma_nents = %d (dlength = 0x%x)\n",
 				 mem->dma_nents,
@@ -415,8 +417,9 @@ int iser_reg_rdma_mem(struct iscsi_iser_task *iser_task,
 			for (i=0 ; i<ib_conn->page_vec->length ; i++)
 				iser_err("page_vec[%d] = 0x%llx\n", i,
 					 (unsigned long long) ib_conn->page_vec->pages[i]);
-			return err;
 		}
+		if (err)
+			return err;
 	}
 	return 0;
 }

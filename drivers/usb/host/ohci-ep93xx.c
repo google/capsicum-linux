@@ -47,7 +47,7 @@ static int usb_hcd_ep93xx_probe(const struct hc_driver *driver,
 	struct usb_hcd *hcd;
 
 	if (pdev->resource[1].flags != IORESOURCE_IRQ) {
-		dbg("resource[1] is not IORESOURCE_IRQ");
+		dev_dbg(&pdev->dev, "resource[1] is not IORESOURCE_IRQ\n");
 		return -ENOMEM;
 	}
 
@@ -65,14 +65,14 @@ static int usb_hcd_ep93xx_probe(const struct hc_driver *driver,
 
 	hcd->regs = ioremap(hcd->rsrc_start, hcd->rsrc_len);
 	if (hcd->regs == NULL) {
-		dbg("ioremap failed");
+		dev_dbg(&pdev->dev, "ioremap failed\n");
 		retval = -ENOMEM;
 		goto err2;
 	}
 
 	usb_host_clock = clk_get(&pdev->dev, NULL);
 	if (IS_ERR(usb_host_clock)) {
-		dbg("clk_get failed");
+		dev_dbg(&pdev->dev, "clk_get failed\n");
 		retval = PTR_ERR(usb_host_clock);
 		goto err3;
 	}
@@ -107,7 +107,7 @@ static void usb_hcd_ep93xx_remove(struct usb_hcd *hcd,
 	usb_put_hcd(hcd);
 }
 
-static int __devinit ohci_ep93xx_start(struct usb_hcd *hcd)
+static int ohci_ep93xx_start(struct usb_hcd *hcd)
 {
 	struct ohci_hcd *ohci = hcd_to_ohci(hcd);
 	int ret;
@@ -116,7 +116,8 @@ static int __devinit ohci_ep93xx_start(struct usb_hcd *hcd)
 		return ret;
 
 	if ((ret = ohci_run(ohci)) < 0) {
-		err("can't start %s", hcd->self.bus_name);
+		dev_err(hcd->self.controller, "can't start %s\n",
+			hcd->self.bus_name);
 		ohci_stop(hcd);
 		return ret;
 	}
@@ -193,7 +194,7 @@ static int ohci_hcd_ep93xx_drv_resume(struct platform_device *pdev)
 
 	ep93xx_start_hc(&pdev->dev);
 
-	ohci_finish_controller_resume(hcd);
+	ohci_resume(hcd, false);
 	return 0;
 }
 #endif

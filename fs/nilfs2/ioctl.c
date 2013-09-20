@@ -182,7 +182,7 @@ static int nilfs_ioctl_change_cpmode(struct inode *inode, struct file *filp,
 	if (copy_from_user(&cpmode, argp, sizeof(cpmode)))
 		goto out;
 
-	down_read(&inode->i_sb->s_umount);
+	mutex_lock(&nilfs->ns_snapshot_mount_mutex);
 
 	nilfs_transaction_begin(inode->i_sb, &ti, 0);
 	ret = nilfs_cpfile_change_cpmode(
@@ -192,7 +192,7 @@ static int nilfs_ioctl_change_cpmode(struct inode *inode, struct file *filp,
 	else
 		nilfs_transaction_commit(inode->i_sb); /* never fails */
 
-	up_read(&inode->i_sb->s_umount);
+	mutex_unlock(&nilfs->ns_snapshot_mount_mutex);
 out:
 	mnt_drop_write_file(filp);
 	return ret;
@@ -660,14 +660,15 @@ static int nilfs_ioctl_clean_segments(struct inode *inode, struct file *filp,
 		goto out_free;
 	}
 
-	vfs_check_frozen(inode->i_sb, SB_FREEZE_WRITE);
-
 	ret = nilfs_ioctl_move_blocks(inode->i_sb, &argv[0], kbufs[0]);
 	if (ret < 0)
 		printk(KERN_ERR "NILFS: GC failed during preparation: "
 			"cannot read source blocks: err=%d\n", ret);
-	else
+	else {
+		if (nilfs_sb_need_update(nilfs))
+			set_nilfs_discontinued(nilfs);
 		ret = nilfs_clean_segments(inode->i_sb, argv, kbufs);
+	}
 
 	nilfs_remove_all_gcinodes(nilfs);
 	clear_nilfs_gc_running(nilfs);
@@ -692,8 +693,14 @@ static int nilfs_ioctl_sync(struct inode *inode, struct file *filp,
 	if (ret < 0)
 		return ret;
 
+	nilfs = inode->i_sb->s_fs_info;
+	if (nilfs_test_opt(nilfs, BARRIER)) {
+		ret = blkdev_issue_flush(inode->i_sb->s_bdev, GFP_KERNEL, NULL);
+		if (ret == -EIO)
+			return ret;
+	}
+
 	if (argp != NULL) {
-		nilfs = inode->i_sb->s_fs_info;
 		down_read(&nilfs->ns_segctor_sem);
 		cno = nilfs->ns_cno - 1;
 		up_read(&nilfs->ns_segctor_sem);
@@ -789,7 +796,7 @@ static int nilfs_ioctl_get_info(struct inode *inode, struct file *filp,
 
 long nilfs_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 {
-	struct inode *inode = filp->f_dentry->d_inode;
+	struct inode *inode = file_inode(filp);
 	void __user *argp = (void __user *)arg;
 
 	switch (cmd) {

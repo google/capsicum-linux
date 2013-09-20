@@ -14,8 +14,8 @@
 
 extern unsigned int smtc_status;
 
-#define SMTC_TLB_SHARED	0x00000001
-#define SMTC_MTC_ACTIVE	0x00000002
+#define SMTC_TLB_SHARED 0x00000001
+#define SMTC_MTC_ACTIVE 0x00000002
 
 /*
  * TLB/ASID Management information
@@ -32,6 +32,12 @@ typedef short asiduse;
 typedef long asiduse;
 #endif
 #endif
+
+/*
+ * VPE Management information
+ */
+
+#define MAX_SMTC_VPES	MAX_SMTC_TLBS	/* FIXME: May not always be true. */
 
 extern asiduse smtc_live_asid[MAX_SMTC_TLBS][MAX_SMTC_ASIDS];
 

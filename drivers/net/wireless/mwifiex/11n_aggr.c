@@ -62,9 +62,7 @@ mwifiex_11n_form_amsdu_pkt(struct sk_buff *skb_aggr,
 	};
 	struct tx_packet_hdr *tx_header;
 
-	skb_put(skb_aggr, sizeof(*tx_header));
-
-	tx_header = (struct tx_packet_hdr *) skb_aggr->data;
+	tx_header = (void *)skb_put(skb_aggr, sizeof(*tx_header));
 
 	/* Copy DA and SA */
 	dt_offset = 2 * ETH_ALEN;
@@ -82,12 +80,10 @@ mwifiex_11n_form_amsdu_pkt(struct sk_buff *skb_aggr,
 	tx_header->eth803_hdr.h_proto = htons(skb_src->len + LLC_SNAP_LEN);
 
 	/* Add payload */
-	skb_put(skb_aggr, skb_src->len);
-	memcpy(skb_aggr->data + sizeof(*tx_header), skb_src->data,
-	       skb_src->len);
-	*pad = (((skb_src->len + LLC_SNAP_LEN) & 3)) ? (4 - (((skb_src->len +
-						      LLC_SNAP_LEN)) & 3)) : 0;
-	skb_put(skb_aggr, *pad);
+	memcpy(skb_put(skb_aggr, skb_src->len), skb_src->data, skb_src->len);
+
+	/* Add padding for new MSDU to start from 4 byte boundary */
+	*pad = (4 - ((unsigned long)skb_aggr->tail & 0x3)) % 4;
 
 	return skb_aggr->len + *pad;
 }
@@ -201,7 +197,7 @@ mwifiex_11n_aggregate_pkt(struct mwifiex_private *priv,
 				       ra_list_flags);
 		mwifiex_11n_form_amsdu_pkt(skb_aggr, skb_src, &pad);
 
-		mwifiex_write_data_complete(adapter, skb_src, 0);
+		mwifiex_write_data_complete(adapter, skb_src, 0, 0);
 
 		spin_lock_irqsave(&priv->wmm.ra_list_spinlock, ra_list_flags);
 
@@ -233,28 +229,34 @@ mwifiex_11n_aggregate_pkt(struct mwifiex_private *priv,
 
 	skb_push(skb_aggr, headroom);
 
-	/*
-	 * Padding per MSDU will affect the length of next
-	 * packet and hence the exact length of next packet
-	 * is uncertain here.
-	 *
-	 * Also, aggregation of transmission buffer, while
-	 * downloading the data to the card, wont gain much
-	 * on the AMSDU packets as the AMSDU packets utilizes
-	 * the transmission buffer space to the maximum
-	 * (adapter->tx_buf_size).
-	 */
-	tx_param.next_pkt_len = 0;
+	if (adapter->iface_type == MWIFIEX_USB) {
+		adapter->data_sent = true;
+		ret = adapter->if_ops.host_to_card(adapter, MWIFIEX_USB_EP_DATA,
+						   skb_aggr, NULL);
+	} else {
+		/*
+		 * Padding per MSDU will affect the length of next
+		 * packet and hence the exact length of next packet
+		 * is uncertain here.
+		 *
+		 * Also, aggregation of transmission buffer, while
+		 * downloading the data to the card, wont gain much
+		 * on the AMSDU packets as the AMSDU packets utilizes
+		 * the transmission buffer space to the maximum
+		 * (adapter->tx_buf_size).
+		 */
+		tx_param.next_pkt_len = 0;
 
-	ret = adapter->if_ops.host_to_card(adapter, MWIFIEX_TYPE_DATA,
-					   skb_aggr, &tx_param);
+		ret = adapter->if_ops.host_to_card(adapter, MWIFIEX_TYPE_DATA,
+						   skb_aggr, &tx_param);
+	}
 	switch (ret) {
 	case -EBUSY:
 		spin_lock_irqsave(&priv->wmm.ra_list_spinlock, ra_list_flags);
 		if (!mwifiex_is_ralist_valid(priv, pra_list, ptrindex)) {
 			spin_unlock_irqrestore(&priv->wmm.ra_list_spinlock,
 					       ra_list_flags);
-			mwifiex_write_data_complete(adapter, skb_aggr, -1);
+			mwifiex_write_data_complete(adapter, skb_aggr, 1, -1);
 			return -1;
 		}
 		if (GET_BSS_ROLE(priv) == MWIFIEX_BSS_ROLE_STA &&
@@ -276,35 +278,25 @@ mwifiex_11n_aggregate_pkt(struct mwifiex_private *priv,
 		dev_dbg(adapter->dev, "data: -EBUSY is returned\n");
 		break;
 	case -1:
-		adapter->data_sent = false;
+		if (adapter->iface_type != MWIFIEX_PCIE)
+			adapter->data_sent = false;
 		dev_err(adapter->dev, "%s: host_to_card failed: %#x\n",
 			__func__, ret);
 		adapter->dbg.num_tx_host_to_card_failure++;
-		mwifiex_write_data_complete(adapter, skb_aggr, ret);
+		mwifiex_write_data_complete(adapter, skb_aggr, 1, ret);
 		return 0;
 	case -EINPROGRESS:
-		adapter->data_sent = false;
+		if (adapter->iface_type != MWIFIEX_PCIE)
+			adapter->data_sent = false;
 		break;
 	case 0:
-		mwifiex_write_data_complete(adapter, skb_aggr, ret);
+		mwifiex_write_data_complete(adapter, skb_aggr, 1, ret);
 		break;
 	default:
 		break;
 	}
 	if (ret != -EBUSY) {
-		spin_lock_irqsave(&priv->wmm.ra_list_spinlock, ra_list_flags);
-		if (mwifiex_is_ralist_valid(priv, pra_list, ptrindex)) {
-			priv->wmm.packets_out[ptrindex]++;
-			priv->wmm.tid_tbl_ptr[ptrindex].ra_list_curr = pra_list;
-		}
-		/* Now bss_prio_cur pointer points to next node */
-		adapter->bss_prio_tbl[priv->bss_priority].bss_prio_cur =
-			list_first_entry(
-				&adapter->bss_prio_tbl[priv->bss_priority]
-				.bss_prio_cur->list,
-				struct mwifiex_bss_prio_node, list);
-		spin_unlock_irqrestore(&priv->wmm.ra_list_spinlock,
-				       ra_list_flags);
+		mwifiex_rotate_priolists(priv, pra_list, ptrindex);
 	}
 
 	return 0;

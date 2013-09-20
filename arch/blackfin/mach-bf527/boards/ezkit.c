@@ -114,9 +114,9 @@ static struct musb_hdrc_config musb_config = {
 };
 
 static struct musb_hdrc_platform_data musb_plat = {
-#if defined(CONFIG_USB_MUSB_OTG)
+#if defined(CONFIG_USB_MUSB_HDRC) && defined(CONFIG_USB_GADGET_MUSB_HDRC)
 	.mode		= MUSB_OTG,
-#elif defined(CONFIG_USB_MUSB_HDRC_HCD)
+#elif defined(CONFIG_USB_MUSB_HDRC)
 	.mode		= MUSB_HOST,
 #elif defined(CONFIG_USB_GADGET_MUSB_HDRC)
 	.mode		= MUSB_PERIPHERAL,
@@ -493,8 +493,7 @@ static const struct ad7879_platform_data bfin_ad7879_ts_info = {
 };
 #endif
 
-#if defined(CONFIG_SND_BF5XX_I2S) || defined(CONFIG_SND_BF5XX_I2S_MODULE) || \
-	defined(CONFIG_SND_BF5XX_TDM) || defined(CONFIG_SND_BF5XX_TDM_MODULE)
+#if defined(CONFIG_SND_BF5XX_I2S) || defined(CONFIG_SND_BF5XX_I2S_MODULE)
 
 static const u16 bfin_snd_pin[][7] = {
 	{P_SPORT0_DTPRI, P_SPORT0_TSCLK, P_SPORT0_RFS,
@@ -549,13 +548,6 @@ static struct platform_device bfin_i2s_pcm = {
 };
 #endif
 
-#if defined(CONFIG_SND_BF5XX_TDM) || defined(CONFIG_SND_BF5XX_TDM_MODULE)
-static struct platform_device bfin_tdm_pcm = {
-	.name = "bfin-tdm-pcm-audio",
-	.id = -1,
-};
-#endif
-
 #if defined(CONFIG_SND_BF5XX_AC97) || defined(CONFIG_SND_BF5XX_AC97_MODULE)
 static struct platform_device bfin_ac97_pcm = {
 	.name = "bfin-ac97-pcm-audio",
@@ -575,14 +567,17 @@ static struct platform_device bfin_i2s = {
 };
 #endif
 
-#if defined(CONFIG_SND_BF5XX_TDM) || defined(CONFIG_SND_BF5XX_TDM_MODULE)
-static struct platform_device bfin_tdm = {
-	.name = "bfin-tdm",
-	.id = CONFIG_SND_BF5XX_SPORT_NUM,
-	.num_resources = ARRAY_SIZE(bfin_snd_resources[CONFIG_SND_BF5XX_SPORT_NUM]),
-	.resource = bfin_snd_resources[CONFIG_SND_BF5XX_SPORT_NUM],
+#if defined(CONFIG_SND_BF5XX_SOC_AD1836) \
+	        || defined(CONFIG_SND_BF5XX_SOC_AD1836_MODULE)
+static const char * const ad1836_link[] = {
+	"bfin-i2s.0",
+	"spi0.4",
+};
+static struct platform_device bfin_ad1836_machine = {
+	.name = "bfin-snd-ad1836",
+	.id = -1,
 	.dev = {
-		.platform_data = &bfin_snd_data[CONFIG_SND_BF5XX_SPORT_NUM],
+		.platform_data = (void *)ad1836_link,
 	},
 };
 #endif
@@ -869,6 +864,8 @@ static struct platform_device bfin_sir1_device = {
 #endif
 
 #if defined(CONFIG_I2C_BLACKFIN_TWI) || defined(CONFIG_I2C_BLACKFIN_TWI_MODULE)
+static const u16 bfin_twi0_pins[] = {P_TWI0_SCL, P_TWI0_SDA, 0};
+
 static struct resource bfin_twi0_resource[] = {
 	[0] = {
 		.start = TWI0_REGBASE,
@@ -887,6 +884,9 @@ static struct platform_device i2c_bfin_twi_device = {
 	.id = 0,
 	.num_resources = ARRAY_SIZE(bfin_twi0_resource),
 	.resource = bfin_twi0_resource,
+	.dev = {
+		.platform_data = &bfin_twi0_pins,
+	},
 };
 #endif
 
@@ -1105,6 +1105,7 @@ static struct bfin_rotary_platform_data bfin_rotary_data = {
 	.rotary_button_key = KEY_ENTER,
 	.debounce	   = 10,	/* 0..17 */
 	.mode		   = ROT_QUAD_ENC | ROT_DEBE,
+	.pm_wakeup	   = 1,
 };
 
 static struct resource bfin_rotary_resources[] = {
@@ -1248,10 +1249,6 @@ static struct platform_device *stamp_devices[] __initdata = {
 	&bfin_i2s_pcm,
 #endif
 
-#if defined(CONFIG_SND_BF5XX_TDM) || defined(CONFIG_SND_BF5XX_TDM_MODULE)
-	&bfin_tdm_pcm,
-#endif
-
 #if defined(CONFIG_SND_BF5XX_AC97) || defined(CONFIG_SND_BF5XX_AC97_MODULE)
 	&bfin_ac97_pcm,
 #endif
@@ -1260,8 +1257,9 @@ static struct platform_device *stamp_devices[] __initdata = {
 	&bfin_i2s,
 #endif
 
-#if defined(CONFIG_SND_BF5XX_TDM) || defined(CONFIG_SND_BF5XX_TDM_MODULE)
-	&bfin_tdm,
+#if defined(CONFIG_SND_BF5XX_SOC_AD1836) || \
+	defined(CONFIG_SND_BF5XX_SOC_AD1836_MODULE)
+	&bfin_ad1836_machine,
 #endif
 };
 

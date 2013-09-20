@@ -518,7 +518,6 @@ cell_iommu_setup_window(struct cbe_iommu *iommu, struct device_node *np,
 	__set_bit(0, window->table.it_map);
 	tce_build_cell(&window->table, window->table.it_offset, 1,
 		       (unsigned long)iommu->pad_page, DMA_TO_DEVICE, NULL);
-	window->table.it_hint = window->table.it_blocksize;
 
 	return window;
 }
@@ -551,9 +550,8 @@ static struct iommu_table *cell_get_iommu_table(struct device *dev)
 	 */
 	iommu = cell_iommu_for_node(dev_to_node(dev));
 	if (iommu == NULL || list_empty(&iommu->windows)) {
-		printk(KERN_ERR "iommu: missing iommu for %s (node %d)\n",
-		       dev->of_node ? dev->of_node->full_name : "?",
-		       dev_to_node(dev));
+		dev_err(dev, "iommu: missing iommu for %s (node %d)\n",
+		       of_node_full_name(dev->of_node), dev_to_node(dev));
 		return NULL;
 	}
 	window = list_entry(iommu->windows.next, struct iommu_window, list);
@@ -730,7 +728,7 @@ static struct cbe_iommu * __init cell_iommu_alloc(struct device_node *np)
 		 nid, np->full_name);
 
 	/* XXX todo: If we can have multiple windows on the same IOMMU, which
-	 * isn't the case today, we probably want here to check wether the
+	 * isn't the case today, we probably want here to check whether the
 	 * iommu for that node is already setup.
 	 * However, there might be issue with getting the size right so let's
 	 * ignore that for now. We might want to completely get rid of the

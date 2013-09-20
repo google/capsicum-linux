@@ -92,14 +92,17 @@ void mdfld_dsi_brightness_init(struct mdfld_dsi_config *dsi_config, int pipe)
 {
 	struct mdfld_dsi_pkg_sender *sender =
 				mdfld_dsi_get_pkg_sender(dsi_config);
-	struct drm_device *dev = sender->dev;
-	struct drm_psb_private *dev_priv = dev->dev_private;
+	struct drm_device *dev;
+	struct drm_psb_private *dev_priv;
 	u32 gen_ctrl_val;
 
 	if (!sender) {
 		DRM_ERROR("No sender found\n");
 		return;
 	}
+
+	dev = sender->dev;
+	dev_priv = dev->dev_private;
 
 	/* Set default display backlight value to 85% (0xd8)*/
 	mdfld_dsi_send_mcs_short(sender, write_display_brightness, 0xd8, 1,
@@ -265,13 +268,13 @@ static int mdfld_dsi_connector_set_property(struct drm_connector *connector,
 			goto set_prop_error;
 		}
 
-		if (drm_connector_property_get_value(connector, property, &val))
+		if (drm_object_property_get_value(&connector->base, property, &val))
 			goto set_prop_error;
 
 		if (val == value)
 			goto set_prop_done;
 
-		if (drm_connector_property_set_value(connector,
+		if (drm_object_property_set_value(&connector->base,
 							property, value))
 			goto set_prop_error;
 
@@ -296,20 +299,11 @@ static int mdfld_dsi_connector_set_property(struct drm_connector *connector,
 			}
 		}
 	} else if (!strcmp(property->name, "backlight") && encoder) {
-		if (drm_connector_property_set_value(connector, property,
+		if (drm_object_property_set_value(&connector->base, property,
 									value))
 			goto set_prop_error;
-		else {
-#ifdef CONFIG_BACKLIGHT_CLASS_DEVICE
-			struct backlight_device *psb_bd;
-
-			psb_bd = mdfld_get_backlight_device();
-			if (psb_bd) {
-				psb_bd->props.brightness = value;
-				mdfld_set_brightness(psb_bd);
-			}
-#endif
-		}
+		else
+			gma_backlight_set(encoder->dev, value);
 	}
 set_prop_done:
 	return 0;
@@ -515,7 +509,7 @@ void mdfld_dsi_output_init(struct drm_device *dev,
 
 	dev_dbg(dev->dev, "init DSI output on pipe %d\n", pipe);
 
-	if (!dev || ((pipe != 0) && (pipe != 2))) {
+	if (pipe != 0 && pipe != 2) {
 		DRM_ERROR("Invalid parameter\n");
 		return;
 	}
@@ -581,10 +575,10 @@ void mdfld_dsi_output_init(struct drm_device *dev,
 	connector->doublescan_allowed = false;
 
 	/*attach properties*/
-	drm_connector_attach_property(connector,
+	drm_object_attach_property(&connector->base,
 				dev->mode_config.scaling_mode_property,
 				DRM_MODE_SCALE_FULLSCREEN);
-	drm_connector_attach_property(connector,
+	drm_object_attach_property(&connector->base,
 				dev_priv->backlight_property,
 				MDFLD_DSI_BRIGHTNESS_MAX_LEVEL);
 

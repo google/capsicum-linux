@@ -253,7 +253,7 @@ static int hpt3x3_init_one(struct pci_dev *pdev, const struct pci_device_id *id)
 #ifdef CONFIG_PM
 static int hpt3x3_reinit_one(struct pci_dev *dev)
 {
-	struct ata_host *host = dev_get_drvdata(&dev->dev);
+	struct ata_host *host = pci_get_drvdata(dev);
 	int rc;
 
 	rc = ata_pci_device_do_resume(dev);
@@ -284,23 +284,10 @@ static struct pci_driver hpt3x3_pci_driver = {
 #endif
 };
 
-static int __init hpt3x3_init(void)
-{
-	return pci_register_driver(&hpt3x3_pci_driver);
-}
-
-
-static void __exit hpt3x3_exit(void)
-{
-	pci_unregister_driver(&hpt3x3_pci_driver);
-}
-
+module_pci_driver(hpt3x3_pci_driver);
 
 MODULE_AUTHOR("Alan Cox");
 MODULE_DESCRIPTION("low-level driver for the Highpoint HPT343/363");
 MODULE_LICENSE("GPL");
 MODULE_DEVICE_TABLE(pci, hpt3x3);
 MODULE_VERSION(DRV_VERSION);
-
-module_init(hpt3x3_init);
-module_exit(hpt3x3_exit);

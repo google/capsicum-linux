@@ -1,8 +1,6 @@
-/**
- * arch/s390/oprofile/init.c
- *
+/*
  * S390 Version
- *   Copyright (C) 2002-2011 IBM Deutschland Entwicklung GmbH, IBM Corporation
+ *   Copyright IBM Corp. 2002, 2011
  *   Author(s): Thomas Spatzier (tspat@de.ibm.com)
  *   Author(s): Mahesh Salgaonkar (mahesh@linux.vnet.ibm.com)
  *   Author(s): Heinz Graalfs (graalfs@linux.vnet.ibm.com)
@@ -171,7 +169,7 @@ static ssize_t hw_interval_write(struct file *file, char const __user *buf,
 	if (*offset)
 		return -EINVAL;
 	retval = oprofilefs_ulong_from_user(&val, buf, count);
-	if (retval)
+	if (retval <= 0)
 		return retval;
 	if (val < oprofile_min_interval)
 		oprofile_hw_interval = oprofile_min_interval;
@@ -214,7 +212,7 @@ static ssize_t hwsampler_zero_write(struct file *file, char const __user *buf,
 		return -EINVAL;
 
 	retval = oprofilefs_ulong_from_user(&val, buf, count);
-	if (retval)
+	if (retval <= 0)
 		return retval;
 	if (val != 0)
 		return -EINVAL;
@@ -245,7 +243,7 @@ static ssize_t hwsampler_kernel_write(struct file *file, char const __user *buf,
 		return -EINVAL;
 
 	retval = oprofilefs_ulong_from_user(&val, buf, count);
-	if (retval)
+	if (retval <= 0)
 		return retval;
 
 	if (val != 0 && val != 1)
@@ -280,7 +278,7 @@ static ssize_t hwsampler_user_write(struct file *file, char const __user *buf,
 		return -EINVAL;
 
 	retval = oprofilefs_ulong_from_user(&val, buf, count);
-	if (retval)
+	if (retval <= 0)
 		return retval;
 
 	if (val != 0 && val != 1)
@@ -319,7 +317,7 @@ static ssize_t timer_enabled_write(struct file *file, char const __user *buf,
 		return -EINVAL;
 
 	retval = oprofilefs_ulong_from_user(&val, buf, count);
-	if (retval)
+	if (retval <= 0)
 		return retval;
 
 	if (val != 0 && val != 1)
@@ -442,6 +440,7 @@ static int oprofile_hwsampler_init(struct oprofile_operations *ops)
 		switch (id.machine) {
 		case 0x2097: case 0x2098: ops->cpu_type = "s390/z10"; break;
 		case 0x2817: case 0x2818: ops->cpu_type = "s390/z196"; break;
+		case 0x2827: case 0x2828: ops->cpu_type = "s390/zEC12"; break;
 		default: return -ENODEV;
 		}
 	}

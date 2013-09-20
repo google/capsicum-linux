@@ -1,7 +1,7 @@
 /*
  * max1619.c - Part of lm_sensors, Linux kernel modules for hardware
  *             monitoring
- * Copyright (C) 2003-2004 Alexey Fisher <fishor@mail.ru>
+ * Copyright (C) 2003-2004 Oleksij Rempel <bug-track@fisher-privat.net>
  *                         Jean Delvare <khali@linux-fr.org>
  *
  * Based on the lm90 driver. The MAX1619 is a sensor chip made by Maxim.
@@ -267,11 +267,10 @@ static int max1619_probe(struct i2c_client *new_client,
 	struct max1619_data *data;
 	int err;
 
-	data = kzalloc(sizeof(struct max1619_data), GFP_KERNEL);
-	if (!data) {
-		err = -ENOMEM;
-		goto exit;
-	}
+	data = devm_kzalloc(&new_client->dev, sizeof(struct max1619_data),
+			    GFP_KERNEL);
+	if (!data)
+		return -ENOMEM;
 
 	i2c_set_clientdata(new_client, data);
 	data->valid = 0;
@@ -283,7 +282,7 @@ static int max1619_probe(struct i2c_client *new_client,
 	/* Register sysfs hooks */
 	err = sysfs_create_group(&new_client->dev.kobj, &max1619_group);
 	if (err)
-		goto exit_free;
+		return err;
 
 	data->hwmon_dev = hwmon_device_register(&new_client->dev);
 	if (IS_ERR(data->hwmon_dev)) {
@@ -295,9 +294,6 @@ static int max1619_probe(struct i2c_client *new_client,
 
 exit_remove_files:
 	sysfs_remove_group(&new_client->dev.kobj, &max1619_group);
-exit_free:
-	kfree(data);
-exit:
 	return err;
 }
 
@@ -323,7 +319,6 @@ static int max1619_remove(struct i2c_client *client)
 	hwmon_device_unregister(data->hwmon_dev);
 	sysfs_remove_group(&client->dev.kobj, &max1619_group);
 
-	kfree(data);
 	return 0;
 }
 
@@ -362,7 +357,7 @@ static struct max1619_data *max1619_update_device(struct device *dev)
 
 module_i2c_driver(max1619_driver);
 
-MODULE_AUTHOR("Alexey Fisher <fishor@mail.ru> and "
+MODULE_AUTHOR("Oleksij Rempel <bug-track@fisher-privat.net> and "
 	"Jean Delvare <khali@linux-fr.org>");
 MODULE_DESCRIPTION("MAX1619 sensor driver");
 MODULE_LICENSE("GPL");

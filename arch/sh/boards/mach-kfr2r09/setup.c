@@ -21,8 +21,11 @@
 #include <linux/input.h>
 #include <linux/input/sh_keysc.h>
 #include <linux/i2c.h>
+#include <linux/regulator/fixed.h>
+#include <linux/regulator/machine.h>
 #include <linux/usb/r8a66597.h>
 #include <linux/videodev2.h>
+#include <linux/sh_intc.h>
 #include <media/rj54n1cb0c.h>
 #include <media/soc_camera.h>
 #include <media/sh_mobile_ceu.h>
@@ -110,7 +113,7 @@ static struct resource kfr2r09_sh_keysc_resources[] = {
 		.flags  = IORESOURCE_MEM,
 	},
 	[1] = {
-		.start  = 79,
+		.start  = evt2irq(0xbe0),
 		.flags  = IORESOURCE_IRQ,
 	},
 };
@@ -155,8 +158,11 @@ static struct sh_mobile_lcdc_info kfr2r09_sh_lcdc_info = {
 			.height = 58,
 			.setup_sys = kfr2r09_lcd_setup,
 			.start_transfer = kfr2r09_lcd_start,
-			.display_on = kfr2r09_lcd_on,
-			.display_off = kfr2r09_lcd_off,
+		},
+		.bl_info = {
+			.name = "sh_mobile_lcdc_bl",
+			.max_brightness = 1,
+			.set_brightness = kfr2r09_lcd_set_brightness,
 		},
 		.sys_bus_cfg = {
 			.ldmt2r = 0x07010904,
@@ -175,7 +181,7 @@ static struct resource kfr2r09_sh_lcdc_resources[] = {
 		.flags	= IORESOURCE_MEM,
 	},
 	[1] = {
-		.start	= 106,
+		.start	= evt2irq(0xf40),
 		.flags	= IORESOURCE_IRQ,
 	},
 };
@@ -200,8 +206,8 @@ static struct resource kfr2r09_usb0_gadget_resources[] = {
 		.flags	= IORESOURCE_MEM,
 	},
 	[1] = {
-		.start	= 65,
-		.end	= 65,
+		.start	= evt2irq(0xa20),
+		.end	= evt2irq(0xa20),
 		.flags	= IORESOURCE_IRQ | IRQF_TRIGGER_LOW,
 	},
 };
@@ -230,8 +236,8 @@ static struct resource kfr2r09_ceu_resources[] = {
 		.flags	= IORESOURCE_MEM,
 	},
 	[1] = {
-		.start  = 52,
-		.end  = 52,
+		.start  = evt2irq(0x880),
+		.end	= evt2irq(0x880),
 		.flags  = IORESOURCE_IRQ,
 	},
 	[2] = {
@@ -340,6 +346,13 @@ static struct platform_device kfr2r09_camera = {
 	},
 };
 
+/* Fixed 3.3V regulator to be used by SDHI0 */
+static struct regulator_consumer_supply fixed3v3_power_consumers[] =
+{
+	REGULATOR_SUPPLY("vmmc", "sh_mobile_sdhi.0"),
+	REGULATOR_SUPPLY("vqmmc", "sh_mobile_sdhi.0"),
+};
+
 static struct resource kfr2r09_sh_sdhi0_resources[] = {
 	[0] = {
 		.name	= "SDHI0",
@@ -348,7 +361,7 @@ static struct resource kfr2r09_sh_sdhi0_resources[] = {
 		.flags  = IORESOURCE_MEM,
 	},
 	[1] = {
-		.start  = 100,
+		.start  = evt2irq(0xe80),
 		.flags  = IORESOURCE_IRQ,
 	},
 };
@@ -521,6 +534,9 @@ static int __init kfr2r09_devices_setup(void)
 					&kfr2r09_sdram_enter_end,
 					&kfr2r09_sdram_leave_start,
 					&kfr2r09_sdram_leave_end);
+
+	regulator_register_always_on(0, "fixed-3.3V", fixed3v3_power_consumers,
+				     ARRAY_SIZE(fixed3v3_power_consumers), 3300000);
 
 	/* enable SCIF1 serial port for YC401 console support */
 	gpio_request(GPIO_FN_SCIF1_RXD, NULL);

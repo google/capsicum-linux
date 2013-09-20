@@ -522,7 +522,7 @@ const struct file_operations capability_ops = {
 	.write = panic_ptr,
 	.aio_read = panic_ptr,
 	.aio_write = panic_ptr,
-	.readdir = panic_ptr,
+	.iterate = panic_ptr,
 	.poll = panic_ptr,
 	.unlocked_ioctl = panic_ptr,
 	.compat_ioctl = panic_ptr,
@@ -540,7 +540,9 @@ const struct file_operations capability_ops = {
 	.flock = panic_ptr,
 	.splice_write = panic_ptr,
 	.splice_read = panic_ptr,
-	.setlease = panic_ptr
+	.setlease = panic_ptr,
+	.fallocate = panic_ptr,
+	.show_fdinfo = panic_ptr
 };
 
 static struct security_operations capsicum_security_ops = {

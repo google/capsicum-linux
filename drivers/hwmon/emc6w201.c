@@ -18,7 +18,6 @@
  */
 
 #include <linux/module.h>
-#include <linux/delay.h>
 #include <linux/init.h>
 #include <linux/slab.h>
 #include <linux/jiffies.h>
@@ -188,7 +187,7 @@ static struct emc6w201_data *emc6w201_update_device(struct device *dev)
  * Sysfs callback functions
  */
 
-static const u16 nominal_mv[6] = { 2500, 1500, 3300, 5000, 1500, 1500 };
+static const s16 nominal_mv[6] = { 2500, 1500, 3300, 5000, 1500, 1500 };
 
 static ssize_t show_in(struct device *dev, struct device_attribute *devattr,
 	char *buf)
@@ -221,7 +220,7 @@ static ssize_t set_in(struct device *dev, struct device_attribute *devattr,
 			  : EMC6W201_REG_IN_HIGH(nr);
 
 	mutex_lock(&data->update_lock);
-	data->in[sf][nr] = SENSORS_LIMIT(val, 0, 255);
+	data->in[sf][nr] = clamp_val(val, 0, 255);
 	err = emc6w201_write8(client, reg, data->in[sf][nr]);
 	mutex_unlock(&data->update_lock);
 
@@ -258,7 +257,7 @@ static ssize_t set_temp(struct device *dev, struct device_attribute *devattr,
 			  : EMC6W201_REG_TEMP_HIGH(nr);
 
 	mutex_lock(&data->update_lock);
-	data->temp[sf][nr] = SENSORS_LIMIT(val, -127, 128);
+	data->temp[sf][nr] = clamp_val(val, -127, 128);
 	err = emc6w201_write8(client, reg, data->temp[sf][nr]);
 	mutex_unlock(&data->update_lock);
 
@@ -299,7 +298,7 @@ static ssize_t set_fan(struct device *dev, struct device_attribute *devattr,
 		val = 0xFFFF;
 	} else {
 		val = DIV_ROUND_CLOSEST(5400000U, val);
-		val = SENSORS_LIMIT(val, 0, 0xFFFE);
+		val = clamp_val(val, 0, 0xFFFE);
 	}
 
 	mutex_lock(&data->update_lock);
@@ -492,11 +491,10 @@ static int emc6w201_probe(struct i2c_client *client,
 	struct emc6w201_data *data;
 	int err;
 
-	data = kzalloc(sizeof(struct emc6w201_data), GFP_KERNEL);
-	if (!data) {
-		err = -ENOMEM;
-		goto exit;
-	}
+	data = devm_kzalloc(&client->dev, sizeof(struct emc6w201_data),
+			    GFP_KERNEL);
+	if (!data)
+		return -ENOMEM;
 
 	i2c_set_clientdata(client, data);
 	mutex_init(&data->update_lock);
@@ -504,7 +502,7 @@ static int emc6w201_probe(struct i2c_client *client,
 	/* Create sysfs attribute */
 	err = sysfs_create_group(&client->dev.kobj, &emc6w201_group);
 	if (err)
-		goto exit_free;
+		return err;
 
 	/* Expose as a hwmon device */
 	data->hwmon_dev = hwmon_device_register(&client->dev);
@@ -517,9 +515,6 @@ static int emc6w201_probe(struct i2c_client *client,
 
  exit_remove:
 	sysfs_remove_group(&client->dev.kobj, &emc6w201_group);
- exit_free:
-	kfree(data);
- exit:
 	return err;
 }
 
@@ -529,7 +524,6 @@ static int emc6w201_remove(struct i2c_client *client)
 
 	hwmon_device_unregister(data->hwmon_dev);
 	sysfs_remove_group(&client->dev.kobj, &emc6w201_group);
-	kfree(data);
 
 	return 0;
 }

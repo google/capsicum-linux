@@ -1,8 +1,7 @@
 /*
- *  arch/s390/kernel/ipl.c
  *    ipl/reipl/dump support for Linux on s390.
  *
- *    Copyright IBM Corp. 2005,2012
+ *    Copyright IBM Corp. 2005, 2012
  *    Author(s): Michael Holzheu <holzheu@de.ibm.com>
  *		 Heiko Carstens <heiko.carstens@de.ibm.com>
  *		 Volker Sameske <sameske@de.ibm.com>
@@ -755,9 +754,9 @@ static struct bin_attribute sys_reipl_fcp_scp_data_attr = {
 	.write = reipl_fcp_scpdata_write,
 };
 
-DEFINE_IPL_ATTR_RW(reipl_fcp, wwpn, "0x%016llx\n", "%016llx\n",
+DEFINE_IPL_ATTR_RW(reipl_fcp, wwpn, "0x%016llx\n", "%llx\n",
 		   reipl_block_fcp->ipl_info.fcp.wwpn);
-DEFINE_IPL_ATTR_RW(reipl_fcp, lun, "0x%016llx\n", "%016llx\n",
+DEFINE_IPL_ATTR_RW(reipl_fcp, lun, "0x%016llx\n", "%llx\n",
 		   reipl_block_fcp->ipl_info.fcp.lun);
 DEFINE_IPL_ATTR_RW(reipl_fcp, bootprog, "%lld\n", "%lld\n",
 		   reipl_block_fcp->ipl_info.fcp.bootprog);
@@ -1324,9 +1323,9 @@ static struct shutdown_action __refdata reipl_action = {
 
 /* FCP dump device attributes */
 
-DEFINE_IPL_ATTR_RW(dump_fcp, wwpn, "0x%016llx\n", "%016llx\n",
+DEFINE_IPL_ATTR_RW(dump_fcp, wwpn, "0x%016llx\n", "%llx\n",
 		   dump_block_fcp->ipl_info.fcp.wwpn);
-DEFINE_IPL_ATTR_RW(dump_fcp, lun, "0x%016llx\n", "%016llx\n",
+DEFINE_IPL_ATTR_RW(dump_fcp, lun, "0x%016llx\n", "%llx\n",
 		   dump_block_fcp->ipl_info.fcp.lun);
 DEFINE_IPL_ATTR_RW(dump_fcp, bootprog, "%lld\n", "%lld\n",
 		   dump_block_fcp->ipl_info.fcp.bootprog);
@@ -1415,6 +1414,16 @@ static struct kobj_attribute dump_type_attr =
 
 static struct kset *dump_kset;
 
+static void diag308_dump(void *dump_block)
+{
+	diag308(DIAG308_SET, dump_block);
+	while (1) {
+		if (diag308(DIAG308_DUMP, NULL) != 0x302)
+			break;
+		udelay_simple(USEC_PER_SEC);
+	}
+}
+
 static void __dump_run(void *unused)
 {
 	struct ccw_dev_id devid;
@@ -1433,12 +1442,10 @@ static void __dump_run(void *unused)
 		__cpcmd(buf, NULL, 0, NULL);
 		break;
 	case DUMP_METHOD_CCW_DIAG:
-		diag308(DIAG308_SET, dump_block_ccw);
-		diag308(DIAG308_DUMP, NULL);
+		diag308_dump(dump_block_ccw);
 		break;
 	case DUMP_METHOD_FCP_DIAG:
-		diag308(DIAG308_SET, dump_block_fcp);
-		diag308(DIAG308_DUMP, NULL);
+		diag308_dump(dump_block_fcp);
 		break;
 	default:
 		break;
@@ -1528,12 +1535,12 @@ static struct shutdown_action __refdata dump_action = {
 
 static void dump_reipl_run(struct shutdown_trigger *trigger)
 {
-	u32 csum;
+	unsigned long ipib = (unsigned long) reipl_block_actual;
+	unsigned int csum;
 
 	csum = csum_partial(reipl_block_actual, reipl_block_actual->hdr.len, 0);
-	copy_to_absolute_zero(&S390_lowcore.ipib_checksum, &csum, sizeof(csum));
-	copy_to_absolute_zero(&S390_lowcore.ipib, &reipl_block_actual,
-			      sizeof(reipl_block_actual));
+	mem_assign_absolute(S390_lowcore.ipib, ipib);
+	mem_assign_absolute(S390_lowcore.ipib_checksum, csum);
 	dump_run(trigger);
 }
 
@@ -1584,7 +1591,7 @@ static struct kset *vmcmd_kset;
 
 static void vmcmd_run(struct shutdown_trigger *trigger)
 {
-	char *cmd, *next_cmd;
+	char *cmd;
 
 	if (strcmp(trigger->name, ON_REIPL_STR) == 0)
 		cmd = vmcmd_on_reboot;
@@ -1601,15 +1608,7 @@ static void vmcmd_run(struct shutdown_trigger *trigger)
 
 	if (strlen(cmd) == 0)
 		return;
-	do {
-		next_cmd = strchr(cmd, '\n');
-		if (next_cmd) {
-			next_cmd[0] = 0;
-			next_cmd += 1;
-		}
-		__cpcmd(cmd, NULL, 0, NULL);
-		cmd = next_cmd;
-	} while (cmd != NULL);
+	__cpcmd(cmd, NULL, 0, NULL);
 }
 
 static int vmcmd_init(void)
@@ -1750,6 +1749,7 @@ static struct kobj_attribute on_restart_attr =
 
 static void __do_restart(void *ignore)
 {
+	__arch_local_irq_stosm(0x04); /* enable DAT */
 	smp_send_stop();
 #ifdef CONFIG_CRASH_DUMP
 	crash_kexec(NULL);

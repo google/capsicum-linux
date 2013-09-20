@@ -64,6 +64,9 @@ struct mpc_i2c {
 	struct i2c_adapter adap;
 	int irq;
 	u32 real_clk;
+#ifdef CONFIG_PM
+	u8 fdr, dfsrr;
+#endif
 };
 
 struct mpc_i2c_divider {
@@ -172,7 +175,7 @@ static int i2c_wait(struct mpc_i2c *i2c, unsigned timeout, int writing)
 }
 
 #if defined(CONFIG_PPC_MPC52xx) || defined(CONFIG_PPC_MPC512x)
-static const struct mpc_i2c_divider mpc_i2c_dividers_52xx[] __devinitconst = {
+static const struct mpc_i2c_divider mpc_i2c_dividers_52xx[] = {
 	{20, 0x20}, {22, 0x21}, {24, 0x22}, {26, 0x23},
 	{28, 0x24}, {30, 0x01}, {32, 0x25}, {34, 0x02},
 	{36, 0x26}, {40, 0x27}, {44, 0x04}, {48, 0x28},
@@ -193,7 +196,7 @@ static const struct mpc_i2c_divider mpc_i2c_dividers_52xx[] __devinitconst = {
 	{10240, 0x9d}, {12288, 0x9e}, {15360, 0x9f}
 };
 
-static int __devinit mpc_i2c_get_fdr_52xx(struct device_node *node, u32 clock,
+static int mpc_i2c_get_fdr_52xx(struct device_node *node, u32 clock,
 					  int prescaler, u32 *real_clk)
 {
 	const struct mpc_i2c_divider *div = NULL;
@@ -227,7 +230,7 @@ static int __devinit mpc_i2c_get_fdr_52xx(struct device_node *node, u32 clock,
 	return (int)div->fdr;
 }
 
-static void __devinit mpc_i2c_setup_52xx(struct device_node *node,
+static void mpc_i2c_setup_52xx(struct device_node *node,
 					 struct mpc_i2c *i2c,
 					 u32 clock, u32 prescaler)
 {
@@ -249,7 +252,7 @@ static void __devinit mpc_i2c_setup_52xx(struct device_node *node,
 			 fdr);
 }
 #else /* !(CONFIG_PPC_MPC52xx || CONFIG_PPC_MPC512x) */
-static void __devinit mpc_i2c_setup_52xx(struct device_node *node,
+static void mpc_i2c_setup_52xx(struct device_node *node,
 					 struct mpc_i2c *i2c,
 					 u32 clock, u32 prescaler)
 {
@@ -257,7 +260,7 @@ static void __devinit mpc_i2c_setup_52xx(struct device_node *node,
 #endif /* CONFIG_PPC_MPC52xx || CONFIG_PPC_MPC512x */
 
 #ifdef CONFIG_PPC_MPC512x
-static void __devinit mpc_i2c_setup_512x(struct device_node *node,
+static void mpc_i2c_setup_512x(struct device_node *node,
 					 struct mpc_i2c *i2c,
 					 u32 clock, u32 prescaler)
 {
@@ -285,7 +288,7 @@ static void __devinit mpc_i2c_setup_512x(struct device_node *node,
 	mpc_i2c_setup_52xx(node, i2c, clock, prescaler);
 }
 #else /* CONFIG_PPC_MPC512x */
-static void __devinit mpc_i2c_setup_512x(struct device_node *node,
+static void mpc_i2c_setup_512x(struct device_node *node,
 					 struct mpc_i2c *i2c,
 					 u32 clock, u32 prescaler)
 {
@@ -293,7 +296,7 @@ static void __devinit mpc_i2c_setup_512x(struct device_node *node,
 #endif /* CONFIG_PPC_MPC512x */
 
 #ifdef CONFIG_FSL_SOC
-static const struct mpc_i2c_divider mpc_i2c_dividers_8xxx[] __devinitconst = {
+static const struct mpc_i2c_divider mpc_i2c_dividers_8xxx[] = {
 	{160, 0x0120}, {192, 0x0121}, {224, 0x0122}, {256, 0x0123},
 	{288, 0x0100}, {320, 0x0101}, {352, 0x0601}, {384, 0x0102},
 	{416, 0x0602}, {448, 0x0126}, {480, 0x0103}, {512, 0x0127},
@@ -313,7 +316,7 @@ static const struct mpc_i2c_divider mpc_i2c_dividers_8xxx[] __devinitconst = {
 	{49152, 0x011e}, {61440, 0x011f}
 };
 
-static u32 __devinit mpc_i2c_get_sec_cfg_8xxx(void)
+static u32 mpc_i2c_get_sec_cfg_8xxx(void)
 {
 	struct device_node *node = NULL;
 	u32 __iomem *reg;
@@ -342,7 +345,7 @@ static u32 __devinit mpc_i2c_get_sec_cfg_8xxx(void)
 	return val;
 }
 
-static int __devinit mpc_i2c_get_fdr_8xxx(struct device_node *node, u32 clock,
+static int mpc_i2c_get_fdr_8xxx(struct device_node *node, u32 clock,
 					  u32 prescaler, u32 *real_clk)
 {
 	const struct mpc_i2c_divider *div = NULL;
@@ -380,7 +383,7 @@ static int __devinit mpc_i2c_get_fdr_8xxx(struct device_node *node, u32 clock,
 	return div ? (int)div->fdr : -EINVAL;
 }
 
-static void __devinit mpc_i2c_setup_8xxx(struct device_node *node,
+static void mpc_i2c_setup_8xxx(struct device_node *node,
 					 struct mpc_i2c *i2c,
 					 u32 clock, u32 prescaler)
 {
@@ -405,7 +408,7 @@ static void __devinit mpc_i2c_setup_8xxx(struct device_node *node,
 }
 
 #else /* !CONFIG_FSL_SOC */
-static void __devinit mpc_i2c_setup_8xxx(struct device_node *node,
+static void mpc_i2c_setup_8xxx(struct device_node *node,
 					 struct mpc_i2c *i2c,
 					 u32 clock, u32 prescaler)
 {
@@ -573,7 +576,23 @@ static int mpc_xfer(struct i2c_adapter *adap, struct i2c_msg *msgs, int num)
 			    mpc_write(i2c, pmsg->addr, pmsg->buf, pmsg->len, i);
 		}
 	}
-	mpc_i2c_stop(i2c);
+	mpc_i2c_stop(i2c); /* Initiate STOP */
+	orig_jiffies = jiffies;
+	/* Wait until STOP is seen, allow up to 1 s */
+	while (readb(i2c->base + MPC_I2C_SR) & CSR_MBB) {
+		if (time_after(jiffies, orig_jiffies + HZ)) {
+			u8 status = readb(i2c->base + MPC_I2C_SR);
+
+			dev_dbg(i2c->dev, "timeout\n");
+			if ((status & (CSR_MCF | CSR_MBB | CSR_RXAK)) != 0) {
+				writeb(status & ~CSR_MAL,
+				       i2c->base + MPC_I2C_SR);
+				mpc_i2c_fixup(i2c);
+			}
+			return -EIO;
+		}
+		cond_resched();
+	}
 	return (ret < 0) ? ret : num;
 }
 
@@ -596,7 +615,7 @@ static struct i2c_adapter mpc_ops = {
 };
 
 static const struct of_device_id mpc_i2c_of_match[];
-static int __devinit fsl_i2c_probe(struct platform_device *op)
+static int fsl_i2c_probe(struct platform_device *op)
 {
 	const struct of_device_id *match;
 	struct mpc_i2c *i2c;
@@ -644,7 +663,7 @@ static int __devinit fsl_i2c_probe(struct platform_device *op)
 	}
 
 	if (match->data) {
-		struct mpc_i2c_data *data = match->data;
+		const struct mpc_i2c_data *data = match->data;
 		data->setup(op->dev.of_node, i2c, clock, data->prescaler);
 	} else {
 		/* Backwards compatibility */
@@ -660,7 +679,7 @@ static int __devinit fsl_i2c_probe(struct platform_device *op)
 	}
 	dev_info(i2c->dev, "timeout %u us\n", mpc_ops.timeout * 1000000 / HZ);
 
-	dev_set_drvdata(&op->dev, i2c);
+	platform_set_drvdata(op, i2c);
 
 	i2c->adap = mpc_ops;
 	i2c_set_adapdata(&i2c->adap, i2c);
@@ -677,7 +696,6 @@ static int __devinit fsl_i2c_probe(struct platform_device *op)
 	return result;
 
  fail_add:
-	dev_set_drvdata(&op->dev, NULL);
 	free_irq(i2c->irq, i2c);
  fail_request:
 	irq_dispose_mapping(i2c->irq);
@@ -687,12 +705,11 @@ static int __devinit fsl_i2c_probe(struct platform_device *op)
 	return result;
 };
 
-static int __devexit fsl_i2c_remove(struct platform_device *op)
+static int fsl_i2c_remove(struct platform_device *op)
 {
-	struct mpc_i2c *i2c = dev_get_drvdata(&op->dev);
+	struct mpc_i2c *i2c = platform_get_drvdata(op);
 
 	i2c_del_adapter(&i2c->adap);
-	dev_set_drvdata(&op->dev, NULL);
 
 	if (i2c->irq)
 		free_irq(i2c->irq, i2c);
@@ -703,24 +720,48 @@ static int __devexit fsl_i2c_remove(struct platform_device *op)
 	return 0;
 };
 
-static struct mpc_i2c_data mpc_i2c_data_512x __devinitdata = {
+#ifdef CONFIG_PM
+static int mpc_i2c_suspend(struct device *dev)
+{
+	struct mpc_i2c *i2c = dev_get_drvdata(dev);
+
+	i2c->fdr = readb(i2c->base + MPC_I2C_FDR);
+	i2c->dfsrr = readb(i2c->base + MPC_I2C_DFSRR);
+
+	return 0;
+}
+
+static int mpc_i2c_resume(struct device *dev)
+{
+	struct mpc_i2c *i2c = dev_get_drvdata(dev);
+
+	writeb(i2c->fdr, i2c->base + MPC_I2C_FDR);
+	writeb(i2c->dfsrr, i2c->base + MPC_I2C_DFSRR);
+
+	return 0;
+}
+
+SIMPLE_DEV_PM_OPS(mpc_i2c_pm_ops, mpc_i2c_suspend, mpc_i2c_resume);
+#endif
+
+static const struct mpc_i2c_data mpc_i2c_data_512x = {
 	.setup = mpc_i2c_setup_512x,
 };
 
-static struct mpc_i2c_data mpc_i2c_data_52xx __devinitdata = {
+static const struct mpc_i2c_data mpc_i2c_data_52xx = {
 	.setup = mpc_i2c_setup_52xx,
 };
 
-static struct mpc_i2c_data mpc_i2c_data_8313 __devinitdata = {
+static const struct mpc_i2c_data mpc_i2c_data_8313 = {
 	.setup = mpc_i2c_setup_8xxx,
 };
 
-static struct mpc_i2c_data mpc_i2c_data_8543 __devinitdata = {
+static const struct mpc_i2c_data mpc_i2c_data_8543 = {
 	.setup = mpc_i2c_setup_8xxx,
 	.prescaler = 2,
 };
 
-static struct mpc_i2c_data mpc_i2c_data_8544 __devinitdata = {
+static const struct mpc_i2c_data mpc_i2c_data_8544 = {
 	.setup = mpc_i2c_setup_8xxx,
 	.prescaler = 3,
 };
@@ -742,11 +783,14 @@ MODULE_DEVICE_TABLE(of, mpc_i2c_of_match);
 /* Structure for a device driver */
 static struct platform_driver mpc_i2c_driver = {
 	.probe		= fsl_i2c_probe,
-	.remove		= __devexit_p(fsl_i2c_remove),
+	.remove		= fsl_i2c_remove,
 	.driver = {
 		.owner = THIS_MODULE,
 		.name = DRV_NAME,
 		.of_match_table = mpc_i2c_of_match,
+#ifdef CONFIG_PM
+		.pm = &mpc_i2c_pm_ops,
+#endif
 	},
 };
 

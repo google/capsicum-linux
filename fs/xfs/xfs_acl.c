@@ -21,6 +21,8 @@
 #include "xfs_bmap_btree.h"
 #include "xfs_inode.h"
 #include "xfs_vnodeops.h"
+#include "xfs_sb.h"
+#include "xfs_mount.h"
 #include "xfs_trace.h"
 #include <linux/slab.h>
 #include <linux/xattr.h>
@@ -34,7 +36,9 @@
  */
 
 STATIC struct posix_acl *
-xfs_acl_from_disk(struct xfs_acl *aclp)
+xfs_acl_from_disk(
+	struct xfs_acl	*aclp,
+	int		max_entries)
 {
 	struct posix_acl_entry *acl_e;
 	struct posix_acl *acl;
@@ -42,7 +46,7 @@ xfs_acl_from_disk(struct xfs_acl *aclp)
 	unsigned int count, i;
 
 	count = be32_to_cpu(aclp->acl_cnt);
-	if (count > XFS_ACL_MAX_ENTRIES)
+	if (count > max_entries)
 		return ERR_PTR(-EFSCORRUPTED);
 
 	acl = posix_acl_alloc(count, GFP_KERNEL);
@@ -108,9 +112,9 @@ xfs_get_acl(struct inode *inode, int type)
 	struct xfs_inode *ip = XFS_I(inode);
 	struct posix_acl *acl;
 	struct xfs_acl *xfs_acl;
-	int len = sizeof(struct xfs_acl);
 	unsigned char *ea_name;
 	int error;
+	int len;
 
 	acl = get_cached_acl(inode, type);
 	if (acl != ACL_NOT_CACHED)
@@ -133,8 +137,8 @@ xfs_get_acl(struct inode *inode, int type)
 	 * If we have a cached ACLs value just return it, not need to
 	 * go out to the disk.
 	 */
-
-	xfs_acl = kzalloc(sizeof(struct xfs_acl), GFP_KERNEL);
+	len = XFS_ACL_MAX_SIZE(ip->i_mount);
+	xfs_acl = kzalloc(len, GFP_KERNEL);
 	if (!xfs_acl)
 		return ERR_PTR(-ENOMEM);
 
@@ -153,7 +157,7 @@ xfs_get_acl(struct inode *inode, int type)
 		goto out;
 	}
 
-	acl = xfs_acl_from_disk(xfs_acl);
+	acl = xfs_acl_from_disk(xfs_acl, XFS_ACL_MAX_ENTRIES(ip->i_mount));
 	if (IS_ERR(acl))
 		goto out;
 
@@ -189,16 +193,17 @@ xfs_set_acl(struct inode *inode, int type, struct posix_acl *acl)
 
 	if (acl) {
 		struct xfs_acl *xfs_acl;
-		int len;
+		int len = XFS_ACL_MAX_SIZE(ip->i_mount);
 
-		xfs_acl = kzalloc(sizeof(struct xfs_acl), GFP_KERNEL);
+		xfs_acl = kzalloc(len, GFP_KERNEL);
 		if (!xfs_acl)
 			return -ENOMEM;
 
 		xfs_acl_to_disk(xfs_acl, acl);
-		len = sizeof(struct xfs_acl) -
-			(sizeof(struct xfs_acl_entry) *
-			 (XFS_ACL_MAX_ENTRIES - acl->a_count));
+
+		/* subtract away the unused acl entries */
+		len -= sizeof(struct xfs_acl_entry) *
+			 (XFS_ACL_MAX_ENTRIES(ip->i_mount) - acl->a_count);
 
 		error = -xfs_attr_set(ip, ea_name, (unsigned char *)xfs_acl,
 				len, ATTR_ROOT);
@@ -243,7 +248,7 @@ xfs_set_mode(struct inode *inode, umode_t mode)
 static int
 xfs_acl_exists(struct inode *inode, unsigned char *name)
 {
-	int len = sizeof(struct xfs_acl);
+	int len = XFS_ACL_MAX_SIZE(XFS_M(inode->i_sb));
 
 	return (xfs_attr_get(XFS_I(inode), name, NULL, &len,
 			    ATTR_ROOT|ATTR_KERNOVAL) == 0);
@@ -337,7 +342,7 @@ xfs_xattr_acl_get(struct dentry *dentry, const char *name,
 	if (acl == NULL)
 		return -ENODATA;
 
-	error = posix_acl_to_xattr(acl, value, size);
+	error = posix_acl_to_xattr(&init_user_ns, acl, value, size);
 	posix_acl_release(acl);
 
 	return error;
@@ -361,7 +366,7 @@ xfs_xattr_acl_set(struct dentry *dentry, const char *name,
 	if (!value)
 		goto set_acl;
 
-	acl = posix_acl_from_xattr(value, size);
+	acl = posix_acl_from_xattr(&init_user_ns, value, size);
 	if (!acl) {
 		/*
 		 * acl_set_file(3) may request that we set default ACLs with
@@ -379,7 +384,7 @@ xfs_xattr_acl_set(struct dentry *dentry, const char *name,
 		goto out_release;
 
 	error = -EINVAL;
-	if (acl->a_count > XFS_ACL_MAX_ENTRIES)
+	if (acl->a_count > XFS_ACL_MAX_ENTRIES(XFS_M(inode->i_sb)))
 		goto out_release;
 
 	if (type == ACL_TYPE_ACCESS) {

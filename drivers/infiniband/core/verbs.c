@@ -348,7 +348,8 @@ static void __ib_shared_qp_event_handler(struct ib_event *event, void *context)
 	struct ib_qp *qp = context;
 
 	list_for_each_entry(event->element.qp, &qp->open_list, open_list)
-		event->element.qp->event_handler(event, event->element.qp->qp_context);
+		if (event->element.qp->event_handler)
+			event->element.qp->event_handler(event, event->element.qp->qp_context);
 }
 
 static void __ib_insert_xrcd_qp(struct ib_xrcd *xrcd, struct ib_qp *qp)
@@ -479,6 +480,7 @@ static const struct {
 				[IB_QPT_UD]  = (IB_QP_PKEY_INDEX		|
 						IB_QP_PORT			|
 						IB_QP_QKEY),
+				[IB_QPT_RAW_PACKET] = IB_QP_PORT,
 				[IB_QPT_UC]  = (IB_QP_PKEY_INDEX		|
 						IB_QP_PORT			|
 						IB_QP_ACCESS_FLAGS),
@@ -1098,18 +1100,19 @@ EXPORT_SYMBOL(ib_free_fast_reg_page_list);
 
 /* Memory windows */
 
-struct ib_mw *ib_alloc_mw(struct ib_pd *pd)
+struct ib_mw *ib_alloc_mw(struct ib_pd *pd, enum ib_mw_type type)
 {
 	struct ib_mw *mw;
 
 	if (!pd->device->alloc_mw)
 		return ERR_PTR(-ENOSYS);
 
-	mw = pd->device->alloc_mw(pd);
+	mw = pd->device->alloc_mw(pd, type);
 	if (!IS_ERR(mw)) {
 		mw->device  = pd->device;
 		mw->pd      = pd;
 		mw->uobject = NULL;
+		mw->type    = type;
 		atomic_inc(&pd->usecnt);
 	}
 
@@ -1183,23 +1186,33 @@ EXPORT_SYMBOL(ib_dealloc_fmr);
 
 int ib_attach_mcast(struct ib_qp *qp, union ib_gid *gid, u16 lid)
 {
+	int ret;
+
 	if (!qp->device->attach_mcast)
 		return -ENOSYS;
 	if (gid->raw[0] != 0xff || qp->qp_type != IB_QPT_UD)
 		return -EINVAL;
 
-	return qp->device->attach_mcast(qp, gid, lid);
+	ret = qp->device->attach_mcast(qp, gid, lid);
+	if (!ret)
+		atomic_inc(&qp->usecnt);
+	return ret;
 }
 EXPORT_SYMBOL(ib_attach_mcast);
 
 int ib_detach_mcast(struct ib_qp *qp, union ib_gid *gid, u16 lid)
 {
+	int ret;
+
 	if (!qp->device->detach_mcast)
 		return -ENOSYS;
 	if (gid->raw[0] != 0xff || qp->qp_type != IB_QPT_UD)
 		return -EINVAL;
 
-	return qp->device->detach_mcast(qp, gid, lid);
+	ret = qp->device->detach_mcast(qp, gid, lid);
+	if (!ret)
+		atomic_dec(&qp->usecnt);
+	return ret;
 }
 EXPORT_SYMBOL(ib_detach_mcast);
 

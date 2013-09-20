@@ -35,23 +35,23 @@
 #include <linux/mmc/host.h>
 #include <linux/mmc/card.h>
 #include <linux/regulator/fixed.h>
+#include <linux/usb/phy.h>
+#include <linux/platform_data/spi-omap2-mcspi.h>
 
 #include <asm/mach-types.h>
 #include <asm/mach/arch.h>
 #include <asm/mach/map.h>
 
-#include <plat/board.h>
 #include "common.h"
-#include <mach/hardware.h>
-#include <plat/mcspi.h>
-#include <plat/usb.h>
 #include <video/omapdss.h>
-#include <plat/nand.h>
+#include <video/omap-panel-data.h>
+#include <linux/platform_data/mtd-nand-omap2.h>
 
 #include "mux.h"
 #include "sdram-micron-mt46h32m32lf-6.h"
 #include "hsmmc.h"
 #include "common-board-devices.h"
+#include "gpmc-nand.h"
 
 #define PANDORA_WIFI_IRQ_GPIO		21
 #define PANDORA_WIFI_NRESET_GPIO	23
@@ -231,12 +231,16 @@ static struct twl4030_keypad_data pandora_kp_data = {
 	.rep		= 1,
 };
 
+static struct panel_tpo_td043_data lcd_data = {
+	.nreset_gpio		= 157,
+};
+
 static struct omap_dss_device pandora_lcd_device = {
 	.name			= "lcd",
 	.driver_name		= "tpo_td043mtea1_panel",
 	.type			= OMAP_DISPLAY_TYPE_DPI,
 	.phy.dpi.data_lines	= 24,
-	.reset_gpio		= 157,
+	.data			= &lcd_data,
 };
 
 static struct omap_dss_device pandora_tv_device = {
@@ -321,9 +325,6 @@ static int omap3pandora_twl_gpio_setup(struct device *dev,
 }
 
 static struct twl4030_gpio_platform_data omap3pandora_gpio_data = {
-	.gpio_base	= OMAP_MAX_GPIO_LINES,
-	.irq_base	= TWL4030_GPIO_IRQ_BASE,
-	.irq_end	= TWL4030_GPIO_IRQ_END,
 	.setup		= omap3pandora_twl_gpio_setup,
 };
 
@@ -342,6 +343,7 @@ static struct regulator_consumer_supply pandora_vmmc3_supply[] = {
 static struct regulator_consumer_supply pandora_vdds_supplies[] = {
 	REGULATOR_SUPPLY("vdds_sdi", "omapdss"),
 	REGULATOR_SUPPLY("vdds_dsi", "omapdss"),
+	REGULATOR_SUPPLY("vdds_dsi", "omapdss_dpi.0"),
 	REGULATOR_SUPPLY("vdds_dsi", "omapdss_dsi.0"),
 };
 
@@ -350,7 +352,7 @@ static struct regulator_consumer_supply pandora_vcc_lcd_supply[] = {
 };
 
 static struct regulator_consumer_supply pandora_usb_phy_supply[] = {
-	REGULATOR_SUPPLY("hsusb1", "ehci-omap.0"),
+	REGULATOR_SUPPLY("vcc", "nop_usb_xceiv.2"),	/* hsusb port 2 */
 };
 
 /* ads7846 on SPI and 2 nub controllers on I2C */
@@ -565,6 +567,14 @@ fail:
 	printk(KERN_ERR "wl1251 board initialisation failed\n");
 }
 
+static struct usbhs_phy_data phy_data[] __initdata = {
+	{
+		.port = 2,
+		.reset_gpio = 16,
+		.vcc_gpio = -EINVAL,
+	},
+};
+
 static struct platform_device *omap3pandora_devices[] __initdata = {
 	&pandora_leds_gpio,
 	&pandora_keys_gpio,
@@ -572,16 +582,8 @@ static struct platform_device *omap3pandora_devices[] __initdata = {
 	&pandora_backlight,
 };
 
-static const struct usbhs_omap_board_data usbhs_bdata __initconst = {
-
-	.port_mode[0] = OMAP_USBHS_PORT_MODE_UNUSED,
+static struct usbhs_omap_platform_data usbhs_bdata __initdata = {
 	.port_mode[1] = OMAP_EHCI_PORT_MODE_PHY,
-	.port_mode[2] = OMAP_USBHS_PORT_MODE_UNUSED,
-
-	.phy_reset  = true,
-	.reset_gpio_port[0]  = -EINVAL,
-	.reset_gpio_port[1]  = 16,
-	.reset_gpio_port[2]  = -EINVAL
 };
 
 #ifdef CONFIG_OMAP_MUX
@@ -605,9 +607,13 @@ static void __init omap3pandora_init(void)
 	spi_register_board_info(omap3pandora_spi_board_info,
 			ARRAY_SIZE(omap3pandora_spi_board_info));
 	omap_ads7846_init(1, OMAP3_PANDORA_TS_GPIO, 0, NULL);
+
+	usbhs_init_phys(phy_data, ARRAY_SIZE(phy_data));
 	usbhs_init(&usbhs_bdata);
+
+	usb_bind_phy("musb-hdrc.0.auto", 0, "twl4030_usb");
 	usb_musb_init(NULL);
-	gpmc_nand_init(&pandora_nand_data);
+	gpmc_nand_init(&pandora_nand_data, NULL);
 
 	/* Ensure SDRC pins are mux'd for self-refresh */
 	omap_mux_init_signal("sdrc_cke0", OMAP_PIN_OUTPUT);
@@ -622,6 +628,7 @@ MACHINE_START(OMAP3_PANDORA, "Pandora Handheld Console")
 	.init_irq	= omap3_init_irq,
 	.handle_irq	= omap3_intc_handle_irq,
 	.init_machine	= omap3pandora_init,
-	.timer		= &omap3_timer,
-	.restart	= omap_prcm_restart,
+	.init_late	= omap35xx_init_late,
+	.init_time	= omap3_sync32k_timer_init,
+	.restart	= omap3xxx_restart,
 MACHINE_END

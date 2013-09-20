@@ -142,21 +142,23 @@ int snd_soc_codec_set_cache_io(struct snd_soc_codec *codec,
 	case SND_SOC_REGMAP:
 		/* Device has made its own regmap arrangements */
 		codec->using_regmap = true;
+		if (!codec->control_data)
+			codec->control_data = dev_get_regmap(codec->dev, NULL);
 
-		ret = regmap_get_val_bytes(codec->control_data);
-		/* Errors are legitimate for non-integer byte multiples */
-		if (ret > 0)
-			codec->val_bytes = ret;
+		if (codec->control_data) {
+			ret = regmap_get_val_bytes(codec->control_data);
+			/* Errors are legitimate for non-integer byte
+			 * multiples */
+			if (ret > 0)
+				codec->val_bytes = ret;
+		}
 		break;
 
 	default:
 		return -EINVAL;
 	}
 
-	if (IS_ERR(codec->control_data))
-		return PTR_ERR(codec->control_data);
-
-	return 0;
+	return PTR_RET(codec->control_data);
 }
 EXPORT_SYMBOL_GPL(snd_soc_codec_set_cache_io);
 #else

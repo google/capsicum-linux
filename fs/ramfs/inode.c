@@ -114,7 +114,7 @@ static int ramfs_mkdir(struct inode * dir, struct dentry * dentry, umode_t mode)
 	return retval;
 }
 
-static int ramfs_create(struct inode *dir, struct dentry *dentry, umode_t mode, struct nameidata *nd)
+static int ramfs_create(struct inode *dir, struct dentry *dentry, umode_t mode, bool excl)
 {
 	return ramfs_mknod(dir, dentry, mode | S_IFREG, 0);
 }
@@ -260,6 +260,7 @@ static struct file_system_type ramfs_fs_type = {
 	.name		= "ramfs",
 	.mount		= ramfs_mount,
 	.kill_sb	= ramfs_kill_sb,
+	.fs_flags	= FS_USERNS_MOUNT,
 };
 static struct file_system_type rootfs_fs_type = {
 	.name		= "rootfs",

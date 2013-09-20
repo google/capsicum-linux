@@ -22,12 +22,12 @@
 #include <linux/input.h>
 #include <linux/gpio.h>
 
-#include <asm/hardware/vic.h>
 #include <asm/mach/arch.h>
 #include <asm/mach/map.h>
 #include <asm/setup.h>
 #include <asm/mach-types.h>
 
+#include <video/samsung_fimd.h>
 #include <mach/map.h>
 #include <mach/regs-clock.h>
 
@@ -38,8 +38,7 @@
 #include <plat/fb.h>
 #include <plat/fimc-core.h>
 #include <plat/sdhci.h>
-#include <plat/s5p-time.h>
-#include <plat/regs-fb-v4.h>
+#include <plat/samsung-time.h>
 
 #include "common.h"
 
@@ -96,38 +95,34 @@ static struct s3c2410_uartcfg aquila_uartcfgs[] __initdata = {
 
 /* Frame Buffer */
 static struct s3c_fb_pd_win aquila_fb_win0 = {
-	.win_mode = {
-		.left_margin = 16,
-		.right_margin = 16,
-		.upper_margin = 3,
-		.lower_margin = 28,
-		.hsync_len = 2,
-		.vsync_len = 2,
-		.xres = 480,
-		.yres = 800,
-	},
 	.max_bpp = 32,
 	.default_bpp = 16,
+	.xres = 480,
+	.yres = 800,
 };
 
 static struct s3c_fb_pd_win aquila_fb_win1 = {
-	.win_mode = {
-		.left_margin = 16,
-		.right_margin = 16,
-		.upper_margin = 3,
-		.lower_margin = 28,
-		.hsync_len = 2,
-		.vsync_len = 2,
-		.xres = 480,
-		.yres = 800,
-	},
 	.max_bpp = 32,
 	.default_bpp = 16,
+	.xres = 480,
+	.yres = 800,
+};
+
+static struct fb_videomode aquila_lcd_timing = {
+	.left_margin = 16,
+	.right_margin = 16,
+	.upper_margin = 3,
+	.lower_margin = 28,
+	.hsync_len = 2,
+	.vsync_len = 2,
+	.xres = 480,
+	.yres = 800,
 };
 
 static struct s3c_fb_platdata aquila_lcd_pdata __initdata = {
 	.win[0]		= &aquila_fb_win0,
 	.win[1]		= &aquila_fb_win1,
+	.vtiming	= &aquila_lcd_timing,
 	.vidcon0	= VIDCON0_VIDOUT_RGB | VIDCON0_PNRMODE_RGB,
 	.vidcon1	= VIDCON1_INV_HSYNC | VIDCON1_INV_VSYNC |
 			  VIDCON1_INV_VCLK | VIDCON1_INV_VDEN,
@@ -382,12 +377,8 @@ static struct max8998_platform_data aquila_max8998_pdata = {
 	.buck1_set1	= S5PV210_GPH0(3),
 	.buck1_set2	= S5PV210_GPH0(4),
 	.buck2_set3	= S5PV210_GPH0(5),
-	.buck1_voltage1	= 1200000,
-	.buck1_voltage2	= 1200000,
-	.buck1_voltage3	= 1200000,
-	.buck1_voltage4	= 1200000,
-	.buck2_voltage1	= 1200000,
-	.buck2_voltage2	= 1200000,
+	.buck1_voltage	= { 1200000, 1200000, 1200000, 1200000 },
+	.buck2_voltage	= { 1200000, 1200000 },
 };
 #endif
 
@@ -604,10 +595,17 @@ static void aquila_setup_sdhci(void)
 	s3c_sdhci2_set_platdata(&aquila_hsmmc2_data);
 };
 
+/* Audio device */
+static struct platform_device aquila_device_audio = {
+	.name = "smdk-audio",
+	.id = -1,
+};
+
 static struct platform_device *aquila_devices[] __initdata = {
 	&aquila_i2c_gpio_pmic,
 	&aquila_i2c_gpio5,
 	&aquila_device_gpiokeys,
+	&aquila_device_audio,
 	&s3c_device_fb,
 	&s5p_device_onenand,
 	&s3c_device_hsmmc0,
@@ -649,7 +647,7 @@ static void __init aquila_map_io(void)
 	s5pv210_init_io(NULL, 0);
 	s3c24xx_init_clocks(24000000);
 	s3c24xx_init_uarts(aquila_uartcfgs, ARRAY_SIZE(aquila_uartcfgs));
-	s5p_set_timer_source(S5P_PWM3, S5P_PWM4);
+	samsung_set_timer_source(SAMSUNG_PWM3, SAMSUNG_PWM4);
 }
 
 static void __init aquila_machine_init(void)
@@ -682,9 +680,8 @@ MACHINE_START(AQUILA, "Aquila")
 	   Kyungmin Park <kyungmin.park@samsung.com> */
 	.atag_offset	= 0x100,
 	.init_irq	= s5pv210_init_irq,
-	.handle_irq	= vic_handle_irq,
 	.map_io		= aquila_map_io,
 	.init_machine	= aquila_machine_init,
-	.timer		= &s5p_timer,
+	.init_time	= samsung_timer_init,
 	.restart	= s5pv210_restart,
 MACHINE_END

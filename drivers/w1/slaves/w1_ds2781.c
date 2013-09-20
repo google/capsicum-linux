@@ -58,29 +58,15 @@ int w1_ds2781_io(struct device *dev, char *buf, int addr, size_t count,
 	if (!dev)
 		return -ENODEV;
 
-	mutex_lock(&sl->master->mutex);
+	mutex_lock(&sl->master->bus_mutex);
 
 	ret = w1_ds2781_do_io(dev, buf, addr, count, io);
 
-	mutex_unlock(&sl->master->mutex);
+	mutex_unlock(&sl->master->bus_mutex);
 
 	return ret;
 }
 EXPORT_SYMBOL(w1_ds2781_io);
-
-int w1_ds2781_io_nolock(struct device *dev, char *buf, int addr, size_t count,
-			int io)
-{
-	int ret;
-
-	if (!dev)
-		return -ENODEV;
-
-	ret = w1_ds2781_do_io(dev, buf, addr, count, io);
-
-	return ret;
-}
-EXPORT_SYMBOL(w1_ds2781_io_nolock);
 
 int w1_ds2781_eeprom_cmd(struct device *dev, int addr, int cmd)
 {
@@ -89,14 +75,14 @@ int w1_ds2781_eeprom_cmd(struct device *dev, int addr, int cmd)
 	if (!dev)
 		return -EINVAL;
 
-	mutex_lock(&sl->master->mutex);
+	mutex_lock(&sl->master->bus_mutex);
 
 	if (w1_reset_select_slave(sl) == 0) {
 		w1_write_8(sl->master, cmd);
 		w1_write_8(sl->master, addr);
 	}
 
-	mutex_unlock(&sl->master->mutex);
+	mutex_unlock(&sl->master->bus_mutex);
 	return 0;
 }
 EXPORT_SYMBOL(w1_ds2781_eeprom_cmd);
@@ -153,8 +139,9 @@ static int w1_ds2781_add_slave(struct w1_slave *sl)
 	return 0;
 
 bin_attr_failed:
+	platform_device_del(pdev);
 pdev_add_failed:
-	platform_device_unregister(pdev);
+	platform_device_put(pdev);
 pdev_alloc_failed:
 	ida_simple_remove(&bat_ida, id);
 noid:
@@ -199,3 +186,4 @@ module_exit(w1_ds2781_exit);
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Renata Sayakhova <renata@oktetlabs.ru>");
 MODULE_DESCRIPTION("1-wire Driver for Maxim/Dallas DS2781 Stand-Alone Fuel Gauge IC");
+MODULE_ALIAS("w1-family-" __stringify(W1_FAMILY_DS2781));

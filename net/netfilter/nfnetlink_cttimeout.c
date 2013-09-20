@@ -41,7 +41,8 @@ MODULE_DESCRIPTION("cttimeout: Extended Netfilter Connection Tracking timeout tu
 static LIST_HEAD(cttimeout_list);
 
 static const struct nla_policy cttimeout_nla_policy[CTA_TIMEOUT_MAX+1] = {
-	[CTA_TIMEOUT_NAME]	= { .type = NLA_NUL_STRING },
+	[CTA_TIMEOUT_NAME]	= { .type = NLA_NUL_STRING,
+				    .len  = CTNL_TIMEOUT_NAME_MAX - 1},
 	[CTA_TIMEOUT_L3PROTO]	= { .type = NLA_U16 },
 	[CTA_TIMEOUT_L4PROTO]	= { .type = NLA_U8 },
 	[CTA_TIMEOUT_DATA]	= { .type = NLA_NESTED },
@@ -49,18 +50,22 @@ static const struct nla_policy cttimeout_nla_policy[CTA_TIMEOUT_MAX+1] = {
 
 static int
 ctnl_timeout_parse_policy(struct ctnl_timeout *timeout,
-			       struct nf_conntrack_l4proto *l4proto,
-			       const struct nlattr *attr)
+			  struct nf_conntrack_l4proto *l4proto,
+			  struct net *net,
+			  const struct nlattr *attr)
 {
 	int ret = 0;
 
 	if (likely(l4proto->ctnl_timeout.nlattr_to_obj)) {
 		struct nlattr *tb[l4proto->ctnl_timeout.nlattr_max+1];
 
-		nla_parse_nested(tb, l4proto->ctnl_timeout.nlattr_max,
-				 attr, l4proto->ctnl_timeout.nla_policy);
+		ret = nla_parse_nested(tb, l4proto->ctnl_timeout.nlattr_max,
+				       attr, l4proto->ctnl_timeout.nla_policy);
+		if (ret < 0)
+			return ret;
 
-		ret = l4proto->ctnl_timeout.nlattr_to_obj(tb, &timeout->data);
+		ret = l4proto->ctnl_timeout.nlattr_to_obj(tb, net,
+							  &timeout->data);
 	}
 	return ret;
 }
@@ -74,6 +79,7 @@ cttimeout_new_timeout(struct sock *ctnl, struct sk_buff *skb,
 	__u8 l4num;
 	struct nf_conntrack_l4proto *l4proto;
 	struct ctnl_timeout *timeout, *matching = NULL;
+	struct net *net = sock_net(skb->sk);
 	char *name;
 	int ret;
 
@@ -117,7 +123,7 @@ cttimeout_new_timeout(struct sock *ctnl, struct sk_buff *skb,
 				goto err_proto_put;
 			}
 
-			ret = ctnl_timeout_parse_policy(matching, l4proto,
+			ret = ctnl_timeout_parse_policy(matching, l4proto, net,
 							cda[CTA_TIMEOUT_DATA]);
 			return ret;
 		}
@@ -132,7 +138,7 @@ cttimeout_new_timeout(struct sock *ctnl, struct sk_buff *skb,
 		goto err_proto_put;
 	}
 
-	ret = ctnl_timeout_parse_policy(timeout, l4proto,
+	ret = ctnl_timeout_parse_policy(timeout, l4proto, net,
 					cda[CTA_TIMEOUT_DATA]);
 	if (ret < 0)
 		goto err;
@@ -152,16 +158,16 @@ err_proto_put:
 }
 
 static int
-ctnl_timeout_fill_info(struct sk_buff *skb, u32 pid, u32 seq, u32 type,
+ctnl_timeout_fill_info(struct sk_buff *skb, u32 portid, u32 seq, u32 type,
 		       int event, struct ctnl_timeout *timeout)
 {
 	struct nlmsghdr *nlh;
 	struct nfgenmsg *nfmsg;
-	unsigned int flags = pid ? NLM_F_MULTI : 0;
+	unsigned int flags = portid ? NLM_F_MULTI : 0;
 	struct nf_conntrack_l4proto *l4proto = timeout->l4proto;
 
 	event |= NFNL_SUBSYS_CTNETLINK_TIMEOUT << 8;
-	nlh = nlmsg_put(skb, pid, seq, event, sizeof(*nfmsg), flags);
+	nlh = nlmsg_put(skb, portid, seq, event, sizeof(*nfmsg), flags);
 	if (nlh == NULL)
 		goto nlmsg_failure;
 
@@ -170,11 +176,12 @@ ctnl_timeout_fill_info(struct sk_buff *skb, u32 pid, u32 seq, u32 type,
 	nfmsg->version = NFNETLINK_V0;
 	nfmsg->res_id = 0;
 
-	NLA_PUT_STRING(skb, CTA_TIMEOUT_NAME, timeout->name);
-	NLA_PUT_BE16(skb, CTA_TIMEOUT_L3PROTO, htons(timeout->l3num));
-	NLA_PUT_U8(skb, CTA_TIMEOUT_L4PROTO, timeout->l4proto->l4proto);
-	NLA_PUT_BE32(skb, CTA_TIMEOUT_USE,
-			htonl(atomic_read(&timeout->refcnt)));
+	if (nla_put_string(skb, CTA_TIMEOUT_NAME, timeout->name) ||
+	    nla_put_be16(skb, CTA_TIMEOUT_L3PROTO, htons(timeout->l3num)) ||
+	    nla_put_u8(skb, CTA_TIMEOUT_L4PROTO, timeout->l4proto->l4proto) ||
+	    nla_put_be32(skb, CTA_TIMEOUT_USE,
+			 htonl(atomic_read(&timeout->refcnt))))
+		goto nla_put_failure;
 
 	if (likely(l4proto->ctnl_timeout.obj_to_nlattr)) {
 		struct nlattr *nest_parms;
@@ -215,10 +222,13 @@ ctnl_timeout_dump(struct sk_buff *skb, struct netlink_callback *cb)
 
 	rcu_read_lock();
 	list_for_each_entry_rcu(cur, &cttimeout_list, head) {
-		if (last && cur != last)
-			continue;
+		if (last) {
+			if (cur != last)
+				continue;
 
-		if (ctnl_timeout_fill_info(skb, NETLINK_CB(cb->skb).pid,
+			last = NULL;
+		}
+		if (ctnl_timeout_fill_info(skb, NETLINK_CB(cb->skb).portid,
 					   cb->nlh->nlmsg_seq,
 					   NFNL_MSG_TYPE(cb->nlh->nlmsg_type),
 					   IPCTNL_MSG_TIMEOUT_NEW, cur) < 0) {
@@ -264,7 +274,7 @@ cttimeout_get_timeout(struct sock *ctnl, struct sk_buff *skb,
 			break;
 		}
 
-		ret = ctnl_timeout_fill_info(skb2, NETLINK_CB(skb).pid,
+		ret = ctnl_timeout_fill_info(skb2, NETLINK_CB(skb).portid,
 					     nlh->nlmsg_seq,
 					     NFNL_MSG_TYPE(nlh->nlmsg_type),
 					     IPCTNL_MSG_TIMEOUT_NEW, cur);
@@ -272,7 +282,7 @@ cttimeout_get_timeout(struct sock *ctnl, struct sk_buff *skb,
 			kfree_skb(skb2);
 			break;
 		}
-		ret = netlink_unicast(ctnl, skb2, NETLINK_CB(skb).pid,
+		ret = netlink_unicast(ctnl, skb2, NETLINK_CB(skb).portid,
 					MSG_DONTWAIT);
 		if (ret > 0)
 			ret = 0;

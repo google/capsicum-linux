@@ -32,6 +32,7 @@
 #include <linux/perf_event.h>
 #include <linux/magic.h>
 #include <linux/ratelimit.h>
+#include <linux/context_tracking.h>
 
 #include <asm/firmware.h>
 #include <asm/page.h>
@@ -113,19 +114,6 @@ static int store_updates_sp(struct pt_regs *regs)
 #define MM_FAULT_CONTINUE	-1
 #define MM_FAULT_ERR(sig)	(sig)
 
-static int out_of_memory(struct pt_regs *regs)
-{
-	/*
-	 * We ran out of memory, or some other thing happened to us that made
-	 * us unable to handle the page fault gracefully.
-	 */
-	up_read(&current->mm->mmap_sem);
-	if (!user_mode(regs))
-		return MM_FAULT_ERR(SIGKILL);
-	pagefault_out_of_memory();
-	return MM_FAULT_RETURN;
-}
-
 static int do_sigbus(struct pt_regs *regs, unsigned long address)
 {
 	siginfo_t info;
@@ -133,6 +121,7 @@ static int do_sigbus(struct pt_regs *regs, unsigned long address)
 	up_read(&current->mm->mmap_sem);
 
 	if (user_mode(regs)) {
+		current->thread.trap_nr = BUS_ADRERR;
 		info.si_signo = SIGBUS;
 		info.si_errno = 0;
 		info.si_code = BUS_ADRERR;
@@ -168,8 +157,18 @@ static int mm_fault_error(struct pt_regs *regs, unsigned long addr, int fault)
 		return MM_FAULT_CONTINUE;
 
 	/* Out of memory */
-	if (fault & VM_FAULT_OOM)
-		return out_of_memory(regs);
+	if (fault & VM_FAULT_OOM) {
+		up_read(&current->mm->mmap_sem);
+
+		/*
+		 * We ran out of memory, or some other thing happened to us that
+		 * made us unable to handle the page fault gracefully.
+		 */
+		if (!user_mode(regs))
+			return MM_FAULT_ERR(SIGKILL);
+		pagefault_out_of_memory();
+		return MM_FAULT_RETURN;
+	}
 
 	/* Bus error. x86 handles HWPOISON here, we'll add this if/when
 	 * we support the feature in HW
@@ -198,6 +197,7 @@ static int mm_fault_error(struct pt_regs *regs, unsigned long addr, int fault)
 int __kprobes do_page_fault(struct pt_regs *regs, unsigned long address,
 			    unsigned long error_code)
 {
+	enum ctx_state prev_state = exception_enter();
 	struct vm_area_struct * vma;
 	struct mm_struct *mm = current->mm;
 	unsigned int flags = FAULT_FLAG_ALLOW_RETRY | FAULT_FLAG_KILLABLE;
@@ -206,6 +206,7 @@ int __kprobes do_page_fault(struct pt_regs *regs, unsigned long address,
 	int trap = TRAP(regs);
  	int is_exec = trap == 0x400;
 	int fault;
+	int rc = 0;
 
 #if !(defined(CONFIG_4xx) || defined(CONFIG_BOOKE))
 	/*
@@ -232,28 +233,30 @@ int __kprobes do_page_fault(struct pt_regs *regs, unsigned long address,
 	 * look at it
 	 */
 	if (error_code & ICSWX_DSI_UCT) {
-		int rc = acop_handle_fault(regs, address, error_code);
+		rc = acop_handle_fault(regs, address, error_code);
 		if (rc)
-			return rc;
+			goto bail;
 	}
 #endif /* CONFIG_PPC_ICSWX */
 
 	if (notify_page_fault(regs))
-		return 0;
+		goto bail;
 
 	if (unlikely(debugger_fault_handler(regs)))
-		return 0;
+		goto bail;
 
 	/* On a kernel SLB miss we can only check for a valid exception entry */
-	if (!user_mode(regs) && (address >= TASK_SIZE))
-		return SIGSEGV;
+	if (!user_mode(regs) && (address >= TASK_SIZE)) {
+		rc = SIGSEGV;
+		goto bail;
+	}
 
 #if !(defined(CONFIG_4xx) || defined(CONFIG_BOOKE) || \
 			     defined(CONFIG_PPC_BOOK3S_64))
   	if (error_code & DSISR_DABRMATCH) {
-		/* DABR match */
-		do_dabr(regs, address, error_code);
-		return 0;
+		/* breakpoint match */
+		do_break(regs, address, error_code);
+		goto bail;
 	}
 #endif
 
@@ -262,8 +265,10 @@ int __kprobes do_page_fault(struct pt_regs *regs, unsigned long address,
 		local_irq_enable();
 
 	if (in_atomic() || mm == NULL) {
-		if (!user_mode(regs))
-			return SIGSEGV;
+		if (!user_mode(regs)) {
+			rc = SIGSEGV;
+			goto bail;
+		}
 		/* in_atomic() in user mode is really bad,
 		   as is current->mm == NULL. */
 		printk(KERN_EMERG "Page fault in user mode with "
@@ -419,9 +424,11 @@ good_area:
 	 */
 	fault = handle_mm_fault(mm, vma, address, flags);
 	if (unlikely(fault & (VM_FAULT_RETRY|VM_FAULT_ERROR))) {
-		int rc = mm_fault_error(regs, address, fault);
+		rc = mm_fault_error(regs, address, fault);
 		if (rc >= MM_FAULT_RETURN)
-			return rc;
+			goto bail;
+		else
+			rc = 0;
 	}
 
 	/*
@@ -450,12 +457,13 @@ good_area:
 			/* Clear FAULT_FLAG_ALLOW_RETRY to avoid any risk
 			 * of starvation. */
 			flags &= ~FAULT_FLAG_ALLOW_RETRY;
+			flags |= FAULT_FLAG_TRIED;
 			goto retry;
 		}
 	}
 
 	up_read(&mm->mmap_sem);
-	return 0;
+	goto bail;
 
 bad_area:
 	up_read(&mm->mmap_sem);
@@ -464,15 +472,19 @@ bad_area_nosemaphore:
 	/* User mode accesses cause a SIGSEGV */
 	if (user_mode(regs)) {
 		_exception(SIGSEGV, regs, code, address);
-		return 0;
+		goto bail;
 	}
 
 	if (is_exec && (error_code & DSISR_PROTFAULT))
 		printk_ratelimited(KERN_CRIT "kernel tried to execute NX-protected"
 				   " page (%lx) - exploit attempt? (uid: %d)\n",
-				   address, current_uid());
+				   address, from_kuid(&init_user_ns, current_uid()));
 
-	return SIGSEGV;
+	rc = SIGSEGV;
+
+bail:
+	exception_exit(prev_state);
+	return rc;
 
 }
 

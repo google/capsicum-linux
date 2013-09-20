@@ -17,6 +17,9 @@
  *  along with this program; if not, write to the Free Software
  *  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
+
+#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
+
 #include <linux/ethtool.h>
 #include <linux/kernel.h>
 #include <linux/list.h>
@@ -44,6 +47,21 @@
 #define CAL_EVENT	7
 #define CAL_TRIGGER	7
 #define PER_TRIGGER	6
+
+#define MII_DP83640_MICR 0x11
+#define MII_DP83640_MISR 0x12
+
+#define MII_DP83640_MICR_OE 0x1
+#define MII_DP83640_MICR_IE 0x2
+
+#define MII_DP83640_MISR_RHF_INT_EN 0x01
+#define MII_DP83640_MISR_FHF_INT_EN 0x02
+#define MII_DP83640_MISR_ANC_INT_EN 0x04
+#define MII_DP83640_MISR_DUP_INT_EN 0x08
+#define MII_DP83640_MISR_SPD_INT_EN 0x10
+#define MII_DP83640_MISR_LINK_INT_EN 0x20
+#define MII_DP83640_MISR_ED_INT_EN 0x40
+#define MII_DP83640_MISR_LQ_INT_EN 0x80
 
 /* phyter seems to miss the mark by 16 ns */
 #define ADJTIME_FIX	16
@@ -453,16 +471,16 @@ static void enable_status_frames(struct phy_device *phydev, bool on)
 	ext_write(0, phydev, PAGE6, PSF_CFG1, ver);
 
 	if (!phydev->attached_dev) {
-		pr_warning("dp83640: expected to find an attached netdevice\n");
+		pr_warn("expected to find an attached netdevice\n");
 		return;
 	}
 
 	if (on) {
 		if (dev_mc_add(phydev->attached_dev, status_frame_dst))
-			pr_warning("dp83640: failed to add mc address\n");
+			pr_warn("failed to add mc address\n");
 	} else {
 		if (dev_mc_del(phydev->attached_dev, status_frame_dst))
-			pr_warning("dp83640: failed to delete mc address\n");
+			pr_warn("failed to delete mc address\n");
 	}
 }
 
@@ -582,9 +600,9 @@ static void recalibrate(struct dp83640_clock *clock)
 	 * read out and correct offsets
 	 */
 	val = ext_read(master, PAGE4, PTP_STS);
-	pr_info("master PTP_STS  0x%04hx", val);
+	pr_info("master PTP_STS  0x%04hx\n", val);
 	val = ext_read(master, PAGE4, PTP_ESTS);
-	pr_info("master PTP_ESTS 0x%04hx", val);
+	pr_info("master PTP_ESTS 0x%04hx\n", val);
 	event_ts.ns_lo  = ext_read(master, PAGE4, PTP_EDATA);
 	event_ts.ns_hi  = ext_read(master, PAGE4, PTP_EDATA);
 	event_ts.sec_lo = ext_read(master, PAGE4, PTP_EDATA);
@@ -594,9 +612,9 @@ static void recalibrate(struct dp83640_clock *clock)
 	list_for_each(this, &clock->phylist) {
 		tmp = list_entry(this, struct dp83640_private, list);
 		val = ext_read(tmp->phydev, PAGE4, PTP_STS);
-		pr_info("slave  PTP_STS  0x%04hx", val);
+		pr_info("slave  PTP_STS  0x%04hx\n", val);
 		val = ext_read(tmp->phydev, PAGE4, PTP_ESTS);
-		pr_info("slave  PTP_ESTS 0x%04hx", val);
+		pr_info("slave  PTP_ESTS 0x%04hx\n", val);
 		event_ts.ns_lo  = ext_read(tmp->phydev, PAGE4, PTP_EDATA);
 		event_ts.ns_hi  = ext_read(tmp->phydev, PAGE4, PTP_EDATA);
 		event_ts.sec_lo = ext_read(tmp->phydev, PAGE4, PTP_EDATA);
@@ -686,7 +704,7 @@ static void decode_rxts(struct dp83640_private *dp83640,
 	prune_rx_ts(dp83640);
 
 	if (list_empty(&dp83640->rxpool)) {
-		pr_debug("dp83640: rx timestamp pool is empty\n");
+		pr_debug("rx timestamp pool is empty\n");
 		goto out;
 	}
 	rxts = list_first_entry(&dp83640->rxpool, struct rxts, list);
@@ -709,7 +727,7 @@ static void decode_txts(struct dp83640_private *dp83640,
 	skb = skb_dequeue(&dp83640->tx_queue);
 
 	if (!skb) {
-		pr_debug("dp83640: have timestamp but tx_queue empty\n");
+		pr_debug("have timestamp but tx_queue empty\n");
 		return;
 	}
 	ns = phy2txts(phy_txts);
@@ -847,7 +865,7 @@ static void dp83640_free_clocks(void)
 	list_for_each_safe(this, next, &phyter_clocks) {
 		clock = list_entry(this, struct dp83640_clock, list);
 		if (!list_empty(&clock->phylist)) {
-			pr_warning("phy list non-empty while unloading");
+			pr_warn("phy list non-empty while unloading\n");
 			BUG();
 		}
 		list_del(&clock->list);
@@ -977,7 +995,7 @@ static int dp83640_probe(struct phy_device *phydev)
 
 	if (choose_this_phy(clock, phydev)) {
 		clock->chosen = dp83640;
-		clock->ptp_clock = ptp_clock_register(&clock->caps);
+		clock->ptp_clock = ptp_clock_register(&clock->caps, &phydev->dev);
 		if (IS_ERR(clock->ptp_clock)) {
 			err = PTR_ERR(clock->ptp_clock);
 			goto no_register;
@@ -1038,6 +1056,65 @@ static void dp83640_remove(struct phy_device *phydev)
 
 	dp83640_clock_put(clock);
 	kfree(dp83640);
+}
+
+static int dp83640_ack_interrupt(struct phy_device *phydev)
+{
+	int err = phy_read(phydev, MII_DP83640_MISR);
+
+	if (err < 0)
+		return err;
+
+	return 0;
+}
+
+static int dp83640_config_intr(struct phy_device *phydev)
+{
+	int micr;
+	int misr;
+	int err;
+
+	if (phydev->interrupts == PHY_INTERRUPT_ENABLED) {
+		misr = phy_read(phydev, MII_DP83640_MISR);
+		if (misr < 0)
+			return misr;
+		misr |=
+			(MII_DP83640_MISR_ANC_INT_EN |
+			MII_DP83640_MISR_DUP_INT_EN |
+			MII_DP83640_MISR_SPD_INT_EN |
+			MII_DP83640_MISR_LINK_INT_EN);
+		err = phy_write(phydev, MII_DP83640_MISR, misr);
+		if (err < 0)
+			return err;
+
+		micr = phy_read(phydev, MII_DP83640_MICR);
+		if (micr < 0)
+			return micr;
+		micr |=
+			(MII_DP83640_MICR_OE |
+			MII_DP83640_MICR_IE);
+		return phy_write(phydev, MII_DP83640_MICR, micr);
+	} else {
+		micr = phy_read(phydev, MII_DP83640_MICR);
+		if (micr < 0)
+			return micr;
+		micr &=
+			~(MII_DP83640_MICR_OE |
+			MII_DP83640_MICR_IE);
+		err = phy_write(phydev, MII_DP83640_MICR, micr);
+		if (err < 0)
+			return err;
+
+		misr = phy_read(phydev, MII_DP83640_MISR);
+		if (misr < 0)
+			return misr;
+		misr &=
+			~(MII_DP83640_MISR_ANC_INT_EN |
+			MII_DP83640_MISR_DUP_INT_EN |
+			MII_DP83640_MISR_SPD_INT_EN |
+			MII_DP83640_MISR_LINK_INT_EN);
+		return phy_write(phydev, MII_DP83640_MISR, misr);
+	}
 }
 
 static int dp83640_hwtstamp(struct phy_device *phydev, struct ifreq *ifr)
@@ -1215,16 +1292,49 @@ static void dp83640_txtstamp(struct phy_device *phydev,
 	}
 }
 
+static int dp83640_ts_info(struct phy_device *dev, struct ethtool_ts_info *info)
+{
+	struct dp83640_private *dp83640 = dev->priv;
+
+	info->so_timestamping =
+		SOF_TIMESTAMPING_TX_HARDWARE |
+		SOF_TIMESTAMPING_RX_HARDWARE |
+		SOF_TIMESTAMPING_RAW_HARDWARE;
+	info->phc_index = ptp_clock_index(dp83640->clock->ptp_clock);
+	info->tx_types =
+		(1 << HWTSTAMP_TX_OFF) |
+		(1 << HWTSTAMP_TX_ON) |
+		(1 << HWTSTAMP_TX_ONESTEP_SYNC);
+	info->rx_filters =
+		(1 << HWTSTAMP_FILTER_NONE) |
+		(1 << HWTSTAMP_FILTER_PTP_V1_L4_EVENT) |
+		(1 << HWTSTAMP_FILTER_PTP_V1_L4_SYNC) |
+		(1 << HWTSTAMP_FILTER_PTP_V1_L4_DELAY_REQ) |
+		(1 << HWTSTAMP_FILTER_PTP_V2_L4_EVENT) |
+		(1 << HWTSTAMP_FILTER_PTP_V2_L4_SYNC) |
+		(1 << HWTSTAMP_FILTER_PTP_V2_L4_DELAY_REQ) |
+		(1 << HWTSTAMP_FILTER_PTP_V2_L2_EVENT) |
+		(1 << HWTSTAMP_FILTER_PTP_V2_L2_SYNC) |
+		(1 << HWTSTAMP_FILTER_PTP_V2_L2_DELAY_REQ) |
+		(1 << HWTSTAMP_FILTER_PTP_V2_EVENT) |
+		(1 << HWTSTAMP_FILTER_PTP_V2_SYNC) |
+		(1 << HWTSTAMP_FILTER_PTP_V2_DELAY_REQ);
+	return 0;
+}
+
 static struct phy_driver dp83640_driver = {
 	.phy_id		= DP83640_PHY_ID,
 	.phy_id_mask	= 0xfffffff0,
 	.name		= "NatSemi DP83640",
 	.features	= PHY_BASIC_FEATURES,
-	.flags		= 0,
+	.flags		= PHY_HAS_INTERRUPT,
 	.probe		= dp83640_probe,
 	.remove		= dp83640_remove,
 	.config_aneg	= genphy_config_aneg,
 	.read_status	= genphy_read_status,
+	.ack_interrupt  = dp83640_ack_interrupt,
+	.config_intr    = dp83640_config_intr,
+	.ts_info	= dp83640_ts_info,
 	.hwtstamp	= dp83640_hwtstamp,
 	.rxtstamp	= dp83640_rxtstamp,
 	.txtstamp	= dp83640_txtstamp,

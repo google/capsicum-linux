@@ -20,6 +20,8 @@
 #include <asm/pgtable.h>
 #include <asm/exception-64e.h>
 #include <asm/ppc-opcode.h>
+#include <asm/kvm_asm.h>
+#include <asm/kvm_booke_hv_asm.h>
 
 #ifdef CONFIG_PPC_64K_PAGES
 #define VPTE_PMD_SHIFT	(PTE_INDEX_SIZE+1)
@@ -37,12 +39,18 @@
  *                                                                    *
  **********************************************************************/
 
-.macro tlb_prolog_bolted addr
-	mtspr	SPRN_SPRG_TLB_SCRATCH,r13
+.macro tlb_prolog_bolted intnum addr
+	mtspr	SPRN_SPRG_GEN_SCRATCH,r13
 	mfspr	r13,SPRN_SPRG_PACA
 	std	r10,PACA_EXTLB+EX_TLB_R10(r13)
 	mfcr	r10
 	std	r11,PACA_EXTLB+EX_TLB_R11(r13)
+#ifdef CONFIG_KVM_BOOKE_HV
+BEGIN_FTR_SECTION
+	mfspr	r11, SPRN_SRR1
+END_FTR_SECTION_IFSET(CPU_FTR_EMB_HV)
+#endif
+	DO_KVM	\intnum, SPRN_SRR1
 	std	r16,PACA_EXTLB+EX_TLB_R16(r13)
 	mfspr	r16,\addr		/* get faulting address */
 	std	r14,PACA_EXTLB+EX_TLB_R14(r13)
@@ -61,12 +69,12 @@
 	ld	r15,PACA_EXTLB+EX_TLB_R15(r13)
 	TLB_MISS_RESTORE_STATS_BOLTED
 	ld	r16,PACA_EXTLB+EX_TLB_R16(r13)
-	mfspr	r13,SPRN_SPRG_TLB_SCRATCH
+	mfspr	r13,SPRN_SPRG_GEN_SCRATCH
 .endm
 
 /* Data TLB miss */
 	START_EXCEPTION(data_tlb_miss_bolted)
-	tlb_prolog_bolted SPRN_DEAR
+	tlb_prolog_bolted BOOKE_INTERRUPT_DTLB_MISS SPRN_DEAR
 
 	/* We need _PAGE_PRESENT and  _PAGE_ACCESSED set */
 
@@ -126,7 +134,7 @@ BEGIN_MMU_FTR_SECTION
 	/* Set the TLB reservation and search for existing entry. Then load
 	 * the entry.
 	 */
-	PPC_TLBSRX_DOT(0,r16)
+	PPC_TLBSRX_DOT(0,R16)
 	ldx	r14,r14,r15		/* grab pgd entry */
 	beq	normal_tlb_miss_done	/* tlb exists already, bail */
 MMU_FTR_SECTION_ELSE
@@ -214,7 +222,7 @@ itlb_miss_fault_bolted:
 
 /* Instruction TLB miss */
 	START_EXCEPTION(instruction_tlb_miss_bolted)
-	tlb_prolog_bolted SPRN_SRR0
+	tlb_prolog_bolted BOOKE_INTERRUPT_ITLB_MISS SPRN_SRR0
 
 	rldicl.	r10,r16,64-PGTABLE_EADDR_SIZE,PGTABLE_EADDR_SIZE+4
 	srdi	r15,r16,60		/* get region */
@@ -395,7 +403,7 @@ BEGIN_MMU_FTR_SECTION
 	/* Set the TLB reservation and search for existing entry. Then load
 	 * the entry.
 	 */
-	PPC_TLBSRX_DOT(0,r16)
+	PPC_TLBSRX_DOT(0,R16)
 	ld	r14,0(r10)
 	beq	normal_tlb_miss_done
 MMU_FTR_SECTION_ELSE
@@ -528,7 +536,7 @@ BEGIN_MMU_FTR_SECTION
 	/* Search if we already have a TLB entry for that virtual address, and
 	 * if we do, bail out.
 	 */
-	PPC_TLBSRX_DOT(0,r16)
+	PPC_TLBSRX_DOT(0,R16)
 	beq	virt_page_table_tlb_miss_done
 END_MMU_FTR_SECTION_IFSET(MMU_FTR_USE_TLBRSRV)
 
@@ -779,7 +787,7 @@ htw_tlb_miss:
 	 *
 	 * MAS1:IND should be already set based on MAS4
 	 */
-	PPC_TLBSRX_DOT(0,r16)
+	PPC_TLBSRX_DOT(0,R16)
 	beq	htw_tlb_miss_done
 
 	/* Now, we need to walk the page tables. First check if we are in
@@ -919,7 +927,7 @@ tlb_load_linear:
 	mtspr	SPRN_MAS1,r15
 
 	/* Already somebody there ? */
-	PPC_TLBSRX_DOT(0,r16)
+	PPC_TLBSRX_DOT(0,R16)
 	beq	tlb_load_linear_done
 
 	/* Now we build the remaining MAS. MAS0 and 2 should be fine

@@ -123,7 +123,6 @@ extern struct platform_device s5pv210_device_spdif;
 
 extern struct platform_device exynos4_device_ac97;
 extern struct platform_device exynos4_device_ahci;
-extern struct platform_device exynos4_device_dwmci;
 extern struct platform_device exynos4_device_i2s0;
 extern struct platform_device exynos4_device_i2s1;
 extern struct platform_device exynos4_device_i2s2;
@@ -131,11 +130,8 @@ extern struct platform_device exynos4_device_ohci;
 extern struct platform_device exynos4_device_pcm0;
 extern struct platform_device exynos4_device_pcm1;
 extern struct platform_device exynos4_device_pcm2;
-extern struct platform_device exynos4_device_pd[];
 extern struct platform_device exynos4_device_spdif;
-extern struct platform_device exynos4_device_sysmmu;
 
-extern struct platform_device samsung_asoc_dma;
 extern struct platform_device samsung_asoc_idma;
 extern struct platform_device samsung_device_keypad;
 

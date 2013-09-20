@@ -16,9 +16,9 @@
 #include <linux/pm.h>
 #include <linux/pm_runtime.h>
 #include <linux/amba/bus.h>
+#include <linux/sizes.h>
 
 #include <asm/irq.h>
-#include <asm/sizes.h>
 
 #define to_amba_driver(d)	container_of(d, struct amba_driver, drv)
 
@@ -45,7 +45,6 @@ static int amba_match(struct device *dev, struct device_driver *drv)
 	return amba_lookup(pcdrv->id_table, pcdev) != NULL;
 }
 
-#ifdef CONFIG_HOTPLUG
 static int amba_uevent(struct device *dev, struct kobj_uevent_env *env)
 {
 	struct amba_device *pcdev = to_amba_device(dev);
@@ -58,9 +57,6 @@ static int amba_uevent(struct device *dev, struct kobj_uevent_env *env)
 	retval = add_uevent_var(env, "MODALIAS=amba:d%08X", pcdev->periphid);
 	return retval;
 }
-#else
-#define amba_uevent NULL
-#endif
 
 #define amba_attr_func(name,fmt,arg...)					\
 static ssize_t name##_show(struct device *_dev,				\
@@ -288,7 +284,7 @@ static const struct dev_pm_ops amba_pm = {
 	SET_RUNTIME_PM_OPS(
 		amba_pm_runtime_suspend,
 		amba_pm_runtime_resume,
-		pm_generic_runtime_idle
+		NULL
 	)
 };
 
@@ -527,9 +523,9 @@ int amba_device_add(struct amba_device *dev, struct resource *parent)
 	if (ret)
 		goto err_release;
 
-	if (dev->irq[0] && dev->irq[0] != NO_IRQ)
+	if (dev->irq[0])
 		ret = device_create_file(&dev->dev, &dev_attr_irq0);
-	if (ret == 0 && dev->irq[1] && dev->irq[1] != NO_IRQ)
+	if (ret == 0 && dev->irq[1])
 		ret = device_create_file(&dev->dev, &dev_attr_irq1);
 	if (ret == 0)
 		return ret;
@@ -542,6 +538,79 @@ int amba_device_add(struct amba_device *dev, struct resource *parent)
 	return ret;
 }
 EXPORT_SYMBOL_GPL(amba_device_add);
+
+static struct amba_device *
+amba_aphb_device_add(struct device *parent, const char *name,
+		     resource_size_t base, size_t size, int irq1, int irq2,
+		     void *pdata, unsigned int periphid, u64 dma_mask,
+		     struct resource *resbase)
+{
+	struct amba_device *dev;
+	int ret;
+
+	dev = amba_device_alloc(name, base, size);
+	if (!dev)
+		return ERR_PTR(-ENOMEM);
+
+	dev->dma_mask = dma_mask;
+	dev->dev.coherent_dma_mask = dma_mask;
+	dev->irq[0] = irq1;
+	dev->irq[1] = irq2;
+	dev->periphid = periphid;
+	dev->dev.platform_data = pdata;
+	dev->dev.parent = parent;
+
+	ret = amba_device_add(dev, resbase);
+	if (ret) {
+		amba_device_put(dev);
+		return ERR_PTR(ret);
+	}
+
+	return dev;
+}
+
+struct amba_device *
+amba_apb_device_add(struct device *parent, const char *name,
+		    resource_size_t base, size_t size, int irq1, int irq2,
+		    void *pdata, unsigned int periphid)
+{
+	return amba_aphb_device_add(parent, name, base, size, irq1, irq2, pdata,
+				    periphid, 0, &iomem_resource);
+}
+EXPORT_SYMBOL_GPL(amba_apb_device_add);
+
+struct amba_device *
+amba_ahb_device_add(struct device *parent, const char *name,
+		    resource_size_t base, size_t size, int irq1, int irq2,
+		    void *pdata, unsigned int periphid)
+{
+	return amba_aphb_device_add(parent, name, base, size, irq1, irq2, pdata,
+				    periphid, ~0ULL, &iomem_resource);
+}
+EXPORT_SYMBOL_GPL(amba_ahb_device_add);
+
+struct amba_device *
+amba_apb_device_add_res(struct device *parent, const char *name,
+			resource_size_t base, size_t size, int irq1,
+			int irq2, void *pdata, unsigned int periphid,
+			struct resource *resbase)
+{
+	return amba_aphb_device_add(parent, name, base, size, irq1, irq2, pdata,
+				    periphid, 0, resbase);
+}
+EXPORT_SYMBOL_GPL(amba_apb_device_add_res);
+
+struct amba_device *
+amba_ahb_device_add_res(struct device *parent, const char *name,
+			resource_size_t base, size_t size, int irq1,
+			int irq2, void *pdata, unsigned int periphid,
+			struct resource *resbase)
+{
+	return amba_aphb_device_add(parent, name, base, size, irq1, irq2, pdata,
+				    periphid, ~0ULL, resbase);
+}
+EXPORT_SYMBOL_GPL(amba_ahb_device_add_res);
+
 
 static void amba_device_initialize(struct amba_device *dev, const char *name)
 {

@@ -117,7 +117,7 @@ static const struct ide_port_ops tx4938ide_port_ops = {
 	.set_pio_mode		= tx4938ide_set_pio_mode,
 };
 
-static const struct ide_port_info tx4938ide_port_info __initdata = {
+static const struct ide_port_info tx4938ide_port_info __initconst = {
 	.port_ops		= &tx4938ide_port_ops,
 #ifdef __BIG_ENDIAN
 	.tp_ops			= &tx4938ide_tp_ops,
@@ -203,18 +203,7 @@ static struct platform_driver tx4938ide_driver = {
 	.remove = __exit_p(tx4938ide_remove),
 };
 
-static int __init tx4938ide_init(void)
-{
-	return platform_driver_probe(&tx4938ide_driver, tx4938ide_probe);
-}
-
-static void __exit tx4938ide_exit(void)
-{
-	platform_driver_unregister(&tx4938ide_driver);
-}
-
-module_init(tx4938ide_init);
-module_exit(tx4938ide_exit);
+module_platform_driver_probe(tx4938ide_driver, tx4938ide_probe);
 
 MODULE_DESCRIPTION("TX4938 internal IDE driver");
 MODULE_LICENSE("GPL");

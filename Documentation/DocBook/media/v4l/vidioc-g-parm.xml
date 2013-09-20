@@ -75,11 +75,12 @@ devices.</para>
 	&cs-ustr;
 	<tbody valign="top">
 	  <row>
-	    <entry>&v4l2-buf-type;</entry>
+	    <entry>__u32</entry>
 	    <entry><structfield>type</structfield></entry>
 	    <entry></entry>
 	    <entry>The buffer (stream) type, same as &v4l2-format;
-<structfield>type</structfield>, set by the application.</entry>
+<structfield>type</structfield>, set by the application. See <xref
+	    linkend="v4l2-buf-type" /></entry>
 	  </row>
 	  <row>
 	    <entry>union</entry>
@@ -107,9 +108,7 @@ devices.</para>
 	    <entry></entry>
 	    <entry>__u8</entry>
 	    <entry><structfield>raw_data</structfield>[200]</entry>
-	    <entry>A place holder for future extensions and custom
-(driver defined) buffer types <constant>V4L2_BUF_TYPE_PRIVATE</constant> and
-higher.</entry>
+	    <entry>A place holder for future extensions.</entry>
 	  </row>
 	</tbody>
       </tgroup>

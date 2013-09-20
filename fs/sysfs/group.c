@@ -20,38 +20,64 @@ static void remove_files(struct sysfs_dirent *dir_sd, struct kobject *kobj,
 			 const struct attribute_group *grp)
 {
 	struct attribute *const* attr;
-	int i;
+	struct bin_attribute *const* bin_attr;
 
-	for (i = 0, attr = grp->attrs; *attr; i++, attr++)
-		sysfs_hash_and_remove(dir_sd, NULL, (*attr)->name);
+	if (grp->attrs)
+		for (attr = grp->attrs; *attr; attr++)
+			sysfs_hash_and_remove(dir_sd, NULL, (*attr)->name);
+	if (grp->bin_attrs)
+		for (bin_attr = grp->bin_attrs; *bin_attr; bin_attr++)
+			sysfs_remove_bin_file(kobj, *bin_attr);
 }
 
 static int create_files(struct sysfs_dirent *dir_sd, struct kobject *kobj,
 			const struct attribute_group *grp, int update)
 {
 	struct attribute *const* attr;
+	struct bin_attribute *const* bin_attr;
 	int error = 0, i;
 
-	for (i = 0, attr = grp->attrs; *attr && !error; i++, attr++) {
-		umode_t mode = 0;
+	if (grp->attrs) {
+		for (i = 0, attr = grp->attrs; *attr && !error; i++, attr++) {
+			umode_t mode = 0;
 
-		/* in update mode, we're changing the permissions or
-		 * visibility.  Do this by first removing then
-		 * re-adding (if required) the file */
-		if (update)
-			sysfs_hash_and_remove(dir_sd, NULL, (*attr)->name);
-		if (grp->is_visible) {
-			mode = grp->is_visible(kobj, *attr, i);
-			if (!mode)
-				continue;
+			/*
+			 * In update mode, we're changing the permissions or
+			 * visibility.  Do this by first removing then
+			 * re-adding (if required) the file.
+			 */
+			if (update)
+				sysfs_hash_and_remove(dir_sd, NULL,
+						      (*attr)->name);
+			if (grp->is_visible) {
+				mode = grp->is_visible(kobj, *attr, i);
+				if (!mode)
+					continue;
+			}
+			error = sysfs_add_file_mode(dir_sd, *attr,
+						    SYSFS_KOBJ_ATTR,
+						    (*attr)->mode | mode);
+			if (unlikely(error))
+				break;
 		}
-		error = sysfs_add_file_mode(dir_sd, *attr, SYSFS_KOBJ_ATTR,
-					    (*attr)->mode | mode);
-		if (unlikely(error))
-			break;
+		if (error) {
+			remove_files(dir_sd, kobj, grp);
+			goto exit;
+		}
 	}
-	if (error)
-		remove_files(dir_sd, kobj, grp);
+
+	if (grp->bin_attrs) {
+		for (bin_attr = grp->bin_attrs; *bin_attr; bin_attr++) {
+			if (update)
+				sysfs_remove_bin_file(kobj, *bin_attr);
+			error = sysfs_create_bin_file(kobj, *bin_attr);
+			if (error)
+				break;
+		}
+		if (error)
+			remove_files(dir_sd, kobj, grp);
+	}
+exit:
 	return error;
 }
 
@@ -67,8 +93,8 @@ static int internal_create_group(struct kobject *kobj, int update,
 	/* Updates may happen before the object has been instantiated */
 	if (unlikely(update && !kobj->sd))
 		return -EINVAL;
-	if (!grp->attrs) {
-		WARN(1, "sysfs: attrs not set by subsystem for group: %s/%s\n",
+	if (!grp->attrs && !grp->bin_attrs) {
+		WARN(1, "sysfs: (bin_)attrs not set by subsystem for group: %s/%s\n",
 			kobj->name, grp->name ? "" : grp->name);
 		return -EINVAL;
 	}
@@ -205,6 +231,48 @@ void sysfs_unmerge_group(struct kobject *kobj,
 }
 EXPORT_SYMBOL_GPL(sysfs_unmerge_group);
 
+/**
+ * sysfs_add_link_to_group - add a symlink to an attribute group.
+ * @kobj:	The kobject containing the group.
+ * @group_name:	The name of the group.
+ * @target:	The target kobject of the symlink to create.
+ * @link_name:	The name of the symlink to create.
+ */
+int sysfs_add_link_to_group(struct kobject *kobj, const char *group_name,
+			    struct kobject *target, const char *link_name)
+{
+	struct sysfs_dirent *dir_sd;
+	int error = 0;
+
+	dir_sd = sysfs_get_dirent(kobj->sd, NULL, group_name);
+	if (!dir_sd)
+		return -ENOENT;
+
+	error = sysfs_create_link_sd(dir_sd, target, link_name);
+	sysfs_put(dir_sd);
+
+	return error;
+}
+EXPORT_SYMBOL_GPL(sysfs_add_link_to_group);
+
+/**
+ * sysfs_remove_link_from_group - remove a symlink from an attribute group.
+ * @kobj:	The kobject containing the group.
+ * @group_name:	The name of the group.
+ * @link_name:	The name of the symlink to remove.
+ */
+void sysfs_remove_link_from_group(struct kobject *kobj, const char *group_name,
+				  const char *link_name)
+{
+	struct sysfs_dirent *dir_sd;
+
+	dir_sd = sysfs_get_dirent(kobj->sd, NULL, group_name);
+	if (dir_sd) {
+		sysfs_hash_and_remove(dir_sd, NULL, link_name);
+		sysfs_put(dir_sd);
+	}
+}
+EXPORT_SYMBOL_GPL(sysfs_remove_link_from_group);
 
 EXPORT_SYMBOL_GPL(sysfs_create_group);
 EXPORT_SYMBOL_GPL(sysfs_update_group);

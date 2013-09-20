@@ -27,14 +27,14 @@
  * Authors:
  *    Kevin E. Martin <martin@valinux.com>
  *    Gareth Hughes <gareth@valinux.com>
+ *
+ * ------------------------ This file is DEPRECATED! -------------------------
  */
 
 #include <linux/module.h>
 
-#include "drmP.h"
-#include "drm.h"
-#include "drm_sarea.h"
-#include "radeon_drm.h"
+#include <drm/drmP.h>
+#include <drm/radeon_drm.h>
 #include "radeon_drv.h"
 #include "r300_reg.h"
 
@@ -116,20 +116,6 @@ u32 radeon_get_scratch(drm_radeon_private_t *dev_priv, int index)
 		else
 			return RADEON_READ(RADEON_SCRATCH_REG0 + 4*index);
 	}
-}
-
-u32 RADEON_READ_MM(drm_radeon_private_t *dev_priv, int addr)
-{
-	u32 ret;
-
-	if (addr < 0x10000)
-		ret = DRM_READ32(dev_priv->mmio, addr);
-	else {
-		DRM_WRITE32(dev_priv->mmio, RADEON_MM_INDEX, addr);
-		ret = DRM_READ32(dev_priv->mmio, RADEON_MM_DATA);
-	}
-
-	return ret;
 }
 
 static u32 R500_READ_MCIND(drm_radeon_private_t *dev_priv, int addr)
@@ -1827,14 +1813,10 @@ void radeon_do_release(struct drm_device * dev)
 			r600_do_cleanup_cp(dev);
 		else
 			radeon_do_cleanup_cp(dev);
-		if (dev_priv->me_fw) {
-			release_firmware(dev_priv->me_fw);
-			dev_priv->me_fw = NULL;
-		}
-		if (dev_priv->pfp_fw) {
-			release_firmware(dev_priv->pfp_fw);
-			dev_priv->pfp_fw = NULL;
-		}
+		release_firmware(dev_priv->me_fw);
+		dev_priv->me_fw = NULL;
+		release_firmware(dev_priv->pfp_fw);
+		dev_priv->pfp_fw = NULL;
 	}
 }
 

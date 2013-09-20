@@ -16,6 +16,15 @@ config BITREVERSE
 config RATIONAL
 	boolean
 
+config GENERIC_STRNCPY_FROM_USER
+	bool
+
+config GENERIC_STRNLEN_USER
+	bool
+
+config GENERIC_NET_UTILS
+	bool
+
 config GENERIC_FIND_FIRST_BIT
 	bool
 
@@ -32,6 +41,12 @@ config GENERIC_IOMAP
 config GENERIC_IO
 	boolean
 	default n
+
+config STMP_DEVICE
+	bool
+
+config PERCPU_RWSEM
+	boolean
 
 config CRC_CCITT
 	tristate "CRC-CCITT functions"
@@ -177,6 +192,15 @@ config LZO_COMPRESS
 config LZO_DECOMPRESS
 	tristate
 
+config LZ4_COMPRESS
+	tristate
+
+config LZ4HC_COMPRESS
+	tristate
+
+config LZ4_DECOMPRESS
+	tristate
+
 source "lib/xz/Kconfig"
 
 #
@@ -199,6 +223,10 @@ config DECOMPRESS_XZ
 
 config DECOMPRESS_LZO
 	select LZO_DECOMPRESS
+	tristate
+
+config DECOMPRESS_LZ4
+	select LZ4_DECOMPRESS
 	tristate
 
 #
@@ -310,7 +338,7 @@ config CPUMASK_OFFSTACK
 
 config DISABLE_OBSOLETE_CPUMASK_FUNCTIONS
        bool "Disable obsolete cpumask functions" if DEBUG_PER_CPU_MAPS
-       depends on EXPERIMENTAL && BROKEN
+       depends on BROKEN
 
 config CPU_RMAP
 	bool
@@ -330,6 +358,9 @@ config NLATTR
 #
 config GENERIC_ATOMIC64
        bool
+
+config ARCH_HAS_ATOMIC64_DEC_IF_POSITIVE
+	def_bool y if GENERIC_ATOMIC64
 
 config LRU_CACHE
 	tristate
@@ -353,6 +384,14 @@ config CORDIC
 	  This option provides an implementation of the CORDIC algorithm;
 	  calculations are in fixed point. Module will be called cordic.
 
+config DDR
+	bool "JEDEC DDR data"
+	help
+	  Data from JEDEC specs for DDR SDRAM memories,
+	  particularly the AC timing parameters and addressing
+	  information. This data is useful for drivers handling
+	  DDR SDRAM controllers.
+
 config MPILIB
 	tristate
 	select CLZ_TAB
@@ -360,14 +399,6 @@ config MPILIB
 	  Multiprecision maths library from GnuPG.
 	  It is used to implement RSA digital signature verification,
 	  which is used by IMA/EVM digital signature extension.
-
-config MPILIB_EXTRA
-	bool
-	depends on MPILIB
-	help
-	  Additional sources of multiprecision maths library from GnuPG.
-	  This code is unnecessary for RSA digital signature verification,
-	  but can be compiled if needed.
 
 config SIGNATURE
 	tristate
@@ -377,5 +408,21 @@ config SIGNATURE
 	help
 	  Digital signature verification. Currently only RSA is supported.
 	  Implementation is done using GnuPG MPI library
+
+#
+# libfdt files, only selected if needed.
+#
+config LIBFDT
+	bool
+
+config OID_REGISTRY
+	tristate
+	help
+	  Enable fast lookup object identifier registry.
+
+config UCS2_STRING
+        tristate
+
+source "lib/fonts/Kconfig"
 
 endmenu

@@ -799,7 +799,7 @@ static void kill_prom_timer(void)
 	prom_limit0 = prom_timers->limit0;
 	prom_limit1 = prom_timers->limit1;
 
-	/* Just as in sun4c/sun4m PROM uses timer which ticks at IRQ 14.
+	/* Just as in sun4c PROM uses timer which ticks at IRQ 14.
 	 * We turn both off here just to be paranoid.
 	 */
 	prom_timers->limit0 = 0;
@@ -835,7 +835,8 @@ void notrace init_irqwork_curcpu(void)
  * Therefore you cannot make any OBP calls, not even prom_printf,
  * from these two routines.
  */
-static void __cpuinit notrace register_one_mondo(unsigned long paddr, unsigned long type, unsigned long qmask)
+static void notrace register_one_mondo(unsigned long paddr, unsigned long type,
+				       unsigned long qmask)
 {
 	unsigned long num_entries = (qmask + 1) / 64;
 	unsigned long status;
@@ -848,7 +849,7 @@ static void __cpuinit notrace register_one_mondo(unsigned long paddr, unsigned l
 	}
 }
 
-void __cpuinit notrace sun4v_register_mondo_queues(int this_cpu)
+void notrace sun4v_register_mondo_queues(int this_cpu)
 {
 	struct trap_per_cpu *tb = &trap_block[this_cpu];
 

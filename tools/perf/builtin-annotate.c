@@ -28,15 +28,16 @@
 #include "util/hist.h"
 #include "util/session.h"
 #include "util/tool.h"
+#include "arch/common.h"
 
 #include <linux/bitmap.h>
 
 struct perf_annotate {
 	struct perf_tool tool;
-	char const *input_name;
-	bool	   force, use_tui, use_stdio;
+	bool	   force, use_tui, use_stdio, use_gtk;
 	bool	   full_paths;
 	bool	   print_line;
+	bool	   skip_missing;
 	const char *sym_hist_filter;
 	const char *cpu_list;
 	DECLARE_BITMAP(cpu_bitmap, MAX_NR_CPUS);
@@ -62,7 +63,7 @@ static int perf_evsel__add_sample(struct perf_evsel *evsel,
 		return 0;
 	}
 
-	he = __hists__add_entry(&evsel->hists, al, NULL, 1);
+	he = __hists__add_entry(&evsel->hists, al, NULL, 1, 1);
 	if (he == NULL)
 		return -ENOMEM;
 
@@ -108,14 +109,16 @@ static int process_sample_event(struct perf_tool *tool,
 	return 0;
 }
 
-static int hist_entry__tty_annotate(struct hist_entry *he, int evidx,
+static int hist_entry__tty_annotate(struct hist_entry *he,
+				    struct perf_evsel *evsel,
 				    struct perf_annotate *ann)
 {
-	return symbol__tty_annotate(he->ms.sym, he->ms.map, evidx,
+	return symbol__tty_annotate(he->ms.sym, he->ms.map, evsel,
 				    ann->print_line, ann->full_paths, 0, 0);
 }
 
-static void hists__find_annotations(struct hists *self, int evidx,
+static void hists__find_annotations(struct hists *self,
+				    struct perf_evsel *evsel,
 				    struct perf_annotate *ann)
 {
 	struct rb_node *nd = rb_first(&self->entries), *next;
@@ -138,9 +141,22 @@ find_next:
 			continue;
 		}
 
-		if (use_browser > 0) {
-			key = hist_entry__tui_annotate(he, evidx, NULL, NULL, 0);
+		if (use_browser == 2) {
+			int ret;
+
+			ret = hist_entry__gtk_annotate(he, evsel, NULL);
+			if (!ret || !ann->skip_missing)
+				return;
+
+			/* skip missing symbols */
+			nd = rb_next(nd);
+		} else if (use_browser == 1) {
+			key = hist_entry__tui_annotate(he, evsel, NULL);
 			switch (key) {
+			case -1:
+				if (!ann->skip_missing)
+					return;
+				/* fall through */
 			case K_RIGHT:
 				next = rb_next(nd);
 				break;
@@ -154,7 +170,7 @@ find_next:
 			if (next != NULL)
 				nd = next;
 		} else {
-			hist_entry__tty_annotate(he, evidx, ann);
+			hist_entry__tty_annotate(he, evsel, ann);
 			nd = rb_next(nd);
 			/*
 			 * Since we have a hist_entry per IP for the same
@@ -174,7 +190,7 @@ static int __cmd_annotate(struct perf_annotate *ann)
 	struct perf_evsel *pos;
 	u64 total_nr_samples;
 
-	session = perf_session__new(ann->input_name, O_RDONLY,
+	session = perf_session__new(input_name, O_RDONLY,
 				    ann->force, false, &ann->tool);
 	if (session == NULL)
 		return -ENOMEM;
@@ -182,6 +198,12 @@ static int __cmd_annotate(struct perf_annotate *ann)
 	if (ann->cpu_list) {
 		ret = perf_session__cpu_bitmap(session, ann->cpu_list,
 					       ann->cpu_bitmap);
+		if (ret)
+			goto out_delete;
+	}
+
+	if (!objdump_path) {
+		ret = perf_session_env__lookup_objdump(&session->header.env);
 		if (ret)
 			goto out_delete;
 	}
@@ -210,14 +232,23 @@ static int __cmd_annotate(struct perf_annotate *ann)
 			total_nr_samples += nr_samples;
 			hists__collapse_resort(hists);
 			hists__output_resort(hists);
-			hists__find_annotations(hists, pos->idx, ann);
+
+			if (symbol_conf.event_group &&
+			    !perf_evsel__is_group_leader(pos))
+				continue;
+
+			hists__find_annotations(hists, pos, ann);
 		}
 	}
 
 	if (total_nr_samples == 0) {
-		ui__warning("The %s file has no samples!\n", session->filename);
+		ui__error("The %s file has no samples!\n", session->filename);
 		goto out_delete;
 	}
+
+	if (use_browser == 2)
+		perf_gtk__show_annotations();
+
 out_delete:
 	/*
 	 * Speed up the exit process, for large files this can
@@ -239,20 +270,21 @@ static const char * const annotate_usage[] = {
 	NULL
 };
 
-int cmd_annotate(int argc, const char **argv, const char *prefix __used)
+int cmd_annotate(int argc, const char **argv, const char *prefix __maybe_unused)
 {
 	struct perf_annotate annotate = {
 		.tool = {
 			.sample	= process_sample_event,
 			.mmap	= perf_event__process_mmap,
 			.comm	= perf_event__process_comm,
-			.fork	= perf_event__process_task,
+			.exit	= perf_event__process_exit,
+			.fork	= perf_event__process_fork,
 			.ordered_samples = true,
 			.ordering_requires_timestamps = true,
 		},
 	};
 	const struct option options[] = {
-	OPT_STRING('i', "input", &annotate.input_name, "file",
+	OPT_STRING('i', "input", &input_name, "file",
 		    "input file name"),
 	OPT_STRING('d', "dsos", &symbol_conf.dso_list_str, "dso[,dso...]",
 		   "only consider symbols in these dsos"),
@@ -263,6 +295,7 @@ int cmd_annotate(int argc, const char **argv, const char *prefix __used)
 		    "be more verbose (show symbol address, etc)"),
 	OPT_BOOLEAN('D', "dump-raw-trace", &dump_trace,
 		    "dump raw trace in ASCII"),
+	OPT_BOOLEAN(0, "gtk", &annotate.use_gtk, "Use the GTK interface"),
 	OPT_BOOLEAN(0, "tui", &annotate.use_tui, "Use the TUI interface"),
 	OPT_BOOLEAN(0, "stdio", &annotate.use_stdio, "Use the stdio interface"),
 	OPT_STRING('k', "vmlinux", &symbol_conf.vmlinux_name,
@@ -273,6 +306,8 @@ int cmd_annotate(int argc, const char **argv, const char *prefix __used)
 		    "print matching source lines (may be slow)"),
 	OPT_BOOLEAN('P', "full-paths", &annotate.full_paths,
 		    "Don't shorten the displayed pathnames"),
+	OPT_BOOLEAN(0, "skip-missing", &annotate.skip_missing,
+		    "Skip symbols that cannot be annotated"),
 	OPT_STRING('C', "cpu", &annotate.cpu_list, "cpu", "list of cpus to profile"),
 	OPT_STRING(0, "symfs", &symbol_conf.symfs, "directory",
 		   "Look for files with symbols relative to this directory"),
@@ -282,6 +317,10 @@ int cmd_annotate(int argc, const char **argv, const char *prefix __used)
 		    "Display raw encoding of assembly instructions (default)"),
 	OPT_STRING('M', "disassembler-style", &disassembler_style, "disassembler style",
 		   "Specify disassembler style (e.g. -M intel for intel syntax)"),
+	OPT_STRING(0, "objdump", &objdump_path, "path",
+		   "objdump binary to use for disassembly and annotations"),
+	OPT_BOOLEAN(0, "group", &symbol_conf.event_group,
+		    "Show event group information together"),
 	OPT_END()
 	};
 
@@ -291,6 +330,8 @@ int cmd_annotate(int argc, const char **argv, const char *prefix __used)
 		use_browser = 0;
 	else if (annotate.use_tui)
 		use_browser = 1;
+	else if (annotate.use_gtk)
+		use_browser = 2;
 
 	setup_browser(true);
 
@@ -300,7 +341,8 @@ int cmd_annotate(int argc, const char **argv, const char *prefix __used)
 	if (symbol__init() < 0)
 		return -1;
 
-	setup_sorting(annotate_usage, options);
+	if (setup_sorting() < 0)
+		usage_with_options(annotate_usage, options);
 
 	if (argc) {
 		/*

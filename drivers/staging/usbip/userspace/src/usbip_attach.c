@@ -27,6 +27,7 @@
 #include <fcntl.h>
 #include <getopt.h>
 #include <unistd.h>
+#include <errno.h>
 
 #include "vhci_driver.h"
 #include "usbip_common.h"
@@ -35,7 +36,7 @@
 
 static const char usbip_attach_usage_string[] =
 	"usbip attach <args>\n"
-	"    -h, --host=<host>      The machine with exported USB devices\n"
+	"    -r, --remote=<host>      The machine with exported USB devices\n"
 	"    -b, --busid=<busid>    Busid of the device on <host>\n";
 
 void usbip_attach_usage(void)
@@ -52,8 +53,18 @@ static int record_connection(char *host, char *port, char *busid, int rhport)
 	int ret;
 
 	ret = mkdir(VHCI_STATE_PATH, 0700);
-	if (ret < 0)
-		return -1;
+	if (ret < 0) {
+		/* if VHCI_STATE_PATH exists, then it better be a directory */
+		if (errno == EEXIST) {
+			struct stat s;
+			ret = stat(VHCI_STATE_PATH, &s);
+			if (ret < 0)
+				return -1;
+			if (!(s.st_mode & S_IFDIR))
+				return -1;
+		} else
+			return -1;
+	}
 
 	snprintf(path, PATH_MAX, VHCI_STATE_PATH"/port%d", rhport);
 
@@ -190,9 +201,9 @@ static int attach_device(char *host, char *busid)
 int usbip_attach(int argc, char *argv[])
 {
 	static const struct option opts[] = {
-		{ "host", required_argument, NULL, 'h' },
-		{ "busid", required_argument, NULL, 'b' },
-		{ NULL, 0, NULL, 0 }
+		{ "remote", required_argument, NULL, 'r' },
+		{ "busid",  required_argument, NULL, 'b' },
+		{ NULL, 0,  NULL, 0 }
 	};
 	char *host = NULL;
 	char *busid = NULL;
@@ -200,13 +211,13 @@ int usbip_attach(int argc, char *argv[])
 	int ret = -1;
 
 	for (;;) {
-		opt = getopt_long(argc, argv, "h:b:", opts, NULL);
+		opt = getopt_long(argc, argv, "r:b:", opts, NULL);
 
 		if (opt == -1)
 			break;
 
 		switch (opt) {
-		case 'h':
+		case 'r':
 			host = optarg;
 			break;
 		case 'b':

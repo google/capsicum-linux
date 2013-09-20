@@ -71,12 +71,7 @@ struct vhci_unlink {
 	unsigned long unlink_seqnum;
 };
 
-/*
- * The number of ports is less than 16 ?
- * USB_MAXCHILDREN is statically defined to 16 in usb.h.  Its maximum value
- * would be 31 because the event_bits[1] of struct usb_hub is defined as
- * unsigned long in hub.h
- */
+/* Number of supported ports. Value has an upperbound of USB_MAXCHILDREN */
 #define VHCI_NPORTS 8
 
 /* for usb_bus.hcpriv */
@@ -100,11 +95,9 @@ struct vhci_hcd {
 
 extern struct vhci_hcd *the_controller;
 extern const struct attribute_group dev_attr_group;
-#define hardware (&the_controller->pdev.dev)
 
 /* vhci_hcd.c */
 void rh_port_connect(int rhport, enum usb_device_speed speed);
-void rh_port_disconnect(int rhport);
 
 /* vhci_rx.c */
 struct urb *pickup_urb_and_free_priv(struct vhci_device *vdev, __u32 seqnum);

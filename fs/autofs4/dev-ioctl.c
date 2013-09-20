@@ -159,7 +159,7 @@ static struct autofs_sb_info *autofs_dev_ioctl_sbi(struct file *f)
 	struct inode *inode;
 
 	if (f) {
-		inode = f->f_path.dentry->d_inode;
+		inode = file_inode(f);
 		sbi = autofs4_sbi(inode->i_sb);
 	}
 	return sbi;
@@ -221,20 +221,6 @@ static int test_by_type(struct path *path, void *p)
 	return ino && ino->sbi->type & *(unsigned *)p;
 }
 
-static void autofs_dev_ioctl_fd_install(unsigned int fd, struct file *file)
-{
-	struct files_struct *files = current->files;
-	struct fdtable *fdt;
-
-	spin_lock(&files->file_lock);
-	fdt = files_fdtable(files);
-	BUG_ON(fdt->fd[fd] != NULL);
-	rcu_assign_pointer(fdt->fd[fd], file);
-	__set_close_on_exec(fd, fdt);
-	spin_unlock(&files->file_lock);
-}
-
-
 /*
  * Open a file descriptor on the autofs mount point corresponding
  * to the given path and device number (aka. new_encode_dev(sb->s_dev)).
@@ -243,7 +229,7 @@ static int autofs_dev_ioctl_open_mountpoint(const char *name, dev_t devid)
 {
 	int err, fd;
 
-	fd = get_unused_fd();
+	fd = get_unused_fd_flags(O_CLOEXEC);
 	if (likely(fd >= 0)) {
 		struct file *filp;
 		struct path path;
@@ -257,14 +243,14 @@ static int autofs_dev_ioctl_open_mountpoint(const char *name, dev_t devid)
 		 * corresponding to the autofs fs we want to open.
 		 */
 
-		filp = dentry_open(path.dentry, path.mnt, O_RDONLY,
-				   current_cred());
+		filp = dentry_open(&path, O_RDONLY, current_cred());
+		path_put(&path);
 		if (IS_ERR(filp)) {
 			err = PTR_ERR(filp);
 			goto out;
 		}
 
-		autofs_dev_ioctl_fd_install(fd, filp);
+		fd_install(fd, filp);
 	}
 
 	return fd;
@@ -451,8 +437,8 @@ static int autofs_dev_ioctl_requester(struct file *fp,
 		err = 0;
 		autofs4_expire_wait(path.dentry);
 		spin_lock(&sbi->fs_lock);
-		param->requester.uid = ino->uid;
-		param->requester.gid = ino->gid;
+		param->requester.uid = from_kuid_munged(current_user_ns(), ino->uid);
+		param->requester.gid = from_kgid_munged(current_user_ns(), ino->gid);
 		spin_unlock(&sbi->fs_lock);
 	}
 	path_put(&path);

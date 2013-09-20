@@ -1,10 +1,11 @@
 /*
  * QLogic Fibre Channel HBA Driver
- * Copyright (c)  2003-2011 QLogic Corporation
+ * Copyright (c)  2003-2013 QLogic Corporation
  *
  * See LICENSE.qla2xxx for copyright and licensing details.
  */
 #include "qla_def.h"
+#include "qla_target.h"
 
 static int qla2x00_sns_ga_nxt(scsi_qla_host_t *, fc_port_t *);
 static int qla2x00_sns_gid_pt(scsi_qla_host_t *, sw_info_t *);
@@ -98,17 +99,17 @@ qla24xx_prep_ms_iocb(scsi_qla_host_t *vha, uint32_t req_size, uint32_t rsp_size)
  * Returns a pointer to the intitialized @ct_req.
  */
 static inline struct ct_sns_req *
-qla2x00_prep_ct_req(struct ct_sns_req *ct_req, uint16_t cmd, uint16_t rsp_size)
+qla2x00_prep_ct_req(struct ct_sns_pkt *p, uint16_t cmd, uint16_t rsp_size)
 {
-	memset(ct_req, 0, sizeof(struct ct_sns_pkt));
+	memset(p, 0, sizeof(struct ct_sns_pkt));
 
-	ct_req->header.revision = 0x01;
-	ct_req->header.gs_type = 0xFC;
-	ct_req->header.gs_subtype = 0x02;
-	ct_req->command = cpu_to_be16(cmd);
-	ct_req->max_rsp_size = cpu_to_be16((rsp_size - 16) / 4);
+	p->p.req.header.revision = 0x01;
+	p->p.req.header.gs_type = 0xFC;
+	p->p.req.header.gs_subtype = 0x02;
+	p->p.req.command = cpu_to_be16(cmd);
+	p->p.req.max_rsp_size = cpu_to_be16((rsp_size - 16) / 4);
 
-	return (ct_req);
+	return &p->p.req;
 }
 
 static int
@@ -187,7 +188,7 @@ qla2x00_ga_nxt(scsi_qla_host_t *vha, fc_port_t *fcport)
 	    GA_NXT_RSP_SIZE);
 
 	/* Prepare CT request */
-	ct_req = qla2x00_prep_ct_req(&ha->ct_sns->p.req, GA_NXT_CMD,
+	ct_req = qla2x00_prep_ct_req(ha->ct_sns, GA_NXT_CMD,
 	    GA_NXT_RSP_SIZE);
 	ct_rsp = &ha->ct_sns->p.rsp;
 
@@ -216,6 +217,9 @@ qla2x00_ga_nxt(scsi_qla_host_t *vha, fc_port_t *fcport)
 		    WWN_SIZE);
 		memcpy(fcport->port_name, ct_rsp->rsp.ga_nxt.port_name,
 		    WWN_SIZE);
+
+		fcport->fc4_type = (ct_rsp->rsp.ga_nxt.fc4_types[2] & BIT_0) ?
+		    FC4_TYPE_FCP_SCSI : FC4_TYPE_OTHER;
 
 		if (ct_rsp->rsp.ga_nxt.port_type != NS_N_PORT_TYPE &&
 		    ct_rsp->rsp.ga_nxt.port_type != NS_NL_PORT_TYPE)
@@ -280,8 +284,7 @@ qla2x00_gid_pt(scsi_qla_host_t *vha, sw_info_t *list)
 	    gid_pt_rsp_size);
 
 	/* Prepare CT request */
-	ct_req = qla2x00_prep_ct_req(&ha->ct_sns->p.req, GID_PT_CMD,
-	    gid_pt_rsp_size);
+	ct_req = qla2x00_prep_ct_req(ha->ct_sns, GID_PT_CMD, gid_pt_rsp_size);
 	ct_rsp = &ha->ct_sns->p.rsp;
 
 	/* Prepare CT arguments -- port_type */
@@ -355,7 +358,7 @@ qla2x00_gpn_id(scsi_qla_host_t *vha, sw_info_t *list)
 		    GPN_ID_RSP_SIZE);
 
 		/* Prepare CT request */
-		ct_req = qla2x00_prep_ct_req(&ha->ct_sns->p.req, GPN_ID_CMD,
+		ct_req = qla2x00_prep_ct_req(ha->ct_sns, GPN_ID_CMD,
 		    GPN_ID_RSP_SIZE);
 		ct_rsp = &ha->ct_sns->p.rsp;
 
@@ -417,7 +420,7 @@ qla2x00_gnn_id(scsi_qla_host_t *vha, sw_info_t *list)
 		    GNN_ID_RSP_SIZE);
 
 		/* Prepare CT request */
-		ct_req = qla2x00_prep_ct_req(&ha->ct_sns->p.req, GNN_ID_CMD,
+		ct_req = qla2x00_prep_ct_req(ha->ct_sns, GNN_ID_CMD,
 		    GNN_ID_RSP_SIZE);
 		ct_rsp = &ha->ct_sns->p.rsp;
 
@@ -491,7 +494,7 @@ qla2x00_rft_id(scsi_qla_host_t *vha)
 	    RFT_ID_RSP_SIZE);
 
 	/* Prepare CT request */
-	ct_req = qla2x00_prep_ct_req(&ha->ct_sns->p.req, RFT_ID_CMD,
+	ct_req = qla2x00_prep_ct_req(ha->ct_sns, RFT_ID_CMD,
 	    RFT_ID_RSP_SIZE);
 	ct_rsp = &ha->ct_sns->p.rsp;
 
@@ -547,7 +550,7 @@ qla2x00_rff_id(scsi_qla_host_t *vha)
 	    RFF_ID_RSP_SIZE);
 
 	/* Prepare CT request */
-	ct_req = qla2x00_prep_ct_req(&ha->ct_sns->p.req, RFF_ID_CMD,
+	ct_req = qla2x00_prep_ct_req(ha->ct_sns, RFF_ID_CMD,
 	    RFF_ID_RSP_SIZE);
 	ct_rsp = &ha->ct_sns->p.rsp;
 
@@ -556,7 +559,8 @@ qla2x00_rff_id(scsi_qla_host_t *vha)
 	ct_req->req.rff_id.port_id[1] = vha->d_id.b.area;
 	ct_req->req.rff_id.port_id[2] = vha->d_id.b.al_pa;
 
-	ct_req->req.rff_id.fc4_feature = BIT_1;
+	qlt_rff_id(vha, ct_req);
+
 	ct_req->req.rff_id.fc4_type = 0x08;		/* SCSI - FCP */
 
 	/* Execute MS IOCB */
@@ -601,8 +605,7 @@ qla2x00_rnn_id(scsi_qla_host_t *vha)
 	    RNN_ID_RSP_SIZE);
 
 	/* Prepare CT request */
-	ct_req = qla2x00_prep_ct_req(&ha->ct_sns->p.req, RNN_ID_CMD,
-	    RNN_ID_RSP_SIZE);
+	ct_req = qla2x00_prep_ct_req(ha->ct_sns, RNN_ID_CMD, RNN_ID_RSP_SIZE);
 	ct_rsp = &ha->ct_sns->p.rsp;
 
 	/* Prepare CT arguments -- port_id, node_name */
@@ -634,9 +637,14 @@ void
 qla2x00_get_sym_node_name(scsi_qla_host_t *vha, uint8_t *snn)
 {
 	struct qla_hw_data *ha = vha->hw;
-	sprintf(snn, "%s FW:v%d.%02d.%02d DVR:v%s",ha->model_number,
-	    ha->fw_major_version, ha->fw_minor_version,
-	    ha->fw_subminor_version, qla2x00_version_str);
+
+	if (IS_QLAFX00(ha))
+		sprintf(snn, "%s FW:v%s DVR:v%s", ha->model_number,
+		    ha->mr.fw_version, qla2x00_version_str);
+	else
+		sprintf(snn, "%s FW:v%d.%02d.%02d DVR:v%s", ha->model_number,
+		    ha->fw_major_version, ha->fw_minor_version,
+		    ha->fw_subminor_version, qla2x00_version_str);
 }
 
 /**
@@ -666,7 +674,7 @@ qla2x00_rsnn_nn(scsi_qla_host_t *vha)
 	ms_pkt = ha->isp_ops->prep_ms_iocb(vha, 0, RSNN_NN_RSP_SIZE);
 
 	/* Prepare CT request */
-	ct_req = qla2x00_prep_ct_req(&ha->ct_sns->p.req, RSNN_NN_CMD,
+	ct_req = qla2x00_prep_ct_req(ha->ct_sns, RSNN_NN_CMD,
 	    RSNN_NN_RSP_SIZE);
 	ct_rsp = &ha->ct_sns->p.rsp;
 
@@ -918,7 +926,7 @@ qla2x00_sns_gpn_id(scsi_qla_host_t *vha, sw_info_t *list)
 		    sns_cmd->p.gpn_data[9] != 0x02) {
 			ql_dbg(ql_dbg_disc + ql_dbg_buffer, vha, 0x207e,
 			    "GPN_ID failed, rejected request, gpn_rsp:\n");
-			ql_dump_buffer(ql_dbg_disc, vha, 0x207f,
+			ql_dump_buffer(ql_dbg_disc + ql_dbg_buffer, vha, 0x207f,
 			    sns_cmd->p.gpn_data, 16);
 			rval = QLA_FUNCTION_FAILED;
 		} else {
@@ -1129,7 +1137,7 @@ qla2x00_mgmt_svr_login(scsi_qla_host_t *vha)
 		return ret;
 
 	rval = ha->isp_ops->fabric_login(vha, vha->mgmt_svr_loop_id, 0xff, 0xff,
-	    0xfa, mb, BIT_1|BIT_0);
+	    0xfa, mb, BIT_1);
 	if (rval != QLA_SUCCESS || mb[0] != MBS_COMMAND_COMPLETE) {
 		if (rval == QLA_MEMORY_ALLOC_FAILED)
 			ql_dbg(ql_dbg_disc, vha, 0x2085,
@@ -1252,18 +1260,18 @@ qla2x00_update_ms_fdmi_iocb(scsi_qla_host_t *vha, uint32_t req_size)
  * Returns a pointer to the intitialized @ct_req.
  */
 static inline struct ct_sns_req *
-qla2x00_prep_ct_fdmi_req(struct ct_sns_req *ct_req, uint16_t cmd,
+qla2x00_prep_ct_fdmi_req(struct ct_sns_pkt *p, uint16_t cmd,
     uint16_t rsp_size)
 {
-	memset(ct_req, 0, sizeof(struct ct_sns_pkt));
+	memset(p, 0, sizeof(struct ct_sns_pkt));
 
-	ct_req->header.revision = 0x01;
-	ct_req->header.gs_type = 0xFA;
-	ct_req->header.gs_subtype = 0x10;
-	ct_req->command = cpu_to_be16(cmd);
-	ct_req->max_rsp_size = cpu_to_be16((rsp_size - 16) / 4);
+	p->p.req.header.revision = 0x01;
+	p->p.req.header.gs_type = 0xFA;
+	p->p.req.header.gs_subtype = 0x10;
+	p->p.req.command = cpu_to_be16(cmd);
+	p->p.req.max_rsp_size = cpu_to_be16((rsp_size - 16) / 4);
 
-	return ct_req;
+	return &p->p.req;
 }
 
 /**
@@ -1291,8 +1299,7 @@ qla2x00_fdmi_rhba(scsi_qla_host_t *vha)
 	ms_pkt = ha->isp_ops->prep_ms_fdmi_iocb(vha, 0, RHBA_RSP_SIZE);
 
 	/* Prepare CT request */
-	ct_req = qla2x00_prep_ct_fdmi_req(&ha->ct_sns->p.req, RHBA_CMD,
-	    RHBA_RSP_SIZE);
+	ct_req = qla2x00_prep_ct_fdmi_req(ha->ct_sns, RHBA_CMD, RHBA_RSP_SIZE);
 	ct_rsp = &ha->ct_sns->p.rsp;
 
 	/* Prepare FDMI command arguments -- attribute block, attributes. */
@@ -1323,8 +1330,8 @@ qla2x00_fdmi_rhba(scsi_qla_host_t *vha)
 	/* Manufacturer. */
 	eiter = (struct ct_fdmi_hba_attr *) (entries + size);
 	eiter->type = __constant_cpu_to_be16(FDMI_HBA_MANUFACTURER);
-	strcpy(eiter->a.manufacturer, "QLogic Corporation");
-	alen = strlen(eiter->a.manufacturer);
+	alen = strlen(QLA2XXX_MANUFACTURER);
+	strncpy(eiter->a.manufacturer, QLA2XXX_MANUFACTURER, alen + 1);
 	alen += (alen & 3) ? (4 - (alen & 3)) : 4;
 	eiter->len = cpu_to_be16(4 + alen);
 	size += 4 + alen;
@@ -1360,8 +1367,7 @@ qla2x00_fdmi_rhba(scsi_qla_host_t *vha)
 	/* Model description. */
 	eiter = (struct ct_fdmi_hba_attr *) (entries + size);
 	eiter->type = __constant_cpu_to_be16(FDMI_HBA_MODEL_DESCRIPTION);
-	if (ha->model_desc)
-		strncpy(eiter->a.model_desc, ha->model_desc, 80);
+	strncpy(eiter->a.model_desc, ha->model_desc, 80);
 	alen = strlen(eiter->a.model_desc);
 	alen += (alen & 3) ? (4 - (alen & 3)) : 4;
 	eiter->len = cpu_to_be16(4 + alen);
@@ -1481,8 +1487,7 @@ qla2x00_fdmi_dhba(scsi_qla_host_t *vha)
 	    DHBA_RSP_SIZE);
 
 	/* Prepare CT request */
-	ct_req = qla2x00_prep_ct_fdmi_req(&ha->ct_sns->p.req, DHBA_CMD,
-	    DHBA_RSP_SIZE);
+	ct_req = qla2x00_prep_ct_fdmi_req(ha->ct_sns, DHBA_CMD, DHBA_RSP_SIZE);
 	ct_rsp = &ha->ct_sns->p.rsp;
 
 	/* Prepare FDMI command arguments -- portname. */
@@ -1538,8 +1543,7 @@ qla2x00_fdmi_rpa(scsi_qla_host_t *vha)
 	ms_pkt = ha->isp_ops->prep_ms_fdmi_iocb(vha, 0, RPA_RSP_SIZE);
 
 	/* Prepare CT request */
-	ct_req = qla2x00_prep_ct_fdmi_req(&ha->ct_sns->p.req, RPA_CMD,
-	    RPA_RSP_SIZE);
+	ct_req = qla2x00_prep_ct_fdmi_req(ha->ct_sns, RPA_CMD, RPA_RSP_SIZE);
 	ct_rsp = &ha->ct_sns->p.rsp;
 
 	/* Prepare FDMI command arguments -- attribute block, attributes. */
@@ -1644,8 +1648,8 @@ qla2x00_fdmi_rpa(scsi_qla_host_t *vha)
 	/* OS device name. */
 	eiter = (struct ct_fdmi_port_attr *) (entries + size);
 	eiter->type = __constant_cpu_to_be16(FDMI_PORT_OS_DEVICE_NAME);
-	strcpy(eiter->a.os_dev_name, QLA2XXX_DRIVER_NAME);
-	alen = strlen(eiter->a.os_dev_name);
+	alen = strlen(QLA2XXX_DRIVER_NAME);
+	strncpy(eiter->a.os_dev_name, QLA2XXX_DRIVER_NAME, alen + 1);
 	alen += (alen & 3) ? (4 - (alen & 3)) : 4;
 	eiter->len = cpu_to_be16(4 + alen);
 	size += 4 + alen;
@@ -1713,7 +1717,8 @@ qla2x00_fdmi_register(scsi_qla_host_t *vha)
 	int rval;
        struct qla_hw_data *ha = vha->hw;
 
-	if (IS_QLA2100(ha) || IS_QLA2200(ha))
+	if (IS_QLA2100(ha) || IS_QLA2200(ha) ||
+	    IS_QLAFX00(ha))
 		return QLA_FUNCTION_FAILED;
 
 	rval = qla2x00_mgmt_svr_login(vha);
@@ -1765,7 +1770,7 @@ qla2x00_gfpn_id(scsi_qla_host_t *vha, sw_info_t *list)
 		    GFPN_ID_RSP_SIZE);
 
 		/* Prepare CT request */
-		ct_req = qla2x00_prep_ct_req(&ha->ct_sns->p.req, GFPN_ID_CMD,
+		ct_req = qla2x00_prep_ct_req(ha->ct_sns, GFPN_ID_CMD,
 		    GFPN_ID_RSP_SIZE);
 		ct_rsp = &ha->ct_sns->p.rsp;
 
@@ -1832,18 +1837,18 @@ qla24xx_prep_ms_fm_iocb(scsi_qla_host_t *vha, uint32_t req_size,
 
 
 static inline struct ct_sns_req *
-qla24xx_prep_ct_fm_req(struct ct_sns_req *ct_req, uint16_t cmd,
+qla24xx_prep_ct_fm_req(struct ct_sns_pkt *p, uint16_t cmd,
     uint16_t rsp_size)
 {
-	memset(ct_req, 0, sizeof(struct ct_sns_pkt));
+	memset(p, 0, sizeof(struct ct_sns_pkt));
 
-	ct_req->header.revision = 0x01;
-	ct_req->header.gs_type = 0xFA;
-	ct_req->header.gs_subtype = 0x01;
-	ct_req->command = cpu_to_be16(cmd);
-	ct_req->max_rsp_size = cpu_to_be16((rsp_size - 16) / 4);
+	p->p.req.header.revision = 0x01;
+	p->p.req.header.gs_type = 0xFA;
+	p->p.req.header.gs_subtype = 0x01;
+	p->p.req.command = cpu_to_be16(cmd);
+	p->p.req.max_rsp_size = cpu_to_be16((rsp_size - 16) / 4);
 
-	return ct_req;
+	return &p->p.req;
 }
 
 /**
@@ -1879,8 +1884,8 @@ qla2x00_gpsc(scsi_qla_host_t *vha, sw_info_t *list)
 		    GPSC_RSP_SIZE);
 
 		/* Prepare CT request */
-		ct_req = qla24xx_prep_ct_fm_req(&ha->ct_sns->p.req,
-		    GPSC_CMD, GPSC_RSP_SIZE);
+		ct_req = qla24xx_prep_ct_fm_req(ha->ct_sns, GPSC_CMD,
+		    GPSC_RSP_SIZE);
 		ct_rsp = &ha->ct_sns->p.rsp;
 
 		/* Prepare CT arguments -- port_name */
@@ -1927,6 +1932,9 @@ qla2x00_gpsc(scsi_qla_host_t *vha, sw_info_t *list)
 				break;
 			case BIT_11:
 				list[i].fp_speed = PORT_SPEED_8GB;
+				break;
+			case BIT_10:
+				list[i].fp_speed = PORT_SPEED_16GB;
 				break;
 			}
 
@@ -1987,7 +1995,7 @@ qla2x00_gff_id(scsi_qla_host_t *vha, sw_info_t *list)
 		    GFF_ID_RSP_SIZE);
 
 		/* Prepare CT request */
-		ct_req = qla2x00_prep_ct_req(&ha->ct_sns->p.req, GFF_ID_CMD,
+		ct_req = qla2x00_prep_ct_req(ha->ct_sns, GFF_ID_CMD,
 		    GFF_ID_RSP_SIZE);
 		ct_rsp = &ha->ct_sns->p.rsp;
 

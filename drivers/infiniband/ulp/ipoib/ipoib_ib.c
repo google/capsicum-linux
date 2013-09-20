@@ -123,7 +123,7 @@ static void ipoib_ud_skb_put_frags(struct ipoib_dev_priv *priv,
 
 		skb_frag_size_set(frag, size);
 		skb->data_len += size;
-		skb->truesize += size;
+		skb->truesize += PAGE_SIZE;
 	} else
 		skb_put(skb, length);
 
@@ -156,14 +156,18 @@ static struct sk_buff *ipoib_alloc_rx_skb(struct net_device *dev, int id)
 	struct ipoib_dev_priv *priv = netdev_priv(dev);
 	struct sk_buff *skb;
 	int buf_size;
+	int tailroom;
 	u64 *mapping;
 
-	if (ipoib_ud_need_sg(priv->max_ib_mtu))
+	if (ipoib_ud_need_sg(priv->max_ib_mtu)) {
 		buf_size = IPOIB_UD_HEAD_SIZE;
-	else
+		tailroom = 128; /* reserve some tailroom for IP/TCP headers */
+	} else {
 		buf_size = IPOIB_UD_BUF_SIZE(priv->max_ib_mtu);
+		tailroom = 0;
+	}
 
-	skb = dev_alloc_skb(buf_size + 4);
+	skb = dev_alloc_skb(buf_size + tailroom + 4);
 	if (unlikely(!skb))
 		return NULL;
 
@@ -596,6 +600,9 @@ void ipoib_send(struct net_device *dev, struct sk_buff *skb,
 		netif_stop_queue(dev);
 	}
 
+	skb_orphan(skb);
+	skb_dst_drop(skb);
+
 	rc = post_send(priv, priv->tx_head & (ipoib_sendq_size - 1),
 		       address->ah, qpn, tx_req, phead, hlen);
 	if (unlikely(rc)) {
@@ -611,8 +618,6 @@ void ipoib_send(struct net_device *dev, struct sk_buff *skb,
 
 		address->last_send = priv->tx_head;
 		++priv->tx_head;
-		skb_orphan(skb);
-
 	}
 
 	if (unlikely(priv->tx_outstanding > MAX_SEND_CQE))
@@ -927,12 +932,47 @@ int ipoib_ib_dev_init(struct net_device *dev, struct ib_device *ca, int port)
 	return 0;
 }
 
+/*
+ * Takes whatever value which is in pkey index 0 and updates priv->pkey
+ * returns 0 if the pkey value was changed.
+ */
+static inline int update_parent_pkey(struct ipoib_dev_priv *priv)
+{
+	int result;
+	u16 prev_pkey;
+
+	prev_pkey = priv->pkey;
+	result = ib_query_pkey(priv->ca, priv->port, 0, &priv->pkey);
+	if (result) {
+		ipoib_warn(priv, "ib_query_pkey port %d failed (ret = %d)\n",
+			   priv->port, result);
+		return result;
+	}
+
+	priv->pkey |= 0x8000;
+
+	if (prev_pkey != priv->pkey) {
+		ipoib_dbg(priv, "pkey changed from 0x%x to 0x%x\n",
+			  prev_pkey, priv->pkey);
+		/*
+		 * Update the pkey in the broadcast address, while making sure to set
+		 * the full membership bit, so that we join the right broadcast group.
+		 */
+		priv->dev->broadcast[8] = priv->pkey >> 8;
+		priv->dev->broadcast[9] = priv->pkey & 0xff;
+		return 0;
+	}
+
+	return 1;
+}
+
 static void __ipoib_ib_dev_flush(struct ipoib_dev_priv *priv,
 				enum ipoib_flush_level level)
 {
 	struct ipoib_dev_priv *cpriv;
 	struct net_device *dev = priv->dev;
 	u16 new_index;
+	int result;
 
 	mutex_lock(&priv->vlan_mutex);
 
@@ -946,6 +986,10 @@ static void __ipoib_ib_dev_flush(struct ipoib_dev_priv *priv,
 	mutex_unlock(&priv->vlan_mutex);
 
 	if (!test_bit(IPOIB_FLAG_INITIALIZED, &priv->flags)) {
+		/* for non-child devices must check/update the pkey value here */
+		if (level == IPOIB_FLUSH_HEAVY &&
+		    !test_bit(IPOIB_FLAG_SUBINTERFACE, &priv->flags))
+			update_parent_pkey(priv);
 		ipoib_dbg(priv, "Not flushing - IPOIB_FLAG_INITIALIZED not set.\n");
 		return;
 	}
@@ -956,21 +1000,32 @@ static void __ipoib_ib_dev_flush(struct ipoib_dev_priv *priv,
 	}
 
 	if (level == IPOIB_FLUSH_HEAVY) {
-		if (ib_find_pkey(priv->ca, priv->port, priv->pkey, &new_index)) {
-			clear_bit(IPOIB_PKEY_ASSIGNED, &priv->flags);
-			ipoib_ib_dev_down(dev, 0);
-			ipoib_ib_dev_stop(dev, 0);
-			if (ipoib_pkey_dev_delay_open(dev))
+		/* child devices chase their origin pkey value, while non-child
+		 * (parent) devices should always takes what present in pkey index 0
+		 */
+		if (test_bit(IPOIB_FLAG_SUBINTERFACE, &priv->flags)) {
+			if (ib_find_pkey(priv->ca, priv->port, priv->pkey, &new_index)) {
+				clear_bit(IPOIB_PKEY_ASSIGNED, &priv->flags);
+				ipoib_ib_dev_down(dev, 0);
+				ipoib_ib_dev_stop(dev, 0);
+				if (ipoib_pkey_dev_delay_open(dev))
+					return;
+			}
+			/* restart QP only if P_Key index is changed */
+			if (test_and_set_bit(IPOIB_PKEY_ASSIGNED, &priv->flags) &&
+			    new_index == priv->pkey_index) {
+				ipoib_dbg(priv, "Not flushing - P_Key index not changed.\n");
 				return;
+			}
+			priv->pkey_index = new_index;
+		} else {
+			result = update_parent_pkey(priv);
+			/* restart QP only if P_Key value changed */
+			if (result) {
+				ipoib_dbg(priv, "Not flushing - P_Key value not changed.\n");
+				return;
+			}
 		}
-
-		/* restart QP only if P_Key index is changed */
-		if (test_and_set_bit(IPOIB_PKEY_ASSIGNED, &priv->flags) &&
-		    new_index == priv->pkey_index) {
-			ipoib_dbg(priv, "Not flushing - P_Key index not changed.\n");
-			return;
-		}
-		priv->pkey_index = new_index;
 	}
 
 	if (level == IPOIB_FLUSH_LIGHT) {

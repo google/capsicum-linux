@@ -22,6 +22,7 @@
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Jean-Francois Dagenais <dagenaisj@sonatest.com>");
 MODULE_DESCRIPTION("w1 family 29 driver for DS2408 8 Pin IO");
+MODULE_ALIAS("w1-family-" __stringify(W1_FAMILY_DS2408));
 
 
 #define W1_F29_RETRIES		3
@@ -52,11 +53,11 @@ static int _read_reg(struct w1_slave *sl, u8 address, unsigned char* buf)
 	if (!buf)
 		return -EINVAL;
 
-	mutex_lock(&sl->master->mutex);
+	mutex_lock(&sl->master->bus_mutex);
 	dev_dbg(&sl->dev, "mutex locked");
 
 	if (w1_reset_select_slave(sl)) {
-		mutex_unlock(&sl->master->mutex);
+		mutex_unlock(&sl->master->bus_mutex);
 		return -EIO;
 	}
 
@@ -66,7 +67,7 @@ static int _read_reg(struct w1_slave *sl, u8 address, unsigned char* buf)
 	w1_write_block(sl->master, wrbuf, 3);
 	*buf = w1_read_8(sl->master);
 
-	mutex_unlock(&sl->master->mutex);
+	mutex_unlock(&sl->master->bus_mutex);
 	dev_dbg(&sl->dev, "mutex unlocked");
 	return 1;
 }
@@ -165,7 +166,7 @@ static ssize_t w1_f29_write_output(
 		return -EFAULT;
 
 	dev_dbg(&sl->dev, "locking mutex for write_output");
-	mutex_lock(&sl->master->mutex);
+	mutex_lock(&sl->master->bus_mutex);
 	dev_dbg(&sl->dev, "mutex locked");
 
 	if (w1_reset_select_slave(sl))
@@ -178,6 +179,15 @@ static ssize_t w1_f29_write_output(
 		w1_write_block(sl->master, w1_buf, 3);
 
 		readBack = w1_read_8(sl->master);
+
+		if (readBack != W1_F29_SUCCESS_CONFIRM_BYTE) {
+			if (w1_reset_resume_command(sl->master))
+				goto error;
+			/* try again, the slave is ready for a command */
+			continue;
+		}
+
+#ifdef CONFIG_W1_SLAVE_DS2408_READBACK
 		/* here the master could read another byte which
 		   would be the PIO reg (the actual pin logic state)
 		   since in this driver we don't know which pins are
@@ -186,11 +196,6 @@ static ssize_t w1_f29_write_output(
 		if (w1_reset_resume_command(sl->master))
 			goto error;
 
-		if (readBack != 0xAA) {
-			/* try again, the slave is ready for a command */
-			continue;
-		}
-
 		/* go read back the output latches */
 		/* (the direct effect of the write above) */
 		w1_buf[0] = W1_F29_FUNC_READ_PIO_REGS;
@@ -198,16 +203,18 @@ static ssize_t w1_f29_write_output(
 		w1_buf[2] = 0;
 		w1_write_block(sl->master, w1_buf, 3);
 		/* read the result of the READ_PIO_REGS command */
-		if (w1_read_8(sl->master) == *buf) {
+		if (w1_read_8(sl->master) == *buf)
+#endif
+		{
 			/* success! */
-			mutex_unlock(&sl->master->mutex);
+			mutex_unlock(&sl->master->bus_mutex);
 			dev_dbg(&sl->dev,
 				"mutex unlocked, retries:%d", retries);
 			return 1;
 		}
 	}
 error:
-	mutex_unlock(&sl->master->mutex);
+	mutex_unlock(&sl->master->bus_mutex);
 	dev_dbg(&sl->dev, "mutex unlocked in error, retries:%d", retries);
 
 	return -EIO;
@@ -228,7 +235,7 @@ static ssize_t w1_f29_write_activity(
 	if (count != 1 || off != 0)
 		return -EFAULT;
 
-	mutex_lock(&sl->master->mutex);
+	mutex_lock(&sl->master->bus_mutex);
 
 	if (w1_reset_select_slave(sl))
 		goto error;
@@ -236,7 +243,7 @@ static ssize_t w1_f29_write_activity(
 	while (retries--) {
 		w1_write_8(sl->master, W1_F29_FUNC_RESET_ACTIVITY_LATCHES);
 		if (w1_read_8(sl->master) == W1_F29_SUCCESS_CONFIRM_BYTE) {
-			mutex_unlock(&sl->master->mutex);
+			mutex_unlock(&sl->master->bus_mutex);
 			return 1;
 		}
 		if (w1_reset_resume_command(sl->master))
@@ -244,7 +251,7 @@ static ssize_t w1_f29_write_activity(
 	}
 
 error:
-	mutex_unlock(&sl->master->mutex);
+	mutex_unlock(&sl->master->bus_mutex);
 	return -EIO;
 }
 
@@ -263,7 +270,7 @@ static ssize_t w1_f29_write_status_control(
 	if (count != 1 || off != 0)
 		return -EFAULT;
 
-	mutex_lock(&sl->master->mutex);
+	mutex_lock(&sl->master->bus_mutex);
 
 	if (w1_reset_select_slave(sl))
 		goto error;
@@ -285,20 +292,45 @@ static ssize_t w1_f29_write_status_control(
 		w1_write_block(sl->master, w1_buf, 3);
 		if (w1_read_8(sl->master) == *buf) {
 			/* success! */
-			mutex_unlock(&sl->master->mutex);
+			mutex_unlock(&sl->master->bus_mutex);
 			return 1;
 		}
 	}
 error:
-	mutex_unlock(&sl->master->mutex);
+	mutex_unlock(&sl->master->bus_mutex);
 
 	return -EIO;
 }
 
+/*
+ * This is a special sequence we must do to ensure the P0 output is not stuck
+ * in test mode. This is described in rev 2 of the ds2408's datasheet
+ * (http://datasheets.maximintegrated.com/en/ds/DS2408.pdf) under
+ * "APPLICATION INFORMATION/Power-up timing".
+ */
+static int w1_f29_disable_test_mode(struct w1_slave *sl)
+{
+	int res;
+	u8 magic[10] = {0x96, };
+	u64 rn = le64_to_cpu(*((u64*)&sl->reg_num));
 
+	memcpy(&magic[1], &rn, 8);
+	magic[9] = 0x3C;
 
-#define NB_SYSFS_BIN_FILES 6
-static struct bin_attribute w1_f29_sysfs_bin_files[NB_SYSFS_BIN_FILES] = {
+	mutex_lock(&sl->master->bus_mutex);
+
+	res = w1_reset_bus(sl->master);
+	if (res)
+		goto out;
+	w1_write_block(sl->master, magic, ARRAY_SIZE(magic));
+
+	res = w1_reset_bus(sl->master);
+out:
+	mutex_unlock(&sl->master->bus_mutex);
+	return res;
+}
+
+static struct bin_attribute w1_f29_sysfs_bin_files[] = {
 	{
 		.attr =	{
 			.name = "state",
@@ -332,7 +364,6 @@ static struct bin_attribute w1_f29_sysfs_bin_files[NB_SYSFS_BIN_FILES] = {
 		},
 		.size = 1,
 		.read = w1_f29_read_cond_search_mask,
-		.write = 0,
 	},
 	{
 		.attr =	{
@@ -341,7 +372,6 @@ static struct bin_attribute w1_f29_sysfs_bin_files[NB_SYSFS_BIN_FILES] = {
 		},
 		.size = 1,
 		.read = w1_f29_read_cond_search_polarity,
-		.write = 0,
 	},
 	{
 		.attr =	{
@@ -359,7 +389,11 @@ static int w1_f29_add_slave(struct w1_slave *sl)
 	int err = 0;
 	int i;
 
-	for (i = 0; i < NB_SYSFS_BIN_FILES && !err; ++i)
+	err = w1_f29_disable_test_mode(sl);
+	if (err)
+		return err;
+
+	for (i = 0; i < ARRAY_SIZE(w1_f29_sysfs_bin_files) && !err; ++i)
 		err = sysfs_create_bin_file(
 			&sl->dev.kobj,
 			&(w1_f29_sysfs_bin_files[i]));
@@ -373,7 +407,7 @@ static int w1_f29_add_slave(struct w1_slave *sl)
 static void w1_f29_remove_slave(struct w1_slave *sl)
 {
 	int i;
-	for (i = NB_SYSFS_BIN_FILES - 1; i >= 0; --i)
+	for (i = ARRAY_SIZE(w1_f29_sysfs_bin_files) - 1; i >= 0; --i)
 		sysfs_remove_bin_file(&sl->dev.kobj,
 			&(w1_f29_sysfs_bin_files[i]));
 }

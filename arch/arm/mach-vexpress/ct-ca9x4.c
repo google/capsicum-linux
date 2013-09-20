@@ -9,11 +9,11 @@
 #include <linux/amba/bus.h>
 #include <linux/amba/clcd.h>
 #include <linux/clkdev.h>
+#include <linux/vexpress.h>
+#include <linux/irqchip/arm-gic.h>
 
 #include <asm/hardware/arm_timer.h>
 #include <asm/hardware/cache-l2x0.h>
-#include <asm/hardware/gic.h>
-#include <asm/pmu.h>
 #include <asm/smp_scu.h>
 #include <asm/smp_twd.h>
 
@@ -27,6 +27,7 @@
 #include "core.h"
 
 #include <mach/motherboard.h>
+#include <mach/irqs.h>
 
 #include <plat/clcd.h>
 
@@ -64,12 +65,6 @@ static void __init ct_ca9x4_init_irq(void)
 	ca9x4_twd_init();
 }
 
-static void ct_ca9x4_clcd_enable(struct clcd_fb *fb)
-{
-	v2m_cfg_write(SYS_CFG_MUXFPGA | SYS_CFG_SITE_DB1, 0);
-	v2m_cfg_write(SYS_CFG_DVIMODE | SYS_CFG_SITE_DB1, 2);
-}
-
 static int ct_ca9x4_clcd_setup(struct clcd_fb *fb)
 {
 	unsigned long framesize = 1024 * 768 * 2;
@@ -86,7 +81,6 @@ static struct clcd_board ct_ca9x4_clcd_data = {
 	.caps		= CLCD_CAP_5551 | CLCD_CAP_565,
 	.check		= clcdfb_check,
 	.decode		= clcdfb_decode,
-	.enable		= ct_ca9x4_clcd_enable,
 	.setup		= ct_ca9x4_clcd_setup,
 	.mmap		= versatile_clcd_mmap_dma,
 	.remove		= versatile_clcd_remove_dma,
@@ -102,46 +96,6 @@ static struct amba_device *ct_ca9x4_amba_devs[] __initdata = {
 	&dmc_device,
 	&smc_device,
 	&gpio_device,
-};
-
-
-static long ct_round(struct clk *clk, unsigned long rate)
-{
-	return rate;
-}
-
-static int ct_set(struct clk *clk, unsigned long rate)
-{
-	return v2m_cfg_write(SYS_CFG_OSC | SYS_CFG_SITE_DB1 | 1, rate);
-}
-
-static const struct clk_ops osc1_clk_ops = {
-	.round	= ct_round,
-	.set	= ct_set,
-};
-
-static struct clk osc1_clk = {
-	.ops	= &osc1_clk_ops,
-	.rate	= 24000000,
-};
-
-static struct clk ct_sp804_clk = {
-	.rate	= 1000000,
-};
-
-static struct clk_lookup lookups[] = {
-	{	/* CLCD */
-		.dev_id		= "ct:clcd",
-		.clk		= &osc1_clk,
-	}, {	/* SP804 timers */
-		.dev_id		= "sp804",
-		.con_id		= "ct-timer0",
-		.clk		= &ct_sp804_clk,
-	}, {	/* SP804 timers */
-		.dev_id		= "sp804",
-		.con_id		= "ct-timer1",
-		.clk		= &ct_sp804_clk,
-	},
 };
 
 static struct resource pmu_resources[] = {
@@ -169,15 +123,19 @@ static struct resource pmu_resources[] = {
 
 static struct platform_device pmu_device = {
 	.name		= "arm-pmu",
-	.id		= ARM_PMU_DEVICE_CPU,
+	.id		= -1,
 	.num_resources	= ARRAY_SIZE(pmu_resources),
 	.resource	= pmu_resources,
 };
 
-static void __init ct_ca9x4_init_early(void)
-{
-	clkdev_add_table(lookups, ARRAY_SIZE(lookups));
-}
+static struct platform_device osc1_device = {
+	.name		= "vexpress-osc",
+	.id		= 1,
+	.num_resources	= 1,
+	.resource	= (struct resource []) {
+		VEXPRESS_RES_FUNC(0xf, 1),
+	},
+};
 
 static void __init ct_ca9x4_init(void)
 {
@@ -197,6 +155,10 @@ static void __init ct_ca9x4_init(void)
 		amba_device_register(ct_ca9x4_amba_devs[i], &iomem_resource);
 
 	platform_device_register(&pmu_device);
+	platform_device_register(&osc1_device);
+
+	WARN_ON(clk_register_clkdev(vexpress_osc_setup(&osc1_device.dev),
+			NULL, "ct:clcd"));
 }
 
 #ifdef CONFIG_SMP
@@ -220,8 +182,6 @@ static void __init ct_ca9x4_init_cpu_map(void)
 
 	for (i = 0; i < ncores; ++i)
 		set_cpu_possible(i, true);
-
-	set_smp_cross_call(gic_raise_softirq);
 }
 
 static void __init ct_ca9x4_smp_enable(unsigned int max_cpus)
@@ -234,7 +194,6 @@ struct ct_desc ct_ca9x4_desc __initdata = {
 	.id		= V2M_CT_ID_CA9,
 	.name		= "CA9x4",
 	.map_io		= ct_ca9x4_map_io,
-	.init_early	= ct_ca9x4_init_early,
 	.init_irq	= ct_ca9x4_init_irq,
 	.init_tile	= ct_ca9x4_init,
 #ifdef CONFIG_SMP

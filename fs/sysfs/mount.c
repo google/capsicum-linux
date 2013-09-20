@@ -10,7 +10,7 @@
  * Please see Documentation/filesystems/sysfs.txt for more information.
  */
 
-#define DEBUG 
+#define DEBUG
 
 #include <linux/fs.h>
 #include <linux/mount.h>
@@ -19,6 +19,7 @@
 #include <linux/module.h>
 #include <linux/magic.h>
 #include <linux/slab.h>
+#include <linux/user_namespace.h>
 
 #include "sysfs.h"
 
@@ -68,6 +69,7 @@ static int sysfs_fill_super(struct super_block *sb, void *data, int silent)
 	}
 	root->d_fsdata = &sysfs_root;
 	sb->s_root = root;
+	sb->s_d_op = &sysfs_dentry_ops;
 	return 0;
 }
 
@@ -110,6 +112,9 @@ static struct dentry *sysfs_mount(struct file_system_type *fs_type,
 	struct super_block *sb;
 	int error;
 
+	if (!(flags & MS_KERNMOUNT) && !current_user_ns()->may_mount_sysfs)
+		return ERR_PTR(-EPERM);
+
 	info = kzalloc(sizeof(*info), GFP_KERNEL);
 	if (!info)
 		return ERR_PTR(-ENOMEM);
@@ -117,13 +122,12 @@ static struct dentry *sysfs_mount(struct file_system_type *fs_type,
 	for (type = KOBJ_NS_TYPE_NONE; type < KOBJ_NS_TYPES; type++)
 		info->ns[type] = kobj_ns_grab_current(type);
 
-	sb = sget(fs_type, sysfs_test_super, sysfs_set_super, info);
+	sb = sget(fs_type, sysfs_test_super, sysfs_set_super, flags, info);
 	if (IS_ERR(sb) || sb->s_fs_info != info)
 		free_sysfs_super_info(info);
 	if (IS_ERR(sb))
 		return ERR_CAST(sb);
 	if (!sb->s_root) {
-		sb->s_flags = flags;
 		error = sysfs_fill_super(sb, data, flags & MS_SILENT ? 1 : 0);
 		if (error) {
 			deactivate_locked_super(sb);
@@ -149,6 +153,7 @@ static struct file_system_type sysfs_fs_type = {
 	.name		= "sysfs",
 	.mount		= sysfs_mount,
 	.kill_sb	= sysfs_kill_sb,
+	.fs_flags	= FS_USERNS_MOUNT,
 };
 
 int __init sysfs_init(void)

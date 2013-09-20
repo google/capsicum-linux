@@ -9,6 +9,7 @@
  * (C) Copyright TOSHIBA CORPORATION 2004-2007
  * All Rights Reserved.
  */
+#include <linux/err.h>
 #include <linux/init.h>
 #include <linux/slab.h>
 #include <linux/module.h>
@@ -129,18 +130,6 @@ static void txx9ndfmc_read_buf(struct mtd_info *mtd, uint8_t *buf, int len)
 
 	while (len--)
 		*buf++ = __raw_readl(ndfdtr);
-}
-
-static int txx9ndfmc_verify_buf(struct mtd_info *mtd, const uint8_t *buf,
-				int len)
-{
-	struct platform_device *dev = mtd_to_platdev(mtd);
-	void __iomem *ndfdtr = ndregaddr(dev, TXX9_NDFDTR);
-
-	while (len--)
-		if (*buf++ != (uint8_t)__raw_readl(ndfdtr))
-			return -EFAULT;
-	return 0;
 }
 
 static void txx9ndfmc_cmd_ctrl(struct mtd_info *mtd, int cmd,
@@ -298,9 +287,9 @@ static int __init txx9ndfmc_probe(struct platform_device *dev)
 	drvdata = devm_kzalloc(&dev->dev, sizeof(*drvdata), GFP_KERNEL);
 	if (!drvdata)
 		return -ENOMEM;
-	drvdata->base = devm_request_and_ioremap(&dev->dev, res);
-	if (!drvdata->base)
-		return -EBUSY;
+	drvdata->base = devm_ioremap_resource(&dev->dev, res);
+	if (IS_ERR(drvdata->base))
+		return PTR_ERR(drvdata->base);
 
 	hold = plat->hold ?: 20; /* tDH */
 	spw = plat->spw ?: 90; /* max(tREADID, tWP, tRP) */
@@ -346,7 +335,6 @@ static int __init txx9ndfmc_probe(struct platform_device *dev)
 		chip->read_byte = txx9ndfmc_read_byte;
 		chip->read_buf = txx9ndfmc_read_buf;
 		chip->write_buf = txx9ndfmc_write_buf;
-		chip->verify_buf = txx9ndfmc_verify_buf;
 		chip->cmd_ctrl = txx9ndfmc_cmd_ctrl;
 		chip->dev_ready = txx9ndfmc_dev_ready;
 		chip->ecc.calculate = txx9ndfmc_calculate_ecc;
@@ -439,18 +427,7 @@ static struct platform_driver txx9ndfmc_driver = {
 	},
 };
 
-static int __init txx9ndfmc_init(void)
-{
-	return platform_driver_probe(&txx9ndfmc_driver, txx9ndfmc_probe);
-}
-
-static void __exit txx9ndfmc_exit(void)
-{
-	platform_driver_unregister(&txx9ndfmc_driver);
-}
-
-module_init(txx9ndfmc_init);
-module_exit(txx9ndfmc_exit);
+module_platform_driver_probe(txx9ndfmc_driver, txx9ndfmc_probe);
 
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("TXx9 SoC NAND flash controller driver");

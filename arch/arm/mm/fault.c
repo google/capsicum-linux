@@ -336,6 +336,7 @@ retry:
 			/* Clear FAULT_FLAG_ALLOW_RETRY to avoid any risk
 			* of starvation. */
 			flags &= ~FAULT_FLAG_ALLOW_RETRY;
+			flags |= FAULT_FLAG_TRIED;
 			goto retry;
 		}
 	}
@@ -432,9 +433,6 @@ do_translation_fault(unsigned long addr, unsigned int fsr,
 
 	index = pgd_index(addr);
 
-	/*
-	 * FIXME: CP15 C1 is write only on ARMv3 architectures.
-	 */
 	pgd = cpu_get_pgd() + index;
 	pgd_k = init_mm.pgd + index;
 
@@ -493,12 +491,14 @@ do_translation_fault(unsigned long addr, unsigned int fsr,
  * Some section permission faults need to be handled gracefully.
  * They can happen due to a __{get,put}_user during an oops.
  */
+#ifndef CONFIG_ARM_LPAE
 static int
 do_sect_fault(unsigned long addr, unsigned int fsr, struct pt_regs *regs)
 {
 	do_bad_area(addr, fsr, regs);
 	return 0;
 }
+#endif /* CONFIG_ARM_LPAE */
 
 /*
  * This abort handler always returns "fault".

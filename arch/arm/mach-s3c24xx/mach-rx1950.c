@@ -1,5 +1,4 @@
-/* linux/arch/arm/mach-s3c2440/mach-rx1950.c
- *
+/*
  * Copyright (c) 2006-2009 Victor Chukhantsev, Denis Grigoriev,
  * Copyright (c) 2007-2010 Vasily Khoruzhick
  *
@@ -37,32 +36,31 @@
 
 #include <linux/mmc/host.h>
 
+#include <asm/mach-types.h>
 #include <asm/mach/arch.h>
 #include <asm/mach/map.h>
-#include <asm/mach-types.h>
 
-#include <mach/regs-gpio.h>
-#include <mach/regs-gpioj.h>
-#include <mach/regs-lcd.h>
-#include <mach/h1940.h>
-#include <mach/fb.h>
-
-#include <plat/clock.h>
-#include <plat/regs-serial.h>
-#include <plat/regs-iic.h>
-#include <plat/mci.h>
-#include <plat/udc.h>
-#include <plat/nand.h>
-#include <plat/iic.h>
-#include <plat/devs.h>
-#include <plat/cpu.h>
-#include <plat/pm.h>
-#include <plat/irq.h>
-#include <plat/ts.h>
+#include <linux/platform_data/i2c-s3c2410.h>
+#include <linux/platform_data/mmc-s3cmci.h>
+#include <linux/platform_data/mtd-nand-s3c2410.h>
+#include <linux/platform_data/touchscreen-s3c2410.h>
+#include <linux/platform_data/usb-s3c2410_udc.h>
 
 #include <sound/uda1380.h>
 
+#include <mach/fb.h>
+#include <mach/regs-gpio.h>
+#include <mach/regs-lcd.h>
+
+#include <plat/clock.h>
+#include <plat/cpu.h>
+#include <plat/devs.h>
+#include <plat/pm.h>
+#include <plat/regs-serial.h>
+#include <plat/samsung-time.h>
+
 #include "common.h"
+#include "h1940.h"
 
 #define LCD_PWM_PERIOD 192960
 #define LCD_PWM_DUTY 127353
@@ -152,13 +150,8 @@ static struct pda_power_pdata power_supply_info = {
 };
 
 static struct resource power_supply_resources[] = {
-	[0] = {
-			.name	= "ac",
-			.flags	= IORESOURCE_IRQ | IORESOURCE_IRQ_LOWEDGE |
-					  IORESOURCE_IRQ_HIGHEDGE,
-			.start	= IRQ_EINT2,
-			.end	= IRQ_EINT2,
-	},
+	[0] = DEFINE_RES_NAMED(IRQ_EINT2, 1, "ac", IORESOURCE_IRQ \
+			| IORESOURCE_IRQ_LOWEDGE | IORESOURCE_IRQ_HIGHEDGE),
 };
 
 static struct platform_device power_supply = {
@@ -718,7 +711,6 @@ static struct platform_device *rx1950_devices[] __initdata = {
 	&s3c_device_wdt,
 	&s3c_device_i2c0,
 	&s3c_device_iis,
-	&samsung_asoc_dma,
 	&s3c_device_usbgadget,
 	&s3c_device_rtc,
 	&s3c_device_nand,
@@ -749,6 +741,7 @@ static void __init rx1950_map_io(void)
 	s3c24xx_init_io(rx1950_iodesc, ARRAY_SIZE(rx1950_iodesc));
 	s3c24xx_init_clocks(16934000);
 	s3c24xx_init_uarts(rx1950_uartcfgs, ARRAY_SIZE(rx1950_uartcfgs));
+	samsung_set_timer_source(SAMSUNG_PWM3, SAMSUNG_PWM4);
 
 	/* setup PM */
 
@@ -819,8 +812,8 @@ MACHINE_START(RX1950, "HP iPAQ RX1950")
 	.atag_offset = 0x100,
 	.map_io = rx1950_map_io,
 	.reserve	= rx1950_reserve,
-	.init_irq = s3c24xx_init_irq,
+	.init_irq	= s3c2442_init_irq,
 	.init_machine = rx1950_init_machine,
-	.timer = &s3c24xx_timer,
+	.init_time	= samsung_timer_init,
 	.restart	= s3c244x_restart,
 MACHINE_END

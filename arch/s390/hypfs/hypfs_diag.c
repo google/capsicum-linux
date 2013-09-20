@@ -1,5 +1,4 @@
 /*
- *  arch/s390/hypfs/hypfs_diag.c
  *    Hypervisor filesystem for Linux on s390. Diag 204 and 224
  *    implementation.
  *
@@ -652,9 +651,7 @@ static int hypfs_create_cpu_files(struct super_block *sb,
 	}
 	diag224_idx2name(cpu_info__ctidx(diag204_info_type, cpu_info), buffer);
 	rc = hypfs_create_str(sb, cpu_dir, "type", buffer);
-	if (IS_ERR(rc))
-		return PTR_ERR(rc);
-	return 0;
+	return PTR_RET(rc);
 }
 
 static void *hypfs_create_lpar_files(struct super_block *sb,
@@ -703,9 +700,7 @@ static int hypfs_create_phys_cpu_files(struct super_block *sb,
 		return PTR_ERR(rc);
 	diag224_idx2name(phys_cpu__ctidx(diag204_info_type, cpu_info), buffer);
 	rc = hypfs_create_str(sb, cpu_dir, "type", buffer);
-	if (IS_ERR(rc))
-		return PTR_ERR(rc);
-	return 0;
+	return PTR_RET(rc);
 }
 
 static void *hypfs_create_phys_files(struct super_block *sb,

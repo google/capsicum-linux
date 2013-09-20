@@ -41,13 +41,6 @@
 
 #include <asm/irq.h>
 
-#ifndef CONFIG_HAVE_CLK
-#define clk_get(dev, id)	NULL
-#define clk_put(clk)		do { } while (0)
-#define clk_disable(clk)	do { } while (0)
-#define clk_enable(clk)		do { } while (0)
-#endif
-
 struct pxa_reg_layout {
 	u32 ibmr;
 	u32 idbr;
@@ -1060,16 +1053,13 @@ static int i2c_pxa_probe_dt(struct platform_device *pdev, struct pxa_i2c *i2c,
 	struct device_node *np = pdev->dev.of_node;
 	const struct of_device_id *of_id =
 			of_match_device(i2c_pxa_dt_ids, &pdev->dev);
-	int ret;
 
 	if (!of_id)
 		return 1;
-	ret = of_alias_get_id(np, "i2c");
-	if (ret < 0) {
-		dev_err(&pdev->dev, "failed to get alias id, errno %d\n", ret);
-		return ret;
-	}
-	pdev->id = ret;
+
+	/* For device tree we always use the dynamic or alias-assigned ID */
+	i2c->adap.nr = -1;
+
 	if (of_get_property(np, "mrvl,i2c-polling", NULL))
 		i2c->use_pio = 1;
 	if (of_get_property(np, "mrvl,i2c-fast-mode", NULL))
@@ -1107,6 +1097,9 @@ static int i2c_pxa_probe(struct platform_device *dev)
 		goto emalloc;
 	}
 
+	/* Default adapter num to device id; i2c_pxa_probe_dt can override. */
+	i2c->adap.nr = dev->id;
+
 	ret = i2c_pxa_probe_dt(dev, i2c, &i2c_type);
 	if (ret > 0)
 		ret = i2c_pxa_probe_pdata(dev, i2c, &i2c_type);
@@ -1131,14 +1124,7 @@ static int i2c_pxa_probe(struct platform_device *dev)
 	spin_lock_init(&i2c->lock);
 	init_waitqueue_head(&i2c->wait);
 
-	/*
-	 * If "dev->id" is negative we consider it as zero.
-	 * The reason to do so is to avoid sysfs names that only make
-	 * sense when there are multiple adapters.
-	 */
-	i2c->adap.nr = dev->id;
-	snprintf(i2c->adap.name, sizeof(i2c->adap.name), "pxa_i2c-i2c.%u",
-		 i2c->adap.nr);
+	strlcpy(i2c->adap.name, "pxa_i2c-i2c", sizeof(i2c->adap.name));
 
 	i2c->clk = clk_get(&dev->dev, NULL);
 	if (IS_ERR(i2c->clk)) {
@@ -1174,14 +1160,14 @@ static int i2c_pxa_probe(struct platform_device *dev)
 		i2c->adap.class = plat->class;
 	}
 
-	clk_enable(i2c->clk);
+	clk_prepare_enable(i2c->clk);
 
 	if (i2c->use_pio) {
 		i2c->adap.algo = &i2c_pxa_pio_algorithm;
 	} else {
 		i2c->adap.algo = &i2c_pxa_algorithm;
 		ret = request_irq(irq, i2c_pxa_handler, IRQF_SHARED,
-				  i2c->adap.name, i2c);
+				  dev_name(&dev->dev), i2c);
 		if (ret)
 			goto ereqirq;
 	}
@@ -1216,7 +1202,7 @@ eadapt:
 	if (!i2c->use_pio)
 		free_irq(irq, i2c);
 ereqirq:
-	clk_disable(i2c->clk);
+	clk_disable_unprepare(i2c->clk);
 	iounmap(i2c->reg_base);
 eremap:
 	clk_put(i2c->clk);
@@ -1227,17 +1213,15 @@ emalloc:
 	return ret;
 }
 
-static int __exit i2c_pxa_remove(struct platform_device *dev)
+static int i2c_pxa_remove(struct platform_device *dev)
 {
 	struct pxa_i2c *i2c = platform_get_drvdata(dev);
-
-	platform_set_drvdata(dev, NULL);
 
 	i2c_del_adapter(&i2c->adap);
 	if (!i2c->use_pio)
 		free_irq(i2c->irq, i2c);
 
-	clk_disable(i2c->clk);
+	clk_disable_unprepare(i2c->clk);
 	clk_put(i2c->clk);
 
 	iounmap(i2c->reg_base);
@@ -1281,7 +1265,7 @@ static const struct dev_pm_ops i2c_pxa_dev_pm_ops = {
 
 static struct platform_driver i2c_pxa_driver = {
 	.probe		= i2c_pxa_probe,
-	.remove		= __exit_p(i2c_pxa_remove),
+	.remove		= i2c_pxa_remove,
 	.driver		= {
 		.name	= "pxa2xx-i2c",
 		.owner	= THIS_MODULE,

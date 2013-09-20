@@ -9,6 +9,7 @@
 #include <linux/blktrace_api.h>
 
 #include "blk.h"
+#include "blk-cgroup.h"
 
 struct queue_sysfs_entry {
 	struct attribute attr;
@@ -25,9 +26,15 @@ queue_var_show(unsigned long var, char *page)
 static ssize_t
 queue_var_store(unsigned long *var, const char *page, size_t count)
 {
-	char *p = (char *) page;
+	int err;
+	unsigned long v;
 
-	*var = simple_strtoul(p, &p, 10);
+	err = strict_strtoul(page, 10, &v);
+	if (err || v > UINT_MAX)
+		return -EINVAL;
+
+	*var = v;
+
 	return count;
 }
 
@@ -39,7 +46,7 @@ static ssize_t queue_requests_show(struct request_queue *q, char *page)
 static ssize_t
 queue_requests_store(struct request_queue *q, const char *page, size_t count)
 {
-	struct request_list *rl = &q->rq;
+	struct request_list *rl;
 	unsigned long nr;
 	int ret;
 
@@ -47,12 +54,18 @@ queue_requests_store(struct request_queue *q, const char *page, size_t count)
 		return -EINVAL;
 
 	ret = queue_var_store(&nr, page, count);
+	if (ret < 0)
+		return ret;
+
 	if (nr < BLKDEV_MIN_RQ)
 		nr = BLKDEV_MIN_RQ;
 
 	spin_lock_irq(q->queue_lock);
 	q->nr_requests = nr;
 	blk_queue_congestion_threshold(q);
+
+	/* congestion isn't cgroup aware and follows root blkcg for now */
+	rl = &q->root_rl;
 
 	if (rl->count[BLK_RW_SYNC] >= queue_congestion_on_threshold(q))
 		blk_set_queue_congested(q, BLK_RW_SYNC);
@@ -64,19 +77,22 @@ queue_requests_store(struct request_queue *q, const char *page, size_t count)
 	else if (rl->count[BLK_RW_ASYNC] < queue_congestion_off_threshold(q))
 		blk_clear_queue_congested(q, BLK_RW_ASYNC);
 
-	if (rl->count[BLK_RW_SYNC] >= q->nr_requests) {
-		blk_set_queue_full(q, BLK_RW_SYNC);
-	} else {
-		blk_clear_queue_full(q, BLK_RW_SYNC);
-		wake_up(&rl->wait[BLK_RW_SYNC]);
+	blk_queue_for_each_rl(rl, q) {
+		if (rl->count[BLK_RW_SYNC] >= q->nr_requests) {
+			blk_set_rl_full(rl, BLK_RW_SYNC);
+		} else {
+			blk_clear_rl_full(rl, BLK_RW_SYNC);
+			wake_up(&rl->wait[BLK_RW_SYNC]);
+		}
+
+		if (rl->count[BLK_RW_ASYNC] >= q->nr_requests) {
+			blk_set_rl_full(rl, BLK_RW_ASYNC);
+		} else {
+			blk_clear_rl_full(rl, BLK_RW_ASYNC);
+			wake_up(&rl->wait[BLK_RW_ASYNC]);
+		}
 	}
 
-	if (rl->count[BLK_RW_ASYNC] >= q->nr_requests) {
-		blk_set_queue_full(q, BLK_RW_ASYNC);
-	} else {
-		blk_clear_queue_full(q, BLK_RW_ASYNC);
-		wake_up(&rl->wait[BLK_RW_ASYNC]);
-	}
 	spin_unlock_irq(q->queue_lock);
 	return ret;
 }
@@ -94,6 +110,9 @@ queue_ra_store(struct request_queue *q, const char *page, size_t count)
 {
 	unsigned long ra_kb;
 	ssize_t ret = queue_var_store(&ra_kb, page, count);
+
+	if (ret < 0)
+		return ret;
 
 	q->backing_dev_info.ra_pages = ra_kb >> (PAGE_CACHE_SHIFT - 10);
 
@@ -161,6 +180,13 @@ static ssize_t queue_discard_zeroes_data_show(struct request_queue *q, char *pag
 	return queue_var_show(queue_discard_zeroes_data(q), page);
 }
 
+static ssize_t queue_write_same_max_show(struct request_queue *q, char *page)
+{
+	return sprintf(page, "%llu\n",
+		(unsigned long long)q->limits.max_write_same_sectors << 9);
+}
+
+
 static ssize_t
 queue_max_sectors_store(struct request_queue *q, const char *page, size_t count)
 {
@@ -168,6 +194,9 @@ queue_max_sectors_store(struct request_queue *q, const char *page, size_t count)
 		max_hw_sectors_kb = queue_max_hw_sectors(q) >> 1,
 			page_kb = 1 << (PAGE_CACHE_SHIFT - 10);
 	ssize_t ret = queue_var_store(&max_sectors_kb, page, count);
+
+	if (ret < 0)
+		return ret;
 
 	if (max_sectors_kb > max_hw_sectors_kb || max_sectors_kb < page_kb)
 		return -EINVAL;
@@ -200,6 +229,8 @@ queue_store_##name(struct request_queue *q, const char *page, size_t count) \
 	unsigned long val;						\
 	ssize_t ret;							\
 	ret = queue_var_store(&val, page, count);			\
+	if (ret < 0)							\
+		 return ret;						\
 	if (neg)							\
 		val = !val;						\
 									\
@@ -229,6 +260,9 @@ static ssize_t queue_nomerges_store(struct request_queue *q, const char *page,
 	unsigned long nm;
 	ssize_t ret = queue_var_store(&nm, page, count);
 
+	if (ret < 0)
+		return ret;
+
 	spin_lock_irq(q->queue_lock);
 	queue_flag_clear(QUEUE_FLAG_NOMERGES, q);
 	queue_flag_clear(QUEUE_FLAG_NOXMERGES, q);
@@ -257,6 +291,9 @@ queue_rq_affinity_store(struct request_queue *q, const char *page, size_t count)
 	unsigned long val;
 
 	ret = queue_var_store(&val, page, count);
+	if (ret < 0)
+		return ret;
+
 	spin_lock_irq(q->queue_lock);
 	if (val == 2) {
 		queue_flag_set(QUEUE_FLAG_SAME_COMP, q);
@@ -357,6 +394,11 @@ static struct queue_sysfs_entry queue_discard_zeroes_data_entry = {
 	.show = queue_discard_zeroes_data_show,
 };
 
+static struct queue_sysfs_entry queue_write_same_max_entry = {
+	.attr = {.name = "write_same_max_bytes", .mode = S_IRUGO },
+	.show = queue_write_same_max_show,
+};
+
 static struct queue_sysfs_entry queue_nonrot_entry = {
 	.attr = {.name = "rotational", .mode = S_IRUGO | S_IWUSR },
 	.show = queue_show_nonrot,
@@ -404,6 +446,7 @@ static struct attribute *default_attrs[] = {
 	&queue_discard_granularity_entry.attr,
 	&queue_discard_max_entry.attr,
 	&queue_discard_zeroes_data_entry.attr,
+	&queue_write_same_max_entry.attr,
 	&queue_nonrot_entry.attr,
 	&queue_nomerges_entry.attr,
 	&queue_rq_affinity_entry.attr,
@@ -425,7 +468,7 @@ queue_attr_show(struct kobject *kobj, struct attribute *attr, char *page)
 	if (!entry->show)
 		return -EIO;
 	mutex_lock(&q->sysfs_lock);
-	if (blk_queue_dead(q)) {
+	if (blk_queue_dying(q)) {
 		mutex_unlock(&q->sysfs_lock);
 		return -ENOENT;
 	}
@@ -447,13 +490,20 @@ queue_attr_store(struct kobject *kobj, struct attribute *attr,
 
 	q = container_of(kobj, struct request_queue, kobj);
 	mutex_lock(&q->sysfs_lock);
-	if (blk_queue_dead(q)) {
+	if (blk_queue_dying(q)) {
 		mutex_unlock(&q->sysfs_lock);
 		return -ENOENT;
 	}
 	res = entry->store(q, page, length);
 	mutex_unlock(&q->sysfs_lock);
 	return res;
+}
+
+static void blk_free_queue_rcu(struct rcu_head *rcu_head)
+{
+	struct request_queue *q = container_of(rcu_head, struct request_queue,
+					       rcu_head);
+	kmem_cache_free(blk_requestq_cachep, q);
 }
 
 /**
@@ -475,9 +525,10 @@ static void blk_release_queue(struct kobject *kobj)
 {
 	struct request_queue *q =
 		container_of(kobj, struct request_queue, kobj);
-	struct request_list *rl = &q->rq;
 
 	blk_sync_queue(q);
+
+	blkcg_exit_queue(q);
 
 	if (q->elevator) {
 		spin_lock_irq(q->queue_lock);
@@ -486,21 +537,17 @@ static void blk_release_queue(struct kobject *kobj)
 		elevator_exit(q->elevator);
 	}
 
-	blk_throtl_exit(q);
-
-	if (rl->rq_pool)
-		mempool_destroy(rl->rq_pool);
+	blk_exit_rl(&q->root_rl);
 
 	if (q->queue_tags)
 		__blk_queue_free_tags(q);
 
-	blk_throtl_release(q);
 	blk_trace_shutdown(q);
 
 	bdi_destroy(&q->backing_dev_info);
 
 	ida_simple_remove(&blk_queue_ida, q->id);
-	kmem_cache_free(blk_requestq_cachep, q);
+	call_rcu(&q->rcu_head, blk_free_queue_rcu);
 }
 
 static const struct sysfs_ops queue_sysfs_ops = {
@@ -522,6 +569,12 @@ int blk_register_queue(struct gendisk *disk)
 
 	if (WARN_ON(!q))
 		return -ENXIO;
+
+	/*
+	 * Initialization must be complete by now.  Finish the initial
+	 * bypass from queue allocation.
+	 */
+	blk_queue_bypass_end(q);
 
 	ret = blk_trace_init_sysfs(dev);
 	if (ret)

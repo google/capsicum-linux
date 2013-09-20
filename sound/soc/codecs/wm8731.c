@@ -2,6 +2,7 @@
  * wm8731.c  --  WM8731 ALSA SoC Audio driver
  *
  * Copyright 2005 Openedhand Ltd.
+ * Copyright 2006-12 Wolfson Microelectronics, plc
  *
  * Author: Richard Purdie <richard@openedhand.com>
  *
@@ -630,21 +631,22 @@ static const struct regmap_config wm8731_regmap = {
 };
 
 #if defined(CONFIG_SPI_MASTER)
-static int __devinit wm8731_spi_probe(struct spi_device *spi)
+static int wm8731_spi_probe(struct spi_device *spi)
 {
 	struct wm8731_priv *wm8731;
 	int ret;
 
-	wm8731 = kzalloc(sizeof(struct wm8731_priv), GFP_KERNEL);
+	wm8731 = devm_kzalloc(&spi->dev, sizeof(struct wm8731_priv),
+			      GFP_KERNEL);
 	if (wm8731 == NULL)
 		return -ENOMEM;
 
-	wm8731->regmap = regmap_init_spi(spi, &wm8731_regmap);
+	wm8731->regmap = devm_regmap_init_spi(spi, &wm8731_regmap);
 	if (IS_ERR(wm8731->regmap)) {
 		ret = PTR_ERR(wm8731->regmap);
 		dev_err(&spi->dev, "Failed to allocate register map: %d\n",
 			ret);
-		goto err;
+		return ret;
 	}
 
 	spi_set_drvdata(spi, wm8731);
@@ -653,25 +655,15 @@ static int __devinit wm8731_spi_probe(struct spi_device *spi)
 			&soc_codec_dev_wm8731, &wm8731_dai, 1);
 	if (ret != 0) {
 		dev_err(&spi->dev, "Failed to register CODEC: %d\n", ret);
-		goto err_regmap;
+		return ret;
 	}
 
 	return 0;
-
-err_regmap:
-	regmap_exit(wm8731->regmap);
-err:
-	kfree(wm8731);
-	return ret;
 }
 
-static int __devexit wm8731_spi_remove(struct spi_device *spi)
+static int wm8731_spi_remove(struct spi_device *spi)
 {
-	struct wm8731_priv *wm8731 = spi_get_drvdata(spi);
-
 	snd_soc_unregister_codec(&spi->dev);
-	regmap_exit(wm8731->regmap);
-	kfree(wm8731);
 	return 0;
 }
 
@@ -682,27 +674,28 @@ static struct spi_driver wm8731_spi_driver = {
 		.of_match_table = wm8731_of_match,
 	},
 	.probe		= wm8731_spi_probe,
-	.remove		= __devexit_p(wm8731_spi_remove),
+	.remove		= wm8731_spi_remove,
 };
 #endif /* CONFIG_SPI_MASTER */
 
 #if defined(CONFIG_I2C) || defined(CONFIG_I2C_MODULE)
-static __devinit int wm8731_i2c_probe(struct i2c_client *i2c,
-				      const struct i2c_device_id *id)
+static int wm8731_i2c_probe(struct i2c_client *i2c,
+			    const struct i2c_device_id *id)
 {
 	struct wm8731_priv *wm8731;
 	int ret;
 
-	wm8731 = kzalloc(sizeof(struct wm8731_priv), GFP_KERNEL);
+	wm8731 = devm_kzalloc(&i2c->dev, sizeof(struct wm8731_priv),
+			      GFP_KERNEL);
 	if (wm8731 == NULL)
 		return -ENOMEM;
 
-	wm8731->regmap = regmap_init_i2c(i2c, &wm8731_regmap);
+	wm8731->regmap = devm_regmap_init_i2c(i2c, &wm8731_regmap);
 	if (IS_ERR(wm8731->regmap)) {
 		ret = PTR_ERR(wm8731->regmap);
 		dev_err(&i2c->dev, "Failed to allocate register map: %d\n",
 			ret);
-		goto err;
+		return ret;
 	}
 
 	i2c_set_clientdata(i2c, wm8731);
@@ -711,24 +704,15 @@ static __devinit int wm8731_i2c_probe(struct i2c_client *i2c,
 			&soc_codec_dev_wm8731, &wm8731_dai, 1);
 	if (ret != 0) {
 		dev_err(&i2c->dev, "Failed to register CODEC: %d\n", ret);
-		goto err_regmap;
+		return ret;
 	}
 
 	return 0;
-
-err_regmap:
-	regmap_exit(wm8731->regmap);
-err:
-	kfree(wm8731);
-	return ret;
 }
 
-static __devexit int wm8731_i2c_remove(struct i2c_client *client)
+static int wm8731_i2c_remove(struct i2c_client *client)
 {
-	struct wm8731_priv *wm8731 = i2c_get_clientdata(client);
 	snd_soc_unregister_codec(&client->dev);
-	regmap_exit(wm8731->regmap);
-	kfree(wm8731);
 	return 0;
 }
 
@@ -745,7 +729,7 @@ static struct i2c_driver wm8731_i2c_driver = {
 		.of_match_table = wm8731_of_match,
 	},
 	.probe =    wm8731_i2c_probe,
-	.remove =   __devexit_p(wm8731_i2c_remove),
+	.remove =   wm8731_i2c_remove,
 	.id_table = wm8731_i2c_id,
 };
 #endif

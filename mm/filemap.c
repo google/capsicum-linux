@@ -29,12 +29,14 @@
 #include <linux/pagevec.h>
 #include <linux/blkdev.h>
 #include <linux/security.h>
-#include <linux/syscalls.h>
 #include <linux/cpuset.h>
 #include <linux/hardirq.h> /* for BUG_ON(!in_atomic()) only */
 #include <linux/memcontrol.h>
 #include <linux/cleancache.h>
 #include "internal.h"
+
+#define CREATE_TRACE_POINTS
+#include <trace/events/filemap.h>
 
 /*
  * FIXME: remove all knowledge of the buffer layer from the core VM
@@ -114,6 +116,7 @@ void __delete_from_page_cache(struct page *page)
 {
 	struct address_space *mapping = page->mapping;
 
+	trace_mm_filemap_delete_from_page_cache(page);
 	/*
 	 * if we're uptodate, flush out into the cleancache, otherwise
 	 * invalidate any existing cleancache entries.  We can't leave
@@ -183,6 +186,17 @@ static int sleep_on_page_killable(void *word)
 {
 	sleep_on_page(word);
 	return fatal_signal_pending(current) ? -EINTR : 0;
+}
+
+static int filemap_check_errors(struct address_space *mapping)
+{
+	int ret = 0;
+	/* Check for outstanding write errors */
+	if (test_and_clear_bit(AS_ENOSPC, &mapping->flags))
+		ret = -ENOSPC;
+	if (test_and_clear_bit(AS_EIO, &mapping->flags))
+		ret = -EIO;
+	return ret;
 }
 
 /**
@@ -266,10 +280,10 @@ int filemap_fdatawait_range(struct address_space *mapping, loff_t start_byte,
 	pgoff_t end = end_byte >> PAGE_CACHE_SHIFT;
 	struct pagevec pvec;
 	int nr_pages;
-	int ret = 0;
+	int ret2, ret = 0;
 
 	if (end_byte < start_byte)
-		return 0;
+		goto out;
 
 	pagevec_init(&pvec, 0);
 	while ((index <= end) &&
@@ -292,12 +306,10 @@ int filemap_fdatawait_range(struct address_space *mapping, loff_t start_byte,
 		pagevec_release(&pvec);
 		cond_resched();
 	}
-
-	/* Check for outstanding write errors */
-	if (test_and_clear_bit(AS_ENOSPC, &mapping->flags))
-		ret = -ENOSPC;
-	if (test_and_clear_bit(AS_EIO, &mapping->flags))
-		ret = -EIO;
+out:
+	ret2 = filemap_check_errors(mapping);
+	if (!ret)
+		ret = ret2;
 
 	return ret;
 }
@@ -338,6 +350,8 @@ int filemap_write_and_wait(struct address_space *mapping)
 			if (!err)
 				err = err2;
 		}
+	} else {
+		err = filemap_check_errors(mapping);
 	}
 	return err;
 }
@@ -369,6 +383,8 @@ int filemap_write_and_wait_range(struct address_space *mapping,
 			if (!err)
 				err = err2;
 		}
+	} else {
+		err = filemap_check_errors(mapping);
 	}
 	return err;
 }
@@ -465,6 +481,7 @@ int add_to_page_cache_locked(struct page *page, struct address_space *mapping,
 			mapping->nrpages++;
 			__inc_zone_page_state(page, NR_FILE_PAGES);
 			spin_unlock_irq(&mapping->tree_lock);
+			trace_mm_filemap_add_to_page_cache(page);
 		} else {
 			page->mapping = NULL;
 			/* Leave page->index set: truncation relies upon it */
@@ -1413,12 +1430,8 @@ generic_file_aio_read(struct kiocb *iocb, const struct iovec *iov,
 			retval = filemap_write_and_wait_range(mapping, pos,
 					pos + iov_length(iov, nr_segs) - 1);
 			if (!retval) {
-				struct blk_plug plug;
-
-				blk_start_plug(&plug);
 				retval = mapping->a_ops->direct_IO(READ, iocb,
 							iov, pos, nr_segs);
-				blk_finish_plug(&plug);
 			}
 			if (retval > 0) {
 				*ppos = pos + retval;
@@ -1478,44 +1491,6 @@ out:
 }
 EXPORT_SYMBOL(generic_file_aio_read);
 
-static ssize_t
-do_readahead(struct address_space *mapping, struct file *filp,
-	     pgoff_t index, unsigned long nr)
-{
-	if (!mapping || !mapping->a_ops || !mapping->a_ops->readpage)
-		return -EINVAL;
-
-	force_page_cache_readahead(mapping, filp, index, nr);
-	return 0;
-}
-
-SYSCALL_DEFINE(readahead)(int fd, loff_t offset, size_t count)
-{
-	ssize_t ret;
-	struct file *file;
-
-	ret = -EBADF;
-	file = fget(fd);
-	if (file) {
-		if (file->f_mode & FMODE_READ) {
-			struct address_space *mapping = file->f_mapping;
-			pgoff_t start = offset >> PAGE_CACHE_SHIFT;
-			pgoff_t end = (offset + count - 1) >> PAGE_CACHE_SHIFT;
-			unsigned long len = end - start + 1;
-			ret = do_readahead(mapping, file, start, len);
-		}
-		fput(file);
-	}
-	return ret;
-}
-#ifdef CONFIG_HAVE_SYSCALL_WRAPPERS
-asmlinkage long SyS_readahead(long fd, loff_t offset, long count)
-{
-	return SYSC_readahead((int) fd, offset, (size_t) count);
-}
-SYSCALL_ALIAS(sys_readahead, SyS_readahead);
-#endif
-
 #ifdef CONFIG_MMU
 /**
  * page_cache_read - adds requested page to the page cache if not already there
@@ -1564,12 +1539,12 @@ static void do_sync_mmap_readahead(struct vm_area_struct *vma,
 	struct address_space *mapping = file->f_mapping;
 
 	/* If we don't want any read-ahead, don't bother */
-	if (VM_RandomReadHint(vma))
+	if (vma->vm_flags & VM_RAND_READ)
 		return;
 	if (!ra->ra_pages)
 		return;
 
-	if (VM_SequentialReadHint(vma)) {
+	if (vma->vm_flags & VM_SEQ_READ) {
 		page_cache_sync_readahead(mapping, ra, file, offset,
 					  ra->ra_pages);
 		return;
@@ -1609,7 +1584,7 @@ static void do_async_mmap_readahead(struct vm_area_struct *vma,
 	struct address_space *mapping = file->f_mapping;
 
 	/* If we don't want any read-ahead, don't bother */
-	if (VM_RandomReadHint(vma))
+	if (vma->vm_flags & VM_RAND_READ)
 		return;
 	if (ra->mmap_miss > 0)
 		ra->mmap_miss--;
@@ -1650,13 +1625,13 @@ int filemap_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
 	 * Do we have something in the page cache already?
 	 */
 	page = find_get_page(mapping, offset);
-	if (likely(page)) {
+	if (likely(page) && !(vmf->flags & FAULT_FLAG_TRIED)) {
 		/*
 		 * We found the page, so try async readahead before
 		 * waiting for the lock.
 		 */
 		do_async_mmap_readahead(vma, ra, file, page, offset);
-	} else {
+	} else if (!page) {
 		/* No page in the page cache at all */
 		do_sync_mmap_readahead(vma, ra, file, offset);
 		count_vm_event(PGMAJFAULT);
@@ -1751,8 +1726,37 @@ page_not_uptodate:
 }
 EXPORT_SYMBOL(filemap_fault);
 
+int filemap_page_mkwrite(struct vm_area_struct *vma, struct vm_fault *vmf)
+{
+	struct page *page = vmf->page;
+	struct inode *inode = file_inode(vma->vm_file);
+	int ret = VM_FAULT_LOCKED;
+
+	sb_start_pagefault(inode->i_sb);
+	file_update_time(vma->vm_file);
+	lock_page(page);
+	if (page->mapping != inode->i_mapping) {
+		unlock_page(page);
+		ret = VM_FAULT_NOPAGE;
+		goto out;
+	}
+	/*
+	 * We mark the page dirty already here so that when freeze is in
+	 * progress, we are guaranteed that writeback during freezing will
+	 * see the dirty page and writeprotect it again.
+	 */
+	set_page_dirty(page);
+	wait_for_stable_page(page);
+out:
+	sb_end_pagefault(inode->i_sb);
+	return ret;
+}
+EXPORT_SYMBOL(filemap_page_mkwrite);
+
 const struct vm_operations_struct generic_file_vm_ops = {
 	.fault		= filemap_fault,
+	.page_mkwrite	= filemap_page_mkwrite,
+	.remap_pages	= generic_file_remap_pages,
 };
 
 /* This is used for a general mmap of a disk file */
@@ -1765,7 +1769,6 @@ int generic_file_mmap(struct file * file, struct vm_area_struct * vma)
 		return -ENOEXEC;
 	file_accessed(file);
 	vma->vm_ops = &generic_file_vm_ops;
-	vma->vm_flags |= VM_CAN_NONLINEAR;
 	return 0;
 }
 
@@ -1938,71 +1941,6 @@ struct page *read_cache_page(struct address_space *mapping,
 }
 EXPORT_SYMBOL(read_cache_page);
 
-/*
- * The logic we want is
- *
- *	if suid or (sgid and xgrp)
- *		remove privs
- */
-int should_remove_suid(struct dentry *dentry)
-{
-	umode_t mode = dentry->d_inode->i_mode;
-	int kill = 0;
-
-	/* suid always must be killed */
-	if (unlikely(mode & S_ISUID))
-		kill = ATTR_KILL_SUID;
-
-	/*
-	 * sgid without any exec bits is just a mandatory locking mark; leave
-	 * it alone.  If some exec bits are set, it's a real sgid; kill it.
-	 */
-	if (unlikely((mode & S_ISGID) && (mode & S_IXGRP)))
-		kill |= ATTR_KILL_SGID;
-
-	if (unlikely(kill && !capable(CAP_FSETID) && S_ISREG(mode)))
-		return kill;
-
-	return 0;
-}
-EXPORT_SYMBOL(should_remove_suid);
-
-static int __remove_suid(struct dentry *dentry, int kill)
-{
-	struct iattr newattrs;
-
-	newattrs.ia_valid = ATTR_FORCE | kill;
-	return notify_change(dentry, &newattrs);
-}
-
-int file_remove_suid(struct file *file)
-{
-	struct dentry *dentry = file->f_path.dentry;
-	struct inode *inode = dentry->d_inode;
-	int killsuid;
-	int killpriv;
-	int error = 0;
-
-	/* Fast path for nothing security related */
-	if (IS_NOSEC(inode))
-		return 0;
-
-	killsuid = should_remove_suid(dentry);
-	killpriv = security_inode_need_killpriv(dentry);
-
-	if (killpriv < 0)
-		return killpriv;
-	if (killpriv)
-		error = security_inode_killpriv(dentry);
-	if (!error && killsuid)
-		error = __remove_suid(dentry, killsuid);
-	if (!error && (inode->i_sb->s_flags & MS_NOSEC))
-		inode->i_flags |= S_NOSEC;
-
-	return error;
-}
-EXPORT_SYMBOL(file_remove_suid);
-
 static size_t __iovec_copy_from_user_inatomic(char *vaddr,
 			const struct iovec *iov, size_t base, size_t bytes)
 {
@@ -2137,7 +2075,7 @@ EXPORT_SYMBOL(iov_iter_fault_in_readable);
 /*
  * Return the count of just the current iov_iter segment.
  */
-size_t iov_iter_single_seg_count(struct iov_iter *i)
+size_t iov_iter_single_seg_count(const struct iov_iter *i)
 {
 	const struct iovec *iov = i->iov;
 	if (i->nr_segs == 1)
@@ -2355,7 +2293,7 @@ repeat:
 		return NULL;
 	}
 found:
-	wait_on_page_writeback(page);
+	wait_for_stable_page(page);
 	return page;
 }
 EXPORT_SYMBOL(grab_cache_page_write_begin);
@@ -2511,8 +2449,6 @@ ssize_t __generic_file_aio_write(struct kiocb *iocb, const struct iovec *iov,
 	count = ocount;
 	pos = *ppos;
 
-	vfs_check_frozen(inode->i_sb, SB_FREEZE_WRITE);
-
 	/* We can write back this queue in page reclaim */
 	current->backing_dev_info = mapping->backing_dev_info;
 	written = 0;
@@ -2528,7 +2464,9 @@ ssize_t __generic_file_aio_write(struct kiocb *iocb, const struct iovec *iov,
 	if (err)
 		goto out;
 
-	file_update_time(file);
+	err = file_update_time(file);
+	if (err)
+		goto out;
 
 	/* coalesce the iovecs and go direct-to-BIO for O_DIRECT */
 	if (unlikely(file->f_flags & O_DIRECT)) {
@@ -2604,13 +2542,11 @@ ssize_t generic_file_aio_write(struct kiocb *iocb, const struct iovec *iov,
 {
 	struct file *file = iocb->ki_filp;
 	struct inode *inode = file->f_mapping->host;
-	struct blk_plug plug;
 	ssize_t ret;
 
 	BUG_ON(iocb->ki_pos != pos);
 
 	mutex_lock(&inode->i_mutex);
-	blk_start_plug(&plug);
 	ret = __generic_file_aio_write(iocb, iov, nr_segs, &iocb->ki_pos);
 	mutex_unlock(&inode->i_mutex);
 
@@ -2621,7 +2557,6 @@ ssize_t generic_file_aio_write(struct kiocb *iocb, const struct iovec *iov,
 		if (err < 0 && ret > 0)
 			ret = err;
 	}
-	blk_finish_plug(&plug);
 	return ret;
 }
 EXPORT_SYMBOL(generic_file_aio_write);

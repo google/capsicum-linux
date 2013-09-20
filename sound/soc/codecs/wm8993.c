@@ -1,7 +1,7 @@
 /*
  * wm8993.c -- WM8993 ALSA SoC audio driver
  *
- * Copyright 2009, 2010 Wolfson Microelectronics plc
+ * Copyright 2009-12 Wolfson Microelectronics plc
  *
  * Author: Mark Brown <broonie@opensource.wolfsonmicro.com>
  *
@@ -218,7 +218,6 @@ struct wm8993_priv {
 	unsigned int sysclk_rate;
 	unsigned int fs;
 	unsigned int bclk;
-	int class_w_users;
 	unsigned int fll_fref;
 	unsigned int fll_fout;
 	int fll_src;
@@ -824,84 +823,6 @@ static int clk_sys_event(struct snd_soc_dapm_widget *w,
 	return 0;
 }
 
-/*
- * When used with DAC outputs only the WM8993 charge pump supports
- * operation in class W mode, providing very low power consumption
- * when used with digital sources.  Enable and disable this mode
- * automatically depending on the mixer configuration.
- *
- * Currently the only supported paths are the direct DAC->headphone
- * paths (which provide minimum power consumption anyway).
- */
-static int class_w_put(struct snd_kcontrol *kcontrol,
-		       struct snd_ctl_elem_value *ucontrol)
-{
-	struct snd_soc_dapm_widget_list *wlist = snd_kcontrol_chip(kcontrol);
-	struct snd_soc_dapm_widget *widget = wlist->widgets[0];
-	struct snd_soc_codec *codec = widget->codec;
-	struct wm8993_priv *wm8993 = snd_soc_codec_get_drvdata(codec);
-	int ret;
-
-	/* Turn it off if we're using the main output mixer */
-	if (ucontrol->value.integer.value[0] == 0) {
-		if (wm8993->class_w_users == 0) {
-			dev_dbg(codec->dev, "Disabling Class W\n");
-			snd_soc_update_bits(codec, WM8993_CLASS_W_0,
-					    WM8993_CP_DYN_FREQ |
-					    WM8993_CP_DYN_V,
-					    0);
-		}
-		wm8993->class_w_users++;
-		wm8993->hubs_data.class_w = true;
-	}
-
-	/* Implement the change */
-	ret = snd_soc_dapm_put_enum_double(kcontrol, ucontrol);
-
-	/* Enable it if we're using the direct DAC path */
-	if (ucontrol->value.integer.value[0] == 1) {
-		if (wm8993->class_w_users == 1) {
-			dev_dbg(codec->dev, "Enabling Class W\n");
-			snd_soc_update_bits(codec, WM8993_CLASS_W_0,
-					    WM8993_CP_DYN_FREQ |
-					    WM8993_CP_DYN_V,
-					    WM8993_CP_DYN_FREQ |
-					    WM8993_CP_DYN_V);
-		}
-		wm8993->class_w_users--;
-		wm8993->hubs_data.class_w = false;
-	}
-
-	dev_dbg(codec->dev, "Indirect DAC use count now %d\n",
-		wm8993->class_w_users);
-
-	return ret;
-}
-
-#define SOC_DAPM_ENUM_W(xname, xenum) \
-{	.iface = SNDRV_CTL_ELEM_IFACE_MIXER, .name = xname, \
-	.info = snd_soc_info_enum_double, \
-	.get = snd_soc_dapm_get_enum_double, \
-	.put = class_w_put, \
-	.private_value = (unsigned long)&xenum }
-
-static const char *hp_mux_text[] = {
-	"Mixer",
-	"DAC",
-};
-
-static const struct soc_enum hpl_enum =
-	SOC_ENUM_SINGLE(WM8993_OUTPUT_MIXER1, 8, 2, hp_mux_text);
-
-static const struct snd_kcontrol_new hpl_mux =
-	SOC_DAPM_ENUM_W("Left Headphone Mux", hpl_enum);
-
-static const struct soc_enum hpr_enum =
-	SOC_ENUM_SINGLE(WM8993_OUTPUT_MIXER2, 8, 2, hp_mux_text);
-
-static const struct snd_kcontrol_new hpr_mux =
-	SOC_DAPM_ENUM_W("Right Headphone Mux", hpr_enum);
-
 static const struct snd_kcontrol_new left_speaker_mixer[] = {
 SOC_DAPM_SINGLE("Input Switch", WM8993_SPEAKER_MIXER, 7, 1, 0),
 SOC_DAPM_SINGLE("IN1LP Switch", WM8993_SPEAKER_MIXER, 5, 1, 0),
@@ -988,8 +909,8 @@ SND_SOC_DAPM_MUX("DACR Sidetone", SND_SOC_NOPM, 0, 0, &sidetoner_mux),
 SND_SOC_DAPM_DAC("DACL", NULL, WM8993_POWER_MANAGEMENT_3, 1, 0),
 SND_SOC_DAPM_DAC("DACR", NULL, WM8993_POWER_MANAGEMENT_3, 0, 0),
 
-SND_SOC_DAPM_MUX("Left Headphone Mux", SND_SOC_NOPM, 0, 0, &hpl_mux),
-SND_SOC_DAPM_MUX("Right Headphone Mux", SND_SOC_NOPM, 0, 0, &hpr_mux),
+SND_SOC_DAPM_MUX("Left Headphone Mux", SND_SOC_NOPM, 0, 0, &wm_hubs_hpl_mux),
+SND_SOC_DAPM_MUX("Right Headphone Mux", SND_SOC_NOPM, 0, 0, &wm_hubs_hpr_mux),
 
 SND_SOC_DAPM_MIXER("SPKL", WM8993_POWER_MANAGEMENT_3, 8, 0,
 		   left_speaker_mixer, ARRAY_SIZE(left_speaker_mixer)),
@@ -1579,9 +1500,6 @@ static int wm8993_probe(struct snd_soc_codec *codec)
 		return ret;
 	}
 
-	/* By default we're using the output mixers */
-	wm8993->class_w_users = 2;
-
 	/* Latch volume update bits and default ZC on */
 	snd_soc_update_bits(codec, WM8993_RIGHT_DAC_DIGITAL_VOLUME,
 			    WM8993_DAC_VU, WM8993_DAC_VU);
@@ -1602,6 +1520,8 @@ static int wm8993_probe(struct snd_soc_codec *codec)
 				      wm8993->pdata.lineout2fb,
 				      wm8993->pdata.jd_scthr,
 				      wm8993->pdata.jd_thr,
+				      wm8993->pdata.micbias1_delay,
+				      wm8993->pdata.micbias2_delay,
 				      wm8993->pdata.micbias1_lvl,
 				      wm8993->pdata.micbias2_lvl);
 
@@ -1725,8 +1645,8 @@ static struct snd_soc_codec_driver soc_codec_dev_wm8993 = {
 	.set_bias_level = wm8993_set_bias_level,
 };
 
-static __devinit int wm8993_i2c_probe(struct i2c_client *i2c,
-				      const struct i2c_device_id *id)
+static int wm8993_i2c_probe(struct i2c_client *i2c,
+			    const struct i2c_device_id *id)
 {
 	struct wm8993_priv *wm8993;
 	unsigned int reg;
@@ -1740,7 +1660,7 @@ static __devinit int wm8993_i2c_probe(struct i2c_client *i2c,
 	wm8993->dev = &i2c->dev;
 	init_completion(&wm8993->fll_lock);
 
-	wm8993->regmap = regmap_init_i2c(i2c, &wm8993_regmap);
+	wm8993->regmap = devm_regmap_init_i2c(i2c, &wm8993_regmap);
 	if (IS_ERR(wm8993->regmap)) {
 		ret = PTR_ERR(wm8993->regmap);
 		dev_err(&i2c->dev, "Failed to allocate regmap: %d\n", ret);
@@ -1752,18 +1672,18 @@ static __devinit int wm8993_i2c_probe(struct i2c_client *i2c,
 	for (i = 0; i < ARRAY_SIZE(wm8993->supplies); i++)
 		wm8993->supplies[i].supply = wm8993_supply_names[i];
 
-	ret = regulator_bulk_get(&i2c->dev, ARRAY_SIZE(wm8993->supplies),
+	ret = devm_regulator_bulk_get(&i2c->dev, ARRAY_SIZE(wm8993->supplies),
 				 wm8993->supplies);
 	if (ret != 0) {
 		dev_err(&i2c->dev, "Failed to request supplies: %d\n", ret);
-		goto err;
+		return ret;
 	}
 
 	ret = regulator_bulk_enable(ARRAY_SIZE(wm8993->supplies),
 				    wm8993->supplies);
 	if (ret != 0) {
 		dev_err(&i2c->dev, "Failed to enable supplies: %d\n", ret);
-		goto err_get;
+		return ret;
 	}
 
 	ret = regmap_read(wm8993->regmap, WM8993_SOFTWARE_RESET, &reg);
@@ -1822,23 +1742,17 @@ err_irq:
 		free_irq(i2c->irq, wm8993);
 err_enable:
 	regulator_bulk_disable(ARRAY_SIZE(wm8993->supplies), wm8993->supplies);
-err_get:
-	regulator_bulk_free(ARRAY_SIZE(wm8993->supplies), wm8993->supplies);
-err:
-	regmap_exit(wm8993->regmap);
 	return ret;
 }
 
-static __devexit int wm8993_i2c_remove(struct i2c_client *i2c)
+static int wm8993_i2c_remove(struct i2c_client *i2c)
 {
 	struct wm8993_priv *wm8993 = i2c_get_clientdata(i2c);
 
 	snd_soc_unregister_codec(&i2c->dev);
 	if (i2c->irq)
 		free_irq(i2c->irq, wm8993);
-	regmap_exit(wm8993->regmap);
 	regulator_bulk_disable(ARRAY_SIZE(wm8993->supplies), wm8993->supplies);
-	regulator_bulk_free(ARRAY_SIZE(wm8993->supplies), wm8993->supplies);
 
 	return 0;
 }
@@ -1855,7 +1769,7 @@ static struct i2c_driver wm8993_i2c_driver = {
 		.owner = THIS_MODULE,
 	},
 	.probe =    wm8993_i2c_probe,
-	.remove =   __devexit_p(wm8993_i2c_remove),
+	.remove =   wm8993_i2c_remove,
 	.id_table = wm8993_i2c_id,
 };
 

@@ -23,7 +23,6 @@ struct xfs_btree_cur;
 struct xfs_mount;
 struct xfs_perag;
 struct xfs_trans;
-struct xfs_busy_extent;
 
 extern struct workqueue_struct *xfs_alloc_wq;
 
@@ -121,9 +120,6 @@ typedef struct xfs_alloc_arg {
 	char		isfl;		/* set if is freelist blocks - !acctg */
 	char		userdata;	/* set if this is user data */
 	xfs_fsblock_t	firstblock;	/* io first block allocated */
-	struct completion *done;
-	struct work_struct work;
-	int		result;
 } xfs_alloc_arg_t;
 
 /*
@@ -138,33 +134,6 @@ typedef struct xfs_alloc_arg {
 xfs_extlen_t
 xfs_alloc_longest_free_extent(struct xfs_mount *mp,
 		struct xfs_perag *pag);
-
-#ifdef __KERNEL__
-void
-xfs_alloc_busy_insert(struct xfs_trans *tp, xfs_agnumber_t agno,
-	xfs_agblock_t bno, xfs_extlen_t len, unsigned int flags);
-
-void
-xfs_alloc_busy_clear(struct xfs_mount *mp, struct list_head *list,
-	bool do_discard);
-
-int
-xfs_alloc_busy_search(struct xfs_mount *mp, xfs_agnumber_t agno,
-	xfs_agblock_t bno, xfs_extlen_t len);
-
-void
-xfs_alloc_busy_reuse(struct xfs_mount *mp, xfs_agnumber_t agno,
-	xfs_agblock_t fbno, xfs_extlen_t flen, bool userdata);
-
-int
-xfs_busy_extent_ag_cmp(void *priv, struct list_head *a, struct list_head *b);
-
-static inline void xfs_alloc_busy_sort(struct list_head *list)
-{
-	list_sort(NULL, list, xfs_busy_extent_ag_cmp);
-}
-
-#endif	/* __KERNEL__ */
 
 /*
  * Compute and fill in value of m_ag_maxlevels.
@@ -261,5 +230,8 @@ xfs_alloc_get_rec(
 	xfs_agblock_t		*bno,	/* output: starting block of extent */
 	xfs_extlen_t		*len,	/* output: length of extent */
 	int			*stat);	/* output: success/failure */
+
+extern const struct xfs_buf_ops xfs_agf_buf_ops;
+extern const struct xfs_buf_ops xfs_agfl_buf_ops;
 
 #endif	/* __XFS_ALLOC_H__ */

@@ -87,7 +87,6 @@
 #include "include/policy.h"
 #include "include/policy_unpack.h"
 #include "include/resource.h"
-#include "include/sid.h"
 
 
 /* root profile namespace */
@@ -292,7 +291,6 @@ static struct aa_namespace *alloc_namespace(const char *prefix,
 	if (!ns->unconfined)
 		goto fail_unconfined;
 
-	ns->unconfined->sid = aa_alloc_sid();
 	ns->unconfined->flags = PFLAG_UNCONFINED | PFLAG_IX_ON_NAME_ERROR |
 	    PFLAG_IMMUTABLE;
 
@@ -302,6 +300,8 @@ static struct aa_namespace *alloc_namespace(const char *prefix,
 	 * replaces with refs to parent namespace unconfined
 	 */
 	ns->unconfined->ns = aa_get_namespace(ns);
+
+	atomic_set(&ns->uniq_null, 0);
 
 	return ns;
 
@@ -497,7 +497,6 @@ static void __replace_profile(struct aa_profile *old, struct aa_profile *new)
 	/* released when @new is freed */
 	new->parent = aa_get_profile(old->parent);
 	new->ns = aa_get_namespace(old->ns);
-	new->sid = old->sid;
 	__list_add_profile(&policy->profiles, new);
 	/* inherit children */
 	list_for_each_entry_safe(child, tmp, &old->base.profiles, base.list) {
@@ -636,6 +635,83 @@ void __init aa_free_root_ns(void)
 }
 
 /**
+ * free_profile - free a profile
+ * @profile: the profile to free  (MAYBE NULL)
+ *
+ * Free a profile, its hats and null_profile. All references to the profile,
+ * its hats and null_profile must have been put.
+ *
+ * If the profile was referenced from a task context, free_profile() will
+ * be called from an rcu callback routine, so we must not sleep here.
+ */
+static void free_profile(struct aa_profile *profile)
+{
+	struct aa_profile *p;
+
+	AA_DEBUG("%s(%p)\n", __func__, profile);
+
+	if (!profile)
+		return;
+
+	if (!list_empty(&profile->base.list)) {
+		AA_ERROR("%s: internal error, "
+			 "profile '%s' still on ns list\n",
+			 __func__, profile->base.name);
+		BUG();
+	}
+
+	/* free children profiles */
+	policy_destroy(&profile->base);
+	aa_put_profile(profile->parent);
+
+	aa_put_namespace(profile->ns);
+	kzfree(profile->rename);
+
+	aa_free_file_rules(&profile->file);
+	aa_free_cap_rules(&profile->caps);
+	aa_free_rlimit_rules(&profile->rlimits);
+
+	aa_put_dfa(profile->xmatch);
+	aa_put_dfa(profile->policy.dfa);
+
+	/* put the profile reference for replacedby, but not via
+	 * put_profile(kref_put).
+	 * replacedby can form a long chain that can result in cascading
+	 * frees that blows the stack because kref_put makes a nested fn
+	 * call (it looks like recursion, with free_profile calling
+	 * free_profile) for each profile in the chain lp#1056078.
+	 */
+	for (p = profile->replacedby; p; ) {
+		if (atomic_dec_and_test(&p->base.count.refcount)) {
+			/* no more refs on p, grab its replacedby */
+			struct aa_profile *next = p->replacedby;
+			/* break the chain */
+			p->replacedby = NULL;
+			/* now free p, chain is broken */
+			free_profile(p);
+
+			/* follow up with next profile in the chain */
+			p = next;
+		} else
+			break;
+	}
+
+	kzfree(profile);
+}
+
+/**
+ * aa_free_profile_kref - free aa_profile by kref (called by aa_put_profile)
+ * @kr: kref callback for freeing of a profile  (NOT NULL)
+ */
+void aa_free_profile_kref(struct kref *kref)
+{
+	struct aa_profile *p = container_of(kref, struct aa_profile,
+					    base.count);
+
+	free_profile(p);
+}
+
+/**
  * aa_alloc_profile - allocate, initialize and return a new profile
  * @hname: name of the profile  (NOT NULL)
  *
@@ -665,7 +741,7 @@ struct aa_profile *aa_alloc_profile(const char *hname)
  * @hat: true if the null- learning profile is a hat
  *
  * Create a null- complain mode profile used in learning mode.  The name of
- * the profile is unique and follows the format of parent//null-sid.
+ * the profile is unique and follows the format of parent//null-<uniq>.
  *
  * null profiles are added to the profile list but the list does not
  * hold a count on them so that they are automatically released when
@@ -677,20 +753,19 @@ struct aa_profile *aa_new_null_profile(struct aa_profile *parent, int hat)
 {
 	struct aa_profile *profile = NULL;
 	char *name;
-	u32 sid = aa_alloc_sid();
+	int uniq = atomic_inc_return(&parent->ns->uniq_null);
 
 	/* freed below */
 	name = kmalloc(strlen(parent->base.hname) + 2 + 7 + 8, GFP_KERNEL);
 	if (!name)
 		goto fail;
-	sprintf(name, "%s//null-%x", parent->base.hname, sid);
+	sprintf(name, "%s//null-%x", parent->base.hname, uniq);
 
 	profile = aa_alloc_profile(name);
 	kfree(name);
 	if (!profile)
 		goto fail;
 
-	profile->sid = sid;
 	profile->mode = APPARMOR_COMPLAIN;
 	profile->flags = PFLAG_NULL;
 	if (hat)
@@ -708,64 +783,7 @@ struct aa_profile *aa_new_null_profile(struct aa_profile *parent, int hat)
 	return profile;
 
 fail:
-	aa_free_sid(sid);
 	return NULL;
-}
-
-/**
- * free_profile - free a profile
- * @profile: the profile to free  (MAYBE NULL)
- *
- * Free a profile, its hats and null_profile. All references to the profile,
- * its hats and null_profile must have been put.
- *
- * If the profile was referenced from a task context, free_profile() will
- * be called from an rcu callback routine, so we must not sleep here.
- */
-static void free_profile(struct aa_profile *profile)
-{
-	AA_DEBUG("%s(%p)\n", __func__, profile);
-
-	if (!profile)
-		return;
-
-	if (!list_empty(&profile->base.list)) {
-		AA_ERROR("%s: internal error, "
-			 "profile '%s' still on ns list\n",
-			 __func__, profile->base.name);
-		BUG();
-	}
-
-	/* free children profiles */
-	policy_destroy(&profile->base);
-	aa_put_profile(profile->parent);
-
-	aa_put_namespace(profile->ns);
-	kzfree(profile->rename);
-
-	aa_free_file_rules(&profile->file);
-	aa_free_cap_rules(&profile->caps);
-	aa_free_rlimit_rules(&profile->rlimits);
-
-	aa_free_sid(profile->sid);
-	aa_put_dfa(profile->xmatch);
-	aa_put_dfa(profile->policy.dfa);
-
-	aa_put_profile(profile->replacedby);
-
-	kzfree(profile);
-}
-
-/**
- * aa_free_profile_kref - free aa_profile by kref (called by aa_put_profile)
- * @kr: kref callback for freeing of a profile  (NOT NULL)
- */
-void aa_free_profile_kref(struct kref *kref)
-{
-	struct aa_profile *p = container_of(kref, struct aa_profile,
-					    base.count);
-
-	free_profile(p);
 }
 
 /* TODO: profile accounting - setup in remove */
@@ -903,6 +921,10 @@ struct aa_profile *aa_lookup_profile(struct aa_namespace *ns, const char *hname)
 	profile = aa_get_profile(__lookup_profile(&ns->base, hname));
 	read_unlock(&ns->lock);
 
+	/* the unconfined profile is not in the regular profile list */
+	if (!profile && strcmp(hname, "unconfined") == 0)
+		profile = aa_get_profile(ns->unconfined);
+
 	/* refcount released by caller */
 	return profile;
 }
@@ -946,7 +968,6 @@ static void __add_new_profile(struct aa_namespace *ns, struct aa_policy *policy,
 		profile->parent = aa_get_profile((struct aa_profile *) policy);
 	__list_add_profile(&policy->profiles, profile);
 	/* released on free_profile */
-	profile->sid = aa_alloc_sid();
 	profile->ns = aa_get_namespace(ns);
 }
 
@@ -965,7 +986,7 @@ static int audit_policy(int op, gfp_t gfp, const char *name, const char *info,
 {
 	struct common_audit_data sa;
 	struct apparmor_audit_data aad = {0,};
-	COMMON_AUDIT_DATA_INIT(&sa, NONE);
+	sa.type = LSM_AUDIT_DATA_NONE;
 	sa.aad = &aad;
 	aad.op = op;
 	aad.name = name;
@@ -1084,14 +1105,8 @@ audit:
 	if (!error) {
 		if (rename_profile)
 			__replace_profile(rename_profile, new_profile);
-		if (old_profile) {
-			/* when there are both rename and old profiles
-			 * inherit old profiles sid
-			 */
-			if (rename_profile)
-				aa_free_sid(new_profile->sid);
+		if (old_profile)
 			__replace_profile(old_profile, new_profile);
-		}
 		if (!(old_profile || rename_profile))
 			__add_new_profile(ns, policy, new_profile);
 	}
@@ -1141,14 +1156,12 @@ ssize_t aa_remove_profiles(char *fqname, size_t size)
 	if (fqname[0] == ':') {
 		char *ns_name;
 		name = aa_split_fqname(fqname, &ns_name);
-		if (ns_name) {
-			/* released below */
-			ns = aa_find_namespace(root, ns_name);
-			if (!ns) {
-				info = "namespace does not exist";
-				error = -ENOENT;
-				goto fail;
-			}
+		/* released below */
+		ns = aa_find_namespace(root, ns_name);
+		if (!ns) {
+			info = "namespace does not exist";
+			error = -ENOENT;
+			goto fail;
 		}
 	} else
 		/* released below */

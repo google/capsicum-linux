@@ -26,6 +26,8 @@
  * These routines are used by both DMA-remapping and Interrupt-remapping
  */
 
+#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt /* has to precede printk.h */
+
 #include <linux/pci.h>
 #include <linux/dmar.h>
 #include <linux/iova.h>
@@ -36,9 +38,10 @@
 #include <linux/tboot.h>
 #include <linux/dmi.h>
 #include <linux/slab.h>
+#include <asm/irq_remapping.h>
 #include <asm/iommu_table.h>
 
-#define PREFIX "DMAR: "
+#include "irq_remapping.h"
 
 /* No locks are needed as DMA remapping hardware unit
  * list is constructed at boot time and hotplug of
@@ -82,16 +85,12 @@ static int __init dmar_parse_one_dev_scope(struct acpi_dmar_device_scope *scope,
 		 * ignore it
 		 */
 		if (!bus) {
-			printk(KERN_WARNING
-			PREFIX "Device scope bus [%d] not found\n",
-			scope->bus);
+			pr_warn("Device scope bus [%d] not found\n", scope->bus);
 			break;
 		}
 		pdev = pci_get_slot(bus, PCI_DEVFN(path->dev, path->fn));
 		if (!pdev) {
-			printk(KERN_WARNING PREFIX
-			"Device scope device [%04x:%02x:%02x.%02x] not found\n",
-				segment, bus->number, path->dev, path->fn);
+			/* warning will be printed below */
 			break;
 		}
 		path ++;
@@ -99,9 +98,8 @@ static int __init dmar_parse_one_dev_scope(struct acpi_dmar_device_scope *scope,
 		bus = pdev->subordinate;
 	}
 	if (!pdev) {
-		printk(KERN_WARNING PREFIX
-		"Device scope device [%04x:%02x:%02x.%02x] not found\n",
-		segment, scope->bus, path->dev, path->fn);
+		pr_warn("Device scope device [%04x:%02x:%02x.%02x] not found\n",
+			segment, scope->bus, path->dev, path->fn);
 		*dev = NULL;
 		return 0;
 	}
@@ -109,9 +107,8 @@ static int __init dmar_parse_one_dev_scope(struct acpi_dmar_device_scope *scope,
 			pdev->subordinate) || (scope->entry_type == \
 			ACPI_DMAR_SCOPE_TYPE_BRIDGE && !pdev->subordinate)) {
 		pci_dev_put(pdev);
-		printk(KERN_WARNING PREFIX
-			"Device scope type does not match for %s\n",
-			 pci_name(pdev));
+		pr_warn("Device scope type does not match for %s\n",
+			pci_name(pdev));
 		return -EINVAL;
 	}
 	*dev = pdev;
@@ -132,9 +129,9 @@ int __init dmar_parse_dev_scope(void *start, void *end, int *cnt,
 		if (scope->entry_type == ACPI_DMAR_SCOPE_TYPE_ENDPOINT ||
 		    scope->entry_type == ACPI_DMAR_SCOPE_TYPE_BRIDGE)
 			(*cnt)++;
-		else if (scope->entry_type != ACPI_DMAR_SCOPE_TYPE_IOAPIC) {
-			printk(KERN_WARNING PREFIX
-			       "Unsupported device scope\n");
+		else if (scope->entry_type != ACPI_DMAR_SCOPE_TYPE_IOAPIC &&
+			scope->entry_type != ACPI_DMAR_SCOPE_TYPE_HPET) {
+			pr_warn("Unsupported device scope\n");
 		}
 		start += scope->length;
 	}
@@ -260,25 +257,23 @@ dmar_table_print_dmar_entry(struct acpi_dmar_header *header)
 	case ACPI_DMAR_TYPE_HARDWARE_UNIT:
 		drhd = container_of(header, struct acpi_dmar_hardware_unit,
 				    header);
-		printk (KERN_INFO PREFIX
-			"DRHD base: %#016Lx flags: %#x\n",
+		pr_info("DRHD base: %#016Lx flags: %#x\n",
 			(unsigned long long)drhd->address, drhd->flags);
 		break;
 	case ACPI_DMAR_TYPE_RESERVED_MEMORY:
 		rmrr = container_of(header, struct acpi_dmar_reserved_memory,
 				    header);
-		printk (KERN_INFO PREFIX
-			"RMRR base: %#016Lx end: %#016Lx\n",
+		pr_info("RMRR base: %#016Lx end: %#016Lx\n",
 			(unsigned long long)rmrr->base_address,
 			(unsigned long long)rmrr->end_address);
 		break;
 	case ACPI_DMAR_TYPE_ATSR:
 		atsr = container_of(header, struct acpi_dmar_atsr, header);
-		printk(KERN_INFO PREFIX "ATSR flags: %#x\n", atsr->flags);
+		pr_info("ATSR flags: %#x\n", atsr->flags);
 		break;
 	case ACPI_DMAR_HARDWARE_AFFINITY:
 		rhsa = container_of(header, struct acpi_dmar_rhsa, header);
-		printk(KERN_INFO PREFIX "RHSA base: %#016Lx proximity domain: %#x\n",
+		pr_info("RHSA base: %#016Lx proximity domain: %#x\n",
 		       (unsigned long long)rhsa->base_address,
 		       rhsa->proximity_domain);
 		break;
@@ -298,7 +293,7 @@ static int __init dmar_table_detect(void)
 				&dmar_tbl_size);
 
 	if (ACPI_SUCCESS(status) && !dmar_tbl) {
-		printk (KERN_WARNING PREFIX "Unable to map DMAR\n");
+		pr_warn("Unable to map DMAR\n");
 		status = AE_NOT_FOUND;
 	}
 
@@ -314,6 +309,7 @@ parse_dmar_table(void)
 	struct acpi_table_dmar *dmar;
 	struct acpi_dmar_header *entry_header;
 	int ret = 0;
+	int drhd_count = 0;
 
 	/*
 	 * Do it again, earlier dmar_tbl mapping could be mapped with
@@ -332,20 +328,18 @@ parse_dmar_table(void)
 		return -ENODEV;
 
 	if (dmar->width < PAGE_SHIFT - 1) {
-		printk(KERN_WARNING PREFIX "Invalid DMAR haw\n");
+		pr_warn("Invalid DMAR haw\n");
 		return -EINVAL;
 	}
 
-	printk (KERN_INFO PREFIX "Host address width %d\n",
-		dmar->width + 1);
+	pr_info("Host address width %d\n", dmar->width + 1);
 
 	entry_header = (struct acpi_dmar_header *)(dmar + 1);
 	while (((unsigned long)entry_header) <
 			(((unsigned long)dmar) + dmar_tbl->length)) {
 		/* Avoid looping forever on bad ACPI tables */
 		if (entry_header->length == 0) {
-			printk(KERN_WARNING PREFIX
-				"Invalid 0-length structure\n");
+			pr_warn("Invalid 0-length structure\n");
 			ret = -EINVAL;
 			break;
 		}
@@ -354,6 +348,7 @@ parse_dmar_table(void)
 
 		switch (entry_header->type) {
 		case ACPI_DMAR_TYPE_HARDWARE_UNIT:
+			drhd_count++;
 			ret = dmar_parse_one_drhd(entry_header);
 			break;
 		case ACPI_DMAR_TYPE_RESERVED_MEMORY:
@@ -368,8 +363,7 @@ parse_dmar_table(void)
 #endif
 			break;
 		default:
-			printk(KERN_WARNING PREFIX
-				"Unknown DMAR structure type %d\n",
+			pr_warn("Unknown DMAR structure type %d\n",
 				entry_header->type);
 			ret = 0; /* for forward compatibility */
 			break;
@@ -379,6 +373,8 @@ parse_dmar_table(void)
 
 		entry_header = ((void *)entry_header + entry_header->length);
 	}
+	if (drhd_count == 0)
+		pr_warn(FW_BUG "No DRHD structure found in DMAR table\n");
 	return ret;
 }
 
@@ -468,12 +464,12 @@ int __init dmar_table_init(void)
 	ret = parse_dmar_table();
 	if (ret) {
 		if (ret != -ENODEV)
-			printk(KERN_INFO PREFIX "parse DMAR table failure.\n");
+			pr_info("parse DMAR table failure.\n");
 		return ret;
 	}
 
 	if (list_empty(&dmar_drhd_units)) {
-		printk(KERN_INFO PREFIX "No DMAR devices found\n");
+		pr_info("No DMAR devices found\n");
 		return -ENODEV;
 	}
 
@@ -505,8 +501,7 @@ int __init check_zero_address(void)
 			(((unsigned long)dmar) + dmar_tbl->length)) {
 		/* Avoid looping forever on bad ACPI tables */
 		if (entry_header->length == 0) {
-			printk(KERN_WARNING PREFIX
-				"Invalid 0-length structure\n");
+			pr_warn("Invalid 0-length structure\n");
 			return 0;
 		}
 
@@ -555,10 +550,9 @@ int __init detect_intel_iommu(void)
 
 		dmar = (struct acpi_table_dmar *) dmar_tbl;
 
-		if (ret && intr_remapping_enabled && cpu_has_x2apic &&
+		if (ret && irq_remapping_enabled && cpu_has_x2apic &&
 		    dmar->flags & 0x1)
-			printk(KERN_INFO
-			       "Queued invalidation will be enabled to support x2apic and Intr-remapping.\n");
+			pr_info("Queued invalidation will be enabled to support x2apic and Intr-remapping.\n");
 
 		if (ret && !no_iommu && !iommu_detected && !dmar_disabled) {
 			iommu_detected = 1;
@@ -578,14 +572,89 @@ int __init detect_intel_iommu(void)
 }
 
 
+static void unmap_iommu(struct intel_iommu *iommu)
+{
+	iounmap(iommu->reg);
+	release_mem_region(iommu->reg_phys, iommu->reg_size);
+}
+
+/**
+ * map_iommu: map the iommu's registers
+ * @iommu: the iommu to map
+ * @phys_addr: the physical address of the base resgister
+ *
+ * Memory map the iommu's registers.  Start w/ a single page, and
+ * possibly expand if that turns out to be insufficent.
+ */
+static int map_iommu(struct intel_iommu *iommu, u64 phys_addr)
+{
+	int map_size, err=0;
+
+	iommu->reg_phys = phys_addr;
+	iommu->reg_size = VTD_PAGE_SIZE;
+
+	if (!request_mem_region(iommu->reg_phys, iommu->reg_size, iommu->name)) {
+		pr_err("IOMMU: can't reserve memory\n");
+		err = -EBUSY;
+		goto out;
+	}
+
+	iommu->reg = ioremap(iommu->reg_phys, iommu->reg_size);
+	if (!iommu->reg) {
+		pr_err("IOMMU: can't map the region\n");
+		err = -ENOMEM;
+		goto release;
+	}
+
+	iommu->cap = dmar_readq(iommu->reg + DMAR_CAP_REG);
+	iommu->ecap = dmar_readq(iommu->reg + DMAR_ECAP_REG);
+
+	if (iommu->cap == (uint64_t)-1 && iommu->ecap == (uint64_t)-1) {
+		err = -EINVAL;
+		warn_invalid_dmar(phys_addr, " returns all ones");
+		goto unmap;
+	}
+
+	/* the registers might be more than one page */
+	map_size = max_t(int, ecap_max_iotlb_offset(iommu->ecap),
+			 cap_max_fault_reg_offset(iommu->cap));
+	map_size = VTD_PAGE_ALIGN(map_size);
+	if (map_size > iommu->reg_size) {
+		iounmap(iommu->reg);
+		release_mem_region(iommu->reg_phys, iommu->reg_size);
+		iommu->reg_size = map_size;
+		if (!request_mem_region(iommu->reg_phys, iommu->reg_size,
+					iommu->name)) {
+			pr_err("IOMMU: can't reserve memory\n");
+			err = -EBUSY;
+			goto out;
+		}
+		iommu->reg = ioremap(iommu->reg_phys, iommu->reg_size);
+		if (!iommu->reg) {
+			pr_err("IOMMU: can't map the region\n");
+			err = -ENOMEM;
+			goto release;
+		}
+	}
+	err = 0;
+	goto out;
+
+unmap:
+	iounmap(iommu->reg);
+release:
+	release_mem_region(iommu->reg_phys, iommu->reg_size);
+out:
+	return err;
+}
+
 int alloc_iommu(struct dmar_drhd_unit *drhd)
 {
 	struct intel_iommu *iommu;
-	int map_size;
-	u32 ver;
+	u32 ver, sts;
 	static int iommu_allocated = 0;
 	int agaw = 0;
 	int msagaw = 0;
+	int err;
 
 	if (!drhd->reg_base_addr) {
 		warn_invalid_dmar(0, "");
@@ -599,30 +668,22 @@ int alloc_iommu(struct dmar_drhd_unit *drhd)
 	iommu->seq_id = iommu_allocated++;
 	sprintf (iommu->name, "dmar%d", iommu->seq_id);
 
-	iommu->reg = ioremap(drhd->reg_base_addr, VTD_PAGE_SIZE);
-	if (!iommu->reg) {
-		printk(KERN_ERR "IOMMU: can't map the region\n");
+	err = map_iommu(iommu, drhd->reg_base_addr);
+	if (err) {
+		pr_err("IOMMU: failed to map %s\n", iommu->name);
 		goto error;
 	}
-	iommu->cap = dmar_readq(iommu->reg + DMAR_CAP_REG);
-	iommu->ecap = dmar_readq(iommu->reg + DMAR_ECAP_REG);
 
-	if (iommu->cap == (uint64_t)-1 && iommu->ecap == (uint64_t)-1) {
-		warn_invalid_dmar(drhd->reg_base_addr, " returns all ones");
-		goto err_unmap;
-	}
-
+	err = -EINVAL;
 	agaw = iommu_calculate_agaw(iommu);
 	if (agaw < 0) {
-		printk(KERN_ERR
-		       "Cannot get a valid agaw for iommu (seq_id = %d)\n",
-		       iommu->seq_id);
+		pr_err("Cannot get a valid agaw for iommu (seq_id = %d)\n",
+			iommu->seq_id);
 		goto err_unmap;
 	}
 	msagaw = iommu_calculate_max_sagaw(iommu);
 	if (msagaw < 0) {
-		printk(KERN_ERR
-			"Cannot get a valid max agaw for iommu (seq_id = %d)\n",
+		pr_err("Cannot get a valid max agaw for iommu (seq_id = %d)\n",
 			iommu->seq_id);
 		goto err_unmap;
 	}
@@ -630,19 +691,6 @@ int alloc_iommu(struct dmar_drhd_unit *drhd)
 	iommu->msagaw = msagaw;
 
 	iommu->node = -1;
-
-	/* the registers might be more than one page */
-	map_size = max_t(int, ecap_max_iotlb_offset(iommu->ecap),
-		cap_max_fault_reg_offset(iommu->cap));
-	map_size = VTD_PAGE_ALIGN(map_size);
-	if (map_size > VTD_PAGE_SIZE) {
-		iounmap(iommu->reg);
-		iommu->reg = ioremap(drhd->reg_base_addr, map_size);
-		if (!iommu->reg) {
-			printk(KERN_ERR "IOMMU: can't map the region\n");
-			goto error;
-		}
-	}
 
 	ver = readl(iommu->reg + DMAR_VER_REG);
 	pr_info("IOMMU %d: reg_base_addr %llx ver %d:%d cap %llx ecap %llx\n",
@@ -652,16 +700,25 @@ int alloc_iommu(struct dmar_drhd_unit *drhd)
 		(unsigned long long)iommu->cap,
 		(unsigned long long)iommu->ecap);
 
+	/* Reflect status in gcmd */
+	sts = readl(iommu->reg + DMAR_GSTS_REG);
+	if (sts & DMA_GSTS_IRES)
+		iommu->gcmd |= DMA_GCMD_IRE;
+	if (sts & DMA_GSTS_TES)
+		iommu->gcmd |= DMA_GCMD_TE;
+	if (sts & DMA_GSTS_QIES)
+		iommu->gcmd |= DMA_GCMD_QIE;
+
 	raw_spin_lock_init(&iommu->register_lock);
 
 	drhd->iommu = iommu;
 	return 0;
 
  err_unmap:
-	iounmap(iommu->reg);
+	unmap_iommu(iommu);
  error:
 	kfree(iommu);
-	return -1;
+	return err;
 }
 
 void free_iommu(struct intel_iommu *iommu)
@@ -672,7 +729,8 @@ void free_iommu(struct intel_iommu *iommu)
 	free_dmar_iommu(iommu);
 
 	if (iommu->reg)
-		iounmap(iommu->reg);
+		unmap_iommu(iommu);
+
 	kfree(iommu);
 }
 
@@ -709,7 +767,7 @@ static int qi_check_fault(struct intel_iommu *iommu, int index)
 	if (fault & DMA_FSTS_IQE) {
 		head = readl(iommu->reg + DMAR_IQH_REG);
 		if ((head >> DMAR_IQ_SHIFT) == index) {
-			printk(KERN_ERR "VT-d detected invalid descriptor: "
+			pr_err("VT-d detected invalid descriptor: "
 				"low=%llx, high=%llx\n",
 				(unsigned long long)qi->desc[index].low,
 				(unsigned long long)qi->desc[index].high);
@@ -998,7 +1056,7 @@ int dmar_enable_qi(struct intel_iommu *iommu)
 
 	qi->desc = page_address(desc_page);
 
-	qi->desc_status = kmalloc(QI_LENGTH * sizeof(int), GFP_ATOMIC);
+	qi->desc_status = kzalloc(QI_LENGTH * sizeof(int), GFP_ATOMIC);
 	if (!qi->desc_status) {
 		free_page((unsigned long) qi->desc);
 		kfree(qi);
@@ -1039,9 +1097,10 @@ static const char *dma_remap_fault_reasons[] =
 	"non-zero reserved fields in RTP",
 	"non-zero reserved fields in CTP",
 	"non-zero reserved fields in PTE",
+	"PCE for translation request specifies blocking",
 };
 
-static const char *intr_remap_fault_reasons[] =
+static const char *irq_remap_fault_reasons[] =
 {
 	"Detected reserved fields in the decoded interrupt-remapped request",
 	"Interrupt index exceeded the interrupt-remapping table size",
@@ -1056,10 +1115,10 @@ static const char *intr_remap_fault_reasons[] =
 
 const char *dmar_get_fault_reason(u8 fault_reason, int *fault_type)
 {
-	if (fault_reason >= 0x20 && (fault_reason <= 0x20 +
-				     ARRAY_SIZE(intr_remap_fault_reasons))) {
+	if (fault_reason >= 0x20 && (fault_reason - 0x20 <
+					ARRAY_SIZE(irq_remap_fault_reasons))) {
 		*fault_type = INTR_REMAP;
-		return intr_remap_fault_reasons[fault_reason - 0x20];
+		return irq_remap_fault_reasons[fault_reason - 0x20];
 	} else if (fault_reason < ARRAY_SIZE(dma_remap_fault_reasons)) {
 		*fault_type = DMA_REMAP;
 		return dma_remap_fault_reasons[fault_reason];
@@ -1128,15 +1187,14 @@ static int dmar_fault_do_one(struct intel_iommu *iommu, int type,
 	reason = dmar_get_fault_reason(fault_reason, &fault_type);
 
 	if (fault_type == INTR_REMAP)
-		printk(KERN_ERR "INTR-REMAP: Request device [[%02x:%02x.%d] "
+		pr_err("INTR-REMAP: Request device [[%02x:%02x.%d] "
 		       "fault index %llx\n"
 			"INTR-REMAP:[fault reason %02d] %s\n",
 			(source_id >> 8), PCI_SLOT(source_id & 0xFF),
 			PCI_FUNC(source_id & 0xFF), addr >> 48,
 			fault_reason, reason);
 	else
-		printk(KERN_ERR
-		       "DMAR:[%s] Request device [%02x:%02x.%d] "
+		pr_err("DMAR:[%s] Request device [%02x:%02x.%d] "
 		       "fault addr %llx \n"
 		       "DMAR:[fault reason %02d] %s\n",
 		       (type ? "DMA Read" : "DMA Write"),
@@ -1156,12 +1214,11 @@ irqreturn_t dmar_fault(int irq, void *dev_id)
 	raw_spin_lock_irqsave(&iommu->register_lock, flag);
 	fault_status = readl(iommu->reg + DMAR_FSTS_REG);
 	if (fault_status)
-		printk(KERN_ERR "DRHD: handling fault status reg %x\n",
-		       fault_status);
+		pr_err("DRHD: handling fault status reg %x\n", fault_status);
 
 	/* TBD: ignore advanced fault log currently */
 	if (!(fault_status & DMA_FSTS_PPF))
-		goto clear_rest;
+		goto unlock_exit;
 
 	fault_index = dma_fsts_fault_record_index(fault_status);
 	reg = cap_fault_reg_offset(iommu->cap);
@@ -1202,11 +1259,10 @@ irqreturn_t dmar_fault(int irq, void *dev_id)
 			fault_index = 0;
 		raw_spin_lock_irqsave(&iommu->register_lock, flag);
 	}
-clear_rest:
-	/* clear all the other faults */
-	fault_status = readl(iommu->reg + DMAR_FSTS_REG);
-	writel(fault_status, iommu->reg + DMAR_FSTS_REG);
 
+	writel(DMA_FSTS_PFO | DMA_FSTS_PPF, iommu->reg + DMAR_FSTS_REG);
+
+unlock_exit:
 	raw_spin_unlock_irqrestore(&iommu->register_lock, flag);
 	return IRQ_HANDLED;
 }
@@ -1223,7 +1279,7 @@ int dmar_set_interrupt(struct intel_iommu *iommu)
 
 	irq = create_irq();
 	if (!irq) {
-		printk(KERN_ERR "IOMMU: no free vectors\n");
+		pr_err("IOMMU: no free vectors\n");
 		return -EINVAL;
 	}
 
@@ -1240,7 +1296,7 @@ int dmar_set_interrupt(struct intel_iommu *iommu)
 
 	ret = request_irq(irq, dmar_fault, IRQF_NO_THREAD, iommu->name, iommu);
 	if (ret)
-		printk(KERN_ERR "IOMMU: can't request irq\n");
+		pr_err("IOMMU: can't request irq\n");
 	return ret;
 }
 
@@ -1254,11 +1310,11 @@ int __init enable_drhd_fault_handling(void)
 	for_each_drhd_unit(drhd) {
 		int ret;
 		struct intel_iommu *iommu = drhd->iommu;
+		u32 fault_status;
 		ret = dmar_set_interrupt(iommu);
 
 		if (ret) {
-			printk(KERN_ERR "DRHD %Lx: failed to enable fault, "
-			       " interrupt, ret %d\n",
+			pr_err("DRHD %Lx: failed to enable fault, interrupt, ret %d\n",
 			       (unsigned long long)drhd->reg_base_addr, ret);
 			return -1;
 		}
@@ -1267,6 +1323,8 @@ int __init enable_drhd_fault_handling(void)
 		 * Clear any previous faults.
 		 */
 		dmar_fault(iommu->irq, iommu);
+		fault_status = readl(iommu->reg + DMAR_FSTS_REG);
+		writel(fault_status, iommu->reg + DMAR_FSTS_REG);
 	}
 
 	return 0;

@@ -149,6 +149,7 @@ struct ath_rx_status {
 	u32 evm2;
 	u32 evm3;
 	u32 evm4;
+	u32 flag; /* see enum mac80211_rx_flags */
 };
 
 struct ath_htc_rx_status {
@@ -183,6 +184,7 @@ struct ath_htc_rx_status {
 #define ATH9K_RXERR_DECRYPT       0x08
 #define ATH9K_RXERR_MIC           0x10
 #define ATH9K_RXERR_KEYMISS       0x20
+#define ATH9K_RXERR_CORRUPT_DESC  0x40
 
 #define ATH9K_RX_MORE             0x01
 #define ATH9K_RX_MORE_AGGR        0x02
@@ -226,7 +228,8 @@ enum ath9k_phyerr {
 	ATH9K_PHYERR_HT_LENGTH_ILLEGAL    = 35,
 	ATH9K_PHYERR_HT_RATE_ILLEGAL      = 36,
 
-	ATH9K_PHYERR_MAX                  = 37,
+	ATH9K_PHYERR_SPECTRAL		  = 38,
+	ATH9K_PHYERR_MAX                  = 39,
 };
 
 struct ath_desc {
@@ -531,7 +534,8 @@ struct ar5416_desc {
 #define AR_2040             0x00000002
 #define AR_Parallel40       0x00000004
 #define AR_Parallel40_S     2
-#define AR_RxStatusRsvd30   0x000000f8
+#define AR_STBC             0x00000008 /* on ar9280 and later */
+#define AR_RxStatusRsvd30   0x000000f0
 #define AR_RxAntenna	    0xffffff00
 #define AR_RxAntenna_S	    8
 
@@ -646,6 +650,7 @@ enum ath9k_rx_filter {
 	ATH9K_RX_FILTER_PHYRADAR = 0x00002000,
 	ATH9K_RX_FILTER_MCAST_BCAST_ALL = 0x00008000,
 	ATH9K_RX_FILTER_CONTROL_WRAPPER = 0x00080000,
+	ATH9K_RX_FILTER_4ADDRESS = 0x00100000,
 };
 
 #define ATH9K_RATESERIES_RTS_CTS  0x0001
@@ -737,6 +742,7 @@ bool ath9k_hw_intrpend(struct ath_hw *ah);
 void ath9k_hw_set_interrupts(struct ath_hw *ah);
 void ath9k_hw_enable_interrupts(struct ath_hw *ah);
 void ath9k_hw_disable_interrupts(struct ath_hw *ah);
+void ath9k_hw_kill_interrupts(struct ath_hw *ah);
 
 void ar9002_hw_attach_mac_ops(struct ath_hw *ah);
 

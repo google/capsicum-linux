@@ -2,7 +2,7 @@
  * net/tipc/core.c: TIPC module code
  *
  * Copyright (c) 2003-2006, Ericsson AB
- * Copyright (c) 2005-2006, 2010-2011, Wind River Systems
+ * Copyright (c) 2005-2006, 2010-2013, Wind River Systems
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -34,39 +34,24 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <linux/module.h>
-
 #include "core.h"
 #include "ref.h"
 #include "name_table.h"
 #include "subscr.h"
 #include "config.h"
+#include "port.h"
 
-
-#ifndef CONFIG_TIPC_PORTS
-#define CONFIG_TIPC_PORTS 8191
-#endif
-
-#ifndef CONFIG_TIPC_LOG
-#define CONFIG_TIPC_LOG 0
-#endif
+#include <linux/module.h>
 
 /* global variables used by multiple sub-systems within TIPC */
-
-int tipc_random;
-
-const char tipc_alphabet[] =
-	"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.";
+int tipc_random __read_mostly;
 
 /* configurable TIPC parameters */
-
-u32 tipc_own_addr;
-int tipc_max_ports;
-int tipc_max_subscriptions;
-int tipc_max_publications;
-int tipc_net_id;
-int tipc_remote_management;
-
+u32 tipc_own_addr __read_mostly;
+int tipc_max_ports __read_mostly;
+int tipc_net_id __read_mostly;
+int tipc_remote_management __read_mostly;
+int sysctl_tipc_rmem[3] __read_mostly;	/* min/default/max */
 
 /**
  * tipc_buf_acquire - creates a TIPC message buffer
@@ -77,7 +62,6 @@ int tipc_remote_management;
  * NOTE: Headroom is reserved to allow prepending of a data link header.
  *       There may also be unrequested tailroom present at the buffer's end.
  */
-
 struct sk_buff *tipc_buf_acquire(u32 size)
 {
 	struct sk_buff *skb;
@@ -95,33 +79,37 @@ struct sk_buff *tipc_buf_acquire(u32 size)
 /**
  * tipc_core_stop_net - shut down TIPC networking sub-systems
  */
-
 static void tipc_core_stop_net(void)
 {
 	tipc_net_stop();
 	tipc_eth_media_stop();
+	tipc_ib_media_stop();
 }
 
 /**
  * start_net - start TIPC networking sub-systems
  */
-
 int tipc_core_start_net(unsigned long addr)
 {
 	int res;
 
-	res = tipc_net_start(addr);
-	if (!res)
-		res = tipc_eth_media_start();
-	if (res)
-		tipc_core_stop_net();
+	tipc_net_start(addr);
+	res = tipc_eth_media_start();
+	if (res < 0)
+		goto err;
+	res = tipc_ib_media_start();
+	if (res < 0)
+		goto err;
+	return res;
+
+err:
+	tipc_core_stop_net();
 	return res;
 }
 
 /**
  * tipc_core_stop - switch TIPC from SINGLE NODE to NOT RUNNING mode
  */
-
 static void tipc_core_stop(void)
 {
 	tipc_netlink_stop();
@@ -131,13 +119,12 @@ static void tipc_core_stop(void)
 	tipc_nametbl_stop();
 	tipc_ref_table_stop();
 	tipc_socket_stop();
-	tipc_log_resize(0);
+	tipc_unregister_sysctl();
 }
 
 /**
  * tipc_core_start - switch TIPC from NOT RUNNING to SINGLE NODE mode
  */
-
 static int tipc_core_start(void)
 {
 	int res;
@@ -150,41 +137,42 @@ static int tipc_core_start(void)
 	if (!res)
 		res = tipc_nametbl_init();
 	if (!res)
-		res = tipc_k_signal((Handler)tipc_subscr_start, 0);
-	if (!res)
-		res = tipc_k_signal((Handler)tipc_cfg_init, 0);
-	if (!res)
 		res = tipc_netlink_start();
 	if (!res)
 		res = tipc_socket_init();
+	if (!res)
+		res = tipc_register_sysctl();
+	if (!res)
+		res = tipc_subscr_start();
+	if (!res)
+		res = tipc_cfg_init();
 	if (res)
 		tipc_core_stop();
 
 	return res;
 }
 
-
 static int __init tipc_init(void)
 {
 	int res;
 
-	if (tipc_log_resize(CONFIG_TIPC_LOG) != 0)
-		warn("Unable to create log buffer\n");
-
-	info("Activated (version " TIPC_MOD_VER ")\n");
+	pr_info("Activated (version " TIPC_MOD_VER ")\n");
 
 	tipc_own_addr = 0;
 	tipc_remote_management = 1;
-	tipc_max_publications = 10000;
-	tipc_max_subscriptions = 2000;
 	tipc_max_ports = CONFIG_TIPC_PORTS;
 	tipc_net_id = 4711;
 
+	sysctl_tipc_rmem[0] = CONN_OVERLOAD_LIMIT >> 4 << TIPC_LOW_IMPORTANCE;
+	sysctl_tipc_rmem[1] = CONN_OVERLOAD_LIMIT >> 4 <<
+			      TIPC_CRITICAL_IMPORTANCE;
+	sysctl_tipc_rmem[2] = CONN_OVERLOAD_LIMIT;
+
 	res = tipc_core_start();
 	if (res)
-		err("Unable to start in single node mode\n");
+		pr_err("Unable to start in single node mode\n");
 	else
-		info("Started in single node mode\n");
+		pr_info("Started in single node mode\n");
 	return res;
 }
 
@@ -192,7 +180,7 @@ static void __exit tipc_exit(void)
 {
 	tipc_core_stop_net();
 	tipc_core_stop();
-	info("Deactivated\n");
+	pr_info("Deactivated\n");
 }
 
 module_init(tipc_init);

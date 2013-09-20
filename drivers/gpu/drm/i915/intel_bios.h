@@ -28,7 +28,7 @@
 #ifndef _I830_BIOS_H_
 #define _I830_BIOS_H_
 
-#include "drmP.h"
+#include <drm/drmP.h>
 
 struct vbt_header {
 	u8 signature[20];		/**< Always starts with 'VBT$' */
@@ -127,7 +127,9 @@ struct bdb_general_features {
         /* bits 3 */
 	u8 disable_smooth_vision:1;
 	u8 single_dvi:1;
-	u8 rsvd9:6; /* finish byte */
+	u8 rsvd9:1;
+	u8 fdi_rx_polarity_inverted:1;
+	u8 rsvd10:4; /* finish byte */
 
         /* bits 4 */
 	u8 legacy_monitor_detect;
@@ -476,7 +478,7 @@ struct bdb_edp {
 } __attribute__ ((packed));
 
 void intel_setup_bios(struct drm_device *dev);
-bool intel_parse_bios(struct drm_device *dev);
+int intel_parse_bios(struct drm_device *dev);
 
 /*
  * Driver<->VBIOS interaction occurs through scratch bits in

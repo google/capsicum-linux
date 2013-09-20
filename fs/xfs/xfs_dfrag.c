@@ -18,14 +18,15 @@
 #include "xfs.h"
 #include "xfs_fs.h"
 #include "xfs_types.h"
-#include "xfs_bit.h"
 #include "xfs_log.h"
-#include "xfs_inum.h"
 #include "xfs_trans.h"
 #include "xfs_sb.h"
 #include "xfs_ag.h"
 #include "xfs_mount.h"
 #include "xfs_bmap_btree.h"
+#include "xfs_alloc_btree.h"
+#include "xfs_ialloc_btree.h"
+#include "xfs_btree.h"
 #include "xfs_dinode.h"
 #include "xfs_inode.h"
 #include "xfs_inode_item.h"
@@ -50,44 +51,44 @@ xfs_swapext(
 	xfs_swapext_t	*sxp)
 {
 	xfs_inode_t     *ip, *tip;
-	struct file	*file, *tmp_file;
+	struct fd	f, tmp;
 	int		error = 0;
 
 	/* Pull information for the target fd */
-	file = fget((int)sxp->sx_fdtarget);
-	if (!file) {
+	f = fdget((int)sxp->sx_fdtarget);
+	if (!f.file) {
 		error = XFS_ERROR(EINVAL);
 		goto out;
 	}
 
-	if (!(file->f_mode & FMODE_WRITE) ||
-	    !(file->f_mode & FMODE_READ) ||
-	    (file->f_flags & O_APPEND)) {
+	if (!(f.file->f_mode & FMODE_WRITE) ||
+	    !(f.file->f_mode & FMODE_READ) ||
+	    (f.file->f_flags & O_APPEND)) {
 		error = XFS_ERROR(EBADF);
 		goto out_put_file;
 	}
 
-	tmp_file = fget((int)sxp->sx_fdtmp);
-	if (!tmp_file) {
+	tmp = fdget((int)sxp->sx_fdtmp);
+	if (!tmp.file) {
 		error = XFS_ERROR(EINVAL);
 		goto out_put_file;
 	}
 
-	if (!(tmp_file->f_mode & FMODE_WRITE) ||
-	    !(tmp_file->f_mode & FMODE_READ) ||
-	    (tmp_file->f_flags & O_APPEND)) {
+	if (!(tmp.file->f_mode & FMODE_WRITE) ||
+	    !(tmp.file->f_mode & FMODE_READ) ||
+	    (tmp.file->f_flags & O_APPEND)) {
 		error = XFS_ERROR(EBADF);
 		goto out_put_tmp_file;
 	}
 
-	if (IS_SWAPFILE(file->f_path.dentry->d_inode) ||
-	    IS_SWAPFILE(tmp_file->f_path.dentry->d_inode)) {
+	if (IS_SWAPFILE(file_inode(f.file)) ||
+	    IS_SWAPFILE(file_inode(tmp.file))) {
 		error = XFS_ERROR(EINVAL);
 		goto out_put_tmp_file;
 	}
 
-	ip = XFS_I(file->f_path.dentry->d_inode);
-	tip = XFS_I(tmp_file->f_path.dentry->d_inode);
+	ip = XFS_I(file_inode(f.file));
+	tip = XFS_I(file_inode(tmp.file));
 
 	if (ip->i_mount != tip->i_mount) {
 		error = XFS_ERROR(EINVAL);
@@ -107,9 +108,9 @@ xfs_swapext(
 	error = xfs_swap_extents(ip, tip, sxp);
 
  out_put_tmp_file:
-	fput(tmp_file);
+	fdput(tmp);
  out_put_file:
-	fput(file);
+	fdput(f);
  out:
 	return error;
 }
@@ -184,7 +185,7 @@ xfs_swap_extents_check_format(
 	 */
 	if (tip->i_d.di_format == XFS_DINODE_FMT_BTREE) {
 		if (XFS_IFORK_BOFF(ip) &&
-		    tip->i_df.if_broot_bytes > XFS_IFORK_BOFF(ip))
+		    XFS_BMAP_BMDR_SPACE(tip->i_df.if_broot) > XFS_IFORK_BOFF(ip))
 			return EINVAL;
 		if (XFS_IFORK_NEXTENTS(tip, XFS_DATA_FORK) <=
 		    XFS_IFORK_MAXEXT(ip, XFS_DATA_FORK))
@@ -194,9 +195,8 @@ xfs_swap_extents_check_format(
 	/* Reciprocal target->temp btree format checks */
 	if (ip->i_d.di_format == XFS_DINODE_FMT_BTREE) {
 		if (XFS_IFORK_BOFF(tip) &&
-		    ip->i_df.if_broot_bytes > XFS_IFORK_BOFF(tip))
+		    XFS_BMAP_BMDR_SPACE(ip->i_df.if_broot) > XFS_IFORK_BOFF(tip))
 			return EINVAL;
-
 		if (XFS_IFORK_NEXTENTS(ip, XFS_DATA_FORK) <=
 		    XFS_IFORK_MAXEXT(tip, XFS_DATA_FORK))
 			return EINVAL;
@@ -220,6 +220,14 @@ xfs_swap_extents(
 	int		aforkblks = 0;
 	int		taforkblks = 0;
 	__uint64_t	tmp;
+
+	/*
+	 * We have no way of updating owner information in the BMBT blocks for
+	 * each inode on CRC enabled filesystems, so to avoid corrupting the
+	 * this metadata we simply don't allow extent swaps to occur.
+	 */
+	if (xfs_sb_version_hascrc(&mp->m_sb))
+		return XFS_ERROR(EINVAL);
 
 	tempifp = kmem_alloc(sizeof(xfs_ifork_t), KM_MAYFAIL);
 	if (!tempifp) {
@@ -248,12 +256,10 @@ xfs_swap_extents(
 		goto out_unlock;
 	}
 
-	if (VN_CACHED(VFS_I(tip)) != 0) {
-		error = xfs_flushinval_pages(tip, 0, -1,
-				FI_REMAPF_LOCKED);
-		if (error)
-			goto out_unlock;
-	}
+	error = -filemap_write_and_wait(VFS_I(tip)->i_mapping);
+	if (error)
+		goto out_unlock;
+	truncate_pagecache_range(VFS_I(tip), 0, -1);
 
 	/* Verify O_DIRECT for ftmp */
 	if (VN_CACHED(VFS_I(tip)) != 0) {
@@ -317,8 +323,7 @@ xfs_swap_extents(
 	 * are safe.  We don't really care if non-io related
 	 * fields change.
 	 */
-
-	xfs_tosspages(ip, 0, -1, FI_REMAPF);
+	truncate_pagecache_range(VFS_I(ip), 0, -1);
 
 	tp = xfs_trans_alloc(mp, XFS_TRANS_SWAPEXT);
 	if ((error = xfs_trans_reserve(tp, 0,

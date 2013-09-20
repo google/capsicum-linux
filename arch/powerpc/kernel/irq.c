@@ -116,14 +116,12 @@ static inline notrace int decrementer_check_overflow(void)
  	u64 now = get_tb_or_rtc();
  	u64 *next_tb = &__get_cpu_var(decrementers_next_tb);
  
-	if (now >= *next_tb)
-		set_dec(1);
 	return now >= *next_tb;
 }
 
 /* This is called whenever we are re-enabling interrupts
- * and returns either 0 (nothing to do) or 500/900 if there's
- * either an EE or a DEC to generate.
+ * and returns either 0 (nothing to do) or 500/900/280/a00/e80 if
+ * there's an EE, DEC or DBELL to generate.
  *
  * This is called in two contexts: From arch_local_irq_restore()
  * before soft-enabling interrupts, and from the exception exit
@@ -162,7 +160,7 @@ notrace unsigned int __check_irq_replay(void)
 	 * in case we also had a rollover while hard disabled
 	 */
 	local_paca->irq_happened &= ~PACA_IRQ_DEC;
-	if (decrementer_check_overflow())
+	if ((happened & PACA_IRQ_DEC) || decrementer_check_overflow())
 		return 0x900;
 
 	/* Finally check if an external interrupt happened */
@@ -182,6 +180,13 @@ notrace unsigned int __check_irq_replay(void)
 	local_paca->irq_happened &= ~PACA_IRQ_DBELL;
 	if (happened & PACA_IRQ_DBELL)
 		return 0x280;
+#else
+	local_paca->irq_happened &= ~PACA_IRQ_DBELL;
+	if (happened & PACA_IRQ_DBELL) {
+		if (cpu_has_feature(CPU_FTR_HVMODE))
+			return 0xe80;
+		return 0xa00;
+	}
 #endif /* CONFIG_PPC_BOOK3E */
 
 	/* There should be nothing left ! */
@@ -229,7 +234,7 @@ notrace void arch_local_irq_restore(unsigned long en)
 	 */
 	if (unlikely(irq_happened != PACA_IRQ_HARD_DIS))
 		__hard_irq_disable();
-#ifdef CONFIG_TRACE_IRQFLAG
+#ifdef CONFIG_TRACE_IRQFLAGS
 	else {
 		/*
 		 * We should already be hard disabled here. We had bugs
@@ -277,13 +282,59 @@ EXPORT_SYMBOL(arch_local_irq_restore);
  * NOTE: This is called with interrupts hard disabled but not marked
  * as such in paca->irq_happened, so we need to resync this.
  */
-void restore_interrupts(void)
+void notrace restore_interrupts(void)
 {
 	if (irqs_disabled()) {
 		local_paca->irq_happened |= PACA_IRQ_HARD_DIS;
 		local_irq_enable();
 	} else
 		__hard_irq_enable();
+}
+
+/*
+ * This is a helper to use when about to go into idle low-power
+ * when the latter has the side effect of re-enabling interrupts
+ * (such as calling H_CEDE under pHyp).
+ *
+ * You call this function with interrupts soft-disabled (this is
+ * already the case when ppc_md.power_save is called). The function
+ * will return whether to enter power save or just return.
+ *
+ * In the former case, it will have notified lockdep of interrupts
+ * being re-enabled and generally sanitized the lazy irq state,
+ * and in the latter case it will leave with interrupts hard
+ * disabled and marked as such, so the local_irq_enable() call
+ * in cpu_idle() will properly re-enable everything.
+ */
+bool prep_irq_for_idle(void)
+{
+	/*
+	 * First we need to hard disable to ensure no interrupt
+	 * occurs before we effectively enter the low power state
+	 */
+	hard_irq_disable();
+
+	/*
+	 * If anything happened while we were soft-disabled,
+	 * we return now and do not enter the low power state.
+	 */
+	if (lazy_irq_pending())
+		return false;
+
+	/* Tell lockdep we are about to re-enable */
+	trace_hardirqs_on();
+
+	/*
+	 * Mark interrupts as soft-enabled and clear the
+	 * PACA_IRQ_HARD_DIS from the pending mask since we
+	 * are about to hard enable as well as a side effect
+	 * of entering the low power state.
+	 */
+	local_paca->irq_happened &= ~PACA_IRQ_HARD_DIS;
+	local_paca->soft_enabled = 1;
+
+	/* Tell the caller to enter the low power state */
+	return true;
 }
 
 #endif /* CONFIG_PPC64 */
@@ -311,7 +362,7 @@ int arch_show_interrupts(struct seq_file *p, int prec)
 		seq_printf(p, "%10u ", per_cpu(irq_stat, j).spurious_irqs);
 	seq_printf(p, "  Spurious interrupts\n");
 
-	seq_printf(p, "%*s: ", prec, "CNT");
+	seq_printf(p, "%*s: ", prec, "PMI");
 	for_each_online_cpu(j)
 		seq_printf(p, "%10u ", per_cpu(irq_stat, j).pmu_irqs);
 	seq_printf(p, "  Performance monitoring interrupts\n");
@@ -320,6 +371,15 @@ int arch_show_interrupts(struct seq_file *p, int prec)
 	for_each_online_cpu(j)
 		seq_printf(p, "%10u ", per_cpu(irq_stat, j).mce_exceptions);
 	seq_printf(p, "  Machine check exceptions\n");
+
+#ifdef CONFIG_PPC_DOORBELL
+	if (cpu_has_feature(CPU_FTR_DBELL)) {
+		seq_printf(p, "%*s: ", prec, "DBL");
+		for_each_online_cpu(j)
+			seq_printf(p, "%10u ", per_cpu(irq_stat, j).doorbell_irqs);
+		seq_printf(p, "  Doorbell interrupts\n");
+	}
+#endif
 
 	return 0;
 }
@@ -334,6 +394,9 @@ u64 arch_irq_stat_cpu(unsigned int cpu)
 	sum += per_cpu(irq_stat, cpu).pmu_irqs;
 	sum += per_cpu(irq_stat, cpu).mce_exceptions;
 	sum += per_cpu(irq_stat, cpu).spurious_irqs;
+#ifdef CONFIG_PPC_DOORBELL
+	sum += per_cpu(irq_stat, cpu).doorbell_irqs;
+#endif
 
 	return sum;
 }
@@ -443,9 +506,9 @@ void do_IRQ(struct pt_regs *regs)
 	struct pt_regs *old_regs = set_irq_regs(regs);
 	unsigned int irq;
 
-	trace_irq_entry(regs);
-
 	irq_enter();
+
+	trace_irq_entry(regs);
 
 	check_stack_overflow();
 
@@ -465,10 +528,10 @@ void do_IRQ(struct pt_regs *regs)
 	else
 		__get_cpu_var(irq_stat).spurious_irqs++;
 
+	trace_irq_exit(regs);
+
 	irq_exit();
 	set_irq_regs(old_regs);
-
-	trace_irq_exit(regs);
 }
 
 void __init init_IRQ(void)
@@ -587,7 +650,7 @@ int irq_choose_cpu(const struct cpumask *mask)
 {
 	int cpuid;
 
-	if (cpumask_equal(mask, cpu_all_mask)) {
+	if (cpumask_equal(mask, cpu_online_mask)) {
 		static int irq_rover;
 		static DEFINE_RAW_SPINLOCK(irq_rover_lock);
 		unsigned long flags;

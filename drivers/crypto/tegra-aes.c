@@ -41,8 +41,6 @@
 #include <linux/completion.h>
 #include <linux/workqueue.h>
 
-#include <mach/clk.h>
-
 #include <crypto/scatterwalk.h>
 #include <crypto/aes.h>
 #include <crypto/internal/rng.h>
@@ -572,7 +570,7 @@ static void aes_workqueue_handler(struct work_struct *work)
 	struct tegra_aes_dev *dd = aes_dev;
 	int ret;
 
-	ret = clk_enable(dd->aes_clk);
+	ret = clk_prepare_enable(dd->aes_clk);
 	if (ret)
 		BUG_ON("clock enable failed");
 
@@ -581,7 +579,7 @@ static void aes_workqueue_handler(struct work_struct *work)
 		ret = tegra_aes_handle_req(dd);
 	} while (!ret);
 
-	clk_disable(dd->aes_clk);
+	clk_disable_unprepare(dd->aes_clk);
 }
 
 static irqreturn_t aes_irq(int irq, void *dev_id)
@@ -673,9 +671,11 @@ static int tegra_aes_get_random(struct crypto_rng *tfm, u8 *rdata,
 	/* take mutex to access the aes hw */
 	mutex_lock(&aes_lock);
 
-	ret = clk_enable(dd->aes_clk);
-	if (ret)
+	ret = clk_prepare_enable(dd->aes_clk);
+	if (ret) {
+		mutex_unlock(&aes_lock);
 		return ret;
+	}
 
 	ctx->dd = dd;
 	dd->ctx = ctx;
@@ -700,7 +700,7 @@ static int tegra_aes_get_random(struct crypto_rng *tfm, u8 *rdata,
 	}
 
 out:
-	clk_disable(dd->aes_clk);
+	clk_disable_unprepare(dd->aes_clk);
 	mutex_unlock(&aes_lock);
 
 	dev_dbg(dd->dev, "%s: done\n", __func__);
@@ -758,9 +758,11 @@ static int tegra_aes_rng_reset(struct crypto_rng *tfm, u8 *seed,
 
 	dd->flags = FLAGS_ENCRYPT | FLAGS_RNG;
 
-	ret = clk_enable(dd->aes_clk);
-	if (ret)
+	ret = clk_prepare_enable(dd->aes_clk);
+	if (ret) {
+		mutex_unlock(&aes_lock);
 		return ret;
+	}
 
 	aes_set_key(dd);
 
@@ -788,7 +790,7 @@ static int tegra_aes_rng_reset(struct crypto_rng *tfm, u8 *seed,
 	memcpy(dd->dt, dt, DEFAULT_RNG_BLK_SZ);
 
 out:
-	clk_disable(dd->aes_clk);
+	clk_disable_unprepare(dd->aes_clk);
 	mutex_unlock(&aes_lock);
 
 	dev_dbg(dd->dev, "%s: done\n", __func__);
@@ -969,6 +971,7 @@ static int tegra_aes_probe(struct platform_device *pdev)
 	aes_wq = alloc_workqueue("tegra_aes_wq", WQ_HIGHPRI | WQ_UNBOUND, 1);
 	if (!aes_wq) {
 		dev_err(dev, "alloc_workqueue failed\n");
+		err = -ENOMEM;
 		goto out;
 	}
 
@@ -1004,8 +1007,6 @@ static int tegra_aes_probe(struct platform_device *pdev)
 
 	aes_dev = dd;
 	for (i = 0; i < ARRAY_SIZE(algs); i++) {
-		INIT_LIST_HEAD(&algs[i].cra_list);
-
 		algs[i].cra_priority = 300;
 		algs[i].cra_ctxsize = sizeof(struct tegra_aes_ctx);
 		algs[i].cra_module = THIS_MODULE;
@@ -1032,7 +1033,7 @@ out:
 	if (dd->buf_out)
 		dma_free_coherent(dev, AES_HW_DMA_BUFFER_SIZE_BYTES,
 			dd->buf_out, dd->dma_buf_out);
-	if (IS_ERR(dd->aes_clk))
+	if (!IS_ERR(dd->aes_clk))
 		clk_put(dd->aes_clk);
 	if (aes_wq)
 		destroy_workqueue(aes_wq);
@@ -1046,7 +1047,7 @@ out:
 	return err;
 }
 
-static int __devexit tegra_aes_remove(struct platform_device *pdev)
+static int tegra_aes_remove(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
 	struct tegra_aes_dev *dd = platform_get_drvdata(pdev);
@@ -1073,7 +1074,7 @@ static int __devexit tegra_aes_remove(struct platform_device *pdev)
 	return 0;
 }
 
-static struct of_device_id tegra_aes_of_match[] __devinitdata = {
+static struct of_device_id tegra_aes_of_match[] = {
 	{ .compatible = "nvidia,tegra20-aes", },
 	{ .compatible = "nvidia,tegra30-aes", },
 	{ },
@@ -1081,7 +1082,7 @@ static struct of_device_id tegra_aes_of_match[] __devinitdata = {
 
 static struct platform_driver tegra_aes_driver = {
 	.probe  = tegra_aes_probe,
-	.remove = __devexit_p(tegra_aes_remove),
+	.remove = tegra_aes_remove,
 	.driver = {
 		.name   = "tegra-aes",
 		.owner  = THIS_MODULE,

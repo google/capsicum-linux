@@ -29,6 +29,7 @@
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Ben Gardner <bgardner@wabtec.com>");
 MODULE_DESCRIPTION("w1 family 23 driver for DS2433, 4kb EEPROM");
+MODULE_ALIAS("w1-family-" __stringify(W1_EEPROM_DS2433));
 
 #define W1_EEPROM_SIZE		512
 #define W1_PAGE_COUNT		16
@@ -107,7 +108,7 @@ static ssize_t w1_f23_read_bin(struct file *filp, struct kobject *kobj,
 	if ((count = w1_f23_fix_count(off, count, W1_EEPROM_SIZE)) == 0)
 		return 0;
 
-	mutex_lock(&sl->master->mutex);
+	mutex_lock(&sl->master->bus_mutex);
 
 #ifdef CONFIG_W1_SLAVE_DS2433_CRC
 
@@ -138,7 +139,7 @@ static ssize_t w1_f23_read_bin(struct file *filp, struct kobject *kobj,
 #endif	/* CONFIG_W1_SLAVE_DS2433_CRC */
 
 out_up:
-	mutex_unlock(&sl->master->mutex);
+	mutex_unlock(&sl->master->bus_mutex);
 
 	return count;
 }
@@ -233,7 +234,7 @@ static ssize_t w1_f23_write_bin(struct file *filp, struct kobject *kobj,
 	}
 #endif	/* CONFIG_W1_SLAVE_DS2433_CRC */
 
-	mutex_lock(&sl->master->mutex);
+	mutex_lock(&sl->master->bus_mutex);
 
 	/* Can only write data to one page at a time */
 	idx = 0;
@@ -251,7 +252,7 @@ static ssize_t w1_f23_write_bin(struct file *filp, struct kobject *kobj,
 	}
 
 out_up:
-	mutex_unlock(&sl->master->mutex);
+	mutex_unlock(&sl->master->bus_mutex);
 
 	return count;
 }

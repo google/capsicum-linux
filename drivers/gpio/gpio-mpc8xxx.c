@@ -38,7 +38,7 @@ struct mpc8xxx_gpio_chip {
 	 */
 	u32 data;
 	struct irq_domain *irq;
-	void *of_dev_id_data;
+	const void *of_dev_id_data;
 };
 
 static inline u32 mpc8xxx_gpio2mask(unsigned int gpio)
@@ -163,7 +163,8 @@ static void mpc8xxx_gpio_irq_cascade(unsigned int irq, struct irq_desc *desc)
 	if (mask)
 		generic_handle_irq(irq_linear_revmap(mpc8xxx_gc->irq,
 						     32 - ffs(mask)));
-	chip->irq_eoi(&desc->irq_data);
+	if (chip->irq_eoi)
+		chip->irq_eoi(&desc->irq_data);
 }
 
 static void mpc8xxx_irq_unmask(struct irq_data *d)
@@ -291,7 +292,6 @@ static int mpc8xxx_gpio_irq_map(struct irq_domain *h, unsigned int virq,
 
 	irq_set_chip_data(virq, h->host_data);
 	irq_set_chip_and_handler(virq, &mpc8xxx_irq_chip, handle_level_irq);
-	irq_set_irq_type(virq, IRQ_TYPE_NONE);
 
 	return 0;
 }

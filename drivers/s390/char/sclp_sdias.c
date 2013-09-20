@@ -1,7 +1,7 @@
 /*
  * Sclp "store data in absolut storage"
  *
- * Copyright IBM Corp. 2003,2007
+ * Copyright IBM Corp. 2003, 2007
  * Author(s): Michael Holzheu
  */
 
@@ -211,7 +211,7 @@ int sclp_sdias_copy(void *dest, int start_blk, int nr_blks)
 	sccb.evbuf.event_qual = EQ_STORE_DATA;
 	sccb.evbuf.data_id = DI_FCP_DUMP;
 	sccb.evbuf.event_id = 4712;
-#ifdef __s390x__
+#ifdef CONFIG_64BIT
 	sccb.evbuf.asa_size = ASA_SIZE_64;
 #else
 	sccb.evbuf.asa_size = ASA_SIZE_32;
@@ -242,11 +242,13 @@ int sclp_sdias_copy(void *dest, int start_blk, int nr_blks)
 	switch (sdias_evbuf.event_status) {
 		case EVSTATE_ALL_STORED:
 			TRACE("all stored\n");
+			break;
 		case EVSTATE_PART_STORED:
 			TRACE("part stored: %i\n", sdias_evbuf.blk_cnt);
 			break;
 		case EVSTATE_NO_DATA:
 			TRACE("no data\n");
+			/* fall through */
 		default:
 			pr_err("Error from SCLP while copying hsa. "
 			       "Event status = %x\n",

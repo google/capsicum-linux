@@ -18,68 +18,8 @@
 #ifndef __PLAT_S3C_SDHCI_H
 #define __PLAT_S3C_SDHCI_H __FILE__
 
+#include <linux/platform_data/mmc-sdhci-s3c.h>
 #include <plat/devs.h>
-
-struct platform_device;
-struct mmc_host;
-struct mmc_card;
-struct mmc_ios;
-
-enum cd_types {
-	S3C_SDHCI_CD_INTERNAL,	/* use mmc internal CD line */
-	S3C_SDHCI_CD_EXTERNAL,	/* use external callback */
-	S3C_SDHCI_CD_GPIO,	/* use external gpio pin for CD line */
-	S3C_SDHCI_CD_NONE,	/* no CD line, use polling to detect card */
-	S3C_SDHCI_CD_PERMANENT,	/* no CD line, card permanently wired to host */
-};
-
-enum clk_types {
-	S3C_SDHCI_CLK_DIV_INTERNAL,	/* use mmc internal clock divider */
-	S3C_SDHCI_CLK_DIV_EXTERNAL,	/* use external clock divider */
-};
-
-/**
- * struct s3c_sdhci_platdata() - Platform device data for Samsung SDHCI
- * @max_width: The maximum number of data bits supported.
- * @host_caps: Standard MMC host capabilities bit field.
- * @host_caps2: The second standard MMC host capabilities bit field.
- * @cd_type: Type of Card Detection method (see cd_types enum above)
- * @clk_type: Type of clock divider method (see clk_types enum above)
- * @ext_cd_init: Initialize external card detect subsystem. Called on
- *		 sdhci-s3c driver probe when cd_type == S3C_SDHCI_CD_EXTERNAL.
- *		 notify_func argument is a callback to the sdhci-s3c driver
- *		 that triggers the card detection event. Callback arguments:
- *		 dev is pointer to platform device of the host controller,
- *		 state is new state of the card (0 - removed, 1 - inserted).
- * @ext_cd_cleanup: Cleanup external card detect subsystem. Called on
- *		 sdhci-s3c driver remove when cd_type == S3C_SDHCI_CD_EXTERNAL.
- *		 notify_func argument is the same callback as for ext_cd_init.
- * @ext_cd_gpio: gpio pin used for external CD line, valid only if
- *		 cd_type == S3C_SDHCI_CD_GPIO
- * @ext_cd_gpio_invert: invert values for external CD gpio line
- * @cfg_gpio: Configure the GPIO for a specific card bit-width
- *
- * Initialisation data specific to either the machine or the platform
- * for the device driver to use or call-back when configuring gpio or
- * card speed information.
-*/
-struct s3c_sdhci_platdata {
-	unsigned int	max_width;
-	unsigned int	host_caps;
-	unsigned int	host_caps2;
-	unsigned int	pm_caps;
-	enum cd_types	cd_type;
-	enum clk_types	clk_type;
-
-	int		ext_cd_gpio;
-	bool		ext_cd_gpio_invert;
-	int	(*ext_cd_init)(void (*notify_func)(struct platform_device *,
-						   int state));
-	int	(*ext_cd_cleanup)(void (*notify_func)(struct platform_device *,
-						      int state));
-
-	void	(*cfg_gpio)(struct platform_device *dev, int width);
-};
 
 /* s3c_sdhci_set_platdata() - common helper for setting SDHCI platform data
  * @pd: The default platform data for this device.
@@ -213,7 +153,7 @@ static inline void s3c6400_default_sdhci2(void) { }
 
 /* S5P64X0 SDHCI setup */
 
-#ifdef CONFIG_S5P64X0_SETUP_SDHCI
+#ifdef CONFIG_S5P64X0_SETUP_SDHCI_GPIO
 static inline void s5p64x0_default_sdhci0(void)
 {
 #ifdef CONFIG_S3C_DEV_HSMMC
@@ -248,7 +188,7 @@ static inline void s5p64x0_default_sdhci1(void) { }
 static inline void s5p6440_default_sdhci2(void) { }
 static inline void s5p6450_default_sdhci2(void) { }
 
-#endif /* CONFIG_S5P64X0_SETUP_SDHCI */
+#endif /* CONFIG_S5P64X0_SETUP_SDHCI_GPIO */
 
 /* S5PC100 SDHCI setup */
 
@@ -381,7 +321,8 @@ static inline void s3c_sdhci_setname(int id, char *name)
 		s3c_device_hsmmc3.name = name;
 		break;
 #endif
+	default:
+		break;
 	}
 }
-
 #endif /* __PLAT_S3C_SDHCI_H */

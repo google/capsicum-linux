@@ -33,8 +33,6 @@
 #define stub_pdfork sys_pdfork
 #define stub_execve sys_execve
 #define stub_fexecve sys_fexecve
-#define stub_rt_sigsuspend sys_rt_sigsuspend
-#define stub_sigaltstack sys_sigaltstack
 #define stub_rt_sigreturn sys_rt_sigreturn
 
 #define __SYSCALL_COMMON(nr, sym, compat) __SYSCALL_64(nr, sym, compat)

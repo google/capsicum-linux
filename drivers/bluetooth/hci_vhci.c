@@ -156,7 +156,7 @@ static inline ssize_t vhci_put_user(struct vhci_data *data,
 	case HCI_SCODATA_PKT:
 		data->hdev->stat.sco_tx++;
 		break;
-	};
+	}
 
 	return total;
 }
@@ -252,8 +252,9 @@ static int vhci_open(struct inode *inode, struct file *file)
 	}
 
 	file->private_data = data;
+	nonseekable_open(inode, file);
 
-	return nonseekable_open(inode, file);
+	return 0;
 }
 
 static int vhci_release(struct inode *inode, struct file *file)

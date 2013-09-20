@@ -9,11 +9,18 @@ Required properties:
 	- "ns16750"
 	- "ns16850"
 	- "nvidia,tegra20-uart"
+	- "nxp,lpc3220-uart"
 	- "ibm,qpace-nwp-serial"
+	- "altr,16550-FIFO32"
+	- "altr,16550-FIFO64"
+	- "altr,16550-FIFO128"
 	- "serial" if the port type is unknown.
 - reg : offset and length of the register set for the device.
 - interrupts : should contain uart interrupt.
-- clock-frequency : the input clock frequency for the UART.
+- clock-frequency : the input clock frequency for the UART
+	 or
+  clocks phandle to refer to the clk used as per Documentation/devicetree
+  /bindings/clock/clock-bindings.txt
 
 Optional properties:
 - current-speed : the current active speed of the UART.
@@ -24,6 +31,12 @@ Optional properties:
   accesses to the UART (e.g. TI davinci).
 - used-by-rtas : set to indicate that the port is in use by the OpenFirmware
   RTAS and should not be registered.
+- no-loopback-test: set to indicate that the port does not implements loopback
+  test mode
+- fifo-size: the fifo size of the UART.
+- auto-flow-control: one way to enable automatic flow control support. The
+  driver is allowed to detect support for the capability even without this
+  property.
 
 Example:
 

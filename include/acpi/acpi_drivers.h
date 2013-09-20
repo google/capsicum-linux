@@ -90,17 +90,11 @@ int acpi_pci_link_allocate_irq(acpi_handle handle, int index, int *triggering,
 			       int *polarity, char **name);
 int acpi_pci_link_free_irq(acpi_handle handle);
 
-/* ACPI PCI Interrupt Routing (pci_irq.c) */
-
-int acpi_pci_irq_add_prt(acpi_handle handle, struct pci_bus *bus);
-void acpi_pci_irq_del_prt(struct pci_bus *bus);
-
 /* ACPI PCI Device Binding (pci_bind.c) */
 
 struct pci_bus;
 
 struct pci_dev *acpi_get_pci_dev(acpi_handle);
-int acpi_pci_bind_root(struct acpi_device *device);
 
 /* Arch-defined function to add a bus to the system */
 
@@ -129,7 +123,9 @@ extern int register_dock_notifier(struct notifier_block *nb);
 extern void unregister_dock_notifier(struct notifier_block *nb);
 extern int register_hotplug_dock_device(acpi_handle handle,
 					const struct acpi_dock_ops *ops,
-					void *context);
+					void *context,
+					void (*init)(void *),
+					void (*release)(void *));
 extern void unregister_hotplug_dock_device(acpi_handle handle);
 #else
 static inline int is_dock_device(acpi_handle handle)
@@ -145,7 +141,9 @@ static inline void unregister_dock_notifier(struct notifier_block *nb)
 }
 static inline int register_hotplug_dock_device(acpi_handle handle,
 					       const struct acpi_dock_ops *ops,
-					       void *context)
+					       void *context,
+					       void (*init)(void *),
+					       void (*release)(void *))
 {
 	return -ENODEV;
 }

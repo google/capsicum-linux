@@ -388,7 +388,7 @@ static int t7l66xb_probe(struct platform_device *dev)
 
 	ret = mfd_add_devices(&dev->dev, dev->id,
 			      t7l66xb_cells, ARRAY_SIZE(t7l66xb_cells),
-			      iomem, t7l66xb->irq_base);
+			      iomem, t7l66xb->irq_base, NULL);
 
 	if (!ret)
 		return 0;
@@ -422,7 +422,6 @@ static int t7l66xb_remove(struct platform_device *dev)
 	iounmap(t7l66xb->scr);
 	release_resource(&t7l66xb->rscr);
 	mfd_remove_devices(&dev->dev);
-	platform_set_drvdata(dev, NULL);
 	kfree(t7l66xb);
 
 	return ret;

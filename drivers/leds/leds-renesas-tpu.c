@@ -63,7 +63,7 @@ static DEFINE_SPINLOCK(r_tpu_lock);
 #define TGRC 8 /* Timer general register C (+0x20) */
 #define TGRD 9 /* Timer general register D (+0x24) */
 
-static inline unsigned short r_tpu_read(struct r_tpu_priv *p, int reg_nr)
+static inline u16 r_tpu_read(struct r_tpu_priv *p, int reg_nr)
 {
 	struct led_renesas_tpu_config *cfg = p->pdev->dev.platform_data;
 	void __iomem *base = p->mapbase;
@@ -75,8 +75,7 @@ static inline unsigned short r_tpu_read(struct r_tpu_priv *p, int reg_nr)
 	return ioread16(base + offs);
 }
 
-static inline void r_tpu_write(struct r_tpu_priv *p, int reg_nr,
-			       unsigned short value)
+static inline void r_tpu_write(struct r_tpu_priv *p, int reg_nr, u16 value)
 {
 	struct led_renesas_tpu_config *cfg = p->pdev->dev.platform_data;
 	void __iomem *base = p->mapbase;
@@ -93,7 +92,8 @@ static inline void r_tpu_write(struct r_tpu_priv *p, int reg_nr,
 static void r_tpu_start_stop_ch(struct r_tpu_priv *p, int start)
 {
 	struct led_renesas_tpu_config *cfg = p->pdev->dev.platform_data;
-	unsigned long flags, value;
+	unsigned long flags;
+	u16 value;
 
 	/* start stop register shared by multiple timer channels */
 	spin_lock_irqsave(&r_tpu_lock, flags);
@@ -133,24 +133,24 @@ static int r_tpu_enable(struct r_tpu_priv *p, enum led_brightness brightness)
 	rate = clk_get_rate(p->clk);
 
 	/* pick the lowest acceptable rate */
-	for (k = 0; k < ARRAY_SIZE(prescaler); k++)
-		if ((rate / prescaler[k]) < p->min_rate)
+	for (k = ARRAY_SIZE(prescaler) - 1; k >= 0; k--)
+		if ((rate / prescaler[k]) >= p->min_rate)
 			break;
 
-	if (!k) {
+	if (k < 0) {
 		dev_err(&p->pdev->dev, "clock rate mismatch\n");
 		goto err0;
 	}
 	dev_dbg(&p->pdev->dev, "rate = %lu, prescaler %u\n",
-		rate, prescaler[k - 1]);
+		rate, prescaler[k]);
 
 	/* clear TCNT on TGRB match, count on rising edge, set prescaler */
-	r_tpu_write(p, TCR, 0x0040 | (k - 1));
+	r_tpu_write(p, TCR, 0x0040 | k);
 
 	/* output 0 until TGRA, output 1 until TGRB */
 	r_tpu_write(p, TIOR, 0x0002);
 
-	rate /= prescaler[k - 1] * p->refresh_rate;
+	rate /= prescaler[k] * p->refresh_rate;
 	r_tpu_write(p, TGRB, rate);
 	dev_dbg(&p->pdev->dev, "TRGB = 0x%04lx\n", rate);
 
@@ -204,10 +204,11 @@ static void r_tpu_set_pin(struct r_tpu_priv *p, enum r_tpu_pin new_state,
 	if (p->pin_state == R_TPU_PIN_GPIO_FN)
 		gpio_free(cfg->pin_gpio_fn);
 
-	if (new_state == R_TPU_PIN_GPIO) {
-		gpio_request(cfg->pin_gpio, cfg->name);
-		gpio_direction_output(cfg->pin_gpio, !!brightness);
-	}
+	if (new_state == R_TPU_PIN_GPIO)
+		gpio_request_one(cfg->pin_gpio, !!brightness ?
+				GPIOF_OUT_INIT_HIGH : GPIOF_OUT_INIT_LOW,
+				cfg->name);
+
 	if (new_state == R_TPU_PIN_GPIO_FN)
 		gpio_request(cfg->pin_gpio_fn, cfg->name);
 
@@ -238,44 +239,43 @@ static void r_tpu_set_brightness(struct led_classdev *ldev,
 	schedule_work(&p->work);
 }
 
-static int __devinit r_tpu_probe(struct platform_device *pdev)
+static int r_tpu_probe(struct platform_device *pdev)
 {
 	struct led_renesas_tpu_config *cfg = pdev->dev.platform_data;
 	struct r_tpu_priv *p;
 	struct resource *res;
-	int ret = -ENXIO;
+	int ret;
 
 	if (!cfg) {
 		dev_err(&pdev->dev, "missing platform data\n");
-		goto err0;
+		return -ENODEV;
 	}
 
-	p = kzalloc(sizeof(*p), GFP_KERNEL);
+	p = devm_kzalloc(&pdev->dev, sizeof(*p), GFP_KERNEL);
 	if (p == NULL) {
 		dev_err(&pdev->dev, "failed to allocate driver data\n");
-		ret = -ENOMEM;
-		goto err0;
+		return -ENOMEM;
 	}
 
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	if (!res) {
 		dev_err(&pdev->dev, "failed to get I/O memory\n");
-		goto err1;
+		return -ENXIO;
 	}
 
 	/* map memory, let mapbase point to our channel */
-	p->mapbase = ioremap_nocache(res->start, resource_size(res));
+	p->mapbase = devm_ioremap_nocache(&pdev->dev, res->start,
+					resource_size(res));
 	if (p->mapbase == NULL) {
 		dev_err(&pdev->dev, "failed to remap I/O memory\n");
-		goto err1;
+		return -ENXIO;
 	}
 
 	/* get hold of clock */
-	p->clk = clk_get(&pdev->dev, NULL);
+	p->clk = devm_clk_get(&pdev->dev, NULL);
 	if (IS_ERR(p->clk)) {
 		dev_err(&pdev->dev, "cannot get clock\n");
-		ret = PTR_ERR(p->clk);
-		goto err2;
+		return PTR_ERR(p->clk);
 	}
 
 	p->pdev = pdev;
@@ -294,7 +294,7 @@ static int __devinit r_tpu_probe(struct platform_device *pdev)
 	p->ldev.flags |= LED_CORE_SUSPENDRESUME;
 	ret = led_classdev_register(&pdev->dev, &p->ldev);
 	if (ret < 0)
-		goto err3;
+		goto err0;
 
 	/* max_brightness may be updated by the LED core code */
 	p->min_rate = p->ldev.max_brightness * p->refresh_rate;
@@ -302,18 +302,12 @@ static int __devinit r_tpu_probe(struct platform_device *pdev)
 	pm_runtime_enable(&pdev->dev);
 	return 0;
 
- err3:
-	r_tpu_set_pin(p, R_TPU_PIN_UNUSED, LED_OFF);
-	clk_put(p->clk);
- err2:
-	iounmap(p->mapbase);
- err1:
-	kfree(p);
  err0:
+	r_tpu_set_pin(p, R_TPU_PIN_UNUSED, LED_OFF);
 	return ret;
 }
 
-static int __devexit r_tpu_remove(struct platform_device *pdev)
+static int r_tpu_remove(struct platform_device *pdev)
 {
 	struct r_tpu_priv *p = platform_get_drvdata(pdev);
 
@@ -324,16 +318,13 @@ static int __devexit r_tpu_remove(struct platform_device *pdev)
 	r_tpu_set_pin(p, R_TPU_PIN_UNUSED, LED_OFF);
 
 	pm_runtime_disable(&pdev->dev);
-	clk_put(p->clk);
 
-	iounmap(p->mapbase);
-	kfree(p);
 	return 0;
 }
 
 static struct platform_driver r_tpu_device_driver = {
 	.probe		= r_tpu_probe,
-	.remove		= __devexit_p(r_tpu_remove),
+	.remove		= r_tpu_remove,
 	.driver		= {
 		.name	= "leds-renesas-tpu",
 	}

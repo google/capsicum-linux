@@ -27,7 +27,6 @@
 #include "include/match.h"
 #include "include/policy.h"
 #include "include/policy_unpack.h"
-#include "include/sid.h"
 
 /*
  * The AppArmor interface treats data as a type byte followed by the
@@ -95,7 +94,7 @@ static int audit_iface(struct aa_profile *new, const char *name,
 	struct aa_profile *profile = __aa_current_profile();
 	struct common_audit_data sa;
 	struct apparmor_audit_data aad = {0,};
-	COMMON_AUDIT_DATA_INIT(&sa, NONE);
+	sa.type = LSM_AUDIT_DATA_NONE;
 	sa.aad = &aad;
 	if (e)
 		aad.iface.pos = e->pos - e->start;
@@ -289,6 +288,9 @@ static int unpack_strdup(struct aa_ext *e, char **string, const char *name)
 
 	return res;
 }
+
+#define DFA_VALID_PERM_MASK		0xffffffff
+#define DFA_VALID_PERM2_MASK		0xffffffff
 
 /**
  * verify_accept - verify the accept tables of a dfa

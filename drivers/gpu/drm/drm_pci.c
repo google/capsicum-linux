@@ -40,7 +40,7 @@
 #include <linux/slab.h>
 #include <linux/dma-mapping.h>
 #include <linux/export.h>
-#include "drmP.h"
+#include <drm/drmP.h>
 
 /**********************************************************************/
 /** \name PCI memory */
@@ -152,7 +152,7 @@ static const char *drm_pci_get_name(struct drm_device *dev)
 	return pdriver->name;
 }
 
-int drm_pci_set_busid(struct drm_device *dev, struct drm_master *master)
+static int drm_pci_set_busid(struct drm_device *dev, struct drm_master *master)
 {
 	int len, ret;
 	struct pci_driver *pdriver = dev->driver->kdriver.pci;
@@ -194,9 +194,9 @@ err:
 	return ret;
 }
 
-int drm_pci_set_unique(struct drm_device *dev,
-		       struct drm_master *master,
-		       struct drm_unique *u)
+static int drm_pci_set_unique(struct drm_device *dev,
+			      struct drm_master *master,
+			      struct drm_unique *u)
 {
 	int domain, bus, slot, func, ret;
 	const char *bus_name;
@@ -266,7 +266,7 @@ static int drm_pci_irq_by_busid(struct drm_device *dev, struct drm_irq_busid *p)
 	return 0;
 }
 
-int drm_pci_agp_init(struct drm_device *dev)
+static int drm_pci_agp_init(struct drm_device *dev)
 {
 	if (drm_core_has_AGP(dev)) {
 		if (drm_pci_device_is_agp(dev))
@@ -278,10 +278,10 @@ int drm_pci_agp_init(struct drm_device *dev)
 		}
 		if (drm_core_has_MTRR(dev)) {
 			if (dev->agp)
-				dev->agp->agp_mtrr =
-					mtrr_add(dev->agp->agp_info.aper_base,
-						 dev->agp->agp_info.aper_size *
-						 1024 * 1024, MTRR_TYPE_WRCOMB, 1);
+				dev->agp->agp_mtrr = arch_phys_wc_add(
+					dev->agp->agp_info.aper_base,
+					dev->agp->agp_info.aper_size *
+					1024 * 1024);
 		}
 	}
 	return 0;
@@ -438,6 +438,44 @@ int drm_pci_init(struct drm_driver *driver, struct pci_driver *pdriver)
 	}
 	return 0;
 }
+
+int drm_pcie_get_speed_cap_mask(struct drm_device *dev, u32 *mask)
+{
+	struct pci_dev *root;
+	u32 lnkcap, lnkcap2;
+
+	*mask = 0;
+	if (!dev->pdev)
+		return -EINVAL;
+
+	root = dev->pdev->bus->self;
+
+	/* we've been informed via and serverworks don't make the cut */
+	if (root->vendor == PCI_VENDOR_ID_VIA ||
+	    root->vendor == PCI_VENDOR_ID_SERVERWORKS)
+		return -EINVAL;
+
+	pcie_capability_read_dword(root, PCI_EXP_LNKCAP, &lnkcap);
+	pcie_capability_read_dword(root, PCI_EXP_LNKCAP2, &lnkcap2);
+
+	if (lnkcap2) {	/* PCIe r3.0-compliant */
+		if (lnkcap2 & PCI_EXP_LNKCAP2_SLS_2_5GB)
+			*mask |= DRM_PCIE_SPEED_25;
+		if (lnkcap2 & PCI_EXP_LNKCAP2_SLS_5_0GB)
+			*mask |= DRM_PCIE_SPEED_50;
+		if (lnkcap2 & PCI_EXP_LNKCAP2_SLS_8_0GB)
+			*mask |= DRM_PCIE_SPEED_80;
+	} else {	/* pre-r3.0 */
+		if (lnkcap & PCI_EXP_LNKCAP_SLS_2_5GB)
+			*mask |= DRM_PCIE_SPEED_25;
+		if (lnkcap & PCI_EXP_LNKCAP_SLS_5_0GB)
+			*mask |= (DRM_PCIE_SPEED_25 | DRM_PCIE_SPEED_50);
+	}
+
+	DRM_INFO("probing gen 2 caps for device %x:%x = %x/%x\n", root->vendor, root->device, lnkcap, lnkcap2);
+	return 0;
+}
+EXPORT_SYMBOL(drm_pcie_get_speed_cap_mask);
 
 #else
 

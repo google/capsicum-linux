@@ -17,7 +17,7 @@
 #include <linux/clk.h>
 
 #include <mach/da8xx.h>
-#include <mach/usb.h>
+#include <linux/platform_data/usb-davinci.h>
 
 #ifndef CONFIG_ARCH_DAVINCI_DA8XX
 #error "This file is DA8xx bus glue.  Define CONFIG_ARCH_DAVINCI_DA8XX."
@@ -401,7 +401,6 @@ static int ohci_hcd_da8xx_drv_remove(struct platform_device *dev)
 	struct usb_hcd	*hcd = platform_get_drvdata(dev);
 
 	usb_hcd_da8xx_remove(hcd, dev);
-	platform_set_drvdata(dev, NULL);
 
 	return 0;
 }
@@ -454,3 +453,5 @@ static struct platform_driver ohci_hcd_da8xx_driver = {
 		.name	= "ohci",
 	},
 };
+
+MODULE_ALIAS("platform:ohci");

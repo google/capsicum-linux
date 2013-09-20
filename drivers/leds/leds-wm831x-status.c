@@ -157,7 +157,7 @@ static int wm831x_status_blink_set(struct led_classdev *led_cdev,
 	return ret;
 }
 
-static const char *led_src_texts[] = {
+static const char * const led_src_texts[] = {
 	"otp",
 	"power",
 	"charger",
@@ -241,7 +241,7 @@ static int wm831x_status_probe(struct platform_device *pdev)
 			       GFP_KERNEL);
 	if (!drvdata)
 		return -ENOMEM;
-	dev_set_drvdata(&pdev->dev, drvdata);
+	platform_set_drvdata(pdev, drvdata);
 
 	drvdata->wm831x = wm831x;
 	drvdata->reg = res->start;

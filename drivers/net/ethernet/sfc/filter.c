@@ -66,6 +66,10 @@ struct efx_filter_state {
 #endif
 };
 
+static void efx_filter_table_clear_entry(struct efx_nic *efx,
+					 struct efx_filter_table *table,
+					 unsigned int filter_idx);
+
 /* The filter hash function is LFSR polynomial x^16 + x^3 + 1 of a 32-bit
  * key derived from the n-tuple.  The initial LFSR state is 0xffff. */
 static u16 efx_filter_hash(u32 key)
@@ -162,20 +166,31 @@ static void efx_filter_push_rx_config(struct efx_nic *efx)
 			!!(table->spec[EFX_FILTER_INDEX_UC_DEF].flags &
 			   EFX_FILTER_FLAG_RX_RSS));
 		EFX_SET_OWORD_FIELD(
-			filter_ctl, FRF_CZ_UNICAST_NOMATCH_IP_OVERRIDE,
-			!!(table->spec[EFX_FILTER_INDEX_UC_DEF].flags &
-			   EFX_FILTER_FLAG_RX_OVERRIDE_IP));
-		EFX_SET_OWORD_FIELD(
 			filter_ctl, FRF_CZ_MULTICAST_NOMATCH_Q_ID,
 			table->spec[EFX_FILTER_INDEX_MC_DEF].dmaq_id);
 		EFX_SET_OWORD_FIELD(
 			filter_ctl, FRF_CZ_MULTICAST_NOMATCH_RSS_ENABLED,
 			!!(table->spec[EFX_FILTER_INDEX_MC_DEF].flags &
 			   EFX_FILTER_FLAG_RX_RSS));
+
+		/* There is a single bit to enable RX scatter for all
+		 * unmatched packets.  Only set it if scatter is
+		 * enabled in both filter specs.
+		 */
 		EFX_SET_OWORD_FIELD(
-			filter_ctl, FRF_CZ_MULTICAST_NOMATCH_IP_OVERRIDE,
-			!!(table->spec[EFX_FILTER_INDEX_MC_DEF].flags &
-			   EFX_FILTER_FLAG_RX_OVERRIDE_IP));
+			filter_ctl, FRF_BZ_SCATTER_ENBL_NO_MATCH_Q,
+			!!(table->spec[EFX_FILTER_INDEX_UC_DEF].flags &
+			   table->spec[EFX_FILTER_INDEX_MC_DEF].flags &
+			   EFX_FILTER_FLAG_RX_SCATTER));
+	} else if (efx_nic_rev(efx) >= EFX_REV_FALCON_B0) {
+		/* We don't expose 'default' filters because unmatched
+		 * packets always go to the queue number found in the
+		 * RSS table.  But we still need to set the RX scatter
+		 * bit here.
+		 */
+		EFX_SET_OWORD_FIELD(
+			filter_ctl, FRF_BZ_SCATTER_ENBL_NO_MATCH_Q,
+			efx->rx_scatter);
 	}
 
 	efx_writeo(efx, &filter_ctl, FR_BZ_RX_FILTER_CTL);
@@ -417,9 +432,18 @@ static void efx_filter_reset_rx_def(struct efx_nic *efx, unsigned filter_idx)
 	struct efx_filter_state *state = efx->filter_state;
 	struct efx_filter_table *table = &state->table[EFX_FILTER_TABLE_RX_DEF];
 	struct efx_filter_spec *spec = &table->spec[filter_idx];
+	enum efx_filter_flags flags = 0;
 
-	efx_filter_init_rx(spec, EFX_FILTER_PRI_MANUAL,
-			   EFX_FILTER_FLAG_RX_RSS, 0);
+	/* If there's only one channel then disable RSS for non VF
+	 * traffic, thereby allowing VFs to use RSS when the PF can't.
+	 */
+	if (efx->n_rx_channels > 1)
+		flags |= EFX_FILTER_FLAG_RX_RSS;
+
+	if (efx->rx_scatter)
+		flags |= EFX_FILTER_FLAG_RX_SCATTER;
+
+	efx_filter_init_rx(spec, EFX_FILTER_PRI_MANUAL, flags, 0);
 	spec->type = EFX_FILTER_UC_DEF + filter_idx;
 	table->used_bitmap[0] |= 1 << filter_idx;
 }
@@ -471,23 +495,14 @@ static u32 efx_filter_build(efx_oword_t *filter, struct efx_filter_spec *spec)
 		break;
 	}
 
-	case EFX_FILTER_TABLE_RX_DEF:
-		/* One filter spec per type */
-		BUILD_BUG_ON(EFX_FILTER_INDEX_UC_DEF != 0);
-		BUILD_BUG_ON(EFX_FILTER_INDEX_MC_DEF !=
-			     EFX_FILTER_MC_DEF - EFX_FILTER_UC_DEF);
-		return spec->type - EFX_FILTER_UC_DEF;
-
 	case EFX_FILTER_TABLE_RX_MAC: {
 		bool is_wild = spec->type == EFX_FILTER_MAC_WILD;
-		EFX_POPULATE_OWORD_8(
+		EFX_POPULATE_OWORD_7(
 			*filter,
 			FRF_CZ_RMFT_RSS_EN,
 			!!(spec->flags & EFX_FILTER_FLAG_RX_RSS),
 			FRF_CZ_RMFT_SCATTER_EN,
 			!!(spec->flags & EFX_FILTER_FLAG_RX_SCATTER),
-			FRF_CZ_RMFT_IP_OVERRIDE,
-			!!(spec->flags & EFX_FILTER_FLAG_RX_OVERRIDE_IP),
 			FRF_CZ_RMFT_RXQ_ID, spec->dmaq_id,
 			FRF_CZ_RMFT_WILDCARD_MATCH, is_wild,
 			FRF_CZ_RMFT_DEST_MAC_HI, spec->data[2],
@@ -530,86 +545,63 @@ static bool efx_filter_equal(const struct efx_filter_spec *left,
 	return true;
 }
 
-static int efx_filter_search(struct efx_filter_table *table,
-			     struct efx_filter_spec *spec, u32 key,
-			     bool for_insert, unsigned int *depth_required)
-{
-	unsigned hash, incr, filter_idx, depth, depth_max;
-
-	hash = efx_filter_hash(key);
-	incr = efx_filter_increment(key);
-
-	filter_idx = hash & (table->size - 1);
-	depth = 1;
-	depth_max = (for_insert ?
-		     (spec->priority <= EFX_FILTER_PRI_HINT ?
-		      FILTER_CTL_SRCH_HINT_MAX : FILTER_CTL_SRCH_MAX) :
-		     table->search_depth[spec->type]);
-
-	for (;;) {
-		/* Return success if entry is used and matches this spec
-		 * or entry is unused and we are trying to insert.
-		 */
-		if (test_bit(filter_idx, table->used_bitmap) ?
-		    efx_filter_equal(spec, &table->spec[filter_idx]) :
-		    for_insert) {
-			*depth_required = depth;
-			return filter_idx;
-		}
-
-		/* Return failure if we reached the maximum search depth */
-		if (depth == depth_max)
-			return for_insert ? -EBUSY : -ENOENT;
-
-		filter_idx = (filter_idx + incr) & (table->size - 1);
-		++depth;
-	}
-}
-
 /*
- * Construct/deconstruct external filter IDs.  These must be ordered
- * by matching priority, for RX NFC semantics.
+ * Construct/deconstruct external filter IDs.  At least the RX filter
+ * IDs must be ordered by matching priority, for RX NFC semantics.
  *
- * Each RX MAC filter entry has a flag for whether it can override an
- * RX IP filter that also matches.  So we assign locations for MAC
- * filters with overriding behaviour, then for IP filters, then for
- * MAC filters without overriding behaviour.
+ * Deconstruction needs to be robust against invalid IDs so that
+ * efx_filter_remove_id_safe() and efx_filter_get_filter_safe() can
+ * accept user-provided IDs.
  */
 
-#define EFX_FILTER_MATCH_PRI_RX_MAC_OVERRIDE_IP	0
-#define EFX_FILTER_MATCH_PRI_RX_DEF_OVERRIDE_IP	1
-#define EFX_FILTER_MATCH_PRI_NORMAL_BASE	2
+#define EFX_FILTER_MATCH_PRI_COUNT	5
+
+static const u8 efx_filter_type_match_pri[EFX_FILTER_TYPE_COUNT] = {
+	[EFX_FILTER_TCP_FULL]	= 0,
+	[EFX_FILTER_UDP_FULL]	= 0,
+	[EFX_FILTER_TCP_WILD]	= 1,
+	[EFX_FILTER_UDP_WILD]	= 1,
+	[EFX_FILTER_MAC_FULL]	= 2,
+	[EFX_FILTER_MAC_WILD]	= 3,
+	[EFX_FILTER_UC_DEF]	= 4,
+	[EFX_FILTER_MC_DEF]	= 4,
+};
+
+static const enum efx_filter_table_id efx_filter_range_table[] = {
+	EFX_FILTER_TABLE_RX_IP,		/* RX match pri 0 */
+	EFX_FILTER_TABLE_RX_IP,
+	EFX_FILTER_TABLE_RX_MAC,
+	EFX_FILTER_TABLE_RX_MAC,
+	EFX_FILTER_TABLE_RX_DEF,	/* RX match pri 4 */
+	EFX_FILTER_TABLE_COUNT,		/* TX match pri 0; invalid */
+	EFX_FILTER_TABLE_COUNT,		/* invalid */
+	EFX_FILTER_TABLE_TX_MAC,
+	EFX_FILTER_TABLE_TX_MAC,	/* TX match pri 3 */
+};
 
 #define EFX_FILTER_INDEX_WIDTH	13
 #define EFX_FILTER_INDEX_MASK	((1 << EFX_FILTER_INDEX_WIDTH) - 1)
 
-static inline u32 efx_filter_make_id(enum efx_filter_table_id table_id,
-				     unsigned int index, u8 flags)
+static inline u32
+efx_filter_make_id(const struct efx_filter_spec *spec, unsigned int index)
 {
-	unsigned int match_pri = EFX_FILTER_MATCH_PRI_NORMAL_BASE + table_id;
+	unsigned int range;
 
-	if (flags & EFX_FILTER_FLAG_RX_OVERRIDE_IP) {
-		if (table_id == EFX_FILTER_TABLE_RX_MAC)
-			match_pri = EFX_FILTER_MATCH_PRI_RX_MAC_OVERRIDE_IP;
-		else if (table_id == EFX_FILTER_TABLE_RX_DEF)
-			match_pri = EFX_FILTER_MATCH_PRI_RX_DEF_OVERRIDE_IP;
-	}
+	range = efx_filter_type_match_pri[spec->type];
+	if (!(spec->flags & EFX_FILTER_FLAG_RX))
+		range += EFX_FILTER_MATCH_PRI_COUNT;
 
-	return match_pri << EFX_FILTER_INDEX_WIDTH | index;
+	return range << EFX_FILTER_INDEX_WIDTH | index;
 }
 
 static inline enum efx_filter_table_id efx_filter_id_table_id(u32 id)
 {
-	unsigned int match_pri = id >> EFX_FILTER_INDEX_WIDTH;
+	unsigned int range = id >> EFX_FILTER_INDEX_WIDTH;
 
-	switch (match_pri) {
-	case EFX_FILTER_MATCH_PRI_RX_MAC_OVERRIDE_IP:
-		return EFX_FILTER_TABLE_RX_MAC;
-	case EFX_FILTER_MATCH_PRI_RX_DEF_OVERRIDE_IP:
-		return EFX_FILTER_TABLE_RX_DEF;
-	default:
-		return match_pri - EFX_FILTER_MATCH_PRI_NORMAL_BASE;
-	}
+	if (range < ARRAY_SIZE(efx_filter_range_table))
+		return efx_filter_range_table[range];
+	else
+		return EFX_FILTER_TABLE_COUNT; /* invalid */
 }
 
 static inline unsigned int efx_filter_id_index(u32 id)
@@ -619,12 +611,9 @@ static inline unsigned int efx_filter_id_index(u32 id)
 
 static inline u8 efx_filter_id_flags(u32 id)
 {
-	unsigned int match_pri = id >> EFX_FILTER_INDEX_WIDTH;
+	unsigned int range = id >> EFX_FILTER_INDEX_WIDTH;
 
-	if (match_pri < EFX_FILTER_MATCH_PRI_NORMAL_BASE)
-		return EFX_FILTER_FLAG_RX | EFX_FILTER_FLAG_RX_OVERRIDE_IP;
-	else if (match_pri <=
-		 EFX_FILTER_MATCH_PRI_NORMAL_BASE + EFX_FILTER_TABLE_RX_DEF)
+	if (range < EFX_FILTER_MATCH_PRI_COUNT)
 		return EFX_FILTER_FLAG_RX;
 	else
 		return EFX_FILTER_FLAG_TX;
@@ -633,14 +622,15 @@ static inline u8 efx_filter_id_flags(u32 id)
 u32 efx_filter_get_rx_id_limit(struct efx_nic *efx)
 {
 	struct efx_filter_state *state = efx->filter_state;
-	unsigned int table_id = EFX_FILTER_TABLE_RX_DEF;
+	unsigned int range = EFX_FILTER_MATCH_PRI_COUNT - 1;
+	enum efx_filter_table_id table_id;
 
 	do {
+		table_id = efx_filter_range_table[range];
 		if (state->table[table_id].size != 0)
-			return ((EFX_FILTER_MATCH_PRI_NORMAL_BASE + table_id)
-				<< EFX_FILTER_INDEX_WIDTH) +
+			return range << EFX_FILTER_INDEX_WIDTH |
 				state->table[table_id].size;
-	} while (table_id--);
+	} while (range--);
 
 	return 0;
 }
@@ -649,44 +639,111 @@ u32 efx_filter_get_rx_id_limit(struct efx_nic *efx)
  * efx_filter_insert_filter - add or replace a filter
  * @efx: NIC in which to insert the filter
  * @spec: Specification for the filter
- * @replace: Flag for whether the specified filter may replace a filter
- *	with an identical match expression and equal or lower priority
+ * @replace_equal: Flag for whether the specified filter may replace an
+ *	existing filter with equal priority
  *
  * On success, return the filter ID.
  * On failure, return a negative error code.
+ *
+ * If an existing filter has equal match values to the new filter
+ * spec, then the new filter might replace it, depending on the
+ * relative priorities.  If the existing filter has lower priority, or
+ * if @replace_equal is set and it has equal priority, then it is
+ * replaced.  Otherwise the function fails, returning -%EPERM if
+ * the existing filter has higher priority or -%EEXIST if it has
+ * equal priority.
  */
 s32 efx_filter_insert_filter(struct efx_nic *efx, struct efx_filter_spec *spec,
-			     bool replace)
+			     bool replace_equal)
 {
 	struct efx_filter_state *state = efx->filter_state;
 	struct efx_filter_table *table = efx_filter_spec_table(state, spec);
-	struct efx_filter_spec *saved_spec;
 	efx_oword_t filter;
-	unsigned int filter_idx, depth;
-	u32 key;
+	int rep_index, ins_index;
+	unsigned int depth = 0;
 	int rc;
 
 	if (!table || table->size == 0)
 		return -EINVAL;
 
-	key = efx_filter_build(&filter, spec);
-
 	netif_vdbg(efx, hw, efx->net_dev,
 		   "%s: type %d search_depth=%d", __func__, spec->type,
 		   table->search_depth[spec->type]);
 
-	spin_lock_bh(&state->lock);
+	if (table->id == EFX_FILTER_TABLE_RX_DEF) {
+		/* One filter spec per type */
+		BUILD_BUG_ON(EFX_FILTER_INDEX_UC_DEF != 0);
+		BUILD_BUG_ON(EFX_FILTER_INDEX_MC_DEF !=
+			     EFX_FILTER_MC_DEF - EFX_FILTER_UC_DEF);
+		rep_index = spec->type - EFX_FILTER_UC_DEF;
+		ins_index = rep_index;
 
-	rc = efx_filter_search(table, spec, key, true, &depth);
-	if (rc < 0)
-		goto out;
-	filter_idx = rc;
-	BUG_ON(filter_idx >= table->size);
-	saved_spec = &table->spec[filter_idx];
+		spin_lock_bh(&state->lock);
+	} else {
+		/* Search concurrently for
+		 * (1) a filter to be replaced (rep_index): any filter
+		 *     with the same match values, up to the current
+		 *     search depth for this type, and
+		 * (2) the insertion point (ins_index): (1) or any
+		 *     free slot before it or up to the maximum search
+		 *     depth for this priority
+		 * We fail if we cannot find (2).
+		 *
+		 * We can stop once either
+		 * (a) we find (1), in which case we have definitely
+		 *     found (2) as well; or
+		 * (b) we have searched exhaustively for (1), and have
+		 *     either found (2) or searched exhaustively for it
+		 */
+		u32 key = efx_filter_build(&filter, spec);
+		unsigned int hash = efx_filter_hash(key);
+		unsigned int incr = efx_filter_increment(key);
+		unsigned int max_rep_depth = table->search_depth[spec->type];
+		unsigned int max_ins_depth =
+			spec->priority <= EFX_FILTER_PRI_HINT ?
+			FILTER_CTL_SRCH_HINT_MAX : FILTER_CTL_SRCH_MAX;
+		unsigned int i = hash & (table->size - 1);
 
-	if (test_bit(filter_idx, table->used_bitmap)) {
-		/* Should we replace the existing filter? */
-		if (!replace) {
+		ins_index = -1;
+		depth = 1;
+
+		spin_lock_bh(&state->lock);
+
+		for (;;) {
+			if (!test_bit(i, table->used_bitmap)) {
+				if (ins_index < 0)
+					ins_index = i;
+			} else if (efx_filter_equal(spec, &table->spec[i])) {
+				/* Case (a) */
+				if (ins_index < 0)
+					ins_index = i;
+				rep_index = i;
+				break;
+			}
+
+			if (depth >= max_rep_depth &&
+			    (ins_index >= 0 || depth >= max_ins_depth)) {
+				/* Case (b) */
+				if (ins_index < 0) {
+					rc = -EBUSY;
+					goto out;
+				}
+				rep_index = -1;
+				break;
+			}
+
+			i = (i + incr) & (table->size - 1);
+			++depth;
+		}
+	}
+
+	/* If we found a filter to be replaced, check whether we
+	 * should do so
+	 */
+	if (rep_index >= 0) {
+		struct efx_filter_spec *saved_spec = &table->spec[rep_index];
+
+		if (spec->priority == saved_spec->priority && !replace_equal) {
 			rc = -EEXIST;
 			goto out;
 		}
@@ -694,11 +751,14 @@ s32 efx_filter_insert_filter(struct efx_nic *efx, struct efx_filter_spec *spec,
 			rc = -EPERM;
 			goto out;
 		}
-	} else {
-		__set_bit(filter_idx, table->used_bitmap);
+	}
+
+	/* Insert the filter */
+	if (ins_index != rep_index) {
+		__set_bit(ins_index, table->used_bitmap);
 		++table->used;
 	}
-	*saved_spec = *spec;
+	table->spec[ins_index] = *spec;
 
 	if (table->id == EFX_FILTER_TABLE_RX_DEF) {
 		efx_filter_push_rx_config(efx);
@@ -712,13 +772,19 @@ s32 efx_filter_insert_filter(struct efx_nic *efx, struct efx_filter_spec *spec,
 		}
 
 		efx_writeo(efx, &filter,
-			   table->offset + table->step * filter_idx);
+			   table->offset + table->step * ins_index);
+
+		/* If we were able to replace a filter by inserting
+		 * at a lower depth, clear the replaced filter
+		 */
+		if (ins_index != rep_index && rep_index >= 0)
+			efx_filter_table_clear_entry(efx, table, rep_index);
 	}
 
 	netif_vdbg(efx, hw, efx->net_dev,
 		   "%s: filter type %d index %d rxq %u set",
-		   __func__, spec->type, filter_idx, spec->dmaq_id);
-	rc = efx_filter_make_id(table->id, filter_idx, spec->flags);
+		   __func__, spec->type, ins_index, spec->dmaq_id);
+	rc = efx_filter_make_id(spec, ins_index);
 
 out:
 	spin_unlock_bh(&state->lock);
@@ -781,8 +847,7 @@ int efx_filter_remove_id_safe(struct efx_nic *efx,
 	spin_lock_bh(&state->lock);
 
 	if (test_bit(filter_idx, table->used_bitmap) &&
-	    spec->priority == priority &&
-	    !((spec->flags ^ filter_flags) & EFX_FILTER_FLAG_RX_OVERRIDE_IP)) {
+	    spec->priority == priority) {
 		efx_filter_table_clear_entry(efx, table, filter_idx);
 		if (table->used == 0)
 			efx_filter_table_reset_search_depth(table);
@@ -833,8 +898,7 @@ int efx_filter_get_filter_safe(struct efx_nic *efx,
 	spin_lock_bh(&state->lock);
 
 	if (test_bit(filter_idx, table->used_bitmap) &&
-	    spec->priority == priority &&
-	    !((spec->flags ^ filter_flags) & EFX_FILTER_FLAG_RX_OVERRIDE_IP)) {
+	    spec->priority == priority) {
 		*spec_buf = *spec;
 		rc = 0;
 	} else {
@@ -927,8 +991,7 @@ s32 efx_filter_get_rx_ids(struct efx_nic *efx,
 					goto out;
 				}
 				buf[count++] = efx_filter_make_id(
-					table_id, filter_idx,
-					table->spec[filter_idx].flags);
+					&table->spec[filter_idx], filter_idx);
 			}
 		}
 	}
@@ -1062,6 +1125,50 @@ void efx_remove_filters(struct efx_nic *efx)
 	kfree(state);
 }
 
+/* Update scatter enable flags for filters pointing to our own RX queues */
+void efx_filter_update_rx_scatter(struct efx_nic *efx)
+{
+	struct efx_filter_state *state = efx->filter_state;
+	enum efx_filter_table_id table_id;
+	struct efx_filter_table *table;
+	efx_oword_t filter;
+	unsigned int filter_idx;
+
+	spin_lock_bh(&state->lock);
+
+	for (table_id = EFX_FILTER_TABLE_RX_IP;
+	     table_id <= EFX_FILTER_TABLE_RX_DEF;
+	     table_id++) {
+		table = &state->table[table_id];
+
+		for (filter_idx = 0; filter_idx < table->size; filter_idx++) {
+			if (!test_bit(filter_idx, table->used_bitmap) ||
+			    table->spec[filter_idx].dmaq_id >=
+			    efx->n_rx_channels)
+				continue;
+
+			if (efx->rx_scatter)
+				table->spec[filter_idx].flags |=
+					EFX_FILTER_FLAG_RX_SCATTER;
+			else
+				table->spec[filter_idx].flags &=
+					~EFX_FILTER_FLAG_RX_SCATTER;
+
+			if (table_id == EFX_FILTER_TABLE_RX_DEF)
+				/* Pushed by efx_filter_push_rx_config() */
+				continue;
+
+			efx_filter_build(&filter, &table->spec[filter_idx]);
+			efx_writeo(efx, &filter,
+				   table->offset + table->step * filter_idx);
+		}
+	}
+
+	efx_filter_push_rx_config(efx);
+
+	spin_unlock_bh(&state->lock);
+}
+
 #ifdef CONFIG_RFS_ACCEL
 
 int efx_filter_rfs(struct net_device *net_dev, const struct sk_buff *skb,
@@ -1078,8 +1185,21 @@ int efx_filter_rfs(struct net_device *net_dev, const struct sk_buff *skb,
 
 	nhoff = skb_network_offset(skb);
 
-	if (skb->protocol != htons(ETH_P_IP))
+	if (skb->protocol == htons(ETH_P_8021Q)) {
+		EFX_BUG_ON_PARANOID(skb_headlen(skb) <
+				    nhoff + sizeof(struct vlan_hdr));
+		if (((const struct vlan_hdr *)skb->data + nhoff)->
+		    h_vlan_encapsulated_proto != htons(ETH_P_IP))
+			return -EPROTONOSUPPORT;
+
+		/* This is IP over 802.1q VLAN.  We can't filter on the
+		 * IP 5-tuple and the vlan together, so just strip the
+		 * vlan header and filter on the IP part.
+		 */
+		nhoff += sizeof(struct vlan_hdr);
+	} else if (skb->protocol != htons(ETH_P_IP)) {
 		return -EPROTONOSUPPORT;
+	}
 
 	/* RFS must validate the IP header length before calling us */
 	EFX_BUG_ON_PARANOID(skb_headlen(skb) < nhoff + sizeof(*ip));
@@ -1089,7 +1209,9 @@ int efx_filter_rfs(struct net_device *net_dev, const struct sk_buff *skb,
 	EFX_BUG_ON_PARANOID(skb_headlen(skb) < nhoff + 4 * ip->ihl + 4);
 	ports = (const __be16 *)(skb->data + nhoff + 4 * ip->ihl);
 
-	efx_filter_init_rx(&spec, EFX_FILTER_PRI_HINT, 0, rxq_index);
+	efx_filter_init_rx(&spec, EFX_FILTER_PRI_HINT,
+			   efx->rx_scatter ? EFX_FILTER_FLAG_RX_SCATTER : 0,
+			   rxq_index);
 	rc = efx_filter_set_ipv4_full(&spec, ip->protocol,
 				      ip->daddr, ports[1], ip->saddr, ports[0]);
 	if (rc)

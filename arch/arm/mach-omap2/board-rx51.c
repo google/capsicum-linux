@@ -1,5 +1,5 @@
 /*
- * linux/arch/arm/mach-omap2/board-rx51.c
+ * Board support file for Nokia N900 (aka RX-51).
  *
  * Copyright (C) 2007, 2008 Nokia
  *
@@ -17,26 +17,23 @@
 #include <linux/io.h>
 #include <linux/gpio.h>
 #include <linux/leds.h>
+#include <linux/usb/phy.h>
+#include <linux/usb/musb.h>
+#include <linux/platform_data/spi-omap2-mcspi.h>
 
-#include <mach/hardware.h>
 #include <asm/mach-types.h>
 #include <asm/mach/arch.h>
 #include <asm/mach/map.h>
 
-#include <plat/mcspi.h>
-#include <plat/board.h>
-#include "common.h"
-#include <plat/dma.h>
-#include <plat/gpmc.h>
-#include <plat/usb.h>
+#include <linux/omap-dma.h>
 
+#include "common.h"
 #include "mux.h"
+#include "gpmc.h"
 #include "pm.h"
 #include "sdram-nokia.h"
 
 #define RX51_GPIO_SLEEP_IND 162
-
-extern void rx51_video_mem_init(void);
 
 static struct gpio_led gpio_leds[] = {
 	{
@@ -59,25 +56,24 @@ static struct platform_device leds_gpio = {
 };
 
 /*
- * cpuidle C-states definition override from the default values.
- * The 'exit_latency' field is the sum of sleep and wake-up latencies.
- */
-static struct cpuidle_params rx51_cpuidle_params[] = {
-	/* C1 */
-	{110 + 162, 5 , 1},
-	/* C2 */
-	{106 + 180, 309, 1},
-	/* C3 */
-	{107 + 410, 46057, 0},
-	/* C4 */
-	{121 + 3374, 46057, 0},
-	/* C5 */
-	{855 + 1146, 46057, 1},
-	/* C6 */
-	{7580 + 4134, 484329, 0},
-	/* C7 */
-	{7505 + 15274, 484329, 1},
-};
+ * cpuidle C-states definition for rx51.
+ *
+ * The 'exit_latency' field is the sum of sleep
+ * and wake-up latencies.
+
+    ---------------------------------------------
+   | state |  exit_latency  |  target_residency  |
+    ---------------------------------------------
+   |  C1   |    110 + 162   |            5       |
+   |  C2   |    106 + 180   |          309       |
+   |  C3   |    107 + 410   |        46057       |
+   |  C4   |    121 + 3374  |        46057       |
+   |  C5   |    855 + 1146  |        46057       |
+   |  C6   |   7580 + 4134  |       484329       |
+   |  C7   |   7505 + 15274 |       484329       |
+    ---------------------------------------------
+
+*/
 
 extern void __init rx51_peripherals_init(void);
 
@@ -89,7 +85,7 @@ static struct omap_board_mux board_mux[] __initdata = {
 
 static struct omap_musb_board_data musb_board_data = {
 	.interface_type		= MUSB_INTERFACE_ULPI,
-	.mode			= MUSB_PERIPHERAL,
+	.mode			= MUSB_OTG,
 	.power			= 0,
 };
 
@@ -98,12 +94,12 @@ static void __init rx51_init(void)
 	struct omap_sdrc_params *sdrc_params;
 
 	omap3_mux_init(board_mux, OMAP_PACKAGE_CBB);
-	omap3_pm_init_cpuidle(rx51_cpuidle_params);
 	omap_serial_init();
 
 	sdrc_params = nokia_get_sdram_timings();
 	omap_sdrc_init(sdrc_params, sdrc_params);
 
+	usb_bind_phy("musb-hdrc.0.auto", 0, "twl4030_usb");
 	usb_musb_init(&musb_board_data);
 	rx51_peripherals_init();
 
@@ -116,7 +112,6 @@ static void __init rx51_init(void)
 
 static void __init rx51_reserve(void)
 {
-	rx51_video_mem_init();
 	omap_reserve();
 }
 
@@ -129,6 +124,7 @@ MACHINE_START(NOKIA_RX51, "Nokia RX-51 board")
 	.init_irq	= omap3_init_irq,
 	.handle_irq	= omap3_intc_handle_irq,
 	.init_machine	= rx51_init,
-	.timer		= &omap3_timer,
-	.restart	= omap_prcm_restart,
+	.init_late	= omap3430_init_late,
+	.init_time	= omap3_sync32k_timer_init,
+	.restart	= omap3xxx_restart,
 MACHINE_END

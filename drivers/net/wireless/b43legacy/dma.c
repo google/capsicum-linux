@@ -52,7 +52,7 @@ struct b43legacy_dmadesc32 *op32_idx2desc(struct b43legacy_dmaring *ring,
 	desc = ring->descbase;
 	desc = &(desc[slot]);
 
-	return (struct b43legacy_dmadesc32 *)desc;
+	return desc;
 }
 
 static void op32_fill_descriptor(struct b43legacy_dmaring *ring,
@@ -334,13 +334,9 @@ static int alloc_ringmemory(struct b43legacy_dmaring *ring)
 	ring->descbase = dma_alloc_coherent(ring->dev->dev->dma_dev,
 					    B43legacy_DMA_RINGMEMSIZE,
 					    &(ring->dmabase),
-					    GFP_KERNEL);
-	if (!ring->descbase) {
-		b43legacyerr(ring->dev->wl, "DMA ringmemory allocation"
-			     " failed\n");
+					    GFP_KERNEL | __GFP_ZERO);
+	if (!ring->descbase)
 		return -ENOMEM;
-	}
-	memset(ring->descbase, 0, B43legacy_DMA_RINGMEMSIZE);
 
 	return 0;
 }
@@ -1072,7 +1068,7 @@ static int dma_tx_fragment(struct b43legacy_dmaring *ring,
 	meta->dmaaddr = map_descbuffer(ring, skb->data, skb->len, 1);
 	/* create a bounce buffer in zone_dma on mapping failure. */
 	if (b43legacy_dma_mapping_error(ring, meta->dmaaddr, skb->len, 1)) {
-		bounce_skb = __dev_alloc_skb(skb->len, GFP_ATOMIC | GFP_DMA);
+		bounce_skb = alloc_skb(skb->len, GFP_ATOMIC | GFP_DMA);
 		if (!bounce_skb) {
 			ring->current_slot = old_top_slot;
 			ring->used_slots = old_used_slots;

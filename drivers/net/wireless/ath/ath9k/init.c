@@ -14,12 +14,21 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
+
 #include <linux/dma-mapping.h>
 #include <linux/slab.h>
 #include <linux/ath9k_platform.h>
 #include <linux/module.h>
+#include <linux/relay.h>
+#include <net/ieee80211_radiotap.h>
 
 #include "ath9k.h"
+
+struct ath9k_eeprom_ctx {
+	struct completion complete;
+	struct ath_hw *ah;
+};
 
 static char *dev_info = "ath9k";
 
@@ -43,6 +52,10 @@ MODULE_PARM_DESC(blink, "Enable LED blink on activity");
 static int ath9k_btcoex_enable;
 module_param_named(btcoex_enable, ath9k_btcoex_enable, int, 0444);
 MODULE_PARM_DESC(btcoex_enable, "Enable wifi-BT coexistence");
+
+static int ath9k_enable_diversity;
+module_param_named(enable_diversity, ath9k_enable_diversity, int, 0444);
+MODULE_PARM_DESC(enable_diversity, "Enable Antenna diversity for AR9565");
 
 bool is_ath9k_unloaded;
 /* We use the hw_value as an index into our private channel structure */
@@ -256,7 +269,7 @@ static void setup_ht_cap(struct ath_softc *sc,
 	ht_info->ampdu_factor = IEEE80211_HT_MAX_AMPDU_64K;
 	ht_info->ampdu_density = IEEE80211_HT_MPDU_DENSITY_8;
 
-	if (AR_SREV_9330(ah) || AR_SREV_9485(ah))
+	if (AR_SREV_9330(ah) || AR_SREV_9485(ah) || AR_SREV_9565(ah))
 		max_streams = 1;
 	else if (AR_SREV_9462(ah))
 		max_streams = 2;
@@ -291,16 +304,15 @@ static void setup_ht_cap(struct ath_softc *sc,
 	ht_info->mcs.tx_params |= IEEE80211_HT_MCS_TX_DEFINED;
 }
 
-static int ath9k_reg_notifier(struct wiphy *wiphy,
-			      struct regulatory_request *request)
+static void ath9k_reg_notifier(struct wiphy *wiphy,
+			       struct regulatory_request *request)
 {
 	struct ieee80211_hw *hw = wiphy_to_ieee80211_hw(wiphy);
 	struct ath_softc *sc = hw->priv;
 	struct ath_hw *ah = sc->sc_ah;
 	struct ath_regulatory *reg = ath9k_hw_regulatory(ah);
-	int ret;
 
-	ret = ath_reg_notifier_apply(wiphy, request, reg);
+	ath_reg_notifier_apply(wiphy, request, reg);
 
 	/* Set tx power */
 	if (ah->curchan) {
@@ -308,10 +320,12 @@ static int ath9k_reg_notifier(struct wiphy *wiphy,
 		ath9k_ps_wakeup(sc);
 		ath9k_hw_set_txpowerlimit(ah, sc->config.txpowlimit, false);
 		sc->curtxpow = ath9k_hw_regulatory(ah)->power_limit;
+		/* synchronize DFS detector if regulatory domain changed */
+		if (sc->dfs_detector != NULL)
+			sc->dfs_detector->set_dfs_domain(sc->dfs_detector,
+							 request->dfs_region);
 		ath9k_ps_restore(sc);
 	}
-
-	return ret;
 }
 
 /*
@@ -326,7 +340,7 @@ int ath_descdma_setup(struct ath_softc *sc, struct ath_descdma *dd,
 	struct ath_common *common = ath9k_hw_common(sc->sc_ah);
 	u8 *ds;
 	struct ath_buf *bf;
-	int i, bsize, error, desc_len;
+	int i, bsize, desc_len;
 
 	ath_dbg(common, CONFIG, "%s DMA: %u buffers %u desc/buf\n",
 		name, nbuf, ndesc);
@@ -342,8 +356,7 @@ int ath_descdma_setup(struct ath_softc *sc, struct ath_descdma *dd,
 	if ((desc_len % 4) != 0) {
 		ath_err(common, "ath_desc not DWORD aligned\n");
 		BUG_ON((desc_len % 4) != 0);
-		error = -ENOMEM;
-		goto fail;
+		return -ENOMEM;
 	}
 
 	dd->dd_desc_len = desc_len * nbuf * ndesc;
@@ -367,12 +380,11 @@ int ath_descdma_setup(struct ath_softc *sc, struct ath_descdma *dd,
 	}
 
 	/* allocate descriptors */
-	dd->dd_desc = dma_alloc_coherent(sc->dev, dd->dd_desc_len,
-					 &dd->dd_desc_paddr, GFP_KERNEL);
-	if (dd->dd_desc == NULL) {
-		error = -ENOMEM;
-		goto fail;
-	}
+	dd->dd_desc = dmam_alloc_coherent(sc->dev, dd->dd_desc_len,
+					  &dd->dd_desc_paddr, GFP_KERNEL);
+	if (!dd->dd_desc)
+		return -ENOMEM;
+
 	ds = (u8 *) dd->dd_desc;
 	ath_dbg(common, CONFIG, "%s DMA map: %p (%u) -> %llx (%u)\n",
 		name, ds, (u32) dd->dd_desc_len,
@@ -380,12 +392,9 @@ int ath_descdma_setup(struct ath_softc *sc, struct ath_descdma *dd,
 
 	/* allocate buffers */
 	bsize = sizeof(struct ath_buf) * nbuf;
-	bf = kzalloc(bsize, GFP_KERNEL);
-	if (bf == NULL) {
-		error = -ENOMEM;
-		goto fail2;
-	}
-	dd->dd_bufptr = bf;
+	bf = devm_kzalloc(sc->dev, bsize, GFP_KERNEL);
+	if (!bf)
+		return -ENOMEM;
 
 	for (i = 0; i < nbuf; i++, bf++, ds += (desc_len * ndesc)) {
 		bf->bf_desc = ds;
@@ -411,12 +420,6 @@ int ath_descdma_setup(struct ath_softc *sc, struct ath_descdma *dd,
 		list_add_tail(&bf->list, head);
 	}
 	return 0;
-fail2:
-	dma_free_coherent(sc->dev, dd->dd_desc_len, dd->dd_desc,
-			  dd->dd_desc_paddr);
-fail:
-	memset(dd, 0, sizeof(*dd));
-	return error;
 }
 
 static int ath9k_init_queues(struct ath_softc *sc)
@@ -429,9 +432,12 @@ static int ath9k_init_queues(struct ath_softc *sc)
 	sc->config.cabqReadytime = ATH_CABQ_READY_TIME;
 	ath_cabq_update(sc);
 
-	for (i = 0; i < WME_NUM_AC; i++) {
+	sc->tx.uapsdq = ath_txq_setup(sc, ATH9K_TX_QUEUE_UAPSD, 0);
+
+	for (i = 0; i < IEEE80211_NUM_ACS; i++) {
 		sc->tx.txq_map[i] = ath_txq_setup(sc, ATH9K_TX_QUEUE_DATA, i);
 		sc->tx.txq_map[i]->mac80211_qnum = i;
+		sc->tx.txq_max_pending[i] = ATH_MAX_QDEPTH;
 	}
 	return 0;
 }
@@ -445,11 +451,13 @@ static int ath9k_init_channels_rates(struct ath_softc *sc)
 		     ATH9K_NUM_CHANNELS);
 
 	if (sc->sc_ah->caps.hw_caps & ATH9K_HW_CAP_2GHZ) {
-		channels = kmemdup(ath9k_2ghz_chantable,
+		channels = devm_kzalloc(sc->dev,
 			sizeof(ath9k_2ghz_chantable), GFP_KERNEL);
 		if (!channels)
 		    return -ENOMEM;
 
+		memcpy(channels, ath9k_2ghz_chantable,
+		       sizeof(ath9k_2ghz_chantable));
 		sc->sbands[IEEE80211_BAND_2GHZ].channels = channels;
 		sc->sbands[IEEE80211_BAND_2GHZ].band = IEEE80211_BAND_2GHZ;
 		sc->sbands[IEEE80211_BAND_2GHZ].n_channels =
@@ -460,14 +468,13 @@ static int ath9k_init_channels_rates(struct ath_softc *sc)
 	}
 
 	if (sc->sc_ah->caps.hw_caps & ATH9K_HW_CAP_5GHZ) {
-		channels = kmemdup(ath9k_5ghz_chantable,
+		channels = devm_kzalloc(sc->dev,
 			sizeof(ath9k_5ghz_chantable), GFP_KERNEL);
-		if (!channels) {
-			if (sc->sbands[IEEE80211_BAND_2GHZ].channels)
-				kfree(sc->sbands[IEEE80211_BAND_2GHZ].channels);
+		if (!channels)
 			return -ENOMEM;
-		}
 
+		memcpy(channels, ath9k_5ghz_chantable,
+		       sizeof(ath9k_5ghz_chantable));
 		sc->sbands[IEEE80211_BAND_5GHZ].channels = channels;
 		sc->sbands[IEEE80211_BAND_5GHZ].band = IEEE80211_BAND_5GHZ;
 		sc->sbands[IEEE80211_BAND_5GHZ].n_channels =
@@ -487,6 +494,7 @@ static void ath9k_init_misc(struct ath_softc *sc)
 
 	setup_timer(&common->ani.timer, ath_ani_calibrate, (unsigned long)sc);
 
+	sc->last_rssi = ATH_RSSI_DUMMY_MARKER;
 	sc->config.txpowlimit = ATH_TXPOWER_MAX;
 	memcpy(common->bssidmask, ath_bcast_mac, ETH_ALEN);
 	sc->beacon.slottime = ATH9K_SLOT_TIME_9;
@@ -496,6 +504,79 @@ static void ath9k_init_misc(struct ath_softc *sc)
 
 	if (sc->sc_ah->caps.hw_caps & ATH9K_HW_CAP_ANT_DIV_COMB)
 		sc->ant_comb.count = ATH_ANT_DIV_COMB_INIT_COUNT;
+
+	sc->spec_config.enabled = 0;
+	sc->spec_config.short_repeat = true;
+	sc->spec_config.count = 8;
+	sc->spec_config.endless = false;
+	sc->spec_config.period = 0xFF;
+	sc->spec_config.fft_period = 0xF;
+}
+
+static void ath9k_init_platform(struct ath_softc *sc)
+{
+	struct ath_hw *ah = sc->sc_ah;
+	struct ath_common *common = ath9k_hw_common(ah);
+
+	if (common->bus_ops->ath_bus_type != ATH_PCI)
+		return;
+
+	if (sc->driver_data & (ATH9K_PCI_CUS198 |
+			       ATH9K_PCI_CUS230)) {
+		ah->config.xlna_gpio = 9;
+		ah->config.xatten_margin_cfg = true;
+
+		ath_info(common, "Set parameters for %s\n",
+			 (sc->driver_data & ATH9K_PCI_CUS198) ?
+			 "CUS198" : "CUS230");
+	} else if (sc->driver_data & ATH9K_PCI_CUS217) {
+		ath_info(common, "CUS217 card detected\n");
+	}
+}
+
+static void ath9k_eeprom_request_cb(const struct firmware *eeprom_blob,
+				    void *ctx)
+{
+	struct ath9k_eeprom_ctx *ec = ctx;
+
+	if (eeprom_blob)
+		ec->ah->eeprom_blob = eeprom_blob;
+
+	complete(&ec->complete);
+}
+
+static int ath9k_eeprom_request(struct ath_softc *sc, const char *name)
+{
+	struct ath9k_eeprom_ctx ec;
+	struct ath_hw *ah = ah = sc->sc_ah;
+	int err;
+
+	/* try to load the EEPROM content asynchronously */
+	init_completion(&ec.complete);
+	ec.ah = sc->sc_ah;
+
+	err = request_firmware_nowait(THIS_MODULE, 1, name, sc->dev, GFP_KERNEL,
+				      &ec, ath9k_eeprom_request_cb);
+	if (err < 0) {
+		ath_err(ath9k_hw_common(ah),
+			"EEPROM request failed\n");
+		return err;
+	}
+
+	wait_for_completion(&ec.complete);
+
+	if (!ah->eeprom_blob) {
+		ath_err(ath9k_hw_common(ah),
+			"Unable to load EEPROM file %s\n", name);
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
+static void ath9k_eeprom_release(struct ath_softc *sc)
+{
+	release_firmware(sc->sc_ah->eeprom_blob);
 }
 
 static int ath9k_init_softc(u16 devid, struct ath_softc *sc,
@@ -507,10 +588,11 @@ static int ath9k_init_softc(u16 devid, struct ath_softc *sc,
 	int ret = 0, i;
 	int csz = 0;
 
-	ah = kzalloc(sizeof(struct ath_hw), GFP_KERNEL);
+	ah = devm_kzalloc(sc->dev, sizeof(struct ath_hw), GFP_KERNEL);
 	if (!ah)
 		return -ENOMEM;
 
+	ah->dev = sc->dev;
 	ah->hw = sc->hw;
 	ah->hw_version.devid = devid;
 	ah->reg_ops.read = ath9k_ioread32;
@@ -518,6 +600,8 @@ static int ath9k_init_softc(u16 devid, struct ath_softc *sc,
 	ah->reg_ops.rmw = ath9k_reg_rmw;
 	atomic_set(&ah->intr_ref_cnt, -1);
 	sc->sc_ah = ah;
+
+	sc->dfs_detector = dfs_pattern_detector_init(ah, NL80211_DFS_UNSET);
 
 	if (!pdata) {
 		ah->ah_flags |= AH_USE_EEPROM;
@@ -540,21 +624,33 @@ static int ath9k_init_softc(u16 devid, struct ath_softc *sc,
 	common->debug_mask = ath9k_debug;
 	common->btcoex_enabled = ath9k_btcoex_enable == 1;
 	common->disable_ani = false;
+
+	/*
+	 * Platform quirks.
+	 */
+	ath9k_init_platform(sc);
+
+	/*
+	 * Enable Antenna diversity only when BTCOEX is disabled
+	 * and the user manually requests the feature.
+	 */
+	if (!common->btcoex_enabled && ath9k_enable_diversity)
+		common->antenna_diversity = 1;
+
 	spin_lock_init(&common->cc_lock);
 
 	spin_lock_init(&sc->sc_serial_rw);
 	spin_lock_init(&sc->sc_pm_lock);
 	mutex_init(&sc->mutex);
-#ifdef CONFIG_ATH9K_DEBUGFS
-	spin_lock_init(&sc->nodes_lock);
-	INIT_LIST_HEAD(&sc->nodes);
-#endif
-#ifdef CONFIG_ATH9K_MAC_DEBUG
-	spin_lock_init(&sc->debug.samp_lock);
-#endif
 	tasklet_init(&sc->intr_tq, ath9k_tasklet, (unsigned long)sc);
-	tasklet_init(&sc->bcon_tasklet, ath_beacon_tasklet,
+	tasklet_init(&sc->bcon_tasklet, ath9k_beacon_tasklet,
 		     (unsigned long)sc);
+
+	INIT_WORK(&sc->hw_reset_work, ath_reset_work);
+	INIT_WORK(&sc->hw_check_work, ath_hw_check);
+	INIT_WORK(&sc->paprd_work, ath_paprd_calibrate);
+	INIT_DELAYED_WORK(&sc->hw_pll_work, ath_hw_pll_work);
+	setup_timer(&sc->rx_poll_timer, ath_rx_poll, (unsigned long)sc);
 
 	/*
 	 * Cache line size is used to size and align various
@@ -562,6 +658,12 @@ static int ath9k_init_softc(u16 devid, struct ath_softc *sc,
 	 */
 	ath_read_cachesize(common, &csz);
 	common->cachelsz = csz << 2; /* convert to bytes */
+
+	if (pdata && pdata->eeprom_name) {
+		ret = ath9k_eeprom_request(sc, pdata->eeprom_name);
+		if (ret)
+			return ret;
+	}
 
 	/* Initializes the hardware for all supported chipsets */
 	ret = ath9k_hw_init(ah);
@@ -585,6 +687,10 @@ static int ath9k_init_softc(u16 devid, struct ath_softc *sc,
 
 	ath9k_cmn_init_crypto(sc->sc_ah);
 	ath9k_init_misc(sc);
+	ath_fill_led_pin(sc);
+
+	if (common->bus_ops->aspm_init)
+		common->bus_ops->aspm_init(common);
 
 	return 0;
 
@@ -595,10 +701,7 @@ err_btcoex:
 err_queues:
 	ath9k_hw_deinit(ah);
 err_hw:
-
-	kfree(ah);
-	sc->sc_ah = NULL;
-
+	ath9k_eeprom_release(sc);
 	return ret;
 }
 
@@ -642,6 +745,50 @@ void ath9k_reload_chainmask_settings(struct ath_softc *sc)
 		setup_ht_cap(sc, &sc->sbands[IEEE80211_BAND_5GHZ].ht_cap);
 }
 
+static const struct ieee80211_iface_limit if_limits[] = {
+	{ .max = 2048,	.types = BIT(NL80211_IFTYPE_STATION) |
+				 BIT(NL80211_IFTYPE_P2P_CLIENT) |
+				 BIT(NL80211_IFTYPE_WDS) },
+	{ .max = 8,	.types =
+#ifdef CONFIG_MAC80211_MESH
+				 BIT(NL80211_IFTYPE_MESH_POINT) |
+#endif
+				 BIT(NL80211_IFTYPE_AP) |
+				 BIT(NL80211_IFTYPE_P2P_GO) },
+};
+
+
+static const struct ieee80211_iface_limit if_dfs_limits[] = {
+	{ .max = 1,	.types = BIT(NL80211_IFTYPE_AP) },
+};
+
+static const struct ieee80211_iface_combination if_comb[] = {
+	{
+		.limits = if_limits,
+		.n_limits = ARRAY_SIZE(if_limits),
+		.max_interfaces = 2048,
+		.num_different_channels = 1,
+		.beacon_int_infra_match = true,
+	},
+	{
+		.limits = if_dfs_limits,
+		.n_limits = ARRAY_SIZE(if_dfs_limits),
+		.max_interfaces = 1,
+		.num_different_channels = 1,
+		.beacon_int_infra_match = true,
+		.radar_detect_widths =	BIT(NL80211_CHAN_NO_HT) |
+					BIT(NL80211_CHAN_HT20),
+	}
+};
+
+#ifdef CONFIG_PM
+static const struct wiphy_wowlan_support ath9k_wowlan_support = {
+	.flags = WIPHY_WOWLAN_MAGIC_PKT | WIPHY_WOWLAN_DISCONNECT,
+	.n_patterns = MAX_NUM_USER_PATTERN,
+	.pattern_min_len = 1,
+	.pattern_max_len = MAX_PATTERN_SIZE,
+};
+#endif
 
 void ath9k_set_hw_capab(struct ath_softc *sc, struct ieee80211_hw *hw)
 {
@@ -654,13 +801,22 @@ void ath9k_set_hw_capab(struct ath_softc *sc, struct ieee80211_hw *hw)
 		IEEE80211_HW_SUPPORTS_PS |
 		IEEE80211_HW_PS_NULLFUNC_STACK |
 		IEEE80211_HW_SPECTRUM_MGMT |
-		IEEE80211_HW_REPORTS_TX_ACK_STATUS;
+		IEEE80211_HW_REPORTS_TX_ACK_STATUS |
+		IEEE80211_HW_SUPPORTS_RC_TABLE |
+		IEEE80211_HW_SUPPORTS_HT_CCK_RATES;
 
-	if (sc->sc_ah->caps.hw_caps & ATH9K_HW_CAP_HT)
-		 hw->flags |= IEEE80211_HW_AMPDU_AGGREGATION;
+	if (sc->sc_ah->caps.hw_caps & ATH9K_HW_CAP_HT) {
+		hw->flags |= IEEE80211_HW_AMPDU_AGGREGATION;
+
+		if (AR_SREV_9280_20_OR_LATER(ah))
+			hw->radiotap_mcs_details |=
+				IEEE80211_RADIOTAP_MCS_HAVE_STBC;
+	}
 
 	if (AR_SREV_9160_10_OR_LATER(sc->sc_ah) || ath9k_modparam_nohwcrypt)
 		hw->flags |= IEEE80211_HW_MFP_CAPABLE;
+
+	hw->wiphy->features |= NL80211_FEATURE_ACTIVE_MONITOR;
 
 	hw->wiphy->interface_modes =
 		BIT(NL80211_IFTYPE_P2P_GO) |
@@ -671,11 +827,24 @@ void ath9k_set_hw_capab(struct ath_softc *sc, struct ieee80211_hw *hw)
 		BIT(NL80211_IFTYPE_ADHOC) |
 		BIT(NL80211_IFTYPE_MESH_POINT);
 
-	if (AR_SREV_5416(sc->sc_ah))
-		hw->wiphy->flags &= ~WIPHY_FLAG_PS_ON_BY_DEFAULT;
+	hw->wiphy->iface_combinations = if_comb;
+	hw->wiphy->n_iface_combinations = ARRAY_SIZE(if_comb);
+
+	hw->wiphy->flags &= ~WIPHY_FLAG_PS_ON_BY_DEFAULT;
 
 	hw->wiphy->flags |= WIPHY_FLAG_IBSS_RSN;
 	hw->wiphy->flags |= WIPHY_FLAG_SUPPORTS_TDLS;
+	hw->wiphy->flags |= WIPHY_FLAG_HAS_REMAIN_ON_CHANNEL;
+
+#ifdef CONFIG_PM_SLEEP
+	if ((ah->caps.hw_caps & ATH9K_HW_WOW_DEVICE_CAPABLE) &&
+	    (sc->driver_data & ATH9K_PCI_WOW) &&
+	    device_can_wakeup(sc->dev))
+		hw->wiphy->wowlan = &ath9k_wowlan_support;
+
+	atomic_set(&sc->wow_sleep_proc_intr, -1);
+	atomic_set(&sc->wow_got_bmiss_intr, -1);
+#endif
 
 	hw->queues = 4;
 	hw->max_rates = 4;
@@ -694,10 +863,6 @@ void ath9k_set_hw_capab(struct ath_softc *sc, struct ieee80211_hw *hw)
 
 	sc->ant_rx = hw->wiphy->available_antennas_rx;
 	sc->ant_tx = hw->wiphy->available_antennas_tx;
-
-#ifdef CONFIG_ATH9K_RATE_CONTROL
-	hw->rate_control_algorithm = "ath9k_rate_control";
-#endif
 
 	if (sc->sc_ah->caps.hw_caps & ATH9K_HW_CAP_2GHZ)
 		hw->wiphy->bands[IEEE80211_BAND_2GHZ] =
@@ -722,8 +887,8 @@ int ath9k_init_device(u16 devid, struct ath_softc *sc,
 
 	/* Bring up device */
 	error = ath9k_init_softc(devid, sc, bus_ops);
-	if (error != 0)
-		goto error_init;
+	if (error)
+		return error;
 
 	ah = sc->sc_ah;
 	common = ath9k_hw_common(ah);
@@ -733,19 +898,19 @@ int ath9k_init_device(u16 devid, struct ath_softc *sc,
 	error = ath_regd_init(&common->regulatory, sc->hw->wiphy,
 			      ath9k_reg_notifier);
 	if (error)
-		goto error_regd;
+		goto deinit;
 
 	reg = &common->regulatory;
 
 	/* Setup TX DMA */
 	error = ath_tx_init(sc, ATH_TXBUF);
 	if (error != 0)
-		goto error_tx;
+		goto deinit;
 
 	/* Setup RX DMA */
 	error = ath_rx_init(sc, ATH_RXBUF);
 	if (error != 0)
-		goto error_rx;
+		goto deinit;
 
 	ath9k_init_txpower_limits(sc);
 
@@ -756,47 +921,37 @@ int ath9k_init_device(u16 devid, struct ath_softc *sc,
 		ARRAY_SIZE(ath9k_tpt_blink));
 #endif
 
-	INIT_WORK(&sc->hw_reset_work, ath_reset_work);
-	INIT_WORK(&sc->hw_check_work, ath_hw_check);
-	INIT_WORK(&sc->paprd_work, ath_paprd_calibrate);
-	INIT_DELAYED_WORK(&sc->hw_pll_work, ath_hw_pll_work);
-
 	/* Register with mac80211 */
 	error = ieee80211_register_hw(hw);
 	if (error)
-		goto error_register;
+		goto rx_cleanup;
 
 	error = ath9k_init_debug(ah);
 	if (error) {
 		ath_err(common, "Unable to create debugfs files\n");
-		goto error_world;
+		goto unregister;
 	}
 
 	/* Handle world regulatory */
 	if (!ath_is_world_regd(reg)) {
 		error = regulatory_hint(hw->wiphy, reg->alpha2);
 		if (error)
-			goto error_world;
+			goto debug_cleanup;
 	}
-
-	sc->last_rssi = ATH_RSSI_DUMMY_MARKER;
 
 	ath_init_leds(sc);
 	ath_start_rfkill_poll(sc);
 
 	return 0;
 
-error_world:
+debug_cleanup:
+	ath9k_deinit_debug(sc);
+unregister:
 	ieee80211_unregister_hw(hw);
-error_register:
+rx_cleanup:
 	ath_rx_cleanup(sc);
-error_rx:
-	ath_tx_cleanup(sc);
-error_tx:
-	/* Nothing */
-error_regd:
+deinit:
 	ath9k_deinit_softc(sc);
-error_init:
 	return error;
 }
 
@@ -808,12 +963,6 @@ static void ath9k_deinit_softc(struct ath_softc *sc)
 {
 	int i = 0;
 
-	if (sc->sbands[IEEE80211_BAND_2GHZ].channels)
-		kfree(sc->sbands[IEEE80211_BAND_2GHZ].channels);
-
-	if (sc->sbands[IEEE80211_BAND_5GHZ].channels)
-		kfree(sc->sbands[IEEE80211_BAND_5GHZ].channels);
-
 	ath9k_deinit_btcoex(sc);
 
 	for (i = 0; i < ATH9K_NUM_TX_QUEUES; i++)
@@ -821,9 +970,10 @@ static void ath9k_deinit_softc(struct ath_softc *sc)
 			ath_tx_cleanupq(sc, &sc->tx.txq[i]);
 
 	ath9k_hw_deinit(sc->sc_ah);
+	if (sc->dfs_detector != NULL)
+		sc->dfs_detector->exit(sc->dfs_detector);
 
-	kfree(sc->sc_ah);
-	sc->sc_ah = NULL;
+	ath9k_eeprom_release(sc);
 }
 
 void ath9k_deinit_device(struct ath_softc *sc)
@@ -837,22 +987,10 @@ void ath9k_deinit_device(struct ath_softc *sc)
 
 	ath9k_ps_restore(sc);
 
+	ath9k_deinit_debug(sc);
 	ieee80211_unregister_hw(hw);
 	ath_rx_cleanup(sc);
-	ath_tx_cleanup(sc);
 	ath9k_deinit_softc(sc);
-}
-
-void ath_descdma_cleanup(struct ath_softc *sc,
-			 struct ath_descdma *dd,
-			 struct list_head *head)
-{
-	dma_free_coherent(sc->dev, dd->dd_desc_len, dd->dd_desc,
-			  dd->dd_desc_paddr);
-
-	INIT_LIST_HEAD(head);
-	kfree(dd->dd_bufptr);
-	memset(dd, 0, sizeof(*dd));
 }
 
 /************************/
@@ -866,17 +1004,14 @@ static int __init ath9k_init(void)
 	/* Register rate control algorithm */
 	error = ath_rate_control_register();
 	if (error != 0) {
-		printk(KERN_ERR
-			"ath9k: Unable to register rate control "
-			"algorithm: %d\n",
-			error);
+		pr_err("Unable to register rate control algorithm: %d\n",
+		       error);
 		goto err_out;
 	}
 
 	error = ath_pci_init();
 	if (error < 0) {
-		printk(KERN_ERR
-			"ath9k: No PCI devices found, driver not installed.\n");
+		pr_err("No PCI devices found, driver not installed\n");
 		error = -ENODEV;
 		goto err_rate_unregister;
 	}
@@ -905,6 +1040,6 @@ static void __exit ath9k_exit(void)
 	ath_ahb_exit();
 	ath_pci_exit();
 	ath_rate_control_unregister();
-	printk(KERN_INFO "%s: Driver unloaded\n", dev_info);
+	pr_info("%s: Driver unloaded\n", dev_info);
 }
 module_exit(ath9k_exit);

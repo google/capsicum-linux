@@ -143,6 +143,7 @@ struct ath_common {
 	u32 keymax;
 	DECLARE_BITMAP(keymap, ATH_KEYMAX);
 	DECLARE_BITMAP(tkip_keymap, ATH_KEYMAX);
+	DECLARE_BITMAP(ccmp_keymap, ATH_KEYMAX);
 	enum ath_crypt_caps crypt_caps;
 
 	unsigned int clockrate;
@@ -158,6 +159,7 @@ struct ath_common {
 
 	bool btcoex_enabled;
 	bool disable_ani;
+	bool antenna_diversity;
 };
 
 struct sk_buff *ath_rxbuf_alloc(struct ath_common *common,
@@ -215,6 +217,7 @@ void ath_printk(const char *level, const struct ath_common *common,
  *	used exclusively for WLAN-BT coexistence starting from
  *	AR9462.
  * @ATH_DBG_DFS: radar datection
+ * @ATH_DBG_WOW: Wake on Wireless
  * @ATH_DBG_ANY: enable all debugging
  *
  * The debug level is used to control the amount and type of debugging output
@@ -236,12 +239,12 @@ enum ATH_DEBUG {
 	ATH_DBG_CONFIG		= 0x00000200,
 	ATH_DBG_FATAL		= 0x00000400,
 	ATH_DBG_PS		= 0x00000800,
-	ATH_DBG_HWTIMER		= 0x00001000,
-	ATH_DBG_BTCOEX		= 0x00002000,
-	ATH_DBG_WMI		= 0x00004000,
-	ATH_DBG_BSTUCK		= 0x00008000,
-	ATH_DBG_MCI		= 0x00010000,
-	ATH_DBG_DFS		= 0x00020000,
+	ATH_DBG_BTCOEX		= 0x00001000,
+	ATH_DBG_WMI		= 0x00002000,
+	ATH_DBG_BSTUCK		= 0x00004000,
+	ATH_DBG_MCI		= 0x00008000,
+	ATH_DBG_DFS		= 0x00010000,
+	ATH_DBG_WOW		= 0x00020000,
 	ATH_DBG_ANY		= 0xffffffff
 };
 

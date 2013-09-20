@@ -28,6 +28,7 @@
 /* Interrupt handlers registered during init_IRQ */
 extern void apic_timer_interrupt(void);
 extern void x86_platform_ipi(void);
+extern void kvm_posted_intr_ipi(void);
 extern void error_interrupt(void);
 extern void irq_work_interrupt(void);
 
@@ -76,6 +77,23 @@ extern void threshold_interrupt(void);
 extern void call_function_interrupt(void);
 extern void call_function_single_interrupt(void);
 
+#ifdef CONFIG_TRACING
+/* Interrupt handlers registered during init_IRQ */
+extern void trace_apic_timer_interrupt(void);
+extern void trace_x86_platform_ipi(void);
+extern void trace_error_interrupt(void);
+extern void trace_irq_work_interrupt(void);
+extern void trace_spurious_interrupt(void);
+extern void trace_thermal_interrupt(void);
+extern void trace_reschedule_interrupt(void);
+extern void trace_threshold_interrupt(void);
+extern void trace_call_function_interrupt(void);
+extern void trace_call_function_single_interrupt(void);
+#define trace_irq_move_cleanup_interrupt  irq_move_cleanup_interrupt
+#define trace_reboot_interrupt  reboot_interrupt
+#define trace_kvm_posted_intr_ipi kvm_posted_intr_ipi
+#endif /* CONFIG_TRACING */
+
 /* IOAPIC */
 #define IO_APIC_IRQ(x) (((x) >= NR_IRQS_LEGACY) || ((1<<(x)) & io_apic_irqs))
 extern unsigned long io_apic_irqs;
@@ -101,11 +119,18 @@ static inline void set_io_apic_irq_attr(struct io_apic_irq_attr *irq_attr,
 	irq_attr->polarity	= polarity;
 }
 
+/* Intel specific interrupt remapping information */
 struct irq_2_iommu {
 	struct intel_iommu *iommu;
 	u16 irte_index;
 	u16 sub_handle;
 	u8  irte_mask;
+};
+
+/* AMD specific interrupt remapping information */
+struct irq_2_irte {
+	u16 devid; /* Device ID for IRTE table */
+	u16 index; /* Index into IRTE table*/
 };
 
 /*
@@ -120,7 +145,11 @@ struct irq_cfg {
 	u8			vector;
 	u8			move_in_progress : 1;
 #ifdef CONFIG_IRQ_REMAP
-	struct irq_2_iommu	irq_2_iommu;
+	u8			remapped : 1;
+	union {
+		struct irq_2_iommu irq_2_iommu;
+		struct irq_2_irte  irq_2_irte;
+	};
 #endif
 };
 

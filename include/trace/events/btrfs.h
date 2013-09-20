@@ -40,21 +40,25 @@ struct extent_buffer;
 		{ BTRFS_ROOT_TREE_DIR_OBJECTID, "ROOT_TREE_DIR"	},	\
 		{ BTRFS_CSUM_TREE_OBJECTID, 	"CSUM_TREE"	},	\
 		{ BTRFS_TREE_LOG_OBJECTID,	"TREE_LOG"	},	\
+		{ BTRFS_QUOTA_TREE_OBJECTID,	"QUOTA_TREE"	},	\
 		{ BTRFS_TREE_RELOC_OBJECTID,	"TREE_RELOC"	},	\
 		{ BTRFS_DATA_RELOC_TREE_OBJECTID, "DATA_RELOC_TREE" })
 
 #define show_root_type(obj)						\
 	obj, ((obj >= BTRFS_DATA_RELOC_TREE_OBJECTID) ||		\
-	      (obj <= BTRFS_CSUM_TREE_OBJECTID )) ? __show_root_type(obj) : "-"
+	      (obj >= BTRFS_ROOT_TREE_OBJECTID &&			\
+	       obj <= BTRFS_QUOTA_TREE_OBJECTID)) ? __show_root_type(obj) : "-"
 
 #define BTRFS_GROUP_FLAGS	\
-	{ BTRFS_BLOCK_GROUP_DATA,	"DATA"}, \
-	{ BTRFS_BLOCK_GROUP_SYSTEM,	"SYSTEM"}, \
-	{ BTRFS_BLOCK_GROUP_METADATA,	"METADATA"}, \
-	{ BTRFS_BLOCK_GROUP_RAID0,	"RAID0"}, \
-	{ BTRFS_BLOCK_GROUP_RAID1,	"RAID1"}, \
-	{ BTRFS_BLOCK_GROUP_DUP,	"DUP"}, \
-	{ BTRFS_BLOCK_GROUP_RAID10,	"RAID10"}
+	{ BTRFS_BLOCK_GROUP_DATA,	"DATA"},	\
+	{ BTRFS_BLOCK_GROUP_SYSTEM,	"SYSTEM"},	\
+	{ BTRFS_BLOCK_GROUP_METADATA,	"METADATA"},	\
+	{ BTRFS_BLOCK_GROUP_RAID0,	"RAID0"}, 	\
+	{ BTRFS_BLOCK_GROUP_RAID1,	"RAID1"}, 	\
+	{ BTRFS_BLOCK_GROUP_DUP,	"DUP"}, 	\
+	{ BTRFS_BLOCK_GROUP_RAID10,	"RAID10"}, 	\
+	{ BTRFS_BLOCK_GROUP_RAID5,	"RAID5"},	\
+	{ BTRFS_BLOCK_GROUP_RAID6,	"RAID6"}
 
 #define BTRFS_UUID_SIZE 16
 
@@ -153,7 +157,9 @@ DEFINE_EVENT(btrfs__inode, btrfs_inode_evict,
 		{ EXTENT_FLAG_PINNED, 		"PINNED" 	},	\
 		{ EXTENT_FLAG_COMPRESSED, 	"COMPRESSED" 	},	\
 		{ EXTENT_FLAG_VACANCY, 		"VACANCY" 	},	\
-		{ EXTENT_FLAG_PREALLOC, 	"PREALLOC" 	})
+		{ EXTENT_FLAG_PREALLOC, 	"PREALLOC" 	},	\
+		{ EXTENT_FLAG_LOGGING,	 	"LOGGING" 	},	\
+		{ EXTENT_FLAG_FILLING,	 	"FILLING" 	})
 
 TRACE_EVENT(btrfs_get_extent,
 
@@ -200,13 +206,17 @@ TRACE_EVENT(btrfs_get_extent,
 );
 
 #define show_ordered_flags(flags)					\
-	__print_symbolic(flags,					\
+	__print_symbolic(flags,						\
 		{ BTRFS_ORDERED_IO_DONE, 	"IO_DONE" 	},	\
 		{ BTRFS_ORDERED_COMPLETE, 	"COMPLETE" 	},	\
 		{ BTRFS_ORDERED_NOCOW, 		"NOCOW" 	},	\
 		{ BTRFS_ORDERED_COMPRESSED, 	"COMPRESSED" 	},	\
 		{ BTRFS_ORDERED_PREALLOC, 	"PREALLOC" 	},	\
-		{ BTRFS_ORDERED_DIRECT, 	"DIRECT" 	})
+		{ BTRFS_ORDERED_DIRECT, 	"DIRECT" 	},	\
+		{ BTRFS_ORDERED_IOERR, 		"IOERR" 	},	\
+		{ BTRFS_ORDERED_UPDATED_ISIZE, 	"UPDATED_ISIZE"	},	\
+		{ BTRFS_ORDERED_LOGGED_CSUM, 	"LOGGED_CSUM"	})
+
 
 DECLARE_EVENT_CLASS(btrfs__ordered_extent,
 
@@ -445,6 +455,7 @@ TRACE_EVENT(btrfs_delayed_tree_ref,
 		__field(	u64,  ref_root		)
 		__field(	int,  level		)
 		__field(	int,  type		)
+		__field(	u64,  seq		)
 	),
 
 	TP_fast_assign(
@@ -455,17 +466,19 @@ TRACE_EVENT(btrfs_delayed_tree_ref,
 		__entry->ref_root	= full_ref->root;
 		__entry->level		= full_ref->level;
 		__entry->type		= ref->type;
+		__entry->seq		= ref->seq;
 	),
 
 	TP_printk("bytenr = %llu, num_bytes = %llu, action = %s, "
 		  "parent = %llu(%s), ref_root = %llu(%s), level = %d, "
-		  "type = %s",
+		  "type = %s, seq = %llu",
 		  (unsigned long long)__entry->bytenr,
 		  (unsigned long long)__entry->num_bytes,
 		  show_ref_action(__entry->action),
 		  show_root_type(__entry->parent),
 		  show_root_type(__entry->ref_root),
-		  __entry->level, show_ref_type(__entry->type))
+		  __entry->level, show_ref_type(__entry->type),
+		  (unsigned long long)__entry->seq)
 );
 
 TRACE_EVENT(btrfs_delayed_data_ref,
@@ -485,6 +498,7 @@ TRACE_EVENT(btrfs_delayed_data_ref,
 		__field(	u64,  owner		)
 		__field(	u64,  offset		)
 		__field(	int,  type		)
+		__field(	u64,  seq		)
 	),
 
 	TP_fast_assign(
@@ -496,11 +510,12 @@ TRACE_EVENT(btrfs_delayed_data_ref,
 		__entry->owner		= full_ref->objectid;
 		__entry->offset		= full_ref->offset;
 		__entry->type		= ref->type;
+		__entry->seq		= ref->seq;
 	),
 
 	TP_printk("bytenr = %llu, num_bytes = %llu, action = %s, "
 		  "parent = %llu(%s), ref_root = %llu(%s), owner = %llu, "
-		  "offset = %llu, type = %s",
+		  "offset = %llu, type = %s, seq = %llu",
 		  (unsigned long long)__entry->bytenr,
 		  (unsigned long long)__entry->num_bytes,
 		  show_ref_action(__entry->action),
@@ -508,7 +523,8 @@ TRACE_EVENT(btrfs_delayed_data_ref,
 		  show_root_type(__entry->ref_root),
 		  (unsigned long long)__entry->owner,
 		  (unsigned long long)__entry->offset,
-		  show_ref_type(__entry->type))
+		  show_ref_type(__entry->type),
+		  (unsigned long long)__entry->seq)
 );
 
 TRACE_EVENT(btrfs_delayed_ref_head,
@@ -548,7 +564,9 @@ TRACE_EVENT(btrfs_delayed_ref_head,
 		{ BTRFS_BLOCK_GROUP_RAID0, 	"RAID0" },	\
 		{ BTRFS_BLOCK_GROUP_RAID1, 	"RAID1" },	\
 		{ BTRFS_BLOCK_GROUP_DUP, 	"DUP"	},	\
-		{ BTRFS_BLOCK_GROUP_RAID10, 	"RAID10"})
+		{ BTRFS_BLOCK_GROUP_RAID10, 	"RAID10"},	\
+		{ BTRFS_BLOCK_GROUP_RAID5, 	"RAID5"	},	\
+		{ BTRFS_BLOCK_GROUP_RAID6, 	"RAID6"	})
 
 DECLARE_EVENT_CLASS(btrfs__chunk,
 

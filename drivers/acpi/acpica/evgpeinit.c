@@ -5,7 +5,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2012, Intel Corp.
+ * Copyright (C) 2000 - 2013, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -85,6 +85,9 @@ acpi_status acpi_ev_gpe_initialize(void)
 	acpi_status status;
 
 	ACPI_FUNCTION_TRACE(ev_gpe_initialize);
+
+	ACPI_DEBUG_PRINT_RAW((ACPI_DB_INIT,
+			      "Initializing General Purpose Events (GPEs):\n"));
 
 	status = acpi_ut_acquire_mutex(ACPI_MTX_NAMESPACE);
 	if (ACPI_FAILURE(status)) {
@@ -360,14 +363,17 @@ acpi_ev_match_gpe_method(acpi_handle obj_handle,
 	 */
 	switch (name[1]) {
 	case 'L':
+
 		type = ACPI_GPE_LEVEL_TRIGGERED;
 		break;
 
 	case 'E':
+
 		type = ACPI_GPE_EDGE_TRIGGERED;
 		break;
 
 	default:
+
 		/* Unknown method type, just ignore it */
 
 		ACPI_DEBUG_PRINT((ACPI_DB_LOAD,

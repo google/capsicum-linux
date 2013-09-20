@@ -8,7 +8,8 @@
 #include <linux/vga_switcheroo.h>
 #include <acpi/acpi_drivers.h>
 
-#include "drmP.h"
+#include <drm/drmP.h>
+#include "i915_drv.h"
 
 #define INTEL_DSM_REVISION_ID 1 /* For Calpella anyway... */
 
@@ -182,8 +183,6 @@ static void intel_dsm_platform_mux_info(void)
 			DRM_DEBUG_DRIVER("  hpd mux info: %s\n",
 			       intel_dsm_mux_type(info->buffer.pointer[3]));
 		}
-	} else {
-		DRM_ERROR("MUX INFO call failed\n");
 	}
 
 out:

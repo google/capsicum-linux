@@ -5,7 +5,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2012, Intel Corp.
+ * Copyright (C) 2000 - 2013, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -62,8 +62,8 @@ acpi_ex_store_object_to_index(union acpi_operand_object *val_desc,
  * FUNCTION:    acpi_ex_store
  *
  * PARAMETERS:  *source_desc        - Value to be stored
- *              *dest_desc          - Where to store it.  Must be an NS node
- *                                    or a union acpi_operand_object of type
+ *              *dest_desc          - Where to store it. Must be an NS node
+ *                                    or union acpi_operand_object of type
  *                                    Reference;
  *              walk_state          - Current walk state
  *
@@ -114,6 +114,7 @@ acpi_ex_store(union acpi_operand_object *source_desc,
 
 	switch (dest_desc->common.type) {
 	case ACPI_TYPE_LOCAL_REFERENCE:
+
 		break;
 
 	case ACPI_TYPE_INTEGER:
@@ -178,7 +179,6 @@ acpi_ex_store(union acpi_operand_object *source_desc,
 		break;
 
 	case ACPI_REFCLASS_DEBUG:
-
 		/*
 		 * Storing to the Debug object causes the value stored to be
 		 * displayed and otherwise has no effect -- see ACPI Specification
@@ -291,7 +291,6 @@ acpi_ex_store_object_to_index(union acpi_operand_object *source_desc,
 		break;
 
 	case ACPI_TYPE_BUFFER_FIELD:
-
 		/*
 		 * Store into a Buffer or String (not actually a real buffer_field)
 		 * at a location defined by an Index.
@@ -361,7 +360,7 @@ acpi_ex_store_object_to_index(union acpi_operand_object *source_desc,
  * FUNCTION:    acpi_ex_store_object_to_node
  *
  * PARAMETERS:  source_desc             - Value to be stored
- *              Node                    - Named object to receive the value
+ *              node                    - Named object to receive the value
  *              walk_state              - Current walk state
  *              implicit_conversion     - Perform implicit conversion (yes/no)
  *
@@ -374,7 +373,7 @@ acpi_ex_store_object_to_index(union acpi_operand_object *source_desc,
  *              with the input value.
  *
  *              When storing into an object the data is converted to the
- *              target object type then stored in the object.  This means
+ *              target object type then stored in the object. This means
  *              that the target object type (for an initialized target) will
  *              not be changed by a store operation.
  *
@@ -447,7 +446,6 @@ acpi_ex_store_object_to_node(union acpi_operand_object *source_desc,
 	case ACPI_TYPE_INTEGER:
 	case ACPI_TYPE_STRING:
 	case ACPI_TYPE_BUFFER:
-
 		/*
 		 * These target types are all of type Integer/String/Buffer, and
 		 * therefore support implicit conversion before the store.
@@ -487,14 +485,33 @@ acpi_ex_store_object_to_node(union acpi_operand_object *source_desc,
 	default:
 
 		ACPI_DEBUG_PRINT((ACPI_DB_EXEC,
-				  "Storing %s (%p) directly into node (%p) with no implicit conversion\n",
+				  "Storing [%s] (%p) directly into node [%s] (%p)"
+				  " with no implicit conversion\n",
 				  acpi_ut_get_object_type_name(source_desc),
-				  source_desc, node));
+				  source_desc,
+				  acpi_ut_get_object_type_name(target_desc),
+				  node));
 
-		/* No conversions for all other types.  Just attach the source object */
+		/*
+		 * No conversions for all other types. Directly store a copy of
+		 * the source object. NOTE: This is a departure from the ACPI
+		 * spec, which states "If conversion is impossible, abort the
+		 * running control method".
+		 *
+		 * This code implements "If conversion is impossible, treat the
+		 * Store operation as a CopyObject".
+		 */
+		status =
+		    acpi_ut_copy_iobject_to_iobject(source_desc, &new_desc,
+						    walk_state);
+		if (ACPI_FAILURE(status)) {
+			return_ACPI_STATUS(status);
+		}
 
-		status = acpi_ns_attach_object(node, source_desc,
-					       source_desc->common.type);
+		status =
+		    acpi_ns_attach_object(node, new_desc,
+					  new_desc->common.type);
+		acpi_ut_remove_reference(new_desc);
 		break;
 	}
 

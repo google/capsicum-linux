@@ -40,21 +40,32 @@
  * Note that newer firmware allows querying device for maximum useable
  * coordinates.
  */
+#define XMIN 0
+#define XMAX 6143
+#define YMIN 0
+#define YMAX 6143
 #define XMIN_NOMINAL 1472
 #define XMAX_NOMINAL 5472
 #define YMIN_NOMINAL 1408
 #define YMAX_NOMINAL 4448
 
-/*
- * Synaptics touchpads report the y coordinate from bottom to top, which is
- * opposite from what userspace expects.
- * This function is used to invert y before reporting.
- */
-static int synaptics_invert_y(int y)
-{
-	return YMAX_NOMINAL + YMIN_NOMINAL - y;
-}
+/* Size in bits of absolute position values reported by the hardware */
+#define ABS_POS_BITS 13
 
+/*
+ * These values should represent the absolute maximum value that will
+ * be reported for a positive position value. Some Synaptics firmware
+ * uses this value to indicate a finger near the edge of the touchpad
+ * whose precise position cannot be determined.
+ *
+ * At least one touchpad is known to report positions in excess of this
+ * value which are actually negative values truncated to the 13-bit
+ * reporting range. These values have never been observed to be lower
+ * than 8184 (i.e. -8), so we treat all values greater than 8176 as
+ * negative and any other value as positive.
+ */
+#define X_MAX_POSITIVE 8176
+#define Y_MAX_POSITIVE 8176
 
 /*****************************************************************************
  *	Stuff we need even when we do not want native Synaptics support
@@ -112,6 +123,16 @@ void synaptics_reset(struct psmouse *psmouse)
  ****************************************************************************/
 
 /*
+ * Synaptics touchpads report the y coordinate from bottom to top, which is
+ * opposite from what userspace expects.
+ * This function is used to invert y before reporting.
+ */
+static int synaptics_invert_y(int y)
+{
+	return YMAX_NOMINAL + YMIN_NOMINAL - y;
+}
+
+/*
  * Send a command to the synpatics touchpad by special commands
  */
 static int synaptics_send_cmd(struct psmouse *psmouse, unsigned char c, unsigned char *param)
@@ -135,6 +156,35 @@ static int synaptics_model_id(struct psmouse *psmouse)
 	if (synaptics_send_cmd(psmouse, SYN_QUE_MODEL, mi))
 		return -1;
 	priv->model_id = (mi[0]<<16) | (mi[1]<<8) | mi[2];
+	return 0;
+}
+
+/*
+ * Read the board id from the touchpad
+ * The board id is encoded in the "QUERY MODES" response
+ */
+static int synaptics_board_id(struct psmouse *psmouse)
+{
+	struct synaptics_data *priv = psmouse->private;
+	unsigned char bid[3];
+
+	if (synaptics_send_cmd(psmouse, SYN_QUE_MODES, bid))
+		return -1;
+	priv->board_id = ((bid[0] & 0xfc) << 6) | bid[1];
+	return 0;
+}
+
+/*
+ * Read the firmware id from the touchpad
+ */
+static int synaptics_firmware_id(struct psmouse *psmouse)
+{
+	struct synaptics_data *priv = psmouse->private;
+	unsigned char fwid[3];
+
+	if (synaptics_send_cmd(psmouse, SYN_QUE_FIRMWARE_ID, fwid))
+		return -1;
+	priv->firmware_id = (fwid[0] << 16) | (fwid[1] << 8) | fwid[2];
 	return 0;
 }
 
@@ -260,6 +310,10 @@ static int synaptics_query_hardware(struct psmouse *psmouse)
 	if (synaptics_identify(psmouse))
 		return -1;
 	if (synaptics_model_id(psmouse))
+		return -1;
+	if (synaptics_firmware_id(psmouse))
+		return -1;
+	if (synaptics_board_id(psmouse))
 		return -1;
 	if (synaptics_capability(psmouse))
 		return -1;
@@ -555,6 +609,22 @@ static int synaptics_parse_hw_state(const unsigned char buf[],
 		hw->right = (buf[0] & 0x02) ? 1 : 0;
 	}
 
+	/*
+	 * Convert wrap-around values to negative. (X|Y)_MAX_POSITIVE
+	 * is used by some firmware to indicate a finger at the edge of
+	 * the touchpad whose precise position cannot be determined, so
+	 * convert these values to the maximum axis value.
+	 */
+	if (hw->x > X_MAX_POSITIVE)
+		hw->x -= 1 << ABS_POS_BITS;
+	else if (hw->x == X_MAX_POSITIVE)
+		hw->x = XMAX;
+
+	if (hw->y > Y_MAX_POSITIVE)
+		hw->y -= 1 << ABS_POS_BITS;
+	else if (hw->y == Y_MAX_POSITIVE)
+		hw->y = YMAX;
+
 	return 0;
 }
 
@@ -652,11 +722,13 @@ static void synaptics_report_mt_data(struct psmouse *psmouse,
 	default:
 		/*
 		 * If the finger slot contained in SGM is valid, and either
-		 * hasn't changed, or is new, then report SGM in MTB slot 0.
+		 * hasn't changed, or is new, or the old SGM has now moved to
+		 * AGM, then report SGM in MTB slot 0.
 		 * Otherwise, empty MTB slot 0.
 		 */
 		if (mt_state->sgm != -1 &&
-		    (mt_state->sgm == old->sgm || old->sgm == -1))
+		    (mt_state->sgm == old->sgm ||
+		     old->sgm == -1 || mt_state->agm == old->sgm))
 			synaptics_report_slot(dev, 0, sgm);
 		else
 			synaptics_report_slot(dev, 0, NULL);
@@ -665,9 +737,31 @@ static void synaptics_report_mt_data(struct psmouse *psmouse,
 		 * If the finger slot contained in AGM is valid, and either
 		 * hasn't changed, or is new, then report AGM in MTB slot 1.
 		 * Otherwise, empty MTB slot 1.
+		 *
+		 * However, in the case where the AGM is new, make sure that
+		 * that it is either the same as the old SGM, or there was no
+		 * SGM.
+		 *
+		 * Otherwise, if the SGM was just 1, and the new AGM is 2, then
+		 * the new AGM will keep the old SGM's tracking ID, which can
+		 * cause apparent drumroll.  This happens if in the following
+		 * valid finger sequence:
+		 *
+		 *  Action                 SGM  AGM (MTB slot:Contact)
+		 *  1. Touch contact 0    (0:0)
+		 *  2. Touch contact 1    (0:0, 1:1)
+		 *  3. Lift  contact 0    (1:1)
+		 *  4. Touch contacts 2,3 (0:2, 1:3)
+		 *
+		 * In step 4, contact 3, in AGM must not be given the same
+		 * tracking ID as contact 1 had in step 3.  To avoid this,
+		 * the first agm with contact 3 is dropped and slot 1 is
+		 * invalidated (tracking ID = -1).
 		 */
 		if (mt_state->agm != -1 &&
-		    (mt_state->agm == old->agm || old->agm == -1))
+		    (mt_state->agm == old->agm ||
+		     (old->agm == -1 &&
+		      (old->sgm == -1 || mt_state->agm == old->sgm))))
 			synaptics_report_slot(dev, 1, agm);
 		else
 			synaptics_report_slot(dev, 1, NULL);
@@ -1177,11 +1271,11 @@ static void set_input_params(struct input_dev *dev, struct synaptics_data *priv)
 	input_set_abs_params(dev, ABS_PRESSURE, 0, 255, 0, 0);
 
 	if (SYN_CAP_IMAGE_SENSOR(priv->ext_cap_0c)) {
-		input_mt_init_slots(dev, 2);
 		set_abs_position_params(dev, priv, ABS_MT_POSITION_X,
 					ABS_MT_POSITION_Y);
 		/* Image sensors can report per-contact pressure */
 		input_set_abs_params(dev, ABS_MT_PRESSURE, 0, 255, 0, 0);
+		input_mt_init_slots(dev, 2, INPUT_MT_POINTER);
 
 		/* Image sensors can signal 4 and 5 finger clicks */
 		__set_bit(BTN_TOOL_QUADTAP, dev->keybit);
@@ -1189,7 +1283,7 @@ static void set_input_params(struct input_dev *dev, struct synaptics_data *priv)
 	} else if (SYN_CAP_ADV_GESTURE(priv->ext_cap_0c)) {
 		/* Non-image sensors with AGM use semi-mt */
 		__set_bit(INPUT_PROP_SEMI_MT, dev->propbit);
-		input_mt_init_slots(dev, 2);
+		input_mt_init_slots(dev, 2, 0);
 		set_abs_position_params(dev, priv, ABS_MT_POSITION_X,
 					ABS_MT_POSITION_Y);
 	}
@@ -1285,6 +1379,7 @@ static int synaptics_reconnect(struct psmouse *psmouse)
 {
 	struct synaptics_data *priv = psmouse->private;
 	struct synaptics_data old_priv = *priv;
+	unsigned char param[2];
 	int retry = 0;
 	int error;
 
@@ -1300,6 +1395,7 @@ static int synaptics_reconnect(struct psmouse *psmouse)
 			 */
 			ssleep(1);
 		}
+		ps2_command(&psmouse->ps2dev, param, PSMOUSE_CMD_GETID);
 		error = synaptics_detect(psmouse, 0);
 	} while (error && ++retry < 3);
 
@@ -1435,11 +1531,12 @@ static int __synaptics_init(struct psmouse *psmouse, bool absolute_mode)
 	priv->pkt_type = SYN_MODEL_NEWABS(priv->model_id) ? SYN_NEWABS : SYN_OLDABS;
 
 	psmouse_info(psmouse,
-		     "Touchpad model: %ld, fw: %ld.%ld, id: %#lx, caps: %#lx/%#lx/%#lx\n",
+		     "Touchpad model: %ld, fw: %ld.%ld, id: %#lx, caps: %#lx/%#lx/%#lx, board id: %lu, fw id: %lu\n",
 		     SYN_ID_MODEL(priv->identity),
 		     SYN_ID_MAJOR(priv->identity), SYN_ID_MINOR(priv->identity),
 		     priv->model_id,
-		     priv->capabilities, priv->ext_cap, priv->ext_cap_0c);
+		     priv->capabilities, priv->ext_cap, priv->ext_cap_0c,
+		     priv->board_id, priv->firmware_id);
 
 	set_input_params(psmouse->dev, priv);
 

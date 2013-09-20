@@ -22,7 +22,7 @@
  * and usb-storage.
  *
  * TODO:
- * - usb suspend/resume triggered by sl811 (with USB_SUSPEND)
+ * - usb suspend/resume triggered by sl811 (with PM_RUNTIME)
  * - various issues noted in the code
  * - performance work; use both register banks; ...
  * - use urb->iso_frame_desc[] with ISO transfers
@@ -156,7 +156,7 @@ static void setup_packet(
 	writeb(SL_SETUP /* | ep->epnum */, data_reg);
 	writeb(usb_pipedevice(urb->pipe), data_reg);
 
-	/* always OUT/data0 */ ;
+	/* always OUT/data0 */
 	sl811_write(sl811, bank + SL11H_HOSTCTLREG,
 			control | SL11H_HCTLMASK_OUT);
 	ep->length = 0;
@@ -1494,7 +1494,7 @@ static int proc_sl811h_show(struct seq_file *s, void *unused)
 
 static int proc_sl811h_open(struct inode *inode, struct file *file)
 {
-	return single_open(file, proc_sl811h_show, PDE(inode)->data);
+	return single_open(file, proc_sl811h_show, PDE_DATA(inode));
 }
 
 static const struct file_operations proc_ops = {
@@ -1595,7 +1595,7 @@ static struct hc_driver sl811h_hc_driver = {
 
 /*-------------------------------------------------------------------------*/
 
-static int __devexit
+static int
 sl811h_remove(struct platform_device *dev)
 {
 	struct usb_hcd		*hcd = platform_get_drvdata(dev);
@@ -1618,7 +1618,7 @@ sl811h_remove(struct platform_device *dev)
 	return 0;
 }
 
-static int __devinit
+static int
 sl811h_probe(struct platform_device *dev)
 {
 	struct usb_hcd		*hcd;
@@ -1755,7 +1755,7 @@ sl811h_probe(struct platform_device *dev)
 
 /* for this device there's no useful distinction between the controller
  * and its root hub, except that the root hub only gets direct PM calls
- * when CONFIG_USB_SUSPEND is enabled.
+ * when CONFIG_PM_RUNTIME is enabled.
  */
 
 static int
@@ -1808,7 +1808,7 @@ sl811h_resume(struct platform_device *dev)
 /* this driver is exported so sl811_cs can depend on it */
 struct platform_driver sl811h_driver = {
 	.probe =	sl811h_probe,
-	.remove =	__devexit_p(sl811h_remove),
+	.remove =	sl811h_remove,
 
 	.suspend =	sl811h_suspend,
 	.resume =	sl811h_resume,

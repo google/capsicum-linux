@@ -3,9 +3,10 @@
 # see Documentation/kbuild/kconfig-language.txt.
 #
 
-config TMS320C6X
+config C6X
 	def_bool y
 	select CLKDEV_LOOKUP
+	select GENERIC_ATOMIC64
 	select GENERIC_IRQ_SHOW
 	select HAVE_ARCH_TRACEHOOK
 	select HAVE_DMA_API_DEBUG
@@ -15,39 +16,23 @@ config TMS320C6X
 	select IRQ_DOMAIN
 	select OF
 	select OF_EARLY_FLATTREE
+	select GENERIC_CLOCKEVENTS
+	select MODULES_USE_ELF_RELA
 
 config MMU
 	def_bool n
 
-config ZONE_DMA
-	def_bool y
-
 config FPU
-	def_bool n
-
-config HIGHMEM
-	def_bool n
-
-config NUMA
 	def_bool n
 
 config RWSEM_GENERIC_SPINLOCK
 	def_bool y
-
-config RWSEM_XCHGADD_ALGORITHM
-	def_bool n
 
 config GENERIC_CALIBRATE_DELAY
 	def_bool y
 
 config GENERIC_HWEIGHT
 	def_bool y
-
-config GENERIC_CLOCKEVENTS
-	def_bool y
-
-config GENERIC_CLOCKEVENTS_BROADCAST
-	bool
 
 config GENERIC_BUG
 	def_bool y
@@ -137,7 +122,6 @@ source "mm/Kconfig"
 source "kernel/Kconfig.preempt"
 
 source "kernel/Kconfig.hz"
-source "kernel/time/Kconfig"
 
 endmenu
 

@@ -64,7 +64,7 @@ static const char mlx4_en_version[] =
 
 /* Enable RSS UDP traffic */
 MLX4_EN_PARM_INT(udp_rss, 1,
-		 "Enable RSS for incomming UDP traffic or disabled (0)");
+		 "Enable RSS for incoming UDP traffic or disabled (0)");
 
 /* Priority pausing */
 MLX4_EN_PARM_INT(pfctx, 0, "Priority based Flow Control policy on TX[7:0]."
@@ -95,12 +95,36 @@ int en_print(const char *level, const struct mlx4_en_priv *priv,
 	return i;
 }
 
+void mlx4_en_update_loopback_state(struct net_device *dev,
+				   netdev_features_t features)
+{
+	struct mlx4_en_priv *priv = netdev_priv(dev);
+
+	priv->flags &= ~(MLX4_EN_FLAG_RX_FILTER_NEEDED|
+			MLX4_EN_FLAG_ENABLE_HW_LOOPBACK);
+
+	/* Drop the packet if SRIOV is not enabled
+	 * and not performing the selftest or flb disabled
+	 */
+	if (mlx4_is_mfunc(priv->mdev->dev) &&
+	    !(features & NETIF_F_LOOPBACK) && !priv->validate_loopback)
+		priv->flags |= MLX4_EN_FLAG_RX_FILTER_NEEDED;
+
+	/* Set dmac in Tx WQE if we are in SRIOV mode or if loopback selftest
+	 * is requested
+	 */
+	if (mlx4_is_mfunc(priv->mdev->dev) || priv->validate_loopback)
+		priv->flags |= MLX4_EN_FLAG_ENABLE_HW_LOOPBACK;
+}
+
 static int mlx4_en_get_profile(struct mlx4_en_dev *mdev)
 {
 	struct mlx4_en_profile *params = &mdev->profile;
 	int i;
 
 	params->udp_rss = udp_rss;
+	params->num_tx_rings_p_up = min_t(int, num_online_cpus(),
+			MLX4_EN_MAX_TX_RING_P_UP);
 	if (params->udp_rss && !(mdev->dev->caps.flags
 					& MLX4_DEV_CAP_FLAG_UDP_RSS)) {
 		mlx4_warn(mdev, "UDP RSS is not supported on this device.\n");
@@ -113,8 +137,8 @@ static int mlx4_en_get_profile(struct mlx4_en_dev *mdev)
 		params->prof[i].tx_ppp = pfctx;
 		params->prof[i].tx_ring_size = MLX4_EN_DEF_TX_RING_SIZE;
 		params->prof[i].rx_ring_size = MLX4_EN_DEF_RX_RING_SIZE;
-		params->prof[i].tx_ring_num = MLX4_EN_NUM_TX_RINGS +
-			(!!pfcrx) * MLX4_EN_NUM_PPP_RINGS;
+		params->prof[i].tx_ring_num = params->num_tx_rings_p_up *
+			MLX4_EN_NUM_UP;
 		params->prof[i].rss_rings = 0;
 	}
 
@@ -129,18 +153,17 @@ static void *mlx4_en_get_netdev(struct mlx4_dev *dev, void *ctx, u8 port)
 }
 
 static void mlx4_en_event(struct mlx4_dev *dev, void *endev_ptr,
-			  enum mlx4_dev_event event, int port)
+			  enum mlx4_dev_event event, unsigned long port)
 {
 	struct mlx4_en_dev *mdev = (struct mlx4_en_dev *) endev_ptr;
 	struct mlx4_en_priv *priv;
 
-	if (!mdev->pndev[port])
-		return;
-
-	priv = netdev_priv(mdev->pndev[port]);
 	switch (event) {
 	case MLX4_DEV_EVENT_PORT_UP:
 	case MLX4_DEV_EVENT_PORT_DOWN:
+		if (!mdev->pndev[port])
+			return;
+		priv = netdev_priv(mdev->pndev[port]);
 		/* To prevent races, we poll the link state in a separate
 		  task rather than changing it here */
 		priv->link_state = event;
@@ -152,7 +175,11 @@ static void mlx4_en_event(struct mlx4_dev *dev, void *endev_ptr,
 		break;
 
 	default:
-		mlx4_warn(mdev, "Unhandled event: %d\n", event);
+		if (port < 1 || port > dev->caps.num_ports ||
+		    !mdev->pndev[port])
+			return;
+		mlx4_warn(mdev, "Unhandled event %d for port %d\n", event,
+			  (int) port);
 	}
 }
 
@@ -171,7 +198,7 @@ static void mlx4_en_remove(struct mlx4_dev *dev, void *endev_ptr)
 
 	flush_workqueue(mdev->workqueue);
 	destroy_workqueue(mdev->workqueue);
-	mlx4_mr_free(dev, &mdev->mr);
+	(void) mlx4_mr_free(dev, &mdev->mr);
 	iounmap(mdev->uar_map);
 	mlx4_uar_free(dev, &mdev->priv_uar);
 	mlx4_pd_free(dev, mdev->priv_pdn);
@@ -186,10 +213,8 @@ static void *mlx4_en_add(struct mlx4_dev *dev)
 
 	printk_once(KERN_INFO "%s", mlx4_en_version);
 
-	mdev = kzalloc(sizeof *mdev, GFP_KERNEL);
+	mdev = kzalloc(sizeof(*mdev), GFP_KERNEL);
 	if (!mdev) {
-		dev_err(&dev->pdev->dev, "Device struct alloc failed, "
-			"aborting.\n");
 		err = -ENOMEM;
 		goto err_free_res;
 	}
@@ -245,7 +270,7 @@ static void *mlx4_en_add(struct mlx4_dev *dev)
 				rounddown_pow_of_two(max_t(int, MIN_RX_RINGS,
 							   min_t(int,
 								 dev->caps.num_comp_vectors,
-								 MAX_RX_RINGS)));
+								 DEF_RX_RINGS)));
 		} else {
 			mdev->profile.prof[i].rx_ring_num = rounddown_pow_of_two(
 				min_t(int, dev->caps.comp_pool/
@@ -275,12 +300,17 @@ static void *mlx4_en_add(struct mlx4_dev *dev)
 		if (mlx4_en_init_netdev(mdev, i, &mdev->profile.prof[i]))
 			mdev->pndev[i] = NULL;
 	}
+
+	/* Initialize time stamp mechanism */
+	if (mdev->dev->caps.flags2 & MLX4_DEV_CAP_FLAG2_TS)
+		mlx4_en_init_timestamp(mdev);
+
 	return mdev;
 
 err_mr:
-	mlx4_mr_free(dev, &mdev->mr);
+	(void) mlx4_mr_free(dev, &mdev->mr);
 err_map:
-	if (!mdev->uar_map)
+	if (mdev->uar_map)
 		iounmap(mdev->uar_map);
 err_uar:
 	mlx4_uar_free(dev, &mdev->priv_uar);

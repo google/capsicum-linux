@@ -167,9 +167,9 @@ ENTRY(v4wb_coherent_user_range)
 	add	r0, r0, #CACHE_DLINESIZE
 	cmp	r0, r1
 	blo	1b
-	mov	ip, #0
-	mcr	p15, 0, ip, c7, c5, 0		@ invalidate I cache
-	mcr	p15, 0, ip, c7, c10, 4		@ drain WB
+	mov	r0, #0
+	mcr	p15, 0, r0, c7, c5, 0		@ invalidate I cache
+	mcr	p15, 0, r0, c7, c10, 4		@ drain WB
 	mov	pc, lr
 
 
@@ -250,6 +250,9 @@ ENDPROC(v4wb_dma_map_area)
 ENTRY(v4wb_dma_unmap_area)
 	mov	pc, lr
 ENDPROC(v4wb_dma_unmap_area)
+
+	.globl	v4wb_flush_kern_cache_louis
+	.equ	v4wb_flush_kern_cache_louis, v4wb_flush_kern_cache_all
 
 	__INITDATA
 

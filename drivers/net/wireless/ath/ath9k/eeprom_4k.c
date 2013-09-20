@@ -32,16 +32,12 @@ static int ath9k_hw_4k_get_eeprom_rev(struct ath_hw *ah)
 
 static bool __ath9k_hw_4k_fill_eeprom(struct ath_hw *ah)
 {
-	struct ath_common *common = ath9k_hw_common(ah);
 	u16 *eep_data = (u16 *)&ah->eeprom.map4k;
 	int addr, eep_start_loc = 64;
 
 	for (addr = 0; addr < SIZE_EEPROM_4K; addr++) {
-		if (!ath9k_hw_nvram_read(common, addr + eep_start_loc, eep_data)) {
-			ath_dbg(common, EEPROM,
-				"Unable to read eeprom region\n");
+		if (!ath9k_hw_nvram_read(ah, addr + eep_start_loc, eep_data))
 			return false;
-		}
 		eep_data++;
 	}
 
@@ -135,7 +131,7 @@ static u32 ath9k_hw_4k_dump_eeprom(struct ath_hw *ah, bool dump_base_hdr,
 	if (!dump_base_hdr) {
 		len += snprintf(buf + len, size - len,
 				"%20s :\n", "2GHz modal Header");
-		len += ath9k_dump_4k_modal_eeprom(buf, len, size,
+		len = ath9k_dump_4k_modal_eeprom(buf, len, size,
 						  &eep->modalHeader);
 		goto out;
 	}
@@ -188,8 +184,7 @@ static int ath9k_hw_4k_check_eeprom(struct ath_hw *ah)
 {
 #define EEPROM_4K_SIZE (sizeof(struct ar5416_eeprom_4k) / sizeof(u16))
 	struct ath_common *common = ath9k_hw_common(ah);
-	struct ar5416_eeprom_4k *eep =
-		(struct ar5416_eeprom_4k *) &ah->eeprom.map4k;
+	struct ar5416_eeprom_4k *eep = &ah->eeprom.map4k;
 	u16 *eepdata, temp, magic, magic2;
 	u32 sum = 0, el;
 	bool need_swap = false;
@@ -197,7 +192,7 @@ static int ath9k_hw_4k_check_eeprom(struct ath_hw *ah)
 
 
 	if (!ath9k_hw_use_flash(ah)) {
-		if (!ath9k_hw_nvram_read(common, AR5416_EEPROM_MAGIC_OFFSET,
+		if (!ath9k_hw_nvram_read(ah, AR5416_EEPROM_MAGIC_OFFSET,
 					 &magic)) {
 			ath_err(common, "Reading Magic # failed\n");
 			return false;

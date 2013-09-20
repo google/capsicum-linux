@@ -101,6 +101,7 @@
 #define MMU_FTRS_POWER5		MMU_FTRS_POWER4 | MMU_FTR_LOCKLESS_TLBIE
 #define MMU_FTRS_POWER6		MMU_FTRS_POWER4 | MMU_FTR_LOCKLESS_TLBIE
 #define MMU_FTRS_POWER7		MMU_FTRS_POWER4 | MMU_FTR_LOCKLESS_TLBIE
+#define MMU_FTRS_POWER8		MMU_FTRS_POWER4 | MMU_FTR_LOCKLESS_TLBIE
 #define MMU_FTRS_CELL		MMU_FTRS_DEFAULT_HPTE_ARCH_V2 | \
 				MMU_FTR_CI_LARGE_PAGE
 #define MMU_FTRS_PA6T		MMU_FTRS_DEFAULT_HPTE_ARCH_V2 | \
@@ -146,6 +147,15 @@ extern void setup_initial_memory_limit(phys_addr_t first_memblock_base,
 extern u64 ppc64_rma_size;
 #endif /* CONFIG_PPC64 */
 
+struct mm_struct;
+#ifdef CONFIG_DEBUG_VM
+extern void assert_pte_locked(struct mm_struct *mm, unsigned long addr);
+#else /* CONFIG_DEBUG_VM */
+static inline void assert_pte_locked(struct mm_struct *mm, unsigned long addr)
+{
+}
+#endif /* !CONFIG_DEBUG_VM */
+
 #endif /* !__ASSEMBLY__ */
 
 /* The kernel use the constants below to index in the page sizes array.
@@ -163,12 +173,7 @@ extern u64 ppc64_rma_size;
  * to think about, feedback welcome. --BenH.
  */
 
-/* There are #define as they have to be used in assembly
- *
- * WARNING: If you change this list, make sure to update the array of
- * names currently in arch/powerpc/mm/hugetlbpage.c or bad things will
- * happen
- */
+/* These are #defines as they have to be used in assembly */
 #define MMU_PAGE_4K	0
 #define MMU_PAGE_16K	1
 #define MMU_PAGE_64K	2

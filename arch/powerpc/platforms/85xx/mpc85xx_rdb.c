@@ -86,22 +86,16 @@ void __init mpc85xx_rdb_pic_init(void)
  */
 static void __init mpc85xx_rdb_setup_arch(void)
 {
-#if defined(CONFIG_PCI) || defined(CONFIG_QUICC_ENGINE)
+#ifdef CONFIG_QUICC_ENGINE
 	struct device_node *np;
 #endif
 
 	if (ppc_md.progress)
 		ppc_md.progress("mpc85xx_rdb_setup_arch()", 0);
 
-#ifdef CONFIG_PCI
-	for_each_node_by_type(np, "pci") {
-		if (of_device_is_compatible(np, "fsl,mpc8548-pcie"))
-			fsl_add_bridge(np, 0);
-	}
-
-#endif
-
 	mpc85xx_smp_init();
+
+	fsl_pci_assign_primary();
 
 #ifdef CONFIG_QUICC_ENGINE
 	np = of_find_compatible_node(NULL, NULL, "fsl,qe");
@@ -161,14 +155,15 @@ qe_fail:
 	printk(KERN_INFO "MPC85xx RDB board from Freescale Semiconductor\n");
 }
 
-machine_device_initcall(p2020_rdb, mpc85xx_common_publish_devices);
-machine_device_initcall(p2020_rdb_pc, mpc85xx_common_publish_devices);
-machine_device_initcall(p1020_mbg_pc, mpc85xx_common_publish_devices);
-machine_device_initcall(p1020_rdb, mpc85xx_common_publish_devices);
-machine_device_initcall(p1020_rdb_pc, mpc85xx_common_publish_devices);
-machine_device_initcall(p1020_utm_pc, mpc85xx_common_publish_devices);
-machine_device_initcall(p1021_rdb_pc, mpc85xx_common_publish_devices);
-machine_device_initcall(p1025_rdb, mpc85xx_common_publish_devices);
+machine_arch_initcall(p2020_rdb, mpc85xx_common_publish_devices);
+machine_arch_initcall(p2020_rdb_pc, mpc85xx_common_publish_devices);
+machine_arch_initcall(p1020_mbg_pc, mpc85xx_common_publish_devices);
+machine_arch_initcall(p1020_rdb, mpc85xx_common_publish_devices);
+machine_arch_initcall(p1020_rdb_pc, mpc85xx_common_publish_devices);
+machine_arch_initcall(p1020_utm_pc, mpc85xx_common_publish_devices);
+machine_arch_initcall(p1021_rdb_pc, mpc85xx_common_publish_devices);
+machine_arch_initcall(p1025_rdb, mpc85xx_common_publish_devices);
+machine_arch_initcall(p1024_rdb, mpc85xx_common_publish_devices);
 
 /*
  * Called very early, device-tree isn't unflattened
@@ -235,6 +230,13 @@ static int __init p1020_utm_pc_probe(void)
 	unsigned long root = of_get_flat_dt_root();
 
 	return of_flat_dt_is_compatible(root, "fsl,P1020UTM-PC");
+}
+
+static int __init p1024_rdb_probe(void)
+{
+	unsigned long root = of_get_flat_dt_root();
+
+	return of_flat_dt_is_compatible(root, "fsl,P1024RDB");
 }
 
 define_machine(p2020_rdb) {
@@ -338,6 +340,20 @@ define_machine(p1020_utm_pc) {
 define_machine(p1020_rdb_pc) {
 	.name			= "P1020RDB-PC",
 	.probe			= p1020_rdb_pc_probe,
+	.setup_arch		= mpc85xx_rdb_setup_arch,
+	.init_IRQ		= mpc85xx_rdb_pic_init,
+#ifdef CONFIG_PCI
+	.pcibios_fixup_bus	= fsl_pcibios_fixup_bus,
+#endif
+	.get_irq		= mpic_get_irq,
+	.restart		= fsl_rstcr_restart,
+	.calibrate_decr		= generic_calibrate_decr,
+	.progress		= udbg_progress,
+};
+
+define_machine(p1024_rdb) {
+	.name			= "P1024 RDB",
+	.probe			= p1024_rdb_probe,
 	.setup_arch		= mpc85xx_rdb_setup_arch,
 	.init_IRQ		= mpc85xx_rdb_pic_init,
 #ifdef CONFIG_PCI

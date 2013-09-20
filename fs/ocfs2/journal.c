@@ -355,11 +355,14 @@ handle_t *ocfs2_start_trans(struct ocfs2_super *osb, int max_buffs)
 	if (journal_current_handle())
 		return jbd2_journal_start(journal, max_buffs);
 
+	sb_start_intwrite(osb->sb);
+
 	down_read(&osb->journal->j_trans_barrier);
 
 	handle = jbd2_journal_start(journal, max_buffs);
 	if (IS_ERR(handle)) {
 		up_read(&osb->journal->j_trans_barrier);
+		sb_end_intwrite(osb->sb);
 
 		mlog_errno(PTR_ERR(handle));
 
@@ -388,8 +391,10 @@ int ocfs2_commit_trans(struct ocfs2_super *osb,
 	if (ret < 0)
 		mlog_errno(ret);
 
-	if (!nested)
+	if (!nested) {
 		up_read(&journal->j_trans_barrier);
+		sb_end_intwrite(osb->sb);
+	}
 
 	return ret;
 }
@@ -1229,11 +1234,8 @@ static void ocfs2_queue_recovery_completion(struct ocfs2_journal *journal,
 		/* Though we wish to avoid it, we are in fact safe in
 		 * skipping local alloc cleanup as fsck.ocfs2 is more
 		 * than capable of reclaiming unused space. */
-		if (la_dinode)
-			kfree(la_dinode);
-
-		if (tl_dinode)
-			kfree(tl_dinode);
+		kfree(la_dinode);
+		kfree(tl_dinode);
 
 		if (qrec)
 			ocfs2_free_quota_recovery(qrec);
@@ -1403,8 +1405,7 @@ bail:
 
 	mutex_unlock(&osb->recovery_lock);
 
-	if (rm_quota)
-		kfree(rm_quota);
+	kfree(rm_quota);
 
 	/* no one is callint kthread_stop() for us so the kthread() api
 	 * requires that we call do_exit().  And it isn't exported, but
@@ -1940,6 +1941,7 @@ void ocfs2_orphan_scan_start(struct ocfs2_super *osb)
 }
 
 struct ocfs2_orphan_filldir_priv {
+	struct dir_context	ctx;
 	struct inode		*head;
 	struct ocfs2_super	*osb;
 };
@@ -1976,11 +1978,11 @@ static int ocfs2_queue_orphans(struct ocfs2_super *osb,
 {
 	int status;
 	struct inode *orphan_dir_inode = NULL;
-	struct ocfs2_orphan_filldir_priv priv;
-	loff_t pos = 0;
-
-	priv.osb = osb;
-	priv.head = *head;
+	struct ocfs2_orphan_filldir_priv priv = {
+		.ctx.actor = ocfs2_orphan_filldir,
+		.osb = osb,
+		.head = *head
+	};
 
 	orphan_dir_inode = ocfs2_get_system_file_inode(osb,
 						       ORPHAN_DIR_SYSTEM_INODE,
@@ -1998,8 +2000,7 @@ static int ocfs2_queue_orphans(struct ocfs2_super *osb,
 		goto out;
 	}
 
-	status = ocfs2_dir_foreach(orphan_dir_inode, &pos, &priv,
-				   ocfs2_orphan_filldir);
+	status = ocfs2_dir_foreach(orphan_dir_inode, &priv.ctx);
 	if (status) {
 		mlog_errno(status);
 		goto out_cluster;

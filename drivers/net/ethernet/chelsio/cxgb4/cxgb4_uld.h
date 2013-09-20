@@ -38,6 +38,7 @@
 #include <linux/cache.h>
 #include <linux/spinlock.h>
 #include <linux/skbuff.h>
+#include <linux/inetdevice.h>
 #include <linux/atomic.h>
 
 /* CPL message priority levels */
@@ -97,9 +98,16 @@ struct tid_info {
 
 	union aopen_entry *atid_tab;
 	unsigned int natids;
+	unsigned int atid_base;
 
+	struct filter_entry *ftid_tab;
 	unsigned int nftids;
 	unsigned int ftid_base;
+	unsigned int aftid_base;
+	unsigned int aftid_end;
+	/* Server filter region */
+	unsigned int sftid_base;
+	unsigned int nsftids;
 
 	spinlock_t atid_lock ____cacheline_aligned_in_smp;
 	union aopen_entry *afree;
@@ -124,7 +132,7 @@ static inline void *lookup_atid(const struct tid_info *t, unsigned int atid)
 static inline void *lookup_stid(const struct tid_info *t, unsigned int stid)
 {
 	stid -= t->stid_base;
-	return stid < t->nstids ? t->stid_tab[stid].data : NULL;
+	return stid < (t->nstids + t->nsftids) ? t->stid_tab[stid].data : NULL;
 }
 
 static inline void cxgb4_insert_tid(struct tid_info *t, void *data,
@@ -136,6 +144,7 @@ static inline void cxgb4_insert_tid(struct tid_info *t, void *data,
 
 int cxgb4_alloc_atid(struct tid_info *t, void *data);
 int cxgb4_alloc_stid(struct tid_info *t, int family, void *data);
+int cxgb4_alloc_sftid(struct tid_info *t, int family, void *data);
 void cxgb4_free_atid(struct tid_info *t, unsigned int atid);
 void cxgb4_free_stid(struct tid_info *t, unsigned int stid, int family);
 void cxgb4_remove_tid(struct tid_info *t, unsigned int qid, unsigned int tid);
@@ -143,8 +152,14 @@ void cxgb4_remove_tid(struct tid_info *t, unsigned int qid, unsigned int tid);
 struct in6_addr;
 
 int cxgb4_create_server(const struct net_device *dev, unsigned int stid,
-			__be32 sip, __be16 sport, unsigned int queue);
-
+			__be32 sip, __be16 sport, __be16 vlan,
+			unsigned int queue);
+int cxgb4_create_server_filter(const struct net_device *dev, unsigned int stid,
+			       __be32 sip, __be16 sport, __be16 vlan,
+			       unsigned int queue,
+			       unsigned char port, unsigned char mask);
+int cxgb4_remove_server_filter(const struct net_device *dev, unsigned int stid,
+			       unsigned int queue, bool ipv6);
 static inline void set_wr_txq(struct sk_buff *skb, int prio, int queue)
 {
 	skb_set_queue_mapping(skb, (queue << 1) | prio);
@@ -161,6 +176,12 @@ enum cxgb4_state {
 	CXGB4_STATE_START_RECOVERY,
 	CXGB4_STATE_DOWN,
 	CXGB4_STATE_DETACH
+};
+
+enum cxgb4_control {
+	CXGB4_CONTROL_DB_FULL,
+	CXGB4_CONTROL_DB_EMPTY,
+	CXGB4_CONTROL_DB_DROP,
 };
 
 struct pci_dev;
@@ -210,8 +231,16 @@ struct cxgb4_lld_info {
 	unsigned int iscsi_iolen;            /* iSCSI max I/O length */
 	unsigned short udb_density;          /* # of user DB/page */
 	unsigned short ucq_density;          /* # of user CQs/page */
+	unsigned short filt_mode;            /* filter optional components */
+	unsigned short tx_modq[NCHAN];       /* maps each tx channel to a */
+					     /* scheduler queue */
 	void __iomem *gts_reg;               /* address of GTS register */
 	void __iomem *db_reg;                /* address of kernel doorbell */
+	int dbfifo_int_thresh;		     /* doorbell fifo int threshold */
+	unsigned int sge_pktshift;           /* Padding between CPL and */
+					     /*	packet data */
+	bool enable_fw_ofld_conn;            /* Enable connection through fw */
+					     /* WR */
 };
 
 struct cxgb4_uld_info {
@@ -220,11 +249,13 @@ struct cxgb4_uld_info {
 	int (*rx_handler)(void *handle, const __be64 *rsp,
 			  const struct pkt_gl *gl);
 	int (*state_change)(void *handle, enum cxgb4_state new_state);
+	int (*control)(void *handle, enum cxgb4_control control, ...);
 };
 
 int cxgb4_register_uld(enum cxgb4_uld type, const struct cxgb4_uld_info *p);
 int cxgb4_unregister_uld(enum cxgb4_uld type);
 int cxgb4_ofld_send(struct net_device *dev, struct sk_buff *skb);
+unsigned int cxgb4_dbfifo_count(const struct net_device *dev, int lpfifo);
 unsigned int cxgb4_port_chan(const struct net_device *dev);
 unsigned int cxgb4_port_viid(const struct net_device *dev);
 unsigned int cxgb4_port_idx(const struct net_device *dev);
@@ -236,4 +267,9 @@ void cxgb4_iscsi_init(struct net_device *dev, unsigned int tag_mask,
 		      const unsigned int *pgsz_order);
 struct sk_buff *cxgb4_pktgl_to_skb(const struct pkt_gl *gl,
 				   unsigned int skb_len, unsigned int pull_len);
+int cxgb4_sync_txq_pidx(struct net_device *dev, u16 qid, u16 pidx, u16 size);
+int cxgb4_flush_eq_cache(struct net_device *dev);
+void cxgb4_disable_db_coalescing(struct net_device *dev);
+void cxgb4_enable_db_coalescing(struct net_device *dev);
+
 #endif  /* !__CXGB4_OFLD_H */

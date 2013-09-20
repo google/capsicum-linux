@@ -592,8 +592,8 @@ static unsigned short snd_intel8x0_codec_read(struct snd_ac97 *ac97,
 	return res;
 }
 
-static void __devinit snd_intel8x0_codec_read_test(struct intel8x0 *chip,
-						   unsigned int codec)
+static void snd_intel8x0_codec_read_test(struct intel8x0 *chip,
+					 unsigned int codec)
 {
 	unsigned int tmp;
 
@@ -1507,8 +1507,8 @@ struct ich_pcm_table {
 	int ac97_idx;
 };
 
-static int __devinit snd_intel8x0_pcm1(struct intel8x0 *chip, int device,
-				       struct ich_pcm_table *rec)
+static int snd_intel8x0_pcm1(struct intel8x0 *chip, int device,
+			     struct ich_pcm_table *rec)
 {
 	struct snd_pcm *pcm;
 	int err;
@@ -1541,10 +1541,30 @@ static int __devinit snd_intel8x0_pcm1(struct intel8x0 *chip, int device,
 					      snd_dma_pci_data(chip->pci),
 					      rec->prealloc_size, rec->prealloc_max_size);
 
+	if (rec->ac97_idx == ICHD_PCMOUT && rec->playback_ops) {
+		struct snd_pcm_chmap *chmap;
+		int chs = 2;
+		if (rec->ac97_idx == ICHD_PCMOUT) {
+			if (chip->multi8)
+				chs = 8;
+			else if (chip->multi6)
+				chs = 6;
+			else if (chip->multi4)
+				chs = 4;
+		}
+		err = snd_pcm_add_chmap_ctls(pcm, SNDRV_PCM_STREAM_PLAYBACK,
+					     snd_pcm_alt_chmaps, chs, 0,
+					     &chmap);
+		if (err < 0)
+			return err;
+		chmap->channel_mask = SND_PCM_CHMAP_MASK_2468;
+		chip->ac97[0]->chmaps[SNDRV_PCM_STREAM_PLAYBACK] = chmap;
+	}
+
 	return 0;
 }
 
-static struct ich_pcm_table intel_pcms[] __devinitdata = {
+static struct ich_pcm_table intel_pcms[] = {
 	{
 		.playback_ops = &snd_intel8x0_playback_ops,
 		.capture_ops = &snd_intel8x0_capture_ops,
@@ -1581,7 +1601,7 @@ static struct ich_pcm_table intel_pcms[] __devinitdata = {
 	},
 };
 
-static struct ich_pcm_table nforce_pcms[] __devinitdata = {
+static struct ich_pcm_table nforce_pcms[] = {
 	{
 		.playback_ops = &snd_intel8x0_playback_ops,
 		.capture_ops = &snd_intel8x0_capture_ops,
@@ -1604,7 +1624,7 @@ static struct ich_pcm_table nforce_pcms[] __devinitdata = {
 	},
 };
 
-static struct ich_pcm_table ali_pcms[] __devinitdata = {
+static struct ich_pcm_table ali_pcms[] = {
 	{
 		.playback_ops = &snd_intel8x0_ali_playback_ops,
 		.capture_ops = &snd_intel8x0_ali_capture_ops,
@@ -1636,7 +1656,7 @@ static struct ich_pcm_table ali_pcms[] __devinitdata = {
 #endif
 };
 
-static int __devinit snd_intel8x0_pcm(struct intel8x0 *chip)
+static int snd_intel8x0_pcm(struct intel8x0 *chip)
 {
 	int i, tblsize, device, err;
 	struct ich_pcm_table *tbl, *rec;
@@ -1699,7 +1719,7 @@ static void snd_intel8x0_mixer_free_ac97(struct snd_ac97 *ac97)
 	chip->ac97[ac97->num] = NULL;
 }
 
-static struct ac97_pcm ac97_pcm_defs[] __devinitdata = {
+static struct ac97_pcm ac97_pcm_defs[] = {
 	/* front PCM */
 	{
 		.exclusive = 1,
@@ -1769,7 +1789,7 @@ static struct ac97_pcm ac97_pcm_defs[] __devinitdata = {
 	},
 };
 
-static struct ac97_quirk ac97_quirks[] __devinitdata = {
+static struct ac97_quirk ac97_quirks[] = {
         {
 		.subvendor = 0x0e11,
 		.subdevice = 0x000e,
@@ -2176,8 +2196,8 @@ static struct ac97_quirk ac97_quirks[] __devinitdata = {
 	{ } /* terminator */
 };
 
-static int __devinit snd_intel8x0_mixer(struct intel8x0 *chip, int ac97_clock,
-					const char *quirk_override)
+static int snd_intel8x0_mixer(struct intel8x0 *chip, int ac97_clock,
+			      const char *quirk_override)
 {
 	struct snd_ac97_bus *pbus;
 	struct snd_ac97_template ac97;
@@ -2206,7 +2226,7 @@ static int __devinit snd_intel8x0_mixer(struct intel8x0 *chip, int ac97_clock,
 		case DEVICE_INTEL_ICH4:
 			chip->spdif_idx = ICHD_SPBAR;
 			break;
-		};
+		}
 	}
 
 	chip->in_ac97_init = 1;
@@ -2620,13 +2640,14 @@ static int snd_intel8x0_free(struct intel8x0 *chip)
 	return 0;
 }
 
-#ifdef CONFIG_PM
+#ifdef CONFIG_PM_SLEEP
 /*
  * power management
  */
-static int intel8x0_suspend(struct pci_dev *pci, pm_message_t state)
+static int intel8x0_suspend(struct device *dev)
 {
-	struct snd_card *card = pci_get_drvdata(pci);
+	struct pci_dev *pci = to_pci_dev(dev);
+	struct snd_card *card = dev_get_drvdata(dev);
 	struct intel8x0 *chip = card->private_data;
 	int i;
 
@@ -2658,13 +2679,14 @@ static int intel8x0_suspend(struct pci_dev *pci, pm_message_t state)
 	/* The call below may disable built-in speaker on some laptops
 	 * after S2RAM.  So, don't touch it.
 	 */
-	/* pci_set_power_state(pci, pci_choose_state(pci, state)); */
+	/* pci_set_power_state(pci, PCI_D3hot); */
 	return 0;
 }
 
-static int intel8x0_resume(struct pci_dev *pci)
+static int intel8x0_resume(struct device *dev)
 {
-	struct snd_card *card = pci_get_drvdata(pci);
+	struct pci_dev *pci = to_pci_dev(dev);
+	struct snd_card *card = dev_get_drvdata(dev);
 	struct intel8x0 *chip = card->private_data;
 	int i;
 
@@ -2734,11 +2756,16 @@ static int intel8x0_resume(struct pci_dev *pci)
 	snd_power_change_state(card, SNDRV_CTL_POWER_D0);
 	return 0;
 }
-#endif /* CONFIG_PM */
+
+static SIMPLE_DEV_PM_OPS(intel8x0_pm, intel8x0_suspend, intel8x0_resume);
+#define INTEL8X0_PM_OPS	&intel8x0_pm
+#else
+#define INTEL8X0_PM_OPS	NULL
+#endif /* CONFIG_PM_SLEEP */
 
 #define INTEL8X0_TESTBUF_SIZE	32768	/* enough large for one shot */
 
-static void __devinit intel8x0_measure_ac97_clock(struct intel8x0 *chip)
+static void intel8x0_measure_ac97_clock(struct intel8x0 *chip)
 {
 	struct snd_pcm_substream *subs;
 	struct ichdev *ichdev;
@@ -2856,7 +2883,7 @@ static void __devinit intel8x0_measure_ac97_clock(struct intel8x0 *chip)
 	snd_ac97_update_power(chip->ac97[0], AC97_PCM_FRONT_DAC_RATE, 0);
 }
 
-static struct snd_pci_quirk intel8x0_clock_list[] __devinitdata = {
+static struct snd_pci_quirk intel8x0_clock_list[] = {
 	SND_PCI_QUIRK(0x0e11, 0x008a, "AD1885", 41000),
 	SND_PCI_QUIRK(0x1028, 0x00be, "AD1885", 44100),
 	SND_PCI_QUIRK(0x1028, 0x0177, "AD1980", 48000),
@@ -2865,7 +2892,7 @@ static struct snd_pci_quirk intel8x0_clock_list[] __devinitdata = {
 	{ }	/* terminator */
 };
 
-static int __devinit intel8x0_in_clock_list(struct intel8x0 *chip)
+static int intel8x0_in_clock_list(struct intel8x0 *chip)
 {
 	struct pci_dev *pci = chip->pci;
 	const struct snd_pci_quirk *wl;
@@ -2914,7 +2941,7 @@ static void snd_intel8x0_proc_read(struct snd_info_entry * entry,
 			chip->ac97_sdin[2]);
 }
 
-static void __devinit snd_intel8x0_proc_init(struct intel8x0 * chip)
+static void snd_intel8x0_proc_init(struct intel8x0 *chip)
 {
 	struct snd_info_entry *entry;
 
@@ -2943,7 +2970,7 @@ static unsigned int sis_codec_bits[3] = {
 	ICH_PCR, ICH_SCR, ICH_SIS_TCR
 };
 
-static int __devinit snd_intel8x0_inside_vm(struct pci_dev *pci)
+static int snd_intel8x0_inside_vm(struct pci_dev *pci)
 {
 	int result  = inside_vm;
 	char *msg   = NULL;
@@ -2982,10 +3009,10 @@ fini:
 	return result;
 }
 
-static int __devinit snd_intel8x0_create(struct snd_card *card,
-					 struct pci_dev *pci,
-					 unsigned long device_type,
-					 struct intel8x0 ** r_intel8x0)
+static int snd_intel8x0_create(struct snd_card *card,
+			       struct pci_dev *pci,
+			       unsigned long device_type,
+			       struct intel8x0 **r_intel8x0)
 {
 	struct intel8x0 *chip;
 	int err;
@@ -3200,7 +3227,7 @@ static int __devinit snd_intel8x0_create(struct snd_card *card,
 static struct shortname_table {
 	unsigned int id;
 	const char *s;
-} shortnames[] __devinitdata = {
+} shortnames[] = {
 	{ PCI_DEVICE_ID_INTEL_82801AA_5, "Intel 82801AA-ICH" },
 	{ PCI_DEVICE_ID_INTEL_82801AB_5, "Intel 82901AB-ICH0" },
 	{ PCI_DEVICE_ID_INTEL_82801BA_4, "Intel 82801BA-ICH2" },
@@ -3226,31 +3253,33 @@ static struct shortname_table {
 	{ 0, NULL },
 };
 
-static struct snd_pci_quirk spdif_aclink_defaults[] __devinitdata = {
+static struct snd_pci_quirk spdif_aclink_defaults[] = {
 	SND_PCI_QUIRK(0x147b, 0x1c1a, "ASUS KN8", 1),
 	{ } /* end */
 };
 
 /* look up white/black list for SPDIF over ac-link */
-static int __devinit check_default_spdif_aclink(struct pci_dev *pci)
+static int check_default_spdif_aclink(struct pci_dev *pci)
 {
 	const struct snd_pci_quirk *w;
 
 	w = snd_pci_quirk_lookup(pci, spdif_aclink_defaults);
 	if (w) {
 		if (w->value)
-			snd_printdd(KERN_INFO "intel8x0: Using SPDIF over "
-				    "AC-Link for %s\n", w->name);
+			snd_printdd(KERN_INFO
+				    "intel8x0: Using SPDIF over AC-Link for %s\n",
+				    snd_pci_quirk_name(w));
 		else
-			snd_printdd(KERN_INFO "intel8x0: Using integrated "
-				    "SPDIF DMA for %s\n", w->name);
+			snd_printdd(KERN_INFO
+				    "intel8x0: Using integrated SPDIF DMA for %s\n",
+				    snd_pci_quirk_name(w));
 		return w->value;
 	}
 	return 0;
 }
 
-static int __devinit snd_intel8x0_probe(struct pci_dev *pci,
-					const struct pci_device_id *pci_id)
+static int snd_intel8x0_probe(struct pci_dev *pci,
+			      const struct pci_device_id *pci_id)
 {
 	struct snd_card *card;
 	struct intel8x0 *chip;
@@ -3332,33 +3361,19 @@ static int __devinit snd_intel8x0_probe(struct pci_dev *pci,
 	return 0;
 }
 
-static void __devexit snd_intel8x0_remove(struct pci_dev *pci)
+static void snd_intel8x0_remove(struct pci_dev *pci)
 {
 	snd_card_free(pci_get_drvdata(pci));
-	pci_set_drvdata(pci, NULL);
 }
 
-static struct pci_driver driver = {
+static struct pci_driver intel8x0_driver = {
 	.name = KBUILD_MODNAME,
 	.id_table = snd_intel8x0_ids,
 	.probe = snd_intel8x0_probe,
-	.remove = __devexit_p(snd_intel8x0_remove),
-#ifdef CONFIG_PM
-	.suspend = intel8x0_suspend,
-	.resume = intel8x0_resume,
-#endif
+	.remove = snd_intel8x0_remove,
+	.driver = {
+		.pm = INTEL8X0_PM_OPS,
+	},
 };
 
-
-static int __init alsa_card_intel8x0_init(void)
-{
-	return pci_register_driver(&driver);
-}
-
-static void __exit alsa_card_intel8x0_exit(void)
-{
-	pci_unregister_driver(&driver);
-}
-
-module_init(alsa_card_intel8x0_init)
-module_exit(alsa_card_intel8x0_exit)
+module_pci_driver(intel8x0_driver);

@@ -44,8 +44,10 @@ TRACE_EVENT(rcu_utilization,
  * of a new grace period or the end of an old grace period ("cpustart"
  * and "cpuend", respectively), a CPU passing through a quiescent
  * state ("cpuqs"), a CPU coming online or going offline ("cpuonl"
- * and "cpuofl", respectively), and a CPU being kicked for being too
- * long in dyntick-idle mode ("kick").
+ * and "cpuofl", respectively), a CPU being kicked for being too
+ * long in dyntick-idle mode ("kick"), a CPU accelerating its new
+ * callbacks to RCU_NEXT_READY_TAIL ("AccReadyCB"), and a CPU
+ * accelerating its new callbacks to RCU_WAIT_TAIL ("AccWaitCB").
  */
 TRACE_EVENT(rcu_grace_period,
 
@@ -67,6 +69,58 @@ TRACE_EVENT(rcu_grace_period,
 
 	TP_printk("%s %lu %s",
 		  __entry->rcuname, __entry->gpnum, __entry->gpevent)
+);
+
+/*
+ * Tracepoint for future grace-period events, including those for no-callbacks
+ * CPUs.  The caller should pull the data from the rcu_node structure,
+ * other than rcuname, which comes from the rcu_state structure, and event,
+ * which is one of the following:
+ *
+ * "Startleaf": Request a nocb grace period based on leaf-node data.
+ * "Startedleaf": Leaf-node start proved sufficient.
+ * "Startedleafroot": Leaf-node start proved sufficient after checking root.
+ * "Startedroot": Requested a nocb grace period based on root-node data.
+ * "StartWait": Start waiting for the requested grace period.
+ * "ResumeWait": Resume waiting after signal.
+ * "EndWait": Complete wait.
+ * "Cleanup": Clean up rcu_node structure after previous GP.
+ * "CleanupMore": Clean up, and another no-CB GP is needed.
+ */
+TRACE_EVENT(rcu_future_grace_period,
+
+	TP_PROTO(char *rcuname, unsigned long gpnum, unsigned long completed,
+		 unsigned long c, u8 level, int grplo, int grphi,
+		 char *gpevent),
+
+	TP_ARGS(rcuname, gpnum, completed, c, level, grplo, grphi, gpevent),
+
+	TP_STRUCT__entry(
+		__field(char *, rcuname)
+		__field(unsigned long, gpnum)
+		__field(unsigned long, completed)
+		__field(unsigned long, c)
+		__field(u8, level)
+		__field(int, grplo)
+		__field(int, grphi)
+		__field(char *, gpevent)
+	),
+
+	TP_fast_assign(
+		__entry->rcuname = rcuname;
+		__entry->gpnum = gpnum;
+		__entry->completed = completed;
+		__entry->c = c;
+		__entry->level = level;
+		__entry->grplo = grplo;
+		__entry->grphi = grphi;
+		__entry->gpevent = gpevent;
+	),
+
+	TP_printk("%s %lu %lu %lu %u %d %d %s",
+		  __entry->rcuname, __entry->gpnum, __entry->completed,
+		  __entry->c, __entry->level, __entry->grplo, __entry->grphi,
+		  __entry->gpevent)
 );
 
 /*
@@ -289,9 +343,12 @@ TRACE_EVENT(rcu_dyntick,
  *	"In holdoff": Nothing to do, holding off after unsuccessful attempt.
  *	"Begin holdoff": Attempt failed, don't retry until next jiffy.
  *	"Dyntick with callbacks": Entering dyntick-idle despite callbacks.
+ *	"Dyntick with lazy callbacks": Entering dyntick-idle w/lazy callbacks.
  *	"More callbacks": Still more callbacks, try again to clear them out.
  *	"Callbacks drained": All callbacks processed, off to dyntick idle!
  *	"Timer": Timer fired to cause CPU to continue processing callbacks.
+ *	"Demigrate": Timer fired on wrong CPU, woke up correct CPU.
+ *	"Cleanup after idle": Idle exited, timer canceled.
  */
 TRACE_EVENT(rcu_prep_idle,
 
@@ -390,7 +447,7 @@ TRACE_EVENT(rcu_kfree_callback,
  */
 TRACE_EVENT(rcu_batch_start,
 
-	TP_PROTO(char *rcuname, long qlen_lazy, long qlen, int blimit),
+	TP_PROTO(char *rcuname, long qlen_lazy, long qlen, long blimit),
 
 	TP_ARGS(rcuname, qlen_lazy, qlen, blimit),
 
@@ -398,7 +455,7 @@ TRACE_EVENT(rcu_batch_start,
 		__field(char *, rcuname)
 		__field(long, qlen_lazy)
 		__field(long, qlen)
-		__field(int, blimit)
+		__field(long, blimit)
 	),
 
 	TP_fast_assign(
@@ -408,7 +465,7 @@ TRACE_EVENT(rcu_batch_start,
 		__entry->blimit = blimit;
 	),
 
-	TP_printk("%s CBs=%ld/%ld bl=%d",
+	TP_printk("%s CBs=%ld/%ld bl=%ld",
 		  __entry->rcuname, __entry->qlen_lazy, __entry->qlen,
 		  __entry->blimit)
 );
@@ -520,22 +577,75 @@ TRACE_EVENT(rcu_batch_end,
  */
 TRACE_EVENT(rcu_torture_read,
 
-	TP_PROTO(char *rcutorturename, struct rcu_head *rhp),
+	TP_PROTO(char *rcutorturename, struct rcu_head *rhp,
+		 unsigned long secs, unsigned long c_old, unsigned long c),
 
-	TP_ARGS(rcutorturename, rhp),
+	TP_ARGS(rcutorturename, rhp, secs, c_old, c),
 
 	TP_STRUCT__entry(
 		__field(char *, rcutorturename)
 		__field(struct rcu_head *, rhp)
+		__field(unsigned long, secs)
+		__field(unsigned long, c_old)
+		__field(unsigned long, c)
 	),
 
 	TP_fast_assign(
 		__entry->rcutorturename = rcutorturename;
 		__entry->rhp = rhp;
+		__entry->secs = secs;
+		__entry->c_old = c_old;
+		__entry->c = c;
 	),
 
-	TP_printk("%s torture read %p",
-		  __entry->rcutorturename, __entry->rhp)
+	TP_printk("%s torture read %p %luus c: %lu %lu",
+		  __entry->rcutorturename, __entry->rhp,
+		  __entry->secs, __entry->c_old, __entry->c)
+);
+
+/*
+ * Tracepoint for _rcu_barrier() execution.  The string "s" describes
+ * the _rcu_barrier phase:
+ *	"Begin": rcu_barrier_callback() started.
+ *	"Check": rcu_barrier_callback() checking for piggybacking.
+ *	"EarlyExit": rcu_barrier_callback() piggybacked, thus early exit.
+ *	"Inc1": rcu_barrier_callback() piggyback check counter incremented.
+ *	"Offline": rcu_barrier_callback() found offline CPU
+ *	"OnlineNoCB": rcu_barrier_callback() found online no-CBs CPU.
+ *	"OnlineQ": rcu_barrier_callback() found online CPU with callbacks.
+ *	"OnlineNQ": rcu_barrier_callback() found online CPU, no callbacks.
+ *	"IRQ": An rcu_barrier_callback() callback posted on remote CPU.
+ *	"CB": An rcu_barrier_callback() invoked a callback, not the last.
+ *	"LastCB": An rcu_barrier_callback() invoked the last callback.
+ *	"Inc2": rcu_barrier_callback() piggyback check counter incremented.
+ * The "cpu" argument is the CPU or -1 if meaningless, the "cnt" argument
+ * is the count of remaining callbacks, and "done" is the piggybacking count.
+ */
+TRACE_EVENT(rcu_barrier,
+
+	TP_PROTO(char *rcuname, char *s, int cpu, int cnt, unsigned long done),
+
+	TP_ARGS(rcuname, s, cpu, cnt, done),
+
+	TP_STRUCT__entry(
+		__field(char *, rcuname)
+		__field(char *, s)
+		__field(int, cpu)
+		__field(int, cnt)
+		__field(unsigned long, done)
+	),
+
+	TP_fast_assign(
+		__entry->rcuname = rcuname;
+		__entry->s = s;
+		__entry->cpu = cpu;
+		__entry->cnt = cnt;
+		__entry->done = done;
+	),
+
+	TP_printk("%s %s cpu %d remaining %d # %lu",
+		  __entry->rcuname, __entry->s, __entry->cpu, __entry->cnt,
+		  __entry->done)
 );
 
 #else /* #ifdef CONFIG_RCU_TRACE */
@@ -543,6 +653,9 @@ TRACE_EVENT(rcu_torture_read,
 #define trace_rcu_grace_period(rcuname, gpnum, gpevent) do { } while (0)
 #define trace_rcu_grace_period_init(rcuname, gpnum, level, grplo, grphi, \
 				    qsmask) do { } while (0)
+#define trace_rcu_future_grace_period(rcuname, gpnum, completed, c, \
+				      level, grplo, grphi, event) \
+				      do { } while (0)
 #define trace_rcu_preempt_task(rcuname, pid, gpnum) do { } while (0)
 #define trace_rcu_unlock_preempted_task(rcuname, gpnum, pid) do { } while (0)
 #define trace_rcu_quiescent_state_report(rcuname, gpnum, mask, qsmask, level, \
@@ -560,7 +673,9 @@ TRACE_EVENT(rcu_torture_read,
 #define trace_rcu_invoke_kfree_callback(rcuname, rhp, offset) do { } while (0)
 #define trace_rcu_batch_end(rcuname, callbacks_invoked, cb, nr, iit, risk) \
 	do { } while (0)
-#define trace_rcu_torture_read(rcutorturename, rhp) do { } while (0)
+#define trace_rcu_torture_read(rcutorturename, rhp, secs, c_old, c) \
+	do { } while (0)
+#define trace_rcu_barrier(name, s, cpu, cnt, done) do { } while (0)
 
 #endif /* #else #ifdef CONFIG_RCU_TRACE */
 

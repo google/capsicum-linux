@@ -19,16 +19,16 @@
 #include <linux/mm.h>
 #include <linux/init.h>
 #include <linux/err.h>
+#include <linux/pinctrl/machine.h>
 
 #include <asm/pgtable.h>
 #include <asm/mach/map.h>
 
-#include <mach/common.h>
-#include <mach/devices-common.h>
-#include <mach/hardware.h>
-#include <mach/mx25.h>
-#include <mach/iomux-v3.h>
-#include <mach/irqs.h>
+#include "common.h"
+#include "devices/devices-common.h"
+#include "hardware.h"
+#include "iomux-v3.h"
+#include "mx25.h"
 
 /*
  * This table defines static virtual address mappings for I/O regions.
@@ -54,7 +54,6 @@ void __init imx25_init_early(void)
 {
 	mxc_set_cpu_type(MXC_CPU_MX25);
 	mxc_iomux_v3_init(MX25_IO_ADDRESS(MX25_IOMUXC_BASE_ADDR));
-	mxc_arch_reset_init(MX25_IO_ADDRESS(MX25_WDOG_BASE_ADDR));
 }
 
 void __init mx25_init_irq(void)
@@ -89,12 +88,16 @@ static const struct resource imx25_audmux_res[] __initconst = {
 
 void __init imx25_soc_init(void)
 {
-	/* i.mx25 has the i.mx31 type gpio */
-	mxc_register_gpio("imx31-gpio", 0, MX25_GPIO1_BASE_ADDR, SZ_16K, MX25_INT_GPIO1, 0);
-	mxc_register_gpio("imx31-gpio", 1, MX25_GPIO2_BASE_ADDR, SZ_16K, MX25_INT_GPIO2, 0);
-	mxc_register_gpio("imx31-gpio", 2, MX25_GPIO3_BASE_ADDR, SZ_16K, MX25_INT_GPIO3, 0);
-	mxc_register_gpio("imx31-gpio", 3, MX25_GPIO4_BASE_ADDR, SZ_16K, MX25_INT_GPIO4, 0);
+	mxc_arch_reset_init(MX25_IO_ADDRESS(MX25_WDOG_BASE_ADDR));
+	mxc_device_init();
 
+	/* i.mx25 has the i.mx35 type gpio */
+	mxc_register_gpio("imx35-gpio", 0, MX25_GPIO1_BASE_ADDR, SZ_16K, MX25_INT_GPIO1, 0);
+	mxc_register_gpio("imx35-gpio", 1, MX25_GPIO2_BASE_ADDR, SZ_16K, MX25_INT_GPIO2, 0);
+	mxc_register_gpio("imx35-gpio", 2, MX25_GPIO3_BASE_ADDR, SZ_16K, MX25_INT_GPIO3, 0);
+	mxc_register_gpio("imx35-gpio", 3, MX25_GPIO4_BASE_ADDR, SZ_16K, MX25_INT_GPIO4, 0);
+
+	pinctrl_provide_dummies();
 	/* i.mx25 has the i.mx35 type sdma */
 	imx_add_imx_sdma("imx35-sdma", MX25_SDMA_BASE_ADDR, MX25_INT_SDMA, &imx25_sdma_pdata);
 	/* i.mx25 has the i.mx31 type audmux */

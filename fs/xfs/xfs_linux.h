@@ -44,6 +44,7 @@
 #include <linux/kernel.h>
 #include <linux/blkdev.h>
 #include <linux/slab.h>
+#include <linux/crc32c.h>
 #include <linux/module.h>
 #include <linux/mutex.h>
 #include <linux/file.h>
@@ -71,6 +72,7 @@
 #include <linux/kthread.h>
 #include <linux/freezer.h>
 #include <linux/list_sort.h>
+#include <linux/ratelimit.h>
 
 #include <asm/page.h>
 #include <asm/div64.h>
@@ -118,6 +120,7 @@
 #define xfs_rotorstep		xfs_params.rotorstep.val
 #define xfs_inherit_nodefrag	xfs_params.inherit_nodfrg.val
 #define xfs_fstrm_centisecs	xfs_params.fstrm_timer.val
+#define xfs_eofb_secs		xfs_params.eofb_timer.val
 
 #define current_cpu()		(raw_smp_processor_id())
 #define current_pid()		(current->pid)
@@ -290,15 +293,7 @@ static inline __uint64_t howmany_64(__uint64_t x, __uint32_t y)
 #define ASSERT_ALWAYS(expr)	\
 	(unlikely(expr) ? (void)0 : assfail(#expr, __FILE__, __LINE__))
 
-#ifndef DEBUG
-#define ASSERT(expr)	((void)0)
-
-#ifndef STATIC
-# define STATIC static noinline
-#endif
-
-#else /* DEBUG */
-
+#ifdef DEBUG
 #define ASSERT(expr)	\
 	(unlikely(expr) ? (void)0 : assfail(#expr, __FILE__, __LINE__))
 
@@ -306,6 +301,26 @@ static inline __uint64_t howmany_64(__uint64_t x, __uint32_t y)
 # define STATIC noinline
 #endif
 
+#else	/* !DEBUG */
+
+#ifdef XFS_WARN
+
+#define ASSERT(expr)	\
+	(unlikely(expr) ? (void)0 : asswarn(#expr, __FILE__, __LINE__))
+
+#ifndef STATIC
+# define STATIC static noinline
+#endif
+
+#else	/* !DEBUG && !XFS_WARN */
+
+#define ASSERT(expr)	((void)0)
+
+#ifndef STATIC
+# define STATIC static noinline
+#endif
+
+#endif /* XFS_WARN */
 #endif /* DEBUG */
 
 #endif /* __XFS_LINUX__ */

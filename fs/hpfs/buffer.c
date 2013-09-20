@@ -7,7 +7,36 @@
  */
 #include <linux/sched.h>
 #include <linux/slab.h>
+#include <linux/blkdev.h>
 #include "hpfs_fn.h"
+
+void hpfs_prefetch_sectors(struct super_block *s, unsigned secno, int n)
+{
+	struct buffer_head *bh;
+	struct blk_plug plug;
+
+	if (n <= 0 || unlikely(secno >= hpfs_sb(s)->sb_fs_size))
+		return;
+
+	bh = sb_find_get_block(s, secno);
+	if (bh) {
+		if (buffer_uptodate(bh)) {
+			brelse(bh);
+			return;
+		}
+		brelse(bh);
+	};
+
+	blk_start_plug(&plug);
+	while (n > 0) {
+		if (unlikely(secno >= hpfs_sb(s)->sb_fs_size))
+			break;
+		sb_breadahead(s, secno);
+		secno++;
+		n--;
+	}
+	blk_finish_plug(&plug);
+}
 
 /* Map a sector into a buffer and return pointers to it and to the buffer. */
 
@@ -17,6 +46,8 @@ void *hpfs_map_sector(struct super_block *s, unsigned secno, struct buffer_head 
 	struct buffer_head *bh;
 
 	hpfs_lock_assert(s);
+
+	hpfs_prefetch_sectors(s, secno, ahead);
 
 	cond_resched();
 
@@ -66,6 +97,8 @@ void *hpfs_map_4sectors(struct super_block *s, unsigned secno, struct quad_buffe
 		printk("HPFS: hpfs_map_4sectors: unaligned read\n");
 		return NULL;
 	}
+
+	hpfs_prefetch_sectors(s, secno, 4 + ahead);
 
 	qbh->data = data = kmalloc(2048, GFP_NOFS);
 	if (!data) {
@@ -156,7 +189,6 @@ void hpfs_brelse4(struct quad_buffer_head *qbh)
 
 void hpfs_mark_4buffers_dirty(struct quad_buffer_head *qbh)
 {
-	PRINTK(("hpfs_mark_4buffers_dirty\n"));
 	memcpy(qbh->bh[0]->b_data, qbh->data, 512);
 	memcpy(qbh->bh[1]->b_data, qbh->data + 512, 512);
 	memcpy(qbh->bh[2]->b_data, qbh->data + 2 * 512, 512);

@@ -30,7 +30,6 @@
 
 #include <mach/board.h>
 #include <mach/hardware.h>
-#include <mach/system.h>
 
 #include "board-mahimahi.h"
 #include "devices.h"
@@ -71,7 +70,12 @@ static void __init mahimahi_map_io(void)
 	msm_clock_init();
 }
 
-extern struct sys_timer msm_timer;
+static void __init mahimahi_init_late(void)
+{
+	smd_debugfs_init();
+}
+
+void msm_timer_init(void);
 
 MACHINE_START(MAHIMAHI, "mahimahi")
 	.atag_offset	= 0x100,
@@ -79,5 +83,6 @@ MACHINE_START(MAHIMAHI, "mahimahi")
 	.map_io		= mahimahi_map_io,
 	.init_irq	= msm_init_irq,
 	.init_machine	= mahimahi_init,
-	.timer		= &msm_timer,
+	.init_late	= mahimahi_init_late,
+	.init_time	= msm_timer_init,
 MACHINE_END

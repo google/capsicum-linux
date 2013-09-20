@@ -133,14 +133,14 @@ static __init int reset_init_affinity(void)
 }
 late_initcall(reset_init_affinity);
 
-static struct cpumask cpu_started __cpuinitdata;
+static struct cpumask cpu_started;
 
 /*
  * Activate a secondary processor.  Very minimal; don't add anything
  * to this path without knowing what you're doing, since SMP booting
  * is pretty fragile.
  */
-static void __cpuinit start_secondary(void)
+static void start_secondary(void)
 {
 	int cpuid = smp_processor_id();
 
@@ -183,7 +183,7 @@ static void __cpuinit start_secondary(void)
 /*
  * Bring a secondary processor online.
  */
-void __cpuinit online_secondary(void)
+void online_secondary(void)
 {
 	/*
 	 * low-memory mappings have been cleared, flush them from
@@ -198,17 +198,7 @@ void __cpuinit online_secondary(void)
 
 	notify_cpu_starting(smp_processor_id());
 
-	/*
-	 * We need to hold call_lock, so there is no inconsistency
-	 * between the time smp_call_function() determines number of
-	 * IPI recipients, and the time when the determination is made
-	 * for which cpus receive the IPI. Holding this
-	 * lock helps us to not include this cpu in a currently in progress
-	 * smp_call_function().
-	 */
-	ipi_call_lock();
 	set_cpu_online(smp_processor_id(), 1);
-	ipi_call_unlock();
 	__get_cpu_var(cpu_state) = CPU_ONLINE;
 
 	/* Set up tile-specific state for this cpu. */
@@ -217,12 +207,10 @@ void __cpuinit online_secondary(void)
 	/* Set up tile-timer clock-event device on this cpu */
 	setup_tile_timer();
 
-	preempt_enable();
-
-	cpu_idle();
+	cpu_startup_entry(CPUHP_ONLINE);
 }
 
-int __cpuinit __cpu_up(unsigned int cpu)
+int __cpu_up(unsigned int cpu, struct task_struct *tidle)
 {
 	/* Wait 5s total for all CPUs for them to come online */
 	static int timeout;

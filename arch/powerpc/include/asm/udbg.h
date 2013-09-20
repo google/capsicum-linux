@@ -21,7 +21,6 @@ extern int (*udbg_getc_poll)(void);
 
 extern void udbg_puts(const char *s);
 extern int udbg_write(const char *s, int n);
-extern int udbg_read(char *buf, int buflen);
 
 extern void register_early_udbg_console(void);
 extern void udbg_printf(const char *fmt, ...)
@@ -53,6 +52,7 @@ extern void __init udbg_init_40x_realmode(void);
 extern void __init udbg_init_cpm(void);
 extern void __init udbg_init_usbgecko(void);
 extern void __init udbg_init_wsp(void);
+extern void __init udbg_init_memcons(void);
 extern void __init udbg_init_ehv_bc(void);
 extern void __init udbg_init_ps3gelic(void);
 extern void __init udbg_init_debug_opal_raw(void);

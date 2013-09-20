@@ -82,9 +82,10 @@ void blk_delete_timer(struct request *req)
 static void blk_rq_timed_out(struct request *req)
 {
 	struct request_queue *q = req->q;
-	enum blk_eh_timer_return ret;
+	enum blk_eh_timer_return ret = BLK_EH_RESET_TIMER;
 
-	ret = q->rq_timed_out_fn(req);
+	if (q->rq_timed_out_fn)
+		ret = q->rq_timed_out_fn(req);
 	switch (ret) {
 	case BLK_EH_HANDLED:
 		__blk_complete_request(req);
@@ -197,44 +198,3 @@ void blk_add_timer(struct request *req)
 		mod_timer(&q->timeout, expiry);
 }
 
-/**
- * blk_abort_queue -- Abort all request on given queue
- * @queue:	pointer to queue
- *
- */
-void blk_abort_queue(struct request_queue *q)
-{
-	unsigned long flags;
-	struct request *rq, *tmp;
-	LIST_HEAD(list);
-
-	/*
-	 * Not a request based block device, nothing to abort
-	 */
-	if (!q->request_fn)
-		return;
-
-	spin_lock_irqsave(q->queue_lock, flags);
-
-	elv_abort_queue(q);
-
-	/*
-	 * Splice entries to local list, to avoid deadlocking if entries
-	 * get readded to the timeout list by error handling
-	 */
-	list_splice_init(&q->timeout_list, &list);
-
-	list_for_each_entry_safe(rq, tmp, &list, timeout_list)
-		blk_abort_request(rq);
-
-	/*
-	 * Occasionally, blk_abort_request() will return without
-	 * deleting the element from the list. Make sure we add those back
-	 * instead of leaving them on the local stack list.
-	 */
-	list_splice(&list, &q->timeout_list);
-
-	spin_unlock_irqrestore(q->queue_lock, flags);
-
-}
-EXPORT_SYMBOL_GPL(blk_abort_queue);

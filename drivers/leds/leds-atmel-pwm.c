@@ -35,7 +35,7 @@ static void pwmled_brightness(struct led_classdev *cdev, enum led_brightness b)
  * NOTE:  we reuse the platform_data structure of GPIO leds,
  * but repurpose its "gpio" number as a PWM channel number.
  */
-static int __devinit pwmled_probe(struct platform_device *pdev)
+static int pwmled_probe(struct platform_device *pdev)
 {
 	const struct gpio_led_platform_data	*pdata;
 	struct pwmled				*leds;
@@ -46,7 +46,8 @@ static int __devinit pwmled_probe(struct platform_device *pdev)
 	if (!pdata || pdata->num_leds < 1)
 		return -ENODEV;
 
-	leds = kcalloc(pdata->num_leds, sizeof(*leds), GFP_KERNEL);
+	leds = devm_kzalloc(&pdev->dev, pdata->num_leds * sizeof(*leds),
+			GFP_KERNEL);
 	if (!leds)
 		return -ENOMEM;
 
@@ -108,12 +109,11 @@ err:
 			pwm_channel_free(&leds[i].pwmc);
 		}
 	}
-	kfree(leds);
 
 	return status;
 }
 
-static int __exit pwmled_remove(struct platform_device *pdev)
+static int pwmled_remove(struct platform_device *pdev)
 {
 	const struct gpio_led_platform_data	*pdata;
 	struct pwmled				*leds;
@@ -129,8 +129,6 @@ static int __exit pwmled_remove(struct platform_device *pdev)
 		pwm_channel_free(&led->pwmc);
 	}
 
-	kfree(leds);
-	platform_set_drvdata(pdev, NULL);
 	return 0;
 }
 
@@ -141,7 +139,7 @@ static struct platform_driver pwmled_driver = {
 	},
 	/* REVISIT add suspend() and resume() methods */
 	.probe =	pwmled_probe,
-	.remove =	__exit_p(pwmled_remove),
+	.remove =	pwmled_remove,
 };
 
 module_platform_driver(pwmled_driver);

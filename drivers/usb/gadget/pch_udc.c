@@ -295,7 +295,6 @@ struct pch_udc_ep {
 	struct pch_udc_data_dma_desc	*td_data;
 	struct pch_udc_dev		*dev;
 	unsigned long			offset_addr;
-	const struct usb_endpoint_descriptor	*desc;
 	struct list_head		queue;
 	unsigned			num:5,
 					in:1,
@@ -359,7 +358,6 @@ struct pch_udc_dev {
 			prot_stall:1,
 			irq_registered:1,
 			mem_region:1,
-			registered:1,
 			suspended:1,
 			connected:1,
 			vbus_session:1,
@@ -376,6 +374,7 @@ struct pch_udc_dev {
 	struct pch_udc_cfg_data		cfg_data;
 	struct pch_vbus_gpio_data	vbus_gpio;
 };
+#define to_pch_udc(g)	(container_of((g), struct pch_udc_dev, gadget))
 
 #define PCH_UDC_PCI_BAR			1
 #define PCI_DEVICE_ID_INTEL_EG20T_UDC	0x8808
@@ -385,7 +384,6 @@ struct pch_udc_dev {
 
 static const char	ep0_string[] = "ep0in";
 static DEFINE_SPINLOCK(udc_stall_spinlock);	/* stall spin lock */
-struct pch_udc_dev *pch_udc;		/* pointer to device object */
 static bool speed_fs;
 module_param_named(speed_fs, speed_fs, bool, S_IRUGO);
 MODULE_PARM_DESC(speed_fs, "true for Full speed operation");
@@ -1236,9 +1234,10 @@ static int pch_udc_pcd_vbus_draw(struct usb_gadget *gadget, unsigned int mA)
 	return -EOPNOTSUPP;
 }
 
-static int pch_udc_start(struct usb_gadget_driver *driver,
-	int (*bind)(struct usb_gadget *));
-static int pch_udc_stop(struct usb_gadget_driver *driver);
+static int pch_udc_start(struct usb_gadget *g,
+		struct usb_gadget_driver *driver);
+static int pch_udc_stop(struct usb_gadget *g,
+		struct usb_gadget_driver *driver);
 static const struct usb_gadget_ops pch_udc_ops = {
 	.get_frame = pch_udc_pcd_get_frame,
 	.wakeup = pch_udc_pcd_wakeup,
@@ -1246,8 +1245,8 @@ static const struct usb_gadget_ops pch_udc_ops = {
 	.pullup = pch_udc_pcd_pullup,
 	.vbus_session = pch_udc_pcd_vbus_session,
 	.vbus_draw = pch_udc_pcd_vbus_draw,
-	.start	= pch_udc_start,
-	.stop	= pch_udc_stop,
+	.udc_start = pch_udc_start,
+	.udc_stop = pch_udc_stop,
 };
 
 /**
@@ -1441,6 +1440,8 @@ static void pch_vbus_gpio_free(struct pch_udc_dev *dev)
  */
 static void complete_req(struct pch_udc_ep *ep, struct pch_udc_request *req,
 								 int status)
+	__releases(&dev->lock)
+	__acquires(&dev->lock)
 {
 	struct pch_udc_dev	*dev;
 	unsigned halted = ep->halted;
@@ -1705,7 +1706,7 @@ static int pch_udc_pcd_ep_enable(struct usb_ep *usbep,
 	if (!dev->driver || (dev->gadget.speed == USB_SPEED_UNKNOWN))
 		return -ESHUTDOWN;
 	spin_lock_irqsave(&dev->lock, iflags);
-	ep->desc = desc;
+	ep->ep.desc = desc;
 	ep->halted = 0;
 	pch_udc_ep_enable(ep, &ep->dev->cfg_data, desc);
 	ep->ep.maxpacket = usb_endpoint_maxp(desc);
@@ -1734,7 +1735,7 @@ static int pch_udc_pcd_ep_disable(struct usb_ep *usbep)
 
 	ep = container_of(usbep, struct pch_udc_ep, ep);
 	dev = ep->dev;
-	if ((usbep->name == ep0_string) || !ep->desc)
+	if ((usbep->name == ep0_string) || !ep->ep.desc)
 		return -EINVAL;
 
 	spin_lock_irqsave(&ep->dev->lock, iflags);
@@ -1742,7 +1743,6 @@ static int pch_udc_pcd_ep_disable(struct usb_ep *usbep)
 	ep->halted = 1;
 	pch_udc_ep_disable(ep);
 	pch_udc_disable_ep_interrupts(ep->dev, PCH_UDC_EPINT(ep->in, ep->num));
-	ep->desc = NULL;
 	ep->ep.desc = NULL;
 	INIT_LIST_HEAD(&ep->queue);
 	spin_unlock_irqrestore(&ep->dev->lock, iflags);
@@ -1849,7 +1849,7 @@ static int pch_udc_pcd_queue(struct usb_ep *usbep, struct usb_request *usbreq,
 		return -EINVAL;
 	ep = container_of(usbep, struct pch_udc_ep, ep);
 	dev = ep->dev;
-	if (!ep->desc && ep->num)
+	if (!ep->ep.desc && ep->num)
 		return -EINVAL;
 	req = container_of(usbreq, struct pch_udc_request, req);
 	if (!list_empty(&req->queue))
@@ -1949,7 +1949,7 @@ static int pch_udc_pcd_dequeue(struct usb_ep *usbep,
 
 	ep = container_of(usbep, struct pch_udc_ep, ep);
 	dev = ep->dev;
-	if (!usbep || !usbreq || (!ep->desc && ep->num))
+	if (!usbep || !usbreq || (!ep->ep.desc && ep->num))
 		return ret;
 	req = container_of(usbreq, struct pch_udc_request, req);
 	spin_lock_irqsave(&ep->dev->lock, flags);
@@ -1988,7 +1988,7 @@ static int pch_udc_pcd_set_halt(struct usb_ep *usbep, int halt)
 		return -EINVAL;
 	ep = container_of(usbep, struct pch_udc_ep, ep);
 	dev = ep->dev;
-	if (!ep->desc && !ep->num)
+	if (!ep->ep.desc && !ep->num)
 		return -EINVAL;
 	if (!ep->dev->driver || (ep->dev->gadget.speed == USB_SPEED_UNKNOWN))
 		return -ESHUTDOWN;
@@ -2033,7 +2033,7 @@ static int pch_udc_pcd_set_wedge(struct usb_ep *usbep)
 		return -EINVAL;
 	ep = container_of(usbep, struct pch_udc_ep, ep);
 	dev = ep->dev;
-	if (!ep->desc && !ep->num)
+	if (!ep->ep.desc && !ep->num)
 		return -EINVAL;
 	if (!ep->dev->driver || (ep->dev->gadget.speed == USB_SPEED_UNKNOWN))
 		return -ESHUTDOWN;
@@ -2065,7 +2065,7 @@ static void pch_udc_pcd_fifo_flush(struct usb_ep *usbep)
 		return;
 
 	ep = container_of(usbep, struct pch_udc_ep, ep);
-	if (ep->desc || !ep->num)
+	if (ep->ep.desc || !ep->num)
 		pch_udc_ep_fifo_flush(ep, ep->in);
 }
 
@@ -2210,7 +2210,7 @@ static void pch_udc_complete_receiver(struct pch_udc_ep *ep)
 			return;
 		}
 		if ((td->status & PCH_UDC_BUFF_STS) == PCH_UDC_BS_DMA_DONE)
-			if (td->status | PCH_UDC_DMA_LAST) {
+			if (td->status & PCH_UDC_DMA_LAST) {
 				count = td->status & PCH_UDC_RXTX_BYTES;
 				break;
 			}
@@ -2383,6 +2383,8 @@ static void pch_udc_svc_control_in(struct pch_udc_dev *dev)
  * @dev:	Reference to the device structure
  */
 static void pch_udc_svc_control_out(struct pch_udc_dev *dev)
+	__releases(&dev->lock)
+	__acquires(&dev->lock)
 {
 	u32	stat;
 	int setup_supported;
@@ -2983,40 +2985,14 @@ static int init_dma_pools(struct pch_udc_dev *dev)
 	return 0;
 }
 
-static int pch_udc_start(struct usb_gadget_driver *driver,
-	int (*bind)(struct usb_gadget *))
+static int pch_udc_start(struct usb_gadget *g,
+		struct usb_gadget_driver *driver)
 {
-	struct pch_udc_dev	*dev = pch_udc;
-	int			retval;
+	struct pch_udc_dev	*dev = to_pch_udc(g);
 
-	if (!driver || (driver->max_speed == USB_SPEED_UNKNOWN) || !bind ||
-	    !driver->setup || !driver->unbind || !driver->disconnect) {
-		dev_err(&dev->pdev->dev,
-			"%s: invalid driver parameter\n", __func__);
-		return -EINVAL;
-	}
-
-	if (!dev)
-		return -ENODEV;
-
-	if (dev->driver) {
-		dev_err(&dev->pdev->dev, "%s: already bound\n", __func__);
-		return -EBUSY;
-	}
 	driver->driver.bus = NULL;
 	dev->driver = driver;
-	dev->gadget.dev.driver = &driver->driver;
 
-	/* Invoke the bind routine of the gadget driver */
-	retval = bind(&dev->gadget);
-
-	if (retval) {
-		dev_err(&dev->pdev->dev, "%s: binding to %s returning %d\n",
-		       __func__, driver->driver.name, retval);
-		dev->driver = NULL;
-		dev->gadget.dev.driver = NULL;
-		return retval;
-	}
 	/* get ready for ep0 traffic */
 	pch_udc_setup_ep0(dev);
 
@@ -3028,30 +3004,20 @@ static int pch_udc_start(struct usb_gadget_driver *driver,
 	return 0;
 }
 
-static int pch_udc_stop(struct usb_gadget_driver *driver)
+static int pch_udc_stop(struct usb_gadget *g,
+		struct usb_gadget_driver *driver)
 {
-	struct pch_udc_dev	*dev = pch_udc;
-
-	if (!dev)
-		return -ENODEV;
-
-	if (!driver || (driver != dev->driver)) {
-		dev_err(&dev->pdev->dev,
-			"%s: invalid driver parameter\n", __func__);
-		return -EINVAL;
-	}
+	struct pch_udc_dev	*dev = to_pch_udc(g);
 
 	pch_udc_disable_interrupts(dev, UDC_DEVINT_MSK);
 
 	/* Assures that there are no pending requests with this driver */
-	driver->disconnect(&dev->gadget);
-	driver->unbind(&dev->gadget);
-	dev->gadget.dev.driver = NULL;
 	dev->driver = NULL;
 	dev->connected = 0;
 
 	/* set SD */
 	pch_udc_set_disconnect(dev);
+
 	return 0;
 }
 
@@ -3113,8 +3079,6 @@ static void pch_udc_remove(struct pci_dev *pdev)
 				   pci_resource_len(pdev, PCH_UDC_PCI_BAR));
 	if (dev->active)
 		pci_disable_device(pdev);
-	if (dev->registered)
-		device_unregister(&dev->gadget.dev);
 	kfree(dev);
 	pci_set_drvdata(pdev, NULL);
 }
@@ -3166,11 +3130,6 @@ static int pch_udc_probe(struct pci_dev *pdev,
 	int			retval;
 	struct pch_udc_dev	*dev;
 
-	/* one udc only */
-	if (pch_udc) {
-		pr_err("%s: already probed\n", __func__);
-		return -EBUSY;
-	}
 	/* init */
 	dev = kzalloc(sizeof *dev, GFP_KERNEL);
 	if (!dev) {
@@ -3209,7 +3168,6 @@ static int pch_udc_probe(struct pci_dev *pdev,
 		retval = -ENODEV;
 		goto finished;
 	}
-	pch_udc = dev;
 	/* initialize the hardware */
 	if (pch_udc_pcd_init(dev)) {
 		retval = -ENODEV;
@@ -3237,21 +3195,13 @@ static int pch_udc_probe(struct pci_dev *pdev,
 	if (retval)
 		goto finished;
 
-	dev_set_name(&dev->gadget.dev, "gadget");
-	dev->gadget.dev.parent = &pdev->dev;
-	dev->gadget.dev.dma_mask = pdev->dev.dma_mask;
-	dev->gadget.dev.release = gadget_release;
 	dev->gadget.name = KBUILD_MODNAME;
 	dev->gadget.max_speed = USB_SPEED_HIGH;
 
-	retval = device_register(&dev->gadget.dev);
-	if (retval)
-		goto finished;
-	dev->registered = 1;
-
 	/* Put the device in disconnected state till a driver is bound */
 	pch_udc_set_disconnect(dev);
-	retval = usb_add_gadget_udc(&pdev->dev, &dev->gadget);
+	retval = usb_add_gadget_udc_release(&pdev->dev, &dev->gadget,
+			gadget_release);
 	if (retval)
 		goto finished;
 	return 0;
@@ -3282,7 +3232,6 @@ static DEFINE_PCI_DEVICE_TABLE(pch_udc_pcidev_id) = {
 
 MODULE_DEVICE_TABLE(pci, pch_udc_pcidev_id);
 
-
 static struct pci_driver pch_udc_driver = {
 	.name =	KBUILD_MODNAME,
 	.id_table =	pch_udc_pcidev_id,
@@ -3293,17 +3242,7 @@ static struct pci_driver pch_udc_driver = {
 	.shutdown =	pch_udc_shutdown,
 };
 
-static int __init pch_udc_pci_init(void)
-{
-	return pci_register_driver(&pch_udc_driver);
-}
-module_init(pch_udc_pci_init);
-
-static void __exit pch_udc_pci_exit(void)
-{
-	pci_unregister_driver(&pch_udc_driver);
-}
-module_exit(pch_udc_pci_exit);
+module_pci_driver(pch_udc_driver);
 
 MODULE_DESCRIPTION("Intel EG20T USB Device Controller");
 MODULE_AUTHOR("LAPIS Semiconductor, <tomoya-linux@dsn.lapis-semi.com>");

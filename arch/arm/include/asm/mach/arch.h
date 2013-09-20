@@ -8,12 +8,22 @@
  * published by the Free Software Foundation.
  */
 
+#include <linux/types.h>
+
 #ifndef __ASSEMBLY__
+#include <linux/reboot.h>
 
 struct tag;
 struct meminfo;
-struct sys_timer;
 struct pt_regs;
+struct smp_operations;
+#ifdef CONFIG_SMP
+#define smp_ops(ops) (&(ops))
+#define smp_init_ops(ops) (&(ops))
+#else
+#define smp_ops(ops) (struct smp_operations *)NULL
+#define smp_init_ops(ops) (bool (*)(void))NULL
+#endif
 
 struct machine_desc {
 	unsigned int		nr;		/* architecture number	*/
@@ -34,19 +44,22 @@ struct machine_desc {
 	unsigned char		reserve_lp0 :1;	/* never has lp0	*/
 	unsigned char		reserve_lp1 :1;	/* never has lp1	*/
 	unsigned char		reserve_lp2 :1;	/* never has lp2	*/
-	char			restart_mode;	/* default restart mode	*/
+	enum reboot_mode	reboot_mode;	/* default restart mode	*/
+	struct smp_operations	*smp;		/* SMP operations	*/
+	bool			(*smp_init)(void);
 	void			(*fixup)(struct tag *, char **,
 					 struct meminfo *);
 	void			(*reserve)(void);/* reserve mem blocks	*/
 	void			(*map_io)(void);/* IO mapping function	*/
 	void			(*init_early)(void);
 	void			(*init_irq)(void);
-	struct sys_timer	*timer;		/* system tick timer	*/
+	void			(*init_time)(void);
 	void			(*init_machine)(void);
+	void			(*init_late)(void);
 #ifdef CONFIG_MULTI_IRQ_HANDLER
 	void			(*handle_irq)(struct pt_regs *);
 #endif
-	void			(*restart)(char, const char *);
+	void			(*restart)(enum reboot_mode, const char *);
 };
 
 /*

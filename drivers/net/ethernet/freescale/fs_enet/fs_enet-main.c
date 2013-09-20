@@ -177,8 +177,6 @@ static int fs_enet_rx_napi(struct napi_struct *napi, int budget)
 				received++;
 				netif_receive_skb(skb);
 			} else {
-				dev_warn(fep->dev,
-					 "Memory squeeze, dropping packet.\n");
 				fep->stats.rx_dropped++;
 				skbn = skb;
 			}
@@ -309,8 +307,6 @@ static int fs_enet_rx_non_napi(struct net_device *dev)
 				received++;
 				netif_rx(skb);
 			} else {
-				dev_warn(fep->dev,
-					 "Memory squeeze, dropping packet.\n");
 				fep->stats.rx_dropped++;
 				skbn = skb;
 			}
@@ -505,11 +501,9 @@ void fs_init_bds(struct net_device *dev)
 	 */
 	for (i = 0, bdp = fep->rx_bd_base; i < fep->rx_ring; i++, bdp++) {
 		skb = netdev_alloc_skb(dev, ENET_RX_FRSIZE);
-		if (skb == NULL) {
-			dev_warn(fep->dev,
-				 "Memory squeeze, unable to allocate skb\n");
+		if (skb == NULL)
 			break;
-		}
+
 		skb_align(skb, ENET_RX_ALIGN);
 		fep->rx_skbuff[i] = skb;
 		CBDW_BUFADDR(bdp,
@@ -593,13 +587,8 @@ static struct sk_buff *tx_skb_align_workaround(struct net_device *dev,
 
 	/* Alloc new skb */
 	new_skb = netdev_alloc_skb(dev, skb->len + 4);
-	if (!new_skb) {
-		if (net_ratelimit()) {
-			dev_warn(fep->dev,
-				 "Memory squeeze, dropping tx packet.\n");
-		}
+	if (!new_skb)
 		return NULL;
-	}
 
 	/* Make sure new skb is properly aligned */
 	skb_align(new_skb, 4);
@@ -888,8 +877,8 @@ static struct net_device_stats *fs_enet_get_stats(struct net_device *dev)
 static void fs_get_drvinfo(struct net_device *dev,
 			    struct ethtool_drvinfo *info)
 {
-	strcpy(info->driver, DRV_MODULE_NAME);
-	strcpy(info->version, DRV_MODULE_VERSION);
+	strlcpy(info->driver, DRV_MODULE_NAME, sizeof(info->driver));
+	strlcpy(info->version, DRV_MODULE_VERSION, sizeof(info->version));
 }
 
 static int fs_get_regs_len(struct net_device *dev)
@@ -963,6 +952,7 @@ static const struct ethtool_ops fs_ethtool_ops = {
 	.get_msglevel = fs_get_msglevel,
 	.set_msglevel = fs_set_msglevel,
 	.get_regs = fs_get_regs,
+	.get_ts_info = ethtool_op_get_ts_info,
 };
 
 static int fs_ioctl(struct net_device *dev, struct ifreq *rq, int cmd)
@@ -1003,7 +993,7 @@ static const struct net_device_ops fs_enet_netdev_ops = {
 };
 
 static struct of_device_id fs_enet_match[];
-static int __devinit fs_enet_probe(struct platform_device *ofdev)
+static int fs_enet_probe(struct platform_device *ofdev)
 {
 	const struct of_device_id *match;
 	struct net_device *ndev;
@@ -1058,7 +1048,7 @@ static int __devinit fs_enet_probe(struct platform_device *ofdev)
 	}
 
 	SET_NETDEV_DEV(ndev, &ofdev->dev);
-	dev_set_drvdata(&ofdev->dev, ndev);
+	platform_set_drvdata(ofdev, ndev);
 
 	fep = netdev_priv(ndev);
 	fep->dev = &ofdev->dev;
@@ -1116,7 +1106,6 @@ out_cleanup_data:
 	fep->ops->cleanup_data(ndev);
 out_free_dev:
 	free_netdev(ndev);
-	dev_set_drvdata(&ofdev->dev, NULL);
 out_put:
 	of_node_put(fpi->phy_node);
 out_free_fpi:
@@ -1126,7 +1115,7 @@ out_free_fpi:
 
 static int fs_enet_remove(struct platform_device *ofdev)
 {
-	struct net_device *ndev = dev_get_drvdata(&ofdev->dev);
+	struct net_device *ndev = platform_get_drvdata(ofdev);
 	struct fs_enet_private *fep = netdev_priv(ndev);
 
 	unregister_netdev(ndev);

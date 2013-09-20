@@ -27,6 +27,7 @@
 #include <linux/swap.h>
 #include <linux/uio.h>
 #include <linux/writeback.h>
+#include <linux/aio.h>
 
 #include <asm/page.h>
 #include <asm/uaccess.h>
@@ -1762,6 +1763,16 @@ err_out:
 	return err;
 }
 
+static void ntfs_write_failed(struct address_space *mapping, loff_t to)
+{
+	struct inode *inode = mapping->host;
+
+	if (to > inode->i_size) {
+		truncate_pagecache(inode, to, inode->i_size);
+		ntfs_truncate_vfs(inode);
+	}
+}
+
 /**
  * ntfs_file_buffered_write -
  *
@@ -2022,8 +2033,9 @@ static ssize_t ntfs_file_buffered_write(struct kiocb *iocb,
 				 * allocated space, which is not a disaster.
 				 */
 				i_size = i_size_read(vi);
-				if (pos + bytes > i_size)
-					vmtruncate(vi, i_size);
+				if (pos + bytes > i_size) {
+					ntfs_write_failed(mapping, pos + bytes);
+				}
 				break;
 			}
 		}
@@ -2084,7 +2096,6 @@ static ssize_t ntfs_file_aio_write_nolock(struct kiocb *iocb,
 	if (err)
 		return err;
 	pos = *ppos;
-	vfs_check_frozen(inode->i_sb, SB_FREEZE_WRITE);
 	/* We can write back this queue in page reclaim. */
 	current->backing_dev_info = mapping->backing_dev_info;
 	written = 0;
@@ -2096,7 +2107,9 @@ static ssize_t ntfs_file_aio_write_nolock(struct kiocb *iocb,
 	err = file_remove_suid(file);
 	if (err)
 		goto out;
-	file_update_time(file);
+	err = file_update_time(file);
+	if (err)
+		goto out;
 	written = ntfs_file_buffered_write(iocb, iov, nr_segs, pos, ppos,
 			count);
 out:
@@ -2224,7 +2237,6 @@ const struct file_operations ntfs_file_ops = {
 
 const struct inode_operations ntfs_file_inode_ops = {
 #ifdef NTFS_RW
-	.truncate	= ntfs_truncate_vfs,
 	.setattr	= ntfs_setattr,
 #endif /* NTFS_RW */
 };

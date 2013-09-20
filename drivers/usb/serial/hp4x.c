@@ -20,10 +20,6 @@
 #include <linux/usb.h>
 #include <linux/usb/serial.h>
 
-/*
- * Version Information
- */
-#define DRIVER_VERSION "v1.00"
 #define DRIVER_DESC "HP4x (48/49) Generic Serial driver"
 
 #define HP_VENDOR_ID 0x03f0
@@ -35,13 +31,6 @@ static const struct usb_device_id id_table[] = {
 };
 
 MODULE_DEVICE_TABLE(usb, id_table);
-
-static struct usb_driver hp49gp_driver = {
-	.name =		"hp4X",
-	.probe =	usb_serial_probe,
-	.disconnect =	usb_serial_disconnect,
-	.id_table =	id_table,
-};
 
 static struct usb_serial_driver hp49gp_device = {
 	.driver = {
@@ -56,8 +45,7 @@ static struct usb_serial_driver * const serial_drivers[] = {
 	&hp49gp_device, NULL
 };
 
-module_usb_serial_driver(hp49gp_driver, serial_drivers);
+module_usb_serial_driver(serial_drivers, id_table);
 
 MODULE_DESCRIPTION(DRIVER_DESC);
-MODULE_VERSION(DRIVER_VERSION);
 MODULE_LICENSE("GPL");

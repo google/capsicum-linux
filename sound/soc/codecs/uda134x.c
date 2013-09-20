@@ -159,8 +159,7 @@ static int uda134x_mute(struct snd_soc_dai *dai, int mute)
 static int uda134x_startup(struct snd_pcm_substream *substream,
 	struct snd_soc_dai *dai)
 {
-	struct snd_soc_pcm_runtime *rtd = substream->private_data;
-	struct snd_soc_codec *codec =rtd->codec;
+	struct snd_soc_codec *codec = dai->codec;
 	struct uda134x_priv *uda134x = snd_soc_codec_get_drvdata(codec);
 	struct snd_pcm_runtime *master_runtime;
 
@@ -191,8 +190,7 @@ static int uda134x_startup(struct snd_pcm_substream *substream,
 static void uda134x_shutdown(struct snd_pcm_substream *substream,
 	struct snd_soc_dai *dai)
 {
-	struct snd_soc_pcm_runtime *rtd = substream->private_data;
-	struct snd_soc_codec *codec = rtd->codec;
+	struct snd_soc_codec *codec = dai->codec;
 	struct uda134x_priv *uda134x = snd_soc_codec_get_drvdata(codec);
 
 	if (uda134x->master_substream == substream)
@@ -603,13 +601,13 @@ static struct snd_soc_codec_driver soc_codec_dev_uda134x = {
 	.set_bias_level = uda134x_set_bias_level,
 };
 
-static int __devinit uda134x_codec_probe(struct platform_device *pdev)
+static int uda134x_codec_probe(struct platform_device *pdev)
 {
 	return snd_soc_register_codec(&pdev->dev,
 			&soc_codec_dev_uda134x, &uda134x_dai, 1);
 }
 
-static int __devexit uda134x_codec_remove(struct platform_device *pdev)
+static int uda134x_codec_remove(struct platform_device *pdev)
 {
 	snd_soc_unregister_codec(&pdev->dev);
 	return 0;
@@ -621,7 +619,7 @@ static struct platform_driver uda134x_codec_driver = {
 		.owner = THIS_MODULE,
 	},
 	.probe = uda134x_codec_probe,
-	.remove = __devexit_p(uda134x_codec_remove),
+	.remove = uda134x_codec_remove,
 };
 
 module_platform_driver(uda134x_codec_driver);

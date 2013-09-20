@@ -5,7 +5,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2011, Intel Corp.
+ * Copyright (C) 2000 - 2013, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -79,9 +79,15 @@
 #pragma pack(1)
 
 /*
- * Note about bitfields: The u8 type is used for bitfields in ACPI tables.
- * This is the only type that is even remotely portable. Anything else is not
- * portable, so do not use any other bitfield types.
+ * Note: C bitfields are not used for this reason:
+ *
+ * "Bitfields are great and easy to read, but unfortunately the C language
+ * does not specify the layout of bitfields in memory, which means they are
+ * essentially useless for dealing with packed data in on-disk formats or
+ * binary wire protocols." (Or ACPI tables and buffers.) "If you ask me,
+ * this decision was a design error in C. Ritchie could have picked an order
+ * and stuck with it." Norman Ramsey.
+ * See http://stackoverflow.com/a/1053662/41661
  */
 
 /*******************************************************************************
@@ -489,7 +495,9 @@ enum acpi_hest_notify_types {
 	ACPI_HEST_NOTIFY_LOCAL = 2,
 	ACPI_HEST_NOTIFY_SCI = 3,
 	ACPI_HEST_NOTIFY_NMI = 4,
-	ACPI_HEST_NOTIFY_RESERVED = 5	/* 5 and greater are reserved */
+	ACPI_HEST_NOTIFY_CMCI = 5,	/* ACPI 5.0 */
+	ACPI_HEST_NOTIFY_MCE = 6,	/* ACPI 5.0 */
+	ACPI_HEST_NOTIFY_RESERVED = 7	/* 7 and greater are reserved */
 };
 
 /* Values for config_write_enable bitfield above */
@@ -676,7 +684,7 @@ struct acpi_madt_local_apic {
 struct acpi_madt_io_apic {
 	struct acpi_subtable_header header;
 	u8 id;			/* I/O APIC ID */
-	u8 reserved;		/* Reserved - must be zero */
+	u8 reserved;		/* reserved - must be zero */
 	u32 address;		/* APIC physical address */
 	u32 global_irq_base;	/* Global system interrupt where INTI lines start */
 };
@@ -760,7 +768,7 @@ struct acpi_madt_interrupt_source {
 
 struct acpi_madt_local_x2apic {
 	struct acpi_subtable_header header;
-	u16 reserved;		/* Reserved - must be zero */
+	u16 reserved;		/* reserved - must be zero */
 	u32 local_apic_id;	/* Processor x2APIC ID  */
 	u32 lapic_flags;
 	u32 uid;		/* ACPI processor UID */
@@ -773,14 +781,14 @@ struct acpi_madt_local_x2apic_nmi {
 	u16 inti_flags;
 	u32 uid;		/* ACPI processor UID */
 	u8 lint;		/* LINTn to which NMI is connected */
-	u8 reserved[3];
+	u8 reserved[3];		/* reserved - must be zero */
 };
 
 /* 11: Generic Interrupt (ACPI 5.0) */
 
 struct acpi_madt_generic_interrupt {
 	struct acpi_subtable_header header;
-	u16 reserved;		/* Reserved - must be zero */
+	u16 reserved;		/* reserved - must be zero */
 	u32 gic_id;
 	u32 uid;
 	u32 flags;
@@ -794,11 +802,11 @@ struct acpi_madt_generic_interrupt {
 
 struct acpi_madt_generic_distributor {
 	struct acpi_subtable_header header;
-	u16 reserved;		/* Reserved - must be zero */
+	u16 reserved;		/* reserved - must be zero */
 	u32 gic_id;
 	u64 base_address;
 	u32 global_irq_base;
-	u32 reserved2;		/* Reserved - must be zero */
+	u32 reserved2;		/* reserved - must be zero */
 };
 
 /*
@@ -841,7 +849,7 @@ struct acpi_table_msct {
 	u64 max_address;	/* Max physical address in system */
 };
 
-/* Subtable - Maximum Proximity Domain Information. Version 1 */
+/* subtable - Maximum Proximity Domain Information. Version 1 */
 
 struct acpi_msct_proximity {
 	u8 revision;

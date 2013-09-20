@@ -304,28 +304,22 @@ static u8 o2net_num_from_nn(struct o2net_node *nn)
 
 static int o2net_prep_nsw(struct o2net_node *nn, struct o2net_status_wait *nsw)
 {
-	int ret = 0;
+	int ret;
 
-	do {
-		if (!idr_pre_get(&nn->nn_status_idr, GFP_ATOMIC)) {
-			ret = -EAGAIN;
-			break;
-		}
-		spin_lock(&nn->nn_lock);
-		ret = idr_get_new(&nn->nn_status_idr, nsw, &nsw->ns_id);
-		if (ret == 0)
-			list_add_tail(&nsw->ns_node_item,
-				      &nn->nn_status_list);
-		spin_unlock(&nn->nn_lock);
-	} while (ret == -EAGAIN);
-
-	if (ret == 0)  {
-		init_waitqueue_head(&nsw->ns_wq);
-		nsw->ns_sys_status = O2NET_ERR_NONE;
-		nsw->ns_status = 0;
+	spin_lock(&nn->nn_lock);
+	ret = idr_alloc(&nn->nn_status_idr, nsw, 0, 0, GFP_ATOMIC);
+	if (ret >= 0) {
+		nsw->ns_id = ret;
+		list_add_tail(&nsw->ns_node_item, &nn->nn_status_list);
 	}
+	spin_unlock(&nn->nn_lock);
+	if (ret < 0)
+		return ret;
 
-	return ret;
+	init_waitqueue_head(&nsw->ns_wq);
+	nsw->ns_sys_status = O2NET_ERR_NONE;
+	nsw->ns_status = 0;
+	return 0;
 }
 
 static void o2net_complete_nsw_locked(struct o2net_node *nn,
@@ -412,6 +406,9 @@ static void sc_kref_release(struct kref *kref)
 	sc->sc_node = NULL;
 
 	o2net_debug_del_sc(sc);
+
+	if (sc->sc_page)
+		__free_page(sc->sc_page);
 	kfree(sc);
 }
 
@@ -636,19 +633,19 @@ static void o2net_state_change(struct sock *sk)
 	state_change = sc->sc_state_change;
 
 	switch(sk->sk_state) {
-		/* ignore connecting sockets as they make progress */
-		case TCP_SYN_SENT:
-		case TCP_SYN_RECV:
-			break;
-		case TCP_ESTABLISHED:
-			o2net_sc_queue_work(sc, &sc->sc_connect_work);
-			break;
-		default:
-			printk(KERN_INFO "o2net: Connection to " SC_NODEF_FMT
-			      " shutdown, state %d\n",
-			      SC_NODEF_ARGS(sc), sk->sk_state);
-			o2net_sc_queue_work(sc, &sc->sc_shutdown_work);
-			break;
+	/* ignore connecting sockets as they make progress */
+	case TCP_SYN_SENT:
+	case TCP_SYN_RECV:
+		break;
+	case TCP_ESTABLISHED:
+		o2net_sc_queue_work(sc, &sc->sc_connect_work);
+		break;
+	default:
+		printk(KERN_INFO "o2net: Connection to " SC_NODEF_FMT
+			" shutdown, state %d\n",
+			SC_NODEF_ARGS(sc), sk->sk_state);
+		o2net_sc_queue_work(sc, &sc->sc_shutdown_work);
+		break;
 	}
 out:
 	read_unlock(&sk->sk_callback_lock);
@@ -870,7 +867,7 @@ int o2net_register_handler(u32 msg_type, u32 key, u32 max_len,
 		/* we've had some trouble with handlers seemingly vanishing. */
 		mlog_bug_on_msg(o2net_handler_tree_lookup(msg_type, key, &p,
 							  &parent) == NULL,
-			        "couldn't find handler we *just* registerd "
+			        "couldn't find handler we *just* registered "
 				"for type %u key %08x\n", msg_type, key);
 	}
 	write_unlock(&o2net_handler_lock);
@@ -1165,10 +1162,8 @@ out:
 	o2net_debug_del_nst(&nst); /* must be before dropping sc and node */
 	if (sc)
 		sc_put(sc);
-	if (vec)
-		kfree(vec);
-	if (msg)
-		kfree(msg);
+	kfree(vec);
+	kfree(msg);
 	o2net_complete_nsw(nn, &nsw, 0, 0, 0);
 	return ret;
 }
@@ -2005,7 +2000,7 @@ static int o2net_open_listening_sock(__be32 addr, __be16 port)
 	o2net_listen_sock = sock;
 	INIT_WORK(&o2net_listen_work, o2net_accept_many);
 
-	sock->sk->sk_reuse = 1;
+	sock->sk->sk_reuse = SK_CAN_REUSE;
 	ret = sock->ops->bind(sock, (struct sockaddr *)&sin, sizeof(sin));
 	if (ret < 0) {
 		printk(KERN_ERR "o2net: Error %d while binding socket at "

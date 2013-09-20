@@ -94,13 +94,18 @@ static int hpet_verbose;
 
 static int __init hpet_setup(char *str)
 {
-	if (str) {
+	while (str) {
+		char *next = strchr(str, ',');
+
+		if (next)
+			*next++ = 0;
 		if (!strncmp("disable", str, 7))
 			boot_hpet_disable = 1;
 		if (!strncmp("force", str, 5))
 			hpet_force_user = 1;
 		if (!strncmp("verbose", str, 7))
 			hpet_verbose = 1;
+		str = next;
 	}
 	return 1;
 }
@@ -319,8 +324,6 @@ static void hpet_set_mode(enum clock_event_mode mode,
 		now = hpet_readl(HPET_COUNTER);
 		cmp = now + (unsigned int) delta;
 		cfg = hpet_readl(HPET_Tn_CFG(timer));
-		/* Make sure we use edge triggered interrupts */
-		cfg &= ~HPET_TN_LEVEL;
 		cfg |= HPET_TN_ENABLE | HPET_TN_PERIODIC |
 		       HPET_TN_SETVAL | HPET_TN_32BIT;
 		hpet_writel(cfg, HPET_Tn_CFG(timer));
@@ -431,7 +434,7 @@ void hpet_msi_unmask(struct irq_data *data)
 
 	/* unmask it */
 	cfg = hpet_readl(HPET_Tn_CFG(hdev->num));
-	cfg |= HPET_TN_FSB;
+	cfg |= HPET_TN_ENABLE | HPET_TN_FSB;
 	hpet_writel(cfg, HPET_Tn_CFG(hdev->num));
 }
 
@@ -442,7 +445,7 @@ void hpet_msi_mask(struct irq_data *data)
 
 	/* mask it */
 	cfg = hpet_readl(HPET_Tn_CFG(hdev->num));
-	cfg &= ~HPET_TN_FSB;
+	cfg &= ~(HPET_TN_ENABLE | HPET_TN_FSB);
 	hpet_writel(cfg, HPET_Tn_CFG(hdev->num));
 }
 
@@ -475,7 +478,7 @@ static int hpet_msi_next_event(unsigned long delta,
 
 static int hpet_setup_msi_irq(unsigned int irq)
 {
-	if (arch_setup_hpet_msi(irq, hpet_blockid)) {
+	if (x86_msi.setup_hpet_msi(irq, hpet_blockid)) {
 		destroy_irq(irq);
 		return -EINVAL;
 	}
@@ -787,15 +790,16 @@ static int hpet_clocksource_register(void)
 	return 0;
 }
 
+static u32 *hpet_boot_cfg;
+
 /**
  * hpet_enable - Try to setup the HPET timer. Returns 1 on success.
  */
 int __init hpet_enable(void)
 {
-	unsigned long hpet_period;
-	unsigned int id;
+	u32 hpet_period, cfg, id;
 	u64 freq;
-	int i;
+	unsigned int i, last;
 
 	if (!is_hpet_capable())
 		return 0;
@@ -847,14 +851,44 @@ int __init hpet_enable(void)
 	id = hpet_readl(HPET_ID);
 	hpet_print_config();
 
+	last = (id & HPET_ID_NUMBER) >> HPET_ID_NUMBER_SHIFT;
+
 #ifdef CONFIG_HPET_EMULATE_RTC
 	/*
 	 * The legacy routing mode needs at least two channels, tick timer
 	 * and the rtc emulation channel.
 	 */
-	if (!(id & HPET_ID_NUMBER))
+	if (!last)
 		goto out_nohpet;
 #endif
+
+	cfg = hpet_readl(HPET_CFG);
+	hpet_boot_cfg = kmalloc((last + 2) * sizeof(*hpet_boot_cfg),
+				GFP_KERNEL);
+	if (hpet_boot_cfg)
+		*hpet_boot_cfg = cfg;
+	else
+		pr_warn("HPET initial state will not be saved\n");
+	cfg &= ~(HPET_CFG_ENABLE | HPET_CFG_LEGACY);
+	hpet_writel(cfg, HPET_CFG);
+	if (cfg)
+		pr_warn("HPET: Unrecognized bits %#x set in global cfg\n",
+			cfg);
+
+	for (i = 0; i <= last; ++i) {
+		cfg = hpet_readl(HPET_Tn_CFG(i));
+		if (hpet_boot_cfg)
+			hpet_boot_cfg[i + 1] = cfg;
+		cfg &= ~(HPET_TN_ENABLE | HPET_TN_LEVEL | HPET_TN_FSB);
+		hpet_writel(cfg, HPET_Tn_CFG(i));
+		cfg &= ~(HPET_TN_PERIODIC | HPET_TN_PERIODIC_CAP
+			 | HPET_TN_64BIT_CAP | HPET_TN_32BIT | HPET_TN_ROUTE
+			 | HPET_TN_FSB | HPET_TN_FSB_CAP);
+		if (cfg)
+			pr_warn("HPET: Unrecognized bits %#x set in cfg#%u\n",
+				cfg, i);
+	}
+	hpet_print_config();
 
 	if (hpet_clocksource_register())
 		goto out_nohpet;
@@ -923,14 +957,28 @@ fs_initcall(hpet_late_init);
 void hpet_disable(void)
 {
 	if (is_hpet_capable() && hpet_virt_address) {
-		unsigned int cfg = hpet_readl(HPET_CFG);
+		unsigned int cfg = hpet_readl(HPET_CFG), id, last;
 
-		if (hpet_legacy_int_enabled) {
+		if (hpet_boot_cfg)
+			cfg = *hpet_boot_cfg;
+		else if (hpet_legacy_int_enabled) {
 			cfg &= ~HPET_CFG_LEGACY;
 			hpet_legacy_int_enabled = 0;
 		}
 		cfg &= ~HPET_CFG_ENABLE;
 		hpet_writel(cfg, HPET_CFG);
+
+		if (!hpet_boot_cfg)
+			return;
+
+		id = hpet_readl(HPET_ID);
+		last = ((id & HPET_ID_NUMBER) >> HPET_ID_NUMBER_SHIFT);
+
+		for (id = 0; id <= last; ++id)
+			hpet_writel(hpet_boot_cfg[id + 1], HPET_Tn_CFG(id));
+
+		if (*hpet_boot_cfg & HPET_CFG_ENABLE)
+			hpet_writel(*hpet_boot_cfg, HPET_CFG);
 	}
 }
 

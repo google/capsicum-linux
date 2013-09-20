@@ -29,8 +29,9 @@ struct resource {
 #define IORESOURCE_BITS		0x000000ff	/* Bus-specific bits */
 
 #define IORESOURCE_TYPE_BITS	0x00001f00	/* Resource type */
-#define IORESOURCE_IO		0x00000100
+#define IORESOURCE_IO		0x00000100	/* PCI/ISA I/O ports */
 #define IORESOURCE_MEM		0x00000200
+#define IORESOURCE_REG		0x00000300	/* Register offsets */
 #define IORESOURCE_IRQ		0x00000400
 #define IORESOURCE_DMA		0x00000800
 #define IORESOURCE_BUS		0x00001000
@@ -191,6 +192,10 @@ extern struct resource * __request_region(struct resource *,
 extern int __check_region(struct resource *, resource_size_t, resource_size_t);
 extern void __release_region(struct resource *, resource_size_t,
 				resource_size_t);
+#ifdef CONFIG_MEMORY_HOTREMOVE
+extern int release_mem_region_adjustable(struct resource *, resource_size_t,
+				resource_size_t);
+#endif
 
 static inline int __deprecated check_region(resource_size_t s,
 						resource_size_t n)
@@ -222,6 +227,13 @@ extern int iomem_is_exclusive(u64 addr);
 extern int
 walk_system_ram_range(unsigned long start_pfn, unsigned long nr_pages,
 		void *arg, int (*func)(unsigned long, unsigned long, void *));
+
+/* True if any part of r1 overlaps r2 */
+static inline bool resource_overlaps(struct resource *r1, struct resource *r2)
+{
+       return (r1->start <= r2->end && r1->end >= r2->start);
+}
+
 
 #endif /* __ASSEMBLY__ */
 #endif	/* _LINUX_IOPORT_H */

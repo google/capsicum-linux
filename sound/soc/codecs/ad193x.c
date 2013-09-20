@@ -245,9 +245,7 @@ static int ad193x_hw_params(struct snd_pcm_substream *substream,
 		struct snd_soc_dai *dai)
 {
 	int word_len = 0, master_rate = 0;
-
-	struct snd_soc_pcm_runtime *rtd = substream->private_data;
-	struct snd_soc_codec *codec = rtd->codec;
+	struct snd_soc_codec *codec = dai->codec;
 	struct ad193x_priv *ad193x = snd_soc_codec_get_drvdata(codec);
 
 	/* bit size */
@@ -380,43 +378,28 @@ static const struct regmap_config ad193x_spi_regmap_config = {
 	.volatile_reg = adau193x_reg_volatile,
 };
 
-static int __devinit ad193x_spi_probe(struct spi_device *spi)
+static int ad193x_spi_probe(struct spi_device *spi)
 {
 	struct ad193x_priv *ad193x;
-	int ret;
 
 	ad193x = devm_kzalloc(&spi->dev, sizeof(struct ad193x_priv),
 			      GFP_KERNEL);
 	if (ad193x == NULL)
 		return -ENOMEM;
 
-	ad193x->regmap = regmap_init_spi(spi, &ad193x_spi_regmap_config);
-	if (IS_ERR(ad193x->regmap)) {
-		ret = PTR_ERR(ad193x->regmap);
-		goto err_out;
-	}
+	ad193x->regmap = devm_regmap_init_spi(spi, &ad193x_spi_regmap_config);
+	if (IS_ERR(ad193x->regmap))
+		return PTR_ERR(ad193x->regmap);
 
 	spi_set_drvdata(spi, ad193x);
 
-	ret = snd_soc_register_codec(&spi->dev,
-			&soc_codec_dev_ad193x, &ad193x_dai, 1);
-	if (ret < 0)
-		goto err_regmap_exit;
-
-	return 0;
-
-err_regmap_exit:
-	regmap_exit(ad193x->regmap);
-err_out:
-	return ret;
+	return snd_soc_register_codec(&spi->dev, &soc_codec_dev_ad193x,
+			&ad193x_dai, 1);
 }
 
-static int __devexit ad193x_spi_remove(struct spi_device *spi)
+static int ad193x_spi_remove(struct spi_device *spi)
 {
-	struct ad193x_priv *ad193x = spi_get_drvdata(spi);
-
 	snd_soc_unregister_codec(&spi->dev);
-	regmap_exit(ad193x->regmap);
 	return 0;
 }
 
@@ -426,7 +409,7 @@ static struct spi_driver ad193x_spi_driver = {
 		.owner	= THIS_MODULE,
 	},
 	.probe		= ad193x_spi_probe,
-	.remove		= __devexit_p(ad193x_spi_remove),
+	.remove		= ad193x_spi_remove,
 };
 #endif
 
@@ -447,44 +430,29 @@ static const struct i2c_device_id ad193x_id[] = {
 };
 MODULE_DEVICE_TABLE(i2c, ad193x_id);
 
-static int __devinit ad193x_i2c_probe(struct i2c_client *client,
-		const struct i2c_device_id *id)
+static int ad193x_i2c_probe(struct i2c_client *client,
+			    const struct i2c_device_id *id)
 {
 	struct ad193x_priv *ad193x;
-	int ret;
 
 	ad193x = devm_kzalloc(&client->dev, sizeof(struct ad193x_priv),
 			      GFP_KERNEL);
 	if (ad193x == NULL)
 		return -ENOMEM;
 
-	ad193x->regmap = regmap_init_i2c(client, &ad193x_i2c_regmap_config);
-	if (IS_ERR(ad193x->regmap)) {
-		ret = PTR_ERR(ad193x->regmap);
-		goto err_out;
-	}
+	ad193x->regmap = devm_regmap_init_i2c(client, &ad193x_i2c_regmap_config);
+	if (IS_ERR(ad193x->regmap))
+		return PTR_ERR(ad193x->regmap);
 
 	i2c_set_clientdata(client, ad193x);
 
-	ret =  snd_soc_register_codec(&client->dev,
-			&soc_codec_dev_ad193x, &ad193x_dai, 1);
-	if (ret < 0)
-		goto err_regmap_exit;
-
-	return 0;
-
-err_regmap_exit:
-	regmap_exit(ad193x->regmap);
-err_out:
-	return ret;
+	return snd_soc_register_codec(&client->dev, &soc_codec_dev_ad193x,
+			&ad193x_dai, 1);
 }
 
-static int __devexit ad193x_i2c_remove(struct i2c_client *client)
+static int ad193x_i2c_remove(struct i2c_client *client)
 {
-	struct ad193x_priv *ad193x = i2c_get_clientdata(client);
-
 	snd_soc_unregister_codec(&client->dev);
-	regmap_exit(ad193x->regmap);
 	return 0;
 }
 
@@ -493,7 +461,7 @@ static struct i2c_driver ad193x_i2c_driver = {
 		.name = "ad193x",
 	},
 	.probe    = ad193x_i2c_probe,
-	.remove   = __devexit_p(ad193x_i2c_remove),
+	.remove   = ad193x_i2c_remove,
 	.id_table = ad193x_id,
 };
 #endif

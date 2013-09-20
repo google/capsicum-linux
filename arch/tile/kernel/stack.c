@@ -112,7 +112,7 @@ static struct pt_regs *valid_fault_handler(struct KBacktraceIterator* kbt)
 		       p->pc, p->sp, p->ex1);
 		p = NULL;
 	}
-	if (!kbt->profile || (INT_MASK(p->faultnum) & QUEUED_INTERRUPTS) == 0)
+	if (!kbt->profile || ((1ULL << p->faultnum) & QUEUED_INTERRUPTS) == 0)
 		return p;
 	return NULL;
 }
@@ -442,7 +442,7 @@ void _KBacktraceIterator_init_current(struct KBacktraceIterator *kbt, ulong pc,
 				regs_to_pt_regs(&regs, pc, lr, sp, r52));
 }
 
-/* This is called only from kernel/sched.c, with esp == NULL */
+/* This is called only from kernel/sched/core.c, with esp == NULL */
 void show_stack(struct task_struct *task, unsigned long *esp)
 {
 	struct KBacktraceIterator kbt;
@@ -484,6 +484,7 @@ void save_stack_trace(struct stack_trace *trace)
 {
 	save_stack_trace_tsk(NULL, trace);
 }
+EXPORT_SYMBOL_GPL(save_stack_trace);
 
 #endif
 

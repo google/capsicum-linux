@@ -1,5 +1,5 @@
 /*
- * Kernel-based Virtual Machine -- Performane Monitoring Unit support
+ * Kernel-based Virtual Machine -- Performance Monitoring Unit support
  *
  * Copyright 2011 Red Hat, Inc. and/or its affiliates.
  *
@@ -80,10 +80,10 @@ static inline struct kvm_pmc *get_fixed_pmc_idx(struct kvm_pmu *pmu, int idx)
 
 static struct kvm_pmc *global_idx_to_pmc(struct kvm_pmu *pmu, int idx)
 {
-	if (idx < X86_PMC_IDX_FIXED)
+	if (idx < INTEL_PMC_IDX_FIXED)
 		return get_gp_pmc(pmu, MSR_P6_EVNTSEL0 + idx, MSR_P6_EVNTSEL0);
 	else
-		return get_fixed_pmc_idx(pmu, idx - X86_PMC_IDX_FIXED);
+		return get_fixed_pmc_idx(pmu, idx - INTEL_PMC_IDX_FIXED);
 }
 
 void kvm_deliver_pmi(struct kvm_vcpu *vcpu)
@@ -291,7 +291,7 @@ static void reprogram_idx(struct kvm_pmu *pmu, int idx)
 	if (pmc_is_gp(pmc))
 		reprogram_gp_counter(pmc, pmc->eventsel);
 	else {
-		int fidx = idx - X86_PMC_IDX_FIXED;
+		int fidx = idx - INTEL_PMC_IDX_FIXED;
 		reprogram_fixed_counter(pmc,
 				fixed_en_pmi(pmu->fixed_ctr_ctrl, fidx), fidx);
 	}
@@ -360,10 +360,12 @@ int kvm_pmu_get_msr(struct kvm_vcpu *vcpu, u32 index, u64 *data)
 	return 1;
 }
 
-int kvm_pmu_set_msr(struct kvm_vcpu *vcpu, u32 index, u64 data)
+int kvm_pmu_set_msr(struct kvm_vcpu *vcpu, struct msr_data *msr_info)
 {
 	struct kvm_pmu *pmu = &vcpu->arch.pmu;
 	struct kvm_pmc *pmc;
+	u32 index = msr_info->index;
+	u64 data = msr_info->data;
 
 	switch (index) {
 	case MSR_CORE_PERF_FIXED_CTR_CTRL:
@@ -375,6 +377,10 @@ int kvm_pmu_set_msr(struct kvm_vcpu *vcpu, u32 index, u64 data)
 		}
 		break;
 	case MSR_CORE_PERF_GLOBAL_STATUS:
+		if (msr_info->host_initiated) {
+			pmu->global_status = data;
+			return 0;
+		}
 		break; /* RO MSR */
 	case MSR_CORE_PERF_GLOBAL_CTRL:
 		if (pmu->global_ctrl == data)
@@ -386,7 +392,8 @@ int kvm_pmu_set_msr(struct kvm_vcpu *vcpu, u32 index, u64 data)
 		break;
 	case MSR_CORE_PERF_GLOBAL_OVF_CTRL:
 		if (!(data & (pmu->global_ctrl_mask & ~(3ull<<62)))) {
-			pmu->global_status &= ~data;
+			if (!msr_info->host_initiated)
+				pmu->global_status &= ~data;
 			pmu->global_ovf_ctrl = data;
 			return 0;
 		}
@@ -394,7 +401,8 @@ int kvm_pmu_set_msr(struct kvm_vcpu *vcpu, u32 index, u64 data)
 	default:
 		if ((pmc = get_gp_pmc(pmu, index, MSR_IA32_PERFCTR0)) ||
 				(pmc = get_fixed_pmc(pmu, index))) {
-			data = (s64)(s32)data;
+			if (!msr_info->host_initiated)
+				data = (s64)(s32)data;
 			pmc->counter += data - read_pmc(pmc);
 			return 0;
 		} else if ((pmc = get_gp_pmc(pmu, index, MSR_P6_EVNTSEL0))) {
@@ -452,7 +460,7 @@ void kvm_pmu_cpuid_update(struct kvm_vcpu *vcpu)
 		return;
 
 	pmu->nr_arch_gp_counters = min((int)(entry->eax >> 8) & 0xff,
-			X86_PMC_MAX_GENERIC);
+			INTEL_PMC_MAX_GENERIC);
 	pmu->counter_bitmask[KVM_PMC_GP] =
 		((u64)1 << ((entry->eax >> 16) & 0xff)) - 1;
 	bitmap_len = (entry->eax >> 24) & 0xff;
@@ -462,13 +470,13 @@ void kvm_pmu_cpuid_update(struct kvm_vcpu *vcpu)
 		pmu->nr_arch_fixed_counters = 0;
 	} else {
 		pmu->nr_arch_fixed_counters = min((int)(entry->edx & 0x1f),
-				X86_PMC_MAX_FIXED);
+				INTEL_PMC_MAX_FIXED);
 		pmu->counter_bitmask[KVM_PMC_FIXED] =
 			((u64)1 << ((entry->edx >> 5) & 0xff)) - 1;
 	}
 
 	pmu->global_ctrl = ((1 << pmu->nr_arch_gp_counters) - 1) |
-		(((1ull << pmu->nr_arch_fixed_counters) - 1) << X86_PMC_IDX_FIXED);
+		(((1ull << pmu->nr_arch_fixed_counters) - 1) << INTEL_PMC_IDX_FIXED);
 	pmu->global_ctrl_mask = ~pmu->global_ctrl;
 }
 
@@ -478,15 +486,15 @@ void kvm_pmu_init(struct kvm_vcpu *vcpu)
 	struct kvm_pmu *pmu = &vcpu->arch.pmu;
 
 	memset(pmu, 0, sizeof(*pmu));
-	for (i = 0; i < X86_PMC_MAX_GENERIC; i++) {
+	for (i = 0; i < INTEL_PMC_MAX_GENERIC; i++) {
 		pmu->gp_counters[i].type = KVM_PMC_GP;
 		pmu->gp_counters[i].vcpu = vcpu;
 		pmu->gp_counters[i].idx = i;
 	}
-	for (i = 0; i < X86_PMC_MAX_FIXED; i++) {
+	for (i = 0; i < INTEL_PMC_MAX_FIXED; i++) {
 		pmu->fixed_counters[i].type = KVM_PMC_FIXED;
 		pmu->fixed_counters[i].vcpu = vcpu;
-		pmu->fixed_counters[i].idx = i + X86_PMC_IDX_FIXED;
+		pmu->fixed_counters[i].idx = i + INTEL_PMC_IDX_FIXED;
 	}
 	init_irq_work(&pmu->irq_work, trigger_pmi);
 	kvm_pmu_cpuid_update(vcpu);
@@ -498,13 +506,13 @@ void kvm_pmu_reset(struct kvm_vcpu *vcpu)
 	int i;
 
 	irq_work_sync(&pmu->irq_work);
-	for (i = 0; i < X86_PMC_MAX_GENERIC; i++) {
+	for (i = 0; i < INTEL_PMC_MAX_GENERIC; i++) {
 		struct kvm_pmc *pmc = &pmu->gp_counters[i];
 		stop_counter(pmc);
 		pmc->counter = pmc->eventsel = 0;
 	}
 
-	for (i = 0; i < X86_PMC_MAX_FIXED; i++)
+	for (i = 0; i < INTEL_PMC_MAX_FIXED; i++)
 		stop_counter(&pmu->fixed_counters[i]);
 
 	pmu->fixed_ctr_ctrl = pmu->global_ctrl = pmu->global_status =

@@ -42,6 +42,8 @@ struct inet_skb_parm {
 #define IPSKB_XFRM_TRANSFORMED	4
 #define IPSKB_FRAG_COMPLETE	8
 #define IPSKB_REROUTED		16
+
+	u16			frag_max_size;
 };
 
 static inline unsigned int ip_hdrlen(const struct sk_buff *skb)
@@ -120,7 +122,7 @@ extern struct sk_buff  *__ip_make_skb(struct sock *sk,
 				      struct flowi4 *fl4,
 				      struct sk_buff_head *queue,
 				      struct inet_cork *cork);
-extern int		ip_send_skb(struct sk_buff *skb);
+extern int		ip_send_skb(struct net *net, struct sk_buff *skb);
 extern int		ip_push_pending_frames(struct sock *sk, struct flowi4 *fl4);
 extern void		ip_flush_pending_frames(struct sock *sk);
 extern struct sk_buff  *ip_make_skb(struct sock *sk,
@@ -141,22 +143,7 @@ static inline struct sk_buff *ip_finish_skb(struct sock *sk, struct flowi4 *fl4)
 extern int		ip4_datagram_connect(struct sock *sk, 
 					     struct sockaddr *uaddr, int addr_len);
 
-/*
- *	Map a multicast IP onto multicast MAC for type Token Ring.
- *      This conforms to RFC1469 Option 2 Multicasting i.e.
- *      using a functional address to transmit / receive 
- *      multicast packets.
- */
-
-static inline void ip_tr_mc_map(__be32 addr, char *buf)
-{
-	buf[0]=0xC0;
-	buf[1]=0x00;
-	buf[2]=0x00;
-	buf[3]=0x04;
-	buf[4]=0x00;
-	buf[5]=0x00;
-}
+extern void ip4_datagram_release_cb(struct sock *sk);
 
 struct ip_reply_arg {
 	struct kvec iov[1];   
@@ -175,8 +162,9 @@ static inline __u8 ip_reply_arg_flowi_flags(const struct ip_reply_arg *arg)
 	return (arg->flags & IP_REPLY_ARG_NOSRCCHECK) ? FLOWI_FLAG_ANYSRC : 0;
 }
 
-void ip_send_reply(struct sock *sk, struct sk_buff *skb, __be32 daddr,
-		   const struct ip_reply_arg *arg, unsigned int len);
+void ip_send_unicast_reply(struct net *net, struct sk_buff *skb, __be32 daddr,
+			   __be32 saddr, const struct ip_reply_arg *arg,
+			   unsigned int len);
 
 struct ipv4_config {
 	int	log_martians;
@@ -222,13 +210,13 @@ static inline int inet_is_reserved_local_port(int port)
 
 extern int sysctl_ip_nonlocal_bind;
 
-extern struct ctl_path net_core_path[];
-extern struct ctl_path net_ipv4_ctl_path[];
-
 /* From inetpeer.c */
 extern int inet_peer_threshold;
 extern int inet_peer_minttl;
 extern int inet_peer_maxttl;
+
+/* From ip_input.c */
+extern int sysctl_ip_early_demux;
 
 /* From ip_output.c */
 extern int sysctl_ip_dynaddr;

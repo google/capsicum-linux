@@ -1226,6 +1226,7 @@ static int __init crypto4xx_probe(struct platform_device *ofdev)
 	core_dev->dev->ce_base = of_iomap(ofdev->dev.of_node, 0);
 	if (!core_dev->dev->ce_base) {
 		dev_err(dev, "failed to of_iomap\n");
+		rc = -ENOMEM;
 		goto err_iomap;
 	}
 
@@ -1244,9 +1245,9 @@ err_start_dev:
 	iounmap(core_dev->dev->ce_base);
 err_iomap:
 	free_irq(core_dev->irq, dev);
+err_request_irq:
 	irq_dispose_mapping(core_dev->irq);
 	tasklet_kill(&core_dev->tasklet);
-err_request_irq:
 	crypto4xx_destroy_sdr(core_dev->dev);
 err_build_sdr:
 	crypto4xx_destroy_gdr(core_dev->dev);

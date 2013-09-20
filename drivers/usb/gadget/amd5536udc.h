@@ -472,7 +472,6 @@ struct udc_request {
 
 	/* flags */
 	unsigned			dma_going : 1,
-					dma_mapping : 1,
 					dma_done : 1;
 	/* phys. address */
 	dma_addr_t			td_phys;
@@ -512,7 +511,6 @@ struct udc_ep {
 
 	/* queue for requests */
 	struct list_head		queue;
-	const struct usb_endpoint_descriptor	*desc;
 	unsigned			halted;
 	unsigned			cancel_transfer;
 	unsigned			num : 5,
@@ -563,6 +561,8 @@ struct udc {
 	u16				cur_intf;
 	u16				cur_alt;
 };
+
+#define to_amd5536_udc(g)	(container_of((g), struct udc, gadget))
 
 /* setup request data */
 union udc_setup_data {

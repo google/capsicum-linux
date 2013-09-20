@@ -15,33 +15,11 @@
  * any later version.
  */
 
-#include <linux/kernel.h>
-#include <linux/module.h>
 #include <linux/sched.h>
-#include <linux/mm.h>
-#include <linux/slab.h>
-#include <linux/errno.h>
-#include <linux/ioport.h>
-#include <linux/delay.h>
 #include <linux/interrupt.h>
-#include <linux/timex.h>
-#include <linux/timer.h>
-#include <linux/pci.h>
-#include <linux/io.h>
-#include <linux/kmod.h>
-#include <linux/uaccess.h>
-#include "../../comedidev.h"
-#include "addi_amcc_s5933.h"
 
-#define ERROR	-1
-#define SUCCESS	1
-
-#define LOBYTE(W)	(unsigned char)((W) & 0xFF)
-#define HIBYTE(W)	(unsigned char)(((W) >> 8) & 0xFF)
-#define MAKEWORD(H, L)	(unsigned short)((L) | ((H) << 8))
 #define LOWORD(W)	(unsigned short)((W) & 0xFFFF)
 #define HIWORD(W)	(unsigned short)(((W) >> 16) & 0xFFFF)
-#define MAKEDWORD(H, L)	(unsigned int)((L) | ((H) << 16))
 
 #define ADDI_ENABLE		1
 #define ADDI_DISABLE		0
@@ -51,8 +29,6 @@
 #define ADDIDATA_NO_EEPROM	0
 #define ADDIDATA_93C76		"93C76"
 #define ADDIDATA_S5920		"S5920"
-#define ADDIDATA_S5933		"S5933"
-#define ADDIDATA_9054		"9054"
 
 /* ADDIDATA Enable Disable */
 #define ADDIDATA_ENABLE		1
@@ -63,12 +39,7 @@
 /* structure for the boardtype */
 struct addi_board {
 	const char *pc_DriverName;	/*  driver name */
-	int i_VendorId;		/* PCI vendor a device ID of card */
-	int i_DeviceId;
-	int i_IorangeBase0;
 	int i_IorangeBase1;
-	int i_IorangeBase2;	/*   base 2 range */
-	int i_IorangeBase3;	/*   base 3 range */
 	int i_PCIEeprom;	/*  eeprom present or not */
 	char *pc_EepromChip;	/*  type of chip */
 	int i_NbrAiChannel;	/*  num of A/D chans */
@@ -78,127 +49,68 @@ struct addi_board {
 	int i_AiMaxdata;	/*  resolution of A/D */
 	int i_AoMaxdata;	/*  resolution of D/A */
 	const struct comedi_lrange *pr_AiRangelist;	/* rangelist for A/D */
-	const struct comedi_lrange *pr_AoRangelist;	/* rangelist for D/A */
 
 	int i_NbrDiChannel;	/*  Number of DI channels */
 	int i_NbrDoChannel;	/*  Number of DO channels */
 	int i_DoMaxdata;	/*  data to set all channels high */
 
-	int i_NbrTTLChannel;	/*  Number of TTL channels */
-	const struct comedi_lrange *pr_TTLRangelist;	/* rangelist for TTL */
-
-	int i_Dma;		/*  dma present or not */
 	int i_Timer;		/*    timer subdevice present or not */
-	unsigned char b_AvailableConvertUnit;
 	unsigned int ui_MinAcquisitiontimeNs;	/*  Minimum Acquisition in Nano secs */
 	unsigned int ui_MinDelaytimeNs;	/*  Minimum Delay in Nano secs */
 
 	/* interrupt and reset */
-	void (*v_hwdrv_Interrupt)(int irq, void *d);
-	int (*i_hwdrv_Reset)(struct comedi_device *dev);
+	void (*interrupt)(int irq, void *d);
+	int (*reset)(struct comedi_device *);
 
 	/* Subdevice functions */
 
 	/* ANALOG INPUT */
-	int (*i_hwdrv_InsnConfigAnalogInput)(struct comedi_device *dev,
-					     struct comedi_subdevice *s,
-					     struct comedi_insn *insn,
-					     unsigned int *data);
-	int (*i_hwdrv_InsnReadAnalogInput)(struct comedi_device *dev,
-					    struct comedi_subdevice *s,
-					    struct comedi_insn *insn,
-					    unsigned int *data);
-	int (*i_hwdrv_InsnWriteAnalogInput)(struct comedi_device *dev,
-					    struct comedi_subdevice *s,
-					    struct comedi_insn *insn,
-					    unsigned int *data);
-	int (*i_hwdrv_InsnBitsAnalogInput)(struct comedi_device *dev,
-					   struct comedi_subdevice *s,
-					   struct comedi_insn *insn,
-					   unsigned int *data);
-	int (*i_hwdrv_CommandTestAnalogInput)(struct comedi_device *dev,
-					      struct comedi_subdevice *s,
-					      struct comedi_cmd *cmd);
-	int (*i_hwdrv_CommandAnalogInput)(struct comedi_device *dev,
-					  struct comedi_subdevice *s);
-	int (*i_hwdrv_CancelAnalogInput)(struct comedi_device *dev,
-					 struct comedi_subdevice *s);
+	int (*ai_config)(struct comedi_device *, struct comedi_subdevice *,
+			 struct comedi_insn *, unsigned int *);
+	int (*ai_read)(struct comedi_device *, struct comedi_subdevice *,
+		       struct comedi_insn *, unsigned int *);
+	int (*ai_write)(struct comedi_device *, struct comedi_subdevice *,
+			struct comedi_insn *, unsigned int *);
+	int (*ai_bits)(struct comedi_device *, struct comedi_subdevice *,
+		       struct comedi_insn *, unsigned int *);
+	int (*ai_cmdtest)(struct comedi_device *, struct comedi_subdevice *,
+			  struct comedi_cmd *);
+	int (*ai_cmd)(struct comedi_device *, struct comedi_subdevice *);
+	int (*ai_cancel)(struct comedi_device *, struct comedi_subdevice *);
 
 	/* Analog Output */
-	int (*i_hwdrv_InsnConfigAnalogOutput)(struct comedi_device *dev,
-					      struct comedi_subdevice *s,
-					      struct comedi_insn *insn,
-					      unsigned int *data);
-	int (*i_hwdrv_InsnWriteAnalogOutput)(struct comedi_device *dev,
-					     struct comedi_subdevice *s,
-					     struct comedi_insn *insn,
-					     unsigned int *data);
-	int (*i_hwdrv_InsnBitsAnalogOutput)(struct comedi_device *dev,
-					    struct comedi_subdevice *s,
-					    struct comedi_insn *insn,
-					    unsigned int *data);
+	int (*ao_write)(struct comedi_device *, struct comedi_subdevice *,
+			struct comedi_insn *, unsigned int *);
 
 	/* Digital Input */
-	int (*i_hwdrv_InsnConfigDigitalInput) (struct comedi_device *dev,
-					       struct comedi_subdevice *s,
-					       struct comedi_insn *insn,
-					       unsigned int *data);
-	int (*i_hwdrv_InsnReadDigitalInput) (struct comedi_device *dev,
-					     struct comedi_subdevice *s,
-					     struct comedi_insn *insn,
-					     unsigned int *data);
-	int (*i_hwdrv_InsnWriteDigitalInput) (struct comedi_device *dev,
-					      struct comedi_subdevice *s,
-					      struct comedi_insn *insn,
-					      unsigned int *data);
-	int (*i_hwdrv_InsnBitsDigitalInput) (struct comedi_device *dev,
-					     struct comedi_subdevice *s,
-					     struct comedi_insn *insn,
-					     unsigned int *data);
+	int (*di_config)(struct comedi_device *, struct comedi_subdevice *,
+			 struct comedi_insn *, unsigned int *);
+	int (*di_read)(struct comedi_device *, struct comedi_subdevice *,
+		       struct comedi_insn *, unsigned int *);
+	int (*di_write)(struct comedi_device *, struct comedi_subdevice *,
+			struct comedi_insn *, unsigned int *);
+	int (*di_bits)(struct comedi_device *, struct comedi_subdevice *,
+		       struct comedi_insn *, unsigned int *);
 
 	/* Digital Output */
-	int (*i_hwdrv_InsnConfigDigitalOutput)(struct comedi_device *dev,
-					       struct comedi_subdevice *s,
-					       struct comedi_insn *insn,
-					       unsigned int *data);
-	int (*i_hwdrv_InsnWriteDigitalOutput)(struct comedi_device *dev,
-					      struct comedi_subdevice *s,
-					      struct comedi_insn *insn,
-					      unsigned int *data);
-	int (*i_hwdrv_InsnBitsDigitalOutput)(struct comedi_device *dev,
-					     struct comedi_subdevice *s,
-					     struct comedi_insn *insn,
-					     unsigned int *data);
-	int (*i_hwdrv_InsnReadDigitalOutput)(struct comedi_device *dev,
-					     struct comedi_subdevice *s,
-					     struct comedi_insn *insn,
-					     unsigned int *data);
+	int (*do_config)(struct comedi_device *, struct comedi_subdevice *,
+			 struct comedi_insn *, unsigned int *);
+	int (*do_write)(struct comedi_device *, struct comedi_subdevice *,
+			struct comedi_insn *, unsigned int *);
+	int (*do_bits)(struct comedi_device *, struct comedi_subdevice *,
+		       struct comedi_insn *, unsigned int *);
+	int (*do_read)(struct comedi_device *, struct comedi_subdevice *,
+		       struct comedi_insn *, unsigned int *);
 
 	/* TIMER */
-	int (*i_hwdrv_InsnConfigTimer)(struct comedi_device *dev,
-				       struct comedi_subdevice *s,
-				       struct comedi_insn *insn, unsigned int *data);
-	int (*i_hwdrv_InsnWriteTimer)(struct comedi_device *dev,
-				      struct comedi_subdevice *s, struct comedi_insn *insn,
-				      unsigned int *data);
-	int (*i_hwdrv_InsnReadTimer)(struct comedi_device *dev, struct comedi_subdevice *s,
-				     struct comedi_insn *insn, unsigned int *data);
-	int (*i_hwdrv_InsnBitsTimer)(struct comedi_device *dev, struct comedi_subdevice *s,
-				     struct comedi_insn *insn, unsigned int *data);
-
-	/* TTL IO */
-	int (*i_hwdr_ConfigInitTTLIO)(struct comedi_device *dev,
-				      struct comedi_subdevice *s, struct comedi_insn *insn,
-				      unsigned int *data);
-	int (*i_hwdr_ReadTTLIOBits)(struct comedi_device *dev, struct comedi_subdevice *s,
-				    struct comedi_insn *insn, unsigned int *data);
-	int (*i_hwdr_ReadTTLIOAllPortValue)(struct comedi_device *dev,
-					    struct comedi_subdevice *s,
-					    struct comedi_insn *insn,
-					    unsigned int *data);
-	int (*i_hwdr_WriteTTLIOChlOnOff)(struct comedi_device *dev,
-					 struct comedi_subdevice *s,
-					 struct comedi_insn *insn, unsigned int *data);
+	int (*timer_config)(struct comedi_device *, struct comedi_subdevice *,
+			    struct comedi_insn *, unsigned int *);
+	int (*timer_write)(struct comedi_device *, struct comedi_subdevice *,
+			   struct comedi_insn *, unsigned int *);
+	int (*timer_read)(struct comedi_device *, struct comedi_subdevice *,
+			  struct comedi_insn *, unsigned int *);
+	int (*timer_bits)(struct comedi_device *, struct comedi_subdevice *,
+			  struct comedi_insn *, unsigned int *);
 };
 
 /* MODULE INFO STRUCTURE */
@@ -346,61 +258,41 @@ union str_ModuleInfo {
 
 /* Private structure for the addi_apci3120 driver */
 struct addi_private {
-
 	int iobase;
 	int i_IobaseAmcc;	/*  base+size for AMCC chip */
 	int i_IobaseAddon;	/* addon base address */
 	int i_IobaseReserved;
-	void __iomem *dw_AiBase;
-	struct pcilst_struct *amcc;	/*  ptr too AMCC data */
-	unsigned char allocated;		/*  we have blocked card */
-	unsigned char b_ValidDriver;	/*  driver is ok */
 	unsigned char b_AiContinuous;	/*  we do unlimited AI */
-	unsigned char b_AiInitialisation;
 	unsigned int ui_AiActualScan;	/* how many scans we finished */
-	unsigned int ui_AiBufferPtr;	/*  data buffer ptr in samples */
 	unsigned int ui_AiNbrofChannels;	/*  how many channels is measured */
 	unsigned int ui_AiScanLength;	/*  Length of actual scanlist */
-	unsigned int ui_AiActualScanPosition;	/*  position in actual scan */
 	unsigned int *pui_AiChannelList;	/*  actual chanlist */
 	unsigned int ui_AiChannelList[32];	/*  actual chanlist */
-	unsigned char b_AiChannelConfiguration[32];	/*  actual chanlist */
 	unsigned int ui_AiReadData[32];
-	unsigned int dw_AiInitialised;
 	unsigned int ui_AiTimer0;	/* Timer Constant for Timer0 */
 	unsigned int ui_AiTimer1;	/* Timer constant for Timer1 */
 	unsigned int ui_AiFlags;
 	unsigned int ui_AiDataLength;
-	short *AiData;	/*  Pointer to sample data */
 	unsigned int ui_AiNbrofScans;	/*  number of scans to do */
 	unsigned short us_UseDma;	/*  To use Dma or not */
 	unsigned char b_DmaDoubleBuffer;	/*  we can use double buffering */
 	unsigned int ui_DmaActualBuffer;	/*  which buffer is used now */
-	/* UPDATE-0.7.57->0.7.68 */
-	/* unsigned int               ul_DmaBufferVirtual[2]; pointers to begin of DMA buffer */
 	short *ul_DmaBufferVirtual[2];	/*  pointers to begin of DMA buffer */
 	unsigned int ul_DmaBufferHw[2];	/*  hw address of DMA buff */
 	unsigned int ui_DmaBufferSize[2];	/*  size of dma buffer in bytes */
 	unsigned int ui_DmaBufferUsesize[2];	/*  which size we may now used for transfer */
-	unsigned int ui_DmaBufferSamples[2];	/*  size in samples */
 	unsigned int ui_DmaBufferPages[2];	/*  number of pages in buffer */
 	unsigned char b_DigitalOutputRegister;	/*  Digital Output Register */
 	unsigned char b_OutputMemoryStatus;
-	unsigned char b_AnalogInputChannelNbr;	/*  Analog input channel Nbr */
-	unsigned char b_AnalogOutputChannelNbr;	/*  Analog input Output  Nbr */
 	unsigned char b_TimerSelectMode;	/*  Contain data written at iobase + 0C */
 	unsigned char b_ModeSelectRegister;	/*  Contain data written at iobase + 0E */
 	unsigned short us_OutputRegister;	/*  Contain data written at iobase + 0 */
-	unsigned char b_InterruptState;
-	unsigned char b_TimerInit;	/*  Specify if InitTimerWatchdog was load */
-	unsigned char b_TimerStarted;	/*  Specify if timer 2 is running or not */
 	unsigned char b_Timer2Mode;	/*  Specify the timer 2 mode */
 	unsigned char b_Timer2Interrupt;	/* Timer2  interrupt enable or disable */
 	unsigned char b_AiCyclicAcquisition;	/*  indicate cyclic acquisition */
 	unsigned char b_InterruptMode;	/*  eoc eos or dma */
 	unsigned char b_EocEosInterrupt;	/*  Enable disable eoc eos interrupt */
 	unsigned int ui_EocEosConversionTime;
-	unsigned char b_EocEosConversionTimeBase;
 	unsigned char b_SingelDiff;
 	unsigned char b_ExttrigEnable;	/* To enable or disable external trigger */
 
@@ -431,7 +323,6 @@ struct addi_private {
 	} s_InterruptParameters;
 
 	union str_ModuleInfo s_ModuleInfo[4];
-	unsigned int ul_TTLPortConfiguration[10];
 
 	/* Parameters read from EEPROM overriding static board info */
 	struct {
@@ -442,7 +333,6 @@ struct addi_private {
 		int i_NbrDiChannel;	/*  Number of DI channels */
 		int i_NbrDoChannel;	/*  Number of DO channels */
 		int i_DoMaxdata;	/*  data to set all channels high */
-		int i_Dma;		/*  dma present or not */
 		int i_Timer;		/*  timer subdevice present or not */
 		unsigned int ui_MinAcquisitiontimeNs;
 					/*  Minimum Acquisition in Nano secs */
@@ -450,14 +340,3 @@ struct addi_private {
 					/*  Minimum Delay in Nano secs */
 	} s_EeParameters;
 };
-
-static unsigned short pci_list_builded;	/* set to 1 when list of card is known */
-
-/* Function declarations */
-static int i_ADDI_Attach(struct comedi_device *dev, struct comedi_devconfig *it);
-static int i_ADDI_Detach(struct comedi_device *dev);
-static int i_ADDI_Reset(struct comedi_device *dev);
-
-static irqreturn_t v_ADDI_Interrupt(int irq, void *d);
-static int i_ADDIDATA_InsnReadEeprom(struct comedi_device *dev, struct comedi_subdevice *s,
-				     struct comedi_insn *insn, unsigned int *data);

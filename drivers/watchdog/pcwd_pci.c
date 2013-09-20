@@ -682,7 +682,7 @@ static struct notifier_block pcipcwd_notifier = {
  *	Init & exit routines
  */
 
-static int __devinit pcipcwd_card_init(struct pci_dev *pdev,
+static int pcipcwd_card_init(struct pci_dev *pdev,
 		const struct pci_device_id *ent)
 {
 	int ret = -EIO;
@@ -707,6 +707,7 @@ static int __devinit pcipcwd_card_init(struct pci_dev *pdev,
 		goto err_out_disable_device;
 	}
 
+	spin_lock_init(&pcipcwd_private.io_lock);
 	pcipcwd_private.pdev = pdev;
 	pcipcwd_private.io_addr = pci_resource_start(pdev, 0);
 
@@ -784,7 +785,7 @@ err_out_disable_device:
 	return ret;
 }
 
-static void __devexit pcipcwd_card_exit(struct pci_dev *pdev)
+static void pcipcwd_card_exit(struct pci_dev *pdev)
 {
 	/* Stop the timer before we leave */
 	if (!nowayout)
@@ -811,25 +812,10 @@ static struct pci_driver pcipcwd_driver = {
 	.name		= WATCHDOG_NAME,
 	.id_table	= pcipcwd_pci_tbl,
 	.probe		= pcipcwd_card_init,
-	.remove		= __devexit_p(pcipcwd_card_exit),
+	.remove		= pcipcwd_card_exit,
 };
 
-static int __init pcipcwd_init_module(void)
-{
-	spin_lock_init(&pcipcwd_private.io_lock);
-
-	return pci_register_driver(&pcipcwd_driver);
-}
-
-static void __exit pcipcwd_cleanup_module(void)
-{
-	pci_unregister_driver(&pcipcwd_driver);
-
-	pr_info("Watchdog Module Unloaded\n");
-}
-
-module_init(pcipcwd_init_module);
-module_exit(pcipcwd_cleanup_module);
+module_pci_driver(pcipcwd_driver);
 
 MODULE_AUTHOR("Wim Van Sebroeck <wim@iguana.be>");
 MODULE_DESCRIPTION("Berkshire PCI-PC Watchdog driver");

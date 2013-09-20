@@ -59,18 +59,13 @@ static inline void dsb_sev(void)
 }
 
 /*
- * ARMv6 Spin-locking.
+ * ARMv6 ticket-based spin-locking.
  *
- * We exclusively read the old value.  If it is zero, we may have
- * won the lock, so we try exclusively storing it.  A memory barrier
- * is required after we get a lock, and before we release it, because
- * V6 CPUs are assumed to have weakly ordered memory.
- *
- * Unlocked value: 0
- * Locked value: 1
+ * A memory barrier is required after we get a lock, and before we
+ * release it, because V6 CPUs are assumed to have weakly ordered
+ * memory.
  */
 
-#define arch_spin_is_locked(x)		((x)->lock != 0)
 #define arch_spin_unlock_wait(lock) \
 	do { while (arch_spin_is_locked(lock)) cpu_relax(); } while (0)
 
@@ -79,34 +74,45 @@ static inline void dsb_sev(void)
 static inline void arch_spin_lock(arch_spinlock_t *lock)
 {
 	unsigned long tmp;
+	u32 newval;
+	arch_spinlock_t lockval;
 
 	__asm__ __volatile__(
-"1:	ldrex	%0, [%1]\n"
-"	teq	%0, #0\n"
-	WFE("ne")
-"	strexeq	%0, %2, [%1]\n"
-"	teqeq	%0, #0\n"
+"1:	ldrex	%0, [%3]\n"
+"	add	%1, %0, %4\n"
+"	strex	%2, %1, [%3]\n"
+"	teq	%2, #0\n"
 "	bne	1b"
-	: "=&r" (tmp)
-	: "r" (&lock->lock), "r" (1)
+	: "=&r" (lockval), "=&r" (newval), "=&r" (tmp)
+	: "r" (&lock->slock), "I" (1 << TICKET_SHIFT)
 	: "cc");
+
+	while (lockval.tickets.next != lockval.tickets.owner) {
+		wfe();
+		lockval.tickets.owner = ACCESS_ONCE(lock->tickets.owner);
+	}
 
 	smp_mb();
 }
 
 static inline int arch_spin_trylock(arch_spinlock_t *lock)
 {
-	unsigned long tmp;
+	unsigned long contended, res;
+	u32 slock;
 
-	__asm__ __volatile__(
-"	ldrex	%0, [%1]\n"
-"	teq	%0, #0\n"
-"	strexeq	%0, %2, [%1]"
-	: "=&r" (tmp)
-	: "r" (&lock->lock), "r" (1)
-	: "cc");
+	do {
+		__asm__ __volatile__(
+		"	ldrex	%0, [%3]\n"
+		"	mov	%2, #0\n"
+		"	subs	%1, %0, %0, ror #16\n"
+		"	addeq	%0, %0, %4\n"
+		"	strexeq	%2, %0, [%3]"
+		: "=&r" (slock), "=&r" (contended), "=&r" (res)
+		: "r" (&lock->slock), "I" (1 << TICKET_SHIFT)
+		: "cc");
+	} while (res);
 
-	if (tmp == 0) {
+	if (!contended) {
 		smp_mb();
 		return 1;
 	} else {
@@ -117,15 +123,22 @@ static inline int arch_spin_trylock(arch_spinlock_t *lock)
 static inline void arch_spin_unlock(arch_spinlock_t *lock)
 {
 	smp_mb();
-
-	__asm__ __volatile__(
-"	str	%1, [%0]\n"
-	:
-	: "r" (&lock->lock), "r" (0)
-	: "cc");
-
+	lock->tickets.owner++;
 	dsb_sev();
 }
+
+static inline int arch_spin_is_locked(arch_spinlock_t *lock)
+{
+	struct __raw_tickets tickets = ACCESS_ONCE(lock->tickets);
+	return tickets.owner != tickets.next;
+}
+
+static inline int arch_spin_is_contended(arch_spinlock_t *lock)
+{
+	struct __raw_tickets tickets = ACCESS_ONCE(lock->tickets);
+	return (tickets.next - tickets.owner) > 1;
+}
+#define arch_spin_is_contended	arch_spin_is_contended
 
 /*
  * RWLOCKS
@@ -155,17 +168,20 @@ static inline void arch_write_lock(arch_rwlock_t *rw)
 
 static inline int arch_write_trylock(arch_rwlock_t *rw)
 {
-	unsigned long tmp;
+	unsigned long contended, res;
 
-	__asm__ __volatile__(
-"1:	ldrex	%0, [%1]\n"
-"	teq	%0, #0\n"
-"	strexeq	%0, %2, [%1]"
-	: "=&r" (tmp)
-	: "r" (&rw->lock), "r" (0x80000000)
-	: "cc");
+	do {
+		__asm__ __volatile__(
+		"	ldrex	%0, [%2]\n"
+		"	mov	%1, #0\n"
+		"	teq	%0, #0\n"
+		"	strexeq	%1, %3, [%2]"
+		: "=&r" (contended), "=&r" (res)
+		: "r" (&rw->lock), "r" (0x80000000)
+		: "cc");
+	} while (res);
 
-	if (tmp == 0) {
+	if (!contended) {
 		smp_mb();
 		return 1;
 	} else {
@@ -241,18 +257,26 @@ static inline void arch_read_unlock(arch_rwlock_t *rw)
 
 static inline int arch_read_trylock(arch_rwlock_t *rw)
 {
-	unsigned long tmp, tmp2 = 1;
+	unsigned long contended, res;
 
-	__asm__ __volatile__(
-"1:	ldrex	%0, [%2]\n"
-"	adds	%0, %0, #1\n"
-"	strexpl	%1, %0, [%2]\n"
-	: "=&r" (tmp), "+r" (tmp2)
-	: "r" (&rw->lock)
-	: "cc");
+	do {
+		__asm__ __volatile__(
+		"	ldrex	%0, [%2]\n"
+		"	mov	%1, #0\n"
+		"	adds	%0, %0, #1\n"
+		"	strexpl	%1, %0, [%2]"
+		: "=&r" (contended), "=&r" (res)
+		: "r" (&rw->lock)
+		: "cc");
+	} while (res);
 
-	smp_mb();
-	return tmp2 == 0;
+	/* If the lock is negative, then it is already held for write. */
+	if (contended < 0x80000000) {
+		smp_mb();
+		return 1;
+	} else {
+		return 0;
+	}
 }
 
 /* read_can_lock - would read_trylock() succeed? */

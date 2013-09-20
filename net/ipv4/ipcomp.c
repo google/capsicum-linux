@@ -31,17 +31,26 @@ static void ipcomp4_err(struct sk_buff *skb, u32 info)
 	struct ip_comp_hdr *ipch = (struct ip_comp_hdr *)(skb->data+(iph->ihl<<2));
 	struct xfrm_state *x;
 
-	if (icmp_hdr(skb)->type != ICMP_DEST_UNREACH ||
-	    icmp_hdr(skb)->code != ICMP_FRAG_NEEDED)
+	switch (icmp_hdr(skb)->type) {
+	case ICMP_DEST_UNREACH:
+		if (icmp_hdr(skb)->code != ICMP_FRAG_NEEDED)
+			return;
+	case ICMP_REDIRECT:
+		break;
+	default:
 		return;
+	}
 
 	spi = htonl(ntohs(ipch->cpi));
 	x = xfrm_state_lookup(net, skb->mark, (const xfrm_address_t *)&iph->daddr,
 			      spi, IPPROTO_COMP, AF_INET);
 	if (!x)
 		return;
-	NETDEBUG(KERN_DEBUG "pmtu discovery on SA IPCOMP/%08x/%pI4\n",
-		 spi, &iph->daddr);
+
+	if (icmp_hdr(skb)->type == ICMP_DEST_UNREACH)
+		ipv4_update_pmtu(skb, net, info, 0, 0, IPPROTO_COMP, 0);
+	else
+		ipv4_redirect(skb, net, 0, 0, IPPROTO_COMP, 0);
 	xfrm_state_put(x);
 }
 
@@ -63,6 +72,7 @@ static struct xfrm_state *ipcomp_tunnel_create(struct xfrm_state *x)
 	t->props.mode = x->props.mode;
 	t->props.saddr.a4 = x->props.saddr.a4;
 	t->props.flags = x->props.flags;
+	t->props.extra_flags = x->props.extra_flags;
 	memcpy(&t->mark, &x->mark, sizeof(t->mark));
 
 	if (xfrm_init_state(t))
@@ -151,6 +161,7 @@ static const struct net_protocol ipcomp4_protocol = {
 	.handler	=	xfrm4_rcv,
 	.err_handler	=	ipcomp4_err,
 	.no_policy	=	1,
+	.netns_ok	=	1,
 };
 
 static int __init ipcomp4_init(void)

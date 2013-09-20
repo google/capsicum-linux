@@ -1,6 +1,6 @@
 /*
  * Copyright (C) ST-Ericsson AB 2010
- * Author:	Sjur Brendeland/sjur.brandeland@stericsson.com
+ * Author:	Sjur Brendeland
  * License terms: GNU General Public License (GPL) version 2
  */
 
@@ -266,8 +266,8 @@ inline u16 cfpkt_getlen(struct cfpkt *pkt)
 }
 
 inline u16 cfpkt_iterate(struct cfpkt *pkt,
-			    u16 (*iter_func)(u16, void *, u16),
-			    u16 data)
+			 u16 (*iter_func)(u16, void *, u16),
+			 u16 data)
 {
 	/*
 	 * Don't care about the performance hit of linearizing,
@@ -307,8 +307,8 @@ int cfpkt_setlen(struct cfpkt *pkt, u16 len)
 }
 
 struct cfpkt *cfpkt_append(struct cfpkt *dstpkt,
-			     struct cfpkt *addpkt,
-			     u16 expectlen)
+			   struct cfpkt *addpkt,
+			   u16 expectlen)
 {
 	struct sk_buff *dst = pkt_to_skb(dstpkt);
 	struct sk_buff *add = pkt_to_skb(addpkt);
@@ -381,6 +381,7 @@ struct cfpkt *cfpkt_split(struct cfpkt *pkt, u16 pos)
 	memcpy(skb2->data, split, len2nd);
 	skb2->tail += len2nd;
 	skb2->len += len2nd;
+	skb2->priority = skb->priority;
 	return skb_to_pkt(skb2);
 }
 
@@ -394,3 +395,9 @@ struct caif_payload_info *cfpkt_info(struct cfpkt *pkt)
 	return (struct caif_payload_info *)&pkt_to_skb(pkt)->cb;
 }
 EXPORT_SYMBOL(cfpkt_info);
+
+void cfpkt_set_prio(struct cfpkt *pkt, int prio)
+{
+	pkt_to_skb(pkt)->priority = prio;
+}
+EXPORT_SYMBOL(cfpkt_set_prio);

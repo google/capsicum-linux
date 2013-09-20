@@ -51,7 +51,7 @@ int mlx4_en_create_cq(struct mlx4_en_priv *priv,
 	int err;
 
 	cq->size = entries;
-	cq->buf_size = cq->size * sizeof(struct mlx4_cqe);
+	cq->buf_size = cq->size * mdev->dev->caps.cqe_size;
 
 	cq->ring = ring;
 	cq->is_tx = mode;
@@ -77,6 +77,13 @@ int mlx4_en_activate_cq(struct mlx4_en_priv *priv, struct mlx4_en_cq *cq,
 	struct mlx4_en_dev *mdev = priv->mdev;
 	int err = 0;
 	char name[25];
+	int timestamp_en = 0;
+	struct cpu_rmap *rmap =
+#ifdef CONFIG_RFS_ACCEL
+		priv->dev->rx_cpu_rmap;
+#else
+		NULL;
+#endif
 
 	cq->dev = mdev->pndev[priv->port];
 	cq->mcq.set_ci_db  = cq->wqres.db.db;
@@ -91,7 +98,8 @@ int mlx4_en_activate_cq(struct mlx4_en_priv *priv, struct mlx4_en_cq *cq,
 				sprintf(name, "%s-%d", priv->dev->name,
 					cq->ring);
 				/* Set IRQ for specific name (per ring) */
-				if (mlx4_assign_eq(mdev->dev, name, &cq->vector)) {
+				if (mlx4_assign_eq(mdev->dev, name, rmap,
+						   &cq->vector)) {
 					cq->vector = (cq->ring + 1 + priv->port)
 					    % mdev->dev->caps.num_comp_vectors;
 					mlx4_warn(mdev, "Failed Assigning an EQ to "
@@ -116,20 +124,22 @@ int mlx4_en_activate_cq(struct mlx4_en_priv *priv, struct mlx4_en_cq *cq,
 	if (!cq->is_tx)
 		cq->size = priv->rx_ring[cq->ring].actual_size;
 
-	err = mlx4_cq_alloc(mdev->dev, cq->size, &cq->wqres.mtt, &mdev->priv_uar,
-			    cq->wqres.db.dma, &cq->mcq, cq->vector, 0);
+	if ((cq->is_tx && priv->hwtstamp_config.tx_type) ||
+	    (!cq->is_tx && priv->hwtstamp_config.rx_filter))
+		timestamp_en = 1;
+
+	err = mlx4_cq_alloc(mdev->dev, cq->size, &cq->wqres.mtt,
+			    &mdev->priv_uar, cq->wqres.db.dma, &cq->mcq,
+			    cq->vector, 0, timestamp_en);
 	if (err)
 		return err;
 
 	cq->mcq.comp  = cq->is_tx ? mlx4_en_tx_irq : mlx4_en_rx_irq;
 	cq->mcq.event = mlx4_en_cq_event;
 
-	if (cq->is_tx) {
-		init_timer(&cq->timer);
-		cq->timer.function = mlx4_en_poll_tx_cq;
-		cq->timer.data = (unsigned long) cq;
-	} else {
+	if (!cq->is_tx) {
 		netif_napi_add(cq->dev, &cq->napi, mlx4_en_poll_rx_cq, 64);
+		napi_hash_add(&cq->napi);
 		napi_enable(&cq->napi);
 	}
 
@@ -151,16 +161,14 @@ void mlx4_en_destroy_cq(struct mlx4_en_priv *priv, struct mlx4_en_cq *cq)
 
 void mlx4_en_deactivate_cq(struct mlx4_en_priv *priv, struct mlx4_en_cq *cq)
 {
-	struct mlx4_en_dev *mdev = priv->mdev;
-
-	if (cq->is_tx)
-		del_timer(&cq->timer);
-	else {
+	if (!cq->is_tx) {
 		napi_disable(&cq->napi);
+		napi_hash_del(&cq->napi);
+		synchronize_rcu();
 		netif_napi_del(&cq->napi);
 	}
 
-	mlx4_cq_free(mdev->dev, &cq->mcq);
+	mlx4_cq_free(priv->mdev->dev, &cq->mcq);
 }
 
 /* Set rx cq moderation parameters */

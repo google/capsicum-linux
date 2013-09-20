@@ -11,6 +11,7 @@
 #include <linux/ceph/types.h>
 #include <linux/ceph/messenger.h>
 #include <linux/ceph/mdsmap.h>
+#include <linux/ceph/auth.h>
 
 /*
  * Some lock dependencies:
@@ -73,6 +74,12 @@ struct ceph_mds_reply_info_parsed {
 			struct ceph_mds_reply_info_in *dir_in;
 			u8                            dir_complete, dir_end;
 		};
+
+		/* for create results */
+		struct {
+			bool has_create_ino;
+			u64 ino;
+		};
 	};
 
 	/* encoded blob describing snapshot contexts for certain
@@ -113,9 +120,7 @@ struct ceph_mds_session {
 
 	struct ceph_connection s_con;
 
-	struct ceph_authorizer *s_authorizer;
-	void             *s_authorizer_buf, *s_authorizer_reply_buf;
-	size_t            s_authorizer_buf_len, s_authorizer_reply_buf_len;
+	struct ceph_auth_handshake s_auth;
 
 	/* protected by s_gen_ttl_lock */
 	spinlock_t        s_gen_ttl_lock;
@@ -185,8 +190,8 @@ struct ceph_mds_request {
 
 	union ceph_mds_request_args r_args;
 	int r_fmode;        /* file mode, if expecting cap */
-	uid_t r_uid;
-	gid_t r_gid;
+	kuid_t r_uid;
+	kgid_t r_gid;
 
 	/* for choosing which mds to send this request to */
 	int r_direct_mode;

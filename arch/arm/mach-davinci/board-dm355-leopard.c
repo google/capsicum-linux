@@ -23,11 +23,11 @@
 #include <asm/mach-types.h>
 #include <asm/mach/arch.h>
 
-#include <mach/i2c.h>
+#include <linux/platform_data/i2c-davinci.h>
 #include <mach/serial.h>
-#include <mach/nand.h>
-#include <mach/mmc.h>
-#include <mach/usb.h>
+#include <linux/platform_data/mtd-davinci.h>
+#include <linux/platform_data/mmc-davinci.h>
+#include <linux/platform_data/usb-davinci.h>
 
 #include "davinci.h"
 
@@ -75,6 +75,7 @@ static struct davinci_nand_pdata davinci_nand_data = {
 	.parts			= davinci_nand_partitions,
 	.nr_parts		= ARRAY_SIZE(davinci_nand_partitions),
 	.ecc_mode		= NAND_ECC_HW_SYNDROME,
+	.ecc_bits		= 4,
 	.bbt_options		= NAND_BBT_USE_FLASH,
 };
 
@@ -246,7 +247,7 @@ static __init void dm355_leopard_init(void)
 	if (IS_ERR(aemif))
 		WARN("%s: unable to get AEMIF clock\n", __func__);
 	else
-		clk_enable(aemif);
+		clk_prepare_enable(aemif);
 
 	platform_add_devices(davinci_leopard_devices,
 			     ARRAY_SIZE(davinci_leopard_devices));
@@ -274,8 +275,9 @@ MACHINE_START(DM355_LEOPARD, "DaVinci DM355 leopard")
 	.atag_offset  = 0x100,
 	.map_io	      = dm355_leopard_map_io,
 	.init_irq     = davinci_irq_init,
-	.timer	      = &davinci_timer,
+	.init_time	= davinci_timer_init,
 	.init_machine = dm355_leopard_init,
+	.init_late	= davinci_init_late,
 	.dma_zone_size	= SZ_128M,
 	.restart	= davinci_restart,
 MACHINE_END

@@ -73,14 +73,6 @@
 #define	MAX_READY_WAIT_JIFFIES	(40 * HZ)	/* M25P16 specs 40s max chip erase */
 #define	MAX_CMD_SIZE		5
 
-#ifdef CONFIG_M25PXX_USE_FAST_READ
-#define OPCODE_READ 	OPCODE_FAST_READ
-#define FAST_READ_DUMMY_BYTE 1
-#else
-#define OPCODE_READ 	OPCODE_NORM_READ
-#define FAST_READ_DUMMY_BYTE 0
-#endif
-
 #define JEDEC_MFR(_jedec_id)	((_jedec_id) >> 16)
 
 /****************************************************************************/
@@ -93,6 +85,7 @@ struct m25p {
 	u16			addr_width;
 	u8			erase_opcode;
 	u8			*command;
+	bool			fast_read;
 };
 
 static inline struct m25p *mtd_to_m25p(struct mtd_info *mtd)
@@ -168,6 +161,7 @@ static inline int set_4byte(struct m25p *flash, u32 jedec_id, int enable)
 {
 	switch (JEDEC_MFR(jedec_id)) {
 	case CFI_MFR_MACRONIX:
+	case 0xEF /* winbond */:
 		flash->command[0] = enable ? OPCODE_EN4B : OPCODE_EX4B;
 		return spi_write(flash->spi, flash->command, 1);
 	default:
@@ -342,6 +336,7 @@ static int m25p80_read(struct mtd_info *mtd, loff_t from, size_t len,
 	struct m25p *flash = mtd_to_m25p(mtd);
 	struct spi_transfer t[2];
 	struct spi_message m;
+	uint8_t opcode;
 
 	pr_debug("%s: %s from 0x%08x, len %zd\n", dev_name(&flash->spi->dev),
 			__func__, (u32)from, len);
@@ -354,7 +349,7 @@ static int m25p80_read(struct mtd_info *mtd, loff_t from, size_t len,
 	 * Should add 1 byte DUMMY_BYTE.
 	 */
 	t[0].tx_buf = flash->command;
-	t[0].len = m25p_cmdsz(flash) + FAST_READ_DUMMY_BYTE;
+	t[0].len = m25p_cmdsz(flash) + (flash->fast_read ? 1 : 0);
 	spi_message_add_tail(&t[0], &m);
 
 	t[1].rx_buf = buf;
@@ -376,12 +371,14 @@ static int m25p80_read(struct mtd_info *mtd, loff_t from, size_t len,
 	 */
 
 	/* Set up the write data buffer. */
-	flash->command[0] = OPCODE_READ;
+	opcode = flash->fast_read ? OPCODE_FAST_READ : OPCODE_NORM_READ;
+	flash->command[0] = opcode;
 	m25p_addr2cmd(flash, from, flash->command);
 
 	spi_sync(flash->spi, &m);
 
-	*retlen = m.actual_length - m25p_cmdsz(flash) - FAST_READ_DUMMY_BYTE;
+	*retlen = m.actual_length - m25p_cmdsz(flash) -
+			(flash->fast_read ? 1 : 0);
 
 	mutex_unlock(&flash->lock);
 
@@ -568,6 +565,96 @@ time_out:
 	return ret;
 }
 
+static int m25p80_lock(struct mtd_info *mtd, loff_t ofs, uint64_t len)
+{
+	struct m25p *flash = mtd_to_m25p(mtd);
+	uint32_t offset = ofs;
+	uint8_t status_old, status_new;
+	int res = 0;
+
+	mutex_lock(&flash->lock);
+	/* Wait until finished previous command */
+	if (wait_till_ready(flash)) {
+		res = 1;
+		goto err;
+	}
+
+	status_old = read_sr(flash);
+
+	if (offset < flash->mtd.size-(flash->mtd.size/2))
+		status_new = status_old | SR_BP2 | SR_BP1 | SR_BP0;
+	else if (offset < flash->mtd.size-(flash->mtd.size/4))
+		status_new = (status_old & ~SR_BP0) | SR_BP2 | SR_BP1;
+	else if (offset < flash->mtd.size-(flash->mtd.size/8))
+		status_new = (status_old & ~SR_BP1) | SR_BP2 | SR_BP0;
+	else if (offset < flash->mtd.size-(flash->mtd.size/16))
+		status_new = (status_old & ~(SR_BP0|SR_BP1)) | SR_BP2;
+	else if (offset < flash->mtd.size-(flash->mtd.size/32))
+		status_new = (status_old & ~SR_BP2) | SR_BP1 | SR_BP0;
+	else if (offset < flash->mtd.size-(flash->mtd.size/64))
+		status_new = (status_old & ~(SR_BP2|SR_BP0)) | SR_BP1;
+	else
+		status_new = (status_old & ~(SR_BP2|SR_BP1)) | SR_BP0;
+
+	/* Only modify protection if it will not unlock other areas */
+	if ((status_new&(SR_BP2|SR_BP1|SR_BP0)) >
+					(status_old&(SR_BP2|SR_BP1|SR_BP0))) {
+		write_enable(flash);
+		if (write_sr(flash, status_new) < 0) {
+			res = 1;
+			goto err;
+		}
+	}
+
+err:	mutex_unlock(&flash->lock);
+	return res;
+}
+
+static int m25p80_unlock(struct mtd_info *mtd, loff_t ofs, uint64_t len)
+{
+	struct m25p *flash = mtd_to_m25p(mtd);
+	uint32_t offset = ofs;
+	uint8_t status_old, status_new;
+	int res = 0;
+
+	mutex_lock(&flash->lock);
+	/* Wait until finished previous command */
+	if (wait_till_ready(flash)) {
+		res = 1;
+		goto err;
+	}
+
+	status_old = read_sr(flash);
+
+	if (offset+len > flash->mtd.size-(flash->mtd.size/64))
+		status_new = status_old & ~(SR_BP2|SR_BP1|SR_BP0);
+	else if (offset+len > flash->mtd.size-(flash->mtd.size/32))
+		status_new = (status_old & ~(SR_BP2|SR_BP1)) | SR_BP0;
+	else if (offset+len > flash->mtd.size-(flash->mtd.size/16))
+		status_new = (status_old & ~(SR_BP2|SR_BP0)) | SR_BP1;
+	else if (offset+len > flash->mtd.size-(flash->mtd.size/8))
+		status_new = (status_old & ~SR_BP2) | SR_BP1 | SR_BP0;
+	else if (offset+len > flash->mtd.size-(flash->mtd.size/4))
+		status_new = (status_old & ~(SR_BP0|SR_BP1)) | SR_BP2;
+	else if (offset+len > flash->mtd.size-(flash->mtd.size/2))
+		status_new = (status_old & ~SR_BP1) | SR_BP2 | SR_BP0;
+	else
+		status_new = (status_old & ~SR_BP0) | SR_BP2 | SR_BP1;
+
+	/* Only modify protection if it will not lock other areas */
+	if ((status_new&(SR_BP2|SR_BP1|SR_BP0)) <
+					(status_old&(SR_BP2|SR_BP1|SR_BP0))) {
+		write_enable(flash);
+		if (write_sr(flash, status_new) < 0) {
+			res = 1;
+			goto err;
+		}
+	}
+
+err:	mutex_unlock(&flash->lock);
+	return res;
+}
+
 /****************************************************************************/
 
 /*
@@ -594,6 +681,7 @@ struct flash_info {
 	u16		flags;
 #define	SECT_4K		0x01		/* OPCODE_BE_4K works uniformly */
 #define	M25P_NO_ERASE	0x02		/* No erase command needed */
+#define	SST_WRITE	0x04		/* use SST byte programming */
 };
 
 #define INFO(_jedec_id, _ext_id, _sector_size, _n_sectors, _flags)	\
@@ -633,11 +721,22 @@ static const struct spi_device_id m25p_ids[] = {
 	{ "at26df161a", INFO(0x1f4601, 0, 64 * 1024, 32, SECT_4K) },
 	{ "at26df321",  INFO(0x1f4700, 0, 64 * 1024, 64, SECT_4K) },
 
+	{ "at45db081d", INFO(0x1f2500, 0, 64 * 1024, 16, SECT_4K) },
+
 	/* EON -- en25xxx */
 	{ "en25f32", INFO(0x1c3116, 0, 64 * 1024,  64, SECT_4K) },
 	{ "en25p32", INFO(0x1c2016, 0, 64 * 1024,  64, 0) },
 	{ "en25q32b", INFO(0x1c3016, 0, 64 * 1024,  64, 0) },
 	{ "en25p64", INFO(0x1c2017, 0, 64 * 1024, 128, 0) },
+	{ "en25q64", INFO(0x1c3017, 0, 64 * 1024, 128, SECT_4K) },
+	{ "en25qh256", INFO(0x1c7019, 0, 64 * 1024, 512, 0) },
+
+	/* Everspin */
+	{ "mr25h256", CAT25_INFO(  32 * 1024, 1, 256, 2) },
+
+	/* GigaDevice */
+	{ "gd25q32", INFO(0xc84016, 0, 64 * 1024,  64, SECT_4K) },
+	{ "gd25q64", INFO(0xc84017, 0, 64 * 1024, 128, SECT_4K) },
 
 	/* Intel/Numonyx -- xxxs33b */
 	{ "160s33b",  INFO(0x898911, 0, 64 * 1024,  32, 0) },
@@ -645,6 +744,7 @@ static const struct spi_device_id m25p_ids[] = {
 	{ "640s33b",  INFO(0x898913, 0, 64 * 1024, 128, 0) },
 
 	/* Macronix */
+	{ "mx25l2005a",  INFO(0xc22012, 0, 64 * 1024,   4, SECT_4K) },
 	{ "mx25l4005a",  INFO(0xc22013, 0, 64 * 1024,   8, SECT_4K) },
 	{ "mx25l8005",   INFO(0xc22014, 0, 64 * 1024,  16, 0) },
 	{ "mx25l1606e",  INFO(0xc22015, 0, 64 * 1024,  32, SECT_4K) },
@@ -654,16 +754,19 @@ static const struct spi_device_id m25p_ids[] = {
 	{ "mx25l12855e", INFO(0xc22618, 0, 64 * 1024, 256, 0) },
 	{ "mx25l25635e", INFO(0xc22019, 0, 64 * 1024, 512, 0) },
 	{ "mx25l25655e", INFO(0xc22619, 0, 64 * 1024, 512, 0) },
+	{ "mx66l51235l", INFO(0xc2201a, 0, 64 * 1024, 1024, 0) },
+
+	/* Micron */
+	{ "n25q064",  INFO(0x20ba17, 0, 64 * 1024, 128, 0) },
+	{ "n25q128a11",  INFO(0x20bb18, 0, 64 * 1024, 256, 0) },
+	{ "n25q128a13",  INFO(0x20ba18, 0, 64 * 1024, 256, 0) },
+	{ "n25q256a", INFO(0x20ba19, 0, 64 * 1024, 512, SECT_4K) },
 
 	/* Spansion -- single (large) sector size only, at least
 	 * for the chips listed here (without boot sectors).
 	 */
-	{ "s25sl004a",  INFO(0x010212,      0,  64 * 1024,   8, 0) },
-	{ "s25sl008a",  INFO(0x010213,      0,  64 * 1024,  16, 0) },
-	{ "s25sl016a",  INFO(0x010214,      0,  64 * 1024,  32, 0) },
-	{ "s25sl032a",  INFO(0x010215,      0,  64 * 1024,  64, 0) },
-	{ "s25sl032p",  INFO(0x010215, 0x4d00,  64 * 1024,  64, SECT_4K) },
-	{ "s25sl064a",  INFO(0x010216,      0,  64 * 1024, 128, 0) },
+	{ "s25sl032p",  INFO(0x010215, 0x4d00,  64 * 1024,  64, 0) },
+	{ "s25sl064p",  INFO(0x010216, 0x4d00,  64 * 1024, 128, 0) },
 	{ "s25fl256s0", INFO(0x010219, 0x4d00, 256 * 1024, 128, 0) },
 	{ "s25fl256s1", INFO(0x010219, 0x4d01,  64 * 1024, 512, 0) },
 	{ "s25fl512s",  INFO(0x010220, 0x4d00, 256 * 1024, 256, 0) },
@@ -672,18 +775,24 @@ static const struct spi_device_id m25p_ids[] = {
 	{ "s25sl12801", INFO(0x012018, 0x0301,  64 * 1024, 256, 0) },
 	{ "s25fl129p0", INFO(0x012018, 0x4d00, 256 * 1024,  64, 0) },
 	{ "s25fl129p1", INFO(0x012018, 0x4d01,  64 * 1024, 256, 0) },
+	{ "s25sl004a",  INFO(0x010212,      0,  64 * 1024,   8, 0) },
+	{ "s25sl008a",  INFO(0x010213,      0,  64 * 1024,  16, 0) },
+	{ "s25sl016a",  INFO(0x010214,      0,  64 * 1024,  32, 0) },
+	{ "s25sl032a",  INFO(0x010215,      0,  64 * 1024,  64, 0) },
+	{ "s25sl064a",  INFO(0x010216,      0,  64 * 1024, 128, 0) },
 	{ "s25fl016k",  INFO(0xef4015,      0,  64 * 1024,  32, SECT_4K) },
 	{ "s25fl064k",  INFO(0xef4017,      0,  64 * 1024, 128, SECT_4K) },
 
 	/* SST -- large erase sizes are "overlays", "sectors" are 4K */
-	{ "sst25vf040b", INFO(0xbf258d, 0, 64 * 1024,  8, SECT_4K) },
-	{ "sst25vf080b", INFO(0xbf258e, 0, 64 * 1024, 16, SECT_4K) },
-	{ "sst25vf016b", INFO(0xbf2541, 0, 64 * 1024, 32, SECT_4K) },
-	{ "sst25vf032b", INFO(0xbf254a, 0, 64 * 1024, 64, SECT_4K) },
-	{ "sst25wf512",  INFO(0xbf2501, 0, 64 * 1024,  1, SECT_4K) },
-	{ "sst25wf010",  INFO(0xbf2502, 0, 64 * 1024,  2, SECT_4K) },
-	{ "sst25wf020",  INFO(0xbf2503, 0, 64 * 1024,  4, SECT_4K) },
-	{ "sst25wf040",  INFO(0xbf2504, 0, 64 * 1024,  8, SECT_4K) },
+	{ "sst25vf040b", INFO(0xbf258d, 0, 64 * 1024,  8, SECT_4K | SST_WRITE) },
+	{ "sst25vf080b", INFO(0xbf258e, 0, 64 * 1024, 16, SECT_4K | SST_WRITE) },
+	{ "sst25vf016b", INFO(0xbf2541, 0, 64 * 1024, 32, SECT_4K | SST_WRITE) },
+	{ "sst25vf032b", INFO(0xbf254a, 0, 64 * 1024, 64, SECT_4K | SST_WRITE) },
+	{ "sst25vf064c", INFO(0xbf254b, 0, 64 * 1024, 128, SECT_4K) },
+	{ "sst25wf512",  INFO(0xbf2501, 0, 64 * 1024,  1, SECT_4K | SST_WRITE) },
+	{ "sst25wf010",  INFO(0xbf2502, 0, 64 * 1024,  2, SECT_4K | SST_WRITE) },
+	{ "sst25wf020",  INFO(0xbf2503, 0, 64 * 1024,  4, SECT_4K | SST_WRITE) },
+	{ "sst25wf040",  INFO(0xbf2504, 0, 64 * 1024,  8, SECT_4K | SST_WRITE) },
 
 	/* ST Microelectronics -- newer production may have feature updates */
 	{ "m25p05",  INFO(0x202010,  0,  32 * 1024,   2, 0) },
@@ -695,6 +804,7 @@ static const struct spi_device_id m25p_ids[] = {
 	{ "m25p32",  INFO(0x202016,  0,  64 * 1024,  64, 0) },
 	{ "m25p64",  INFO(0x202017,  0,  64 * 1024, 128, 0) },
 	{ "m25p128", INFO(0x202018,  0, 256 * 1024,  64, 0) },
+	{ "n25q032", INFO(0x20ba16,  0,  64 * 1024,  64, 0) },
 
 	{ "m25p05-nonjedec",  INFO(0, 0,  32 * 1024,   2, 0) },
 	{ "m25p10-nonjedec",  INFO(0, 0,  32 * 1024,   4, 0) },
@@ -710,6 +820,7 @@ static const struct spi_device_id m25p_ids[] = {
 	{ "m45pe80", INFO(0x204014,  0, 64 * 1024,   16, 0) },
 	{ "m45pe16", INFO(0x204015,  0, 64 * 1024,   32, 0) },
 
+	{ "m25pe20", INFO(0x208012,  0, 64 * 1024,  4,       0) },
 	{ "m25pe80", INFO(0x208014,  0, 64 * 1024, 16,       0) },
 	{ "m25pe16", INFO(0x208015,  0, 64 * 1024, 32, SECT_4K) },
 
@@ -726,8 +837,13 @@ static const struct spi_device_id m25p_ids[] = {
 	{ "w25x16", INFO(0xef3015, 0, 64 * 1024,  32, SECT_4K) },
 	{ "w25x32", INFO(0xef3016, 0, 64 * 1024,  64, SECT_4K) },
 	{ "w25q32", INFO(0xef4016, 0, 64 * 1024,  64, SECT_4K) },
+	{ "w25q32dw", INFO(0xef6016, 0, 64 * 1024,  64, SECT_4K) },
 	{ "w25x64", INFO(0xef3017, 0, 64 * 1024, 128, SECT_4K) },
 	{ "w25q64", INFO(0xef4017, 0, 64 * 1024, 128, SECT_4K) },
+	{ "w25q80", INFO(0xef5014, 0, 64 * 1024,  16, SECT_4K) },
+	{ "w25q80bl", INFO(0xef4014, 0, 64 * 1024,  16, SECT_4K) },
+	{ "w25q128", INFO(0xef4018, 0, 64 * 1024, 256, SECT_4K) },
+	{ "w25q256", INFO(0xef4019, 0, 64 * 1024, 512, SECT_4K) },
 
 	/* Catalyst / On Semiconductor -- non-JEDEC */
 	{ "cat25c11", CAT25_INFO(  16, 8, 16, 1) },
@@ -739,7 +855,7 @@ static const struct spi_device_id m25p_ids[] = {
 };
 MODULE_DEVICE_TABLE(spi, m25p_ids);
 
-static const struct spi_device_id *__devinit jedec_probe(struct spi_device *spi)
+static const struct spi_device_id *jedec_probe(struct spi_device *spi)
 {
 	int			tmp;
 	u8			code = OPCODE_RDID;
@@ -784,7 +900,7 @@ static const struct spi_device_id *__devinit jedec_probe(struct spi_device *spi)
  * matches what the READ command supports, at least until this driver
  * understands FAST_READ (for clocks over 25 MHz).
  */
-static int __devinit m25p_probe(struct spi_device *spi)
+static int m25p_probe(struct spi_device *spi)
 {
 	const struct spi_device_id	*id = spi_get_device_id(spi);
 	struct flash_platform_data	*data;
@@ -792,9 +908,10 @@ static int __devinit m25p_probe(struct spi_device *spi)
 	struct flash_info		*info;
 	unsigned			i;
 	struct mtd_part_parser_data	ppdata;
+	struct device_node __maybe_unused *np = spi->dev.of_node;
 
 #ifdef CONFIG_MTD_OF_PARTS
-	if (!of_device_is_available(spi->dev.of_node))
+	if (!of_device_is_available(np))
 		return -ENODEV;
 #endif
 
@@ -846,7 +963,8 @@ static int __devinit m25p_probe(struct spi_device *spi)
 	flash = kzalloc(sizeof *flash, GFP_KERNEL);
 	if (!flash)
 		return -ENOMEM;
-	flash->command = kmalloc(MAX_CMD_SIZE + FAST_READ_DUMMY_BYTE, GFP_KERNEL);
+	flash->command = kmalloc(MAX_CMD_SIZE + (flash->fast_read ? 1 : 0),
+					GFP_KERNEL);
 	if (!flash->command) {
 		kfree(flash);
 		return -ENOMEM;
@@ -880,8 +998,14 @@ static int __devinit m25p_probe(struct spi_device *spi)
 	flash->mtd._erase = m25p80_erase;
 	flash->mtd._read = m25p80_read;
 
+	/* flash protection support for STmicro chips */
+	if (JEDEC_MFR(info->jedec_id) == CFI_MFR_ST) {
+		flash->mtd._lock = m25p80_lock;
+		flash->mtd._unlock = m25p80_unlock;
+	}
+
 	/* sst flash chips use AAI word program */
-	if (JEDEC_MFR(info->jedec_id) == CFI_MFR_SST)
+	if (info->flags & SST_WRITE)
 		flash->mtd._write = sst_write;
 	else
 		flash->mtd._write = m25p80_write;
@@ -902,6 +1026,16 @@ static int __devinit m25p_probe(struct spi_device *spi)
 	flash->mtd.dev.parent = &spi->dev;
 	flash->page_size = info->page_size;
 	flash->mtd.writebufsize = flash->page_size;
+
+	flash->fast_read = false;
+#ifdef CONFIG_OF
+	if (np && of_property_read_bool(np, "m25p,fast-read"))
+		flash->fast_read = true;
+#endif
+
+#ifdef CONFIG_M25PXX_USE_FAST_READ
+	flash->fast_read = true;
+#endif
 
 	if (info->addr_width)
 		flash->addr_width = info->addr_width;
@@ -944,7 +1078,7 @@ static int __devinit m25p_probe(struct spi_device *spi)
 }
 
 
-static int __devexit m25p_remove(struct spi_device *spi)
+static int m25p_remove(struct spi_device *spi)
 {
 	struct m25p	*flash = dev_get_drvdata(&spi->dev);
 	int		status;
@@ -966,7 +1100,7 @@ static struct spi_driver m25p80_driver = {
 	},
 	.id_table	= m25p_ids,
 	.probe	= m25p_probe,
-	.remove	= __devexit_p(m25p_remove),
+	.remove	= m25p_remove,
 
 	/* REVISIT: many of these chips have deep power-down modes, which
 	 * should clearly be entered on suspend() to minimize power use.

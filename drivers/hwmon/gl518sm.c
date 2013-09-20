@@ -86,7 +86,7 @@ enum chips { gl518sm_r00, gl518sm_r80 };
 #define BOOL_FROM_REG(val)	((val) ? 0 : 1)
 #define BOOL_TO_REG(val)	((val) ? 0 : 1)
 
-#define TEMP_TO_REG(val)	SENSORS_LIMIT(((((val) < 0 ? \
+#define TEMP_TO_REG(val)	clamp_val(((((val) < 0 ? \
 				(val) - 500 : \
 				(val) + 500) / 1000) + 119), 0, 255)
 #define TEMP_FROM_REG(val)	(((val) - 119) * 1000)
@@ -96,15 +96,15 @@ static inline u8 FAN_TO_REG(long rpm, int div)
 	long rpmdiv;
 	if (rpm == 0)
 		return 0;
-	rpmdiv = SENSORS_LIMIT(rpm, 1, 960000) * div;
-	return SENSORS_LIMIT((480000 + rpmdiv / 2) / rpmdiv, 1, 255);
+	rpmdiv = clamp_val(rpm, 1, 960000) * div;
+	return clamp_val((480000 + rpmdiv / 2) / rpmdiv, 1, 255);
 }
 #define FAN_FROM_REG(val, div)	((val) == 0 ? 0 : (480000 / ((val) * (div))))
 
-#define IN_TO_REG(val)		SENSORS_LIMIT((((val) + 9) / 19), 0, 255)
+#define IN_TO_REG(val)		clamp_val((((val) + 9) / 19), 0, 255)
 #define IN_FROM_REG(val)	((val) * 19)
 
-#define VDD_TO_REG(val)		SENSORS_LIMIT((((val) * 4 + 47) / 95), 0, 255)
+#define VDD_TO_REG(val)		clamp_val((((val) * 4 + 47) / 95), 0, 255)
 #define VDD_FROM_REG(val)	(((val) * 95 + 2) / 4)
 
 #define DIV_FROM_REG(val)	(1 << (val))
@@ -344,8 +344,9 @@ static ssize_t set_fan_div(struct device *dev, struct device_attribute *attr,
 		val = 3;
 		break;
 	default:
-		dev_err(dev, "Invalid fan clock divider %lu, choose one "
-			"of 1, 2, 4 or 8\n", val);
+		dev_err(dev,
+			"Invalid fan clock divider %lu, choose one of 1, 2, 4 or 8\n",
+			val);
 		return -EINVAL;
 	}
 
@@ -544,11 +545,10 @@ static int gl518_probe(struct i2c_client *client,
 	struct gl518_data *data;
 	int err, revision;
 
-	data = kzalloc(sizeof(struct gl518_data), GFP_KERNEL);
-	if (!data) {
-		err = -ENOMEM;
-		goto exit;
-	}
+	data = devm_kzalloc(&client->dev, sizeof(struct gl518_data),
+			    GFP_KERNEL);
+	if (!data)
+		return -ENOMEM;
 
 	i2c_set_clientdata(client, data);
 	revision = gl518_read_value(client, GL518_REG_REVISION);
@@ -562,7 +562,7 @@ static int gl518_probe(struct i2c_client *client,
 	/* Register sysfs hooks */
 	err = sysfs_create_group(&client->dev.kobj, &gl518_group);
 	if (err)
-		goto exit_free;
+		return err;
 	if (data->type == gl518sm_r80) {
 		err = sysfs_create_group(&client->dev.kobj, &gl518_group_r80);
 		if (err)
@@ -581,9 +581,6 @@ exit_remove_files:
 	sysfs_remove_group(&client->dev.kobj, &gl518_group);
 	if (data->type == gl518sm_r80)
 		sysfs_remove_group(&client->dev.kobj, &gl518_group_r80);
-exit_free:
-	kfree(data);
-exit:
 	return err;
 }
 
@@ -617,7 +614,6 @@ static int gl518_remove(struct i2c_client *client)
 	if (data->type == gl518sm_r80)
 		sysfs_remove_group(&client->dev.kobj, &gl518_group_r80);
 
-	kfree(data);
 	return 0;
 }
 

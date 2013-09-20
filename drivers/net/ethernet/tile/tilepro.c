@@ -843,7 +843,7 @@ static bool tile_net_poll_aux(struct tile_net_cpu *info, int index)
 		if (!is_multicast_ether_addr(buf)) {
 			/* Filter packets not for our address. */
 			const u8 *mine = dev->dev_addr;
-			filter = compare_ether_addr(mine, buf);
+			filter = !ether_addr_equal(mine, buf);
 		}
 	}
 
@@ -2195,7 +2195,6 @@ static int tile_net_set_mac_address(struct net_device *dev, void *p)
 
 	/* ISSUE: Note that "dev_addr" is now a pointer. */
 	memcpy(dev->dev_addr, addr->sa_data, dev->addr_len);
-	dev->addr_assign_type &= ~NET_ADDR_RANDOM;
 
 	return 0;
 }

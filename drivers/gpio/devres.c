@@ -34,10 +34,10 @@ static int devm_gpio_match(struct device *dev, void *res, void *data)
 }
 
 /**
- *      devm_gpio_request - request a gpio for a managed device
- *      @dev: device to request the gpio for
- *      @gpio: gpio to allocate
- *      @label: the name of the requested gpio
+ *      devm_gpio_request - request a GPIO for a managed device
+ *      @dev: device to request the GPIO for
+ *      @gpio: GPIO to allocate
+ *      @label: the name of the requested GPIO
  *
  *      Except for the extra @dev argument, this function takes the
  *      same arguments and performs the same function as
@@ -71,9 +71,39 @@ int devm_gpio_request(struct device *dev, unsigned gpio, const char *label)
 EXPORT_SYMBOL(devm_gpio_request);
 
 /**
- *      devm_gpio_free - free an interrupt
- *      @dev: device to free gpio for
- *      @gpio: gpio to free
+ *	devm_gpio_request_one - request a single GPIO with initial setup
+ *	@dev:   device to request for
+ *	@gpio:	the GPIO number
+ *	@flags:	GPIO configuration as specified by GPIOF_*
+ *	@label:	a literal description string of this GPIO
+ */
+int devm_gpio_request_one(struct device *dev, unsigned gpio,
+			  unsigned long flags, const char *label)
+{
+	unsigned *dr;
+	int rc;
+
+	dr = devres_alloc(devm_gpio_release, sizeof(unsigned), GFP_KERNEL);
+	if (!dr)
+		return -ENOMEM;
+
+	rc = gpio_request_one(gpio, flags, label);
+	if (rc) {
+		devres_free(dr);
+		return rc;
+	}
+
+	*dr = gpio;
+	devres_add(dev, dr);
+
+	return 0;
+}
+EXPORT_SYMBOL(devm_gpio_request_one);
+
+/**
+ *      devm_gpio_free - free a GPIO
+ *      @dev: device to free GPIO for
+ *      @gpio: GPIO to free
  *
  *      Except for the extra @dev argument, this function takes the
  *      same arguments and performs the same function as gpio_free().
@@ -83,8 +113,7 @@ EXPORT_SYMBOL(devm_gpio_request);
 void devm_gpio_free(struct device *dev, unsigned int gpio)
 {
 
-	WARN_ON(devres_destroy(dev, devm_gpio_release, devm_gpio_match,
+	WARN_ON(devres_release(dev, devm_gpio_release, devm_gpio_match,
 		&gpio));
-	gpio_free(gpio);
 }
 EXPORT_SYMBOL(devm_gpio_free);

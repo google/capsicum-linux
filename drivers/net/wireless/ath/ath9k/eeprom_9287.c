@@ -33,18 +33,13 @@ static int ath9k_hw_ar9287_get_eeprom_rev(struct ath_hw *ah)
 static bool __ath9k_hw_ar9287_fill_eeprom(struct ath_hw *ah)
 {
 	struct ar9287_eeprom *eep = &ah->eeprom.map9287;
-	struct ath_common *common = ath9k_hw_common(ah);
 	u16 *eep_data;
 	int addr, eep_start_loc = AR9287_EEP_START_LOC;
 	eep_data = (u16 *)eep;
 
 	for (addr = 0; addr < SIZE_EEPROM_AR9287; addr++) {
-		if (!ath9k_hw_nvram_read(common, addr + eep_start_loc,
-					 eep_data)) {
-			ath_dbg(common, EEPROM,
-				"Unable to read eeprom region\n");
+		if (!ath9k_hw_nvram_read(ah, addr + eep_start_loc, eep_data))
 			return false;
-		}
 		eep_data++;
 	}
 
@@ -132,7 +127,7 @@ static u32 ath9k_hw_ar9287_dump_eeprom(struct ath_hw *ah, bool dump_base_hdr,
 	if (!dump_base_hdr) {
 		len += snprintf(buf + len, size - len,
 				"%20s :\n", "2GHz modal Header");
-		len += ar9287_dump_modal_eeprom(buf, len, size,
+		len = ar9287_dump_modal_eeprom(buf, len, size,
 						&eep->modalHeader);
 		goto out;
 	}
@@ -190,7 +185,7 @@ static int ath9k_hw_ar9287_check_eeprom(struct ath_hw *ah)
 	struct ath_common *common = ath9k_hw_common(ah);
 
 	if (!ath9k_hw_use_flash(ah)) {
-		if (!ath9k_hw_nvram_read(common, AR5416_EEPROM_MAGIC_OFFSET,
+		if (!ath9k_hw_nvram_read(ah, AR5416_EEPROM_MAGIC_OFFSET,
 					 &magic)) {
 			ath_err(common, "Reading Magic # failed\n");
 			return false;
@@ -564,9 +559,6 @@ static void ath9k_hw_set_ar9287_power_per_rate_table(struct ath_hw *ah,
 	(((cfgCtl & ~CTL_MODE_M) | (pCtlMode[ctlMode] & CTL_MODE_M)) == \
 	 ((pEepData->ctlIndex[i] & CTL_MODE_M) | SD_NO_CTL))
 
-#define REDUCE_SCALED_POWER_BY_TWO_CHAIN     6
-#define REDUCE_SCALED_POWER_BY_THREE_CHAIN   10
-
 	u16 twiceMaxEdgePower;
 	int i;
 	struct cal_ctl_data_ar9287 *rep;
@@ -591,29 +583,8 @@ static void ath9k_hw_set_ar9287_power_per_rate_table(struct ath_hw *ah,
 	tx_chainmask = ah->txchainmask;
 
 	ath9k_hw_get_channel_centers(ah, chan, &centers);
-	scaledPower = powerLimit - antenna_reduction;
-
-	/*
-	 * Reduce scaled Power by number of chains active
-	 * to get the per chain tx power level.
-	 */
-	switch (ar5416_get_ntxchains(tx_chainmask)) {
-	case 1:
-		break;
-	case 2:
-		if (scaledPower > REDUCE_SCALED_POWER_BY_TWO_CHAIN)
-			scaledPower -= REDUCE_SCALED_POWER_BY_TWO_CHAIN;
-		else
-			scaledPower = 0;
-		break;
-	case 3:
-		if (scaledPower > REDUCE_SCALED_POWER_BY_THREE_CHAIN)
-			scaledPower -= REDUCE_SCALED_POWER_BY_THREE_CHAIN;
-		else
-			scaledPower = 0;
-		break;
-	}
-	scaledPower = max((u16)0, scaledPower);
+	scaledPower = ath9k_hw_get_scaled_power(ah, powerLimit,
+						antenna_reduction);
 
 	/*
 	 * Get TX power from EEPROM.
@@ -786,8 +757,6 @@ static void ath9k_hw_set_ar9287_power_per_rate_table(struct ath_hw *ah,
 
 #undef CMP_CTL
 #undef CMP_NO_CTL
-#undef REDUCE_SCALED_POWER_BY_TWO_CHAIN
-#undef REDUCE_SCALED_POWER_BY_THREE_CHAIN
 }
 
 static void ath9k_hw_ar9287_set_txpower(struct ath_hw *ah,

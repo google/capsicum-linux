@@ -132,11 +132,9 @@ struct scsi_cmnd {
 	unsigned char tag;	/* SCSI-II queued command tag */
 };
 
+/* make sure not to use it with REQ_TYPE_BLOCK_PC commands */
 static inline struct scsi_driver *scsi_cmd_to_driver(struct scsi_cmnd *cmd)
 {
-	if (!cmd->request->rq_disk)
-		return NULL;
-
 	return *(struct scsi_driver **)cmd->request->rq_disk->private_data;
 }
 

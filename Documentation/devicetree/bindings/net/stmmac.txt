@@ -1,7 +1,8 @@
 * STMicroelectronics 10/100/1000 Ethernet driver (GMAC)
 
 Required properties:
-- compatible: Should be "st,spear600-gmac"
+- compatible: Should be "snps,dwmac-<ip_version>" "snps,dwmac"
+	For backwards compatibility: "st,spear600-gmac" is also supported.
 - reg: Address and length of the register set for the device
 - interrupt-parent: Should be the phandle for the interrupt controller
   that services interrupts for this device
@@ -11,6 +12,16 @@ Required properties:
   property
 - phy-mode: String, operation mode of the PHY interface.
   Supported values are: "mii", "rmii", "gmii", "rgmii".
+- snps,phy-addr		phy address to connect to.
+- snps,reset-gpio 	gpio number for phy reset.
+- snps,reset-active-low boolean flag to indicate if phy reset is active low.
+- snps,reset-delays-us  is triplet of delays
+	The 1st cell is reset pre-delay in micro seconds.
+	The 2nd cell is reset pulse in micro seconds.
+	The 3rd cell is reset post-delay in micro seconds.
+- snps,pbl		Programmable Burst Length
+- snps,fixed-burst	Program the DMA to use the fixed burst mode
+- snps,mixed-burst	Program the DMA to use the mixed burst mode
 
 Optional properties:
 - mac-address: 6 bytes, mac address

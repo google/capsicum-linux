@@ -27,20 +27,18 @@
 #include <linux/clk.h>
 #include <linux/io.h>
 #include <linux/gpio.h>
+#include <linux/usb/phy.h>
 
-#include <mach/hardware.h>
 #include <asm/mach-types.h>
 #include <asm/mach/arch.h>
 #include <asm/mach/map.h>
 
-#include <plat/board.h>
 #include "common.h"
-#include <plat/gpmc.h>
-#include <plat/usb.h>
-#include <plat/gpmc-smc91x.h>
+#include "gpmc.h"
+#include "gpmc-smc91x.h"
 
 #include <video/omapdss.h>
-#include <video/omap-panel-generic-dpi.h>
+#include <video/omap-panel-data.h>
 
 #include "mux.h"
 #include "hsmmc.h"
@@ -110,24 +108,13 @@ static struct platform_device *sdp2430_devices[] __initdata = {
 #define SDP2430_LCD_PANEL_BACKLIGHT_GPIO	91
 #define SDP2430_LCD_PANEL_ENABLE_GPIO		154
 
-static int sdp2430_panel_enable_lcd(struct omap_dss_device *dssdev)
-{
-	gpio_direction_output(SDP2430_LCD_PANEL_ENABLE_GPIO, 1);
-	gpio_direction_output(SDP2430_LCD_PANEL_BACKLIGHT_GPIO, 1);
-
-	return 0;
-}
-
-static void sdp2430_panel_disable_lcd(struct omap_dss_device *dssdev)
-{
-	gpio_direction_output(SDP2430_LCD_PANEL_ENABLE_GPIO, 0);
-	gpio_direction_output(SDP2430_LCD_PANEL_BACKLIGHT_GPIO, 0);
-}
-
 static struct panel_generic_dpi_data sdp2430_panel_data = {
 	.name			= "nec_nl2432dr22-11b",
-	.platform_enable	= sdp2430_panel_enable_lcd,
-	.platform_disable	= sdp2430_panel_disable_lcd,
+	.num_gpios		= 2,
+	.gpios			= {
+		SDP2430_LCD_PANEL_ENABLE_GPIO,
+		SDP2430_LCD_PANEL_BACKLIGHT_GPIO,
+	},
 };
 
 static struct omap_dss_device sdp2430_lcd_device = {
@@ -148,27 +135,7 @@ static struct omap_dss_board_info sdp2430_dss_data = {
 	.default_device	= &sdp2430_lcd_device,
 };
 
-static void __init sdp2430_display_init(void)
-{
-	int r;
-
-	static struct gpio gpios[] __initdata = {
-		{ SDP2430_LCD_PANEL_ENABLE_GPIO, GPIOF_OUT_INIT_LOW,
-			"LCD reset" },
-		{ SDP2430_LCD_PANEL_BACKLIGHT_GPIO, GPIOF_OUT_INIT_LOW,
-			"LCD Backlight" },
-	};
-
-	r = gpio_request_array(gpios, ARRAY_SIZE(gpios));
-	if (r) {
-		pr_err("Cannot request LCD GPIOs, error %d\n", r);
-		return;
-	}
-
-	omap_display_init(&sdp2430_dss_data);
-}
-
-#if defined(CONFIG_SMC91X) || defined(CONFIG_SMC91x_MODULE)
+#if IS_ENABLED(CONFIG_SMC91X)
 
 static struct omap_smc91x_platform_data board_smc91x_data = {
 	.cs		= 5,
@@ -212,15 +179,9 @@ static struct regulator_init_data sdp2430_vmmc1 = {
 };
 
 static struct twl4030_gpio_platform_data sdp2430_gpio_data = {
-	.gpio_base	= OMAP_MAX_GPIO_LINES,
-	.irq_base	= TWL4030_GPIO_IRQ_BASE,
-	.irq_end	= TWL4030_GPIO_IRQ_END,
 };
 
 static struct twl4030_platform_data sdp2430_twldata = {
-	.irq_base	= TWL4030_IRQ_BASE,
-	.irq_end	= TWL4030_IRQ_END,
-
 	/* platform_data for children goes here */
 	.gpio		= &sdp2430_gpio_data,
 	.vmmc1		= &sdp2430_vmmc1,
@@ -238,7 +199,7 @@ static int __init omap2430_i2c_init(void)
 	sdp2430_i2c1_boardinfo[0].irq = gpio_to_irq(78);
 	omap_register_i2c_bus(1, 100, sdp2430_i2c1_boardinfo,
 			ARRAY_SIZE(sdp2430_i2c1_boardinfo));
-	omap_pmic_init(2, 100, "twl4030", INT_24XX_SYS_NIRQ,
+	omap_pmic_init(2, 100, "twl4030", 7 + OMAP_INTC_START,
 			&sdp2430_twldata);
 	return 0;
 }
@@ -252,16 +213,6 @@ static struct omap2_hsmmc_info mmc[] __initdata = {
 		.ext_clock	= 1,
 	},
 	{}	/* Terminator */
-};
-
-static struct omap_usb_config sdp2430_usb_config __initdata = {
-	.otg		= 1,
-#ifdef  CONFIG_USB_GADGET_OMAP
-	.hmc_mode	= 0x0,
-#elif   defined(CONFIG_USB_OHCI_HCD) || defined(CONFIG_USB_OHCI_HCD_MODULE)
-	.hmc_mode	= 0x1,
-#endif
-	.pins[0]	= 3,
 };
 
 #ifdef CONFIG_OMAP_MUX
@@ -280,9 +231,9 @@ static void __init omap_2430sdp_init(void)
 	omap_serial_init();
 	omap_sdrc_init(NULL, NULL);
 	omap_hsmmc_init(mmc);
-	omap2_usbfs_init(&sdp2430_usb_config);
 
 	omap_mux_init_signal("usb0hs_stp", OMAP_PULL_ENA | OMAP_PULL_UP);
+	usb_bind_phy("musb-hdrc.0.auto", 0, "twl4030_usb");
 	usb_musb_init(NULL);
 
 	board_smc91x_init();
@@ -291,7 +242,7 @@ static void __init omap_2430sdp_init(void)
 	gpio_request_one(SECONDARY_LCD_GPIO, GPIOF_OUT_INIT_LOW,
 			 "Secondary LCD backlight");
 
-	sdp2430_display_init();
+	omap_display_init(&sdp2430_dss_data);
 }
 
 MACHINE_START(OMAP_2430SDP, "OMAP2430 sdp2430 board")
@@ -303,6 +254,7 @@ MACHINE_START(OMAP_2430SDP, "OMAP2430 sdp2430 board")
 	.init_irq	= omap2_init_irq,
 	.handle_irq	= omap2_intc_handle_irq,
 	.init_machine	= omap_2430sdp_init,
-	.timer		= &omap2_timer,
-	.restart	= omap_prcm_restart,
+	.init_late	= omap2430_init_late,
+	.init_time	= omap2_sync32k_timer_init,
+	.restart	= omap2xxx_restart,
 MACHINE_END

@@ -16,6 +16,7 @@
 #include <asm/asm-offsets.h>
 #include <asm/ppc-opcode.h>
 #include <asm/hw_irq.h>
+#include <asm/kvm_book3s_asm.h>
 
 #undef DEBUG
 
@@ -27,7 +28,9 @@ _GLOBAL(power7_idle)
 	lwz	r4,ADDROFF(powersave_nap)(r3)
 	cmpwi	0,r4,0
 	beqlr
+	/* fall through */
 
+_GLOBAL(power7_nap)
 	/* NAP is a state loss, we create a regs frame on the
 	 * stack, fill it up with the state we care about and
 	 * stick a pointer to it in PACAR1. We really only
@@ -80,6 +83,12 @@ _GLOBAL(power7_idle)
 	std	r3,_CCR(r1)
 	std	r9,_MSR(r1)
 	std	r1,PACAR1(r13)
+
+#ifdef CONFIG_KVM_BOOK3S_64_HV
+	/* Tell KVM we're napping */
+	li	r4,KVM_HWTHREAD_IN_NAP
+	stb	r4,HSTATE_HWTHREAD_STATE(r13)
+#endif
 
 	/* Magic NAP mode enter sequence */
 	std	r0,0(r1)

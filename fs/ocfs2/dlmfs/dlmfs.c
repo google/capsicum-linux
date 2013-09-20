@@ -224,7 +224,7 @@ static int dlmfs_file_setattr(struct dentry *dentry, struct iattr *attr)
 static unsigned int dlmfs_file_poll(struct file *file, poll_table *wait)
 {
 	int event = 0;
-	struct inode *inode = file->f_path.dentry->d_inode;
+	struct inode *inode = file_inode(file);
 	struct dlmfs_inode_private *ip = DLMFS_I(inode);
 
 	poll_wait(file, &ip->ip_lockres.l_event, wait);
@@ -245,7 +245,7 @@ static ssize_t dlmfs_file_read(struct file *filp,
 	int bytes_left;
 	ssize_t readlen, got;
 	char *lvb_buf;
-	struct inode *inode = filp->f_path.dentry->d_inode;
+	struct inode *inode = file_inode(filp);
 
 	mlog(0, "inode %lu, count = %zu, *ppos = %llu\n",
 		inode->i_ino, count, *ppos);
@@ -293,7 +293,7 @@ static ssize_t dlmfs_file_write(struct file *filp,
 	int bytes_left;
 	ssize_t writelen;
 	char *lvb_buf;
-	struct inode *inode = filp->f_path.dentry->d_inode;
+	struct inode *inode = file_inode(filp);
 
 	mlog(0, "inode %lu, count = %zu, *ppos = %llu\n",
 		inode->i_ino, count, *ppos);
@@ -367,7 +367,7 @@ static void dlmfs_evict_inode(struct inode *inode)
 	int status;
 	struct dlmfs_inode_private *ip;
 
-	end_writeback(inode);
+	clear_inode(inode);
 
 	mlog(0, "inode %lu\n", inode->i_ino);
 
@@ -526,7 +526,7 @@ bail:
 static int dlmfs_create(struct inode *dir,
 			struct dentry *dentry,
 			umode_t mode,
-			struct nameidata *nd)
+			bool excl)
 {
 	int status = 0;
 	struct inode *inode;
@@ -640,6 +640,7 @@ static struct file_system_type dlmfs_fs_type = {
 	.mount		= dlmfs_mount,
 	.kill_sb	= kill_litter_super,
 };
+MODULE_ALIAS_FS("ocfs2_dlmfs");
 
 static int __init init_dlmfs_fs(void)
 {
@@ -691,6 +692,11 @@ static void __exit exit_dlmfs_fs(void)
 	flush_workqueue(user_dlm_worker);
 	destroy_workqueue(user_dlm_worker);
 
+	/*
+	 * Make sure all delayed rcu free inodes are flushed before we
+	 * destroy cache.
+	 */
+	rcu_barrier();
 	kmem_cache_destroy(dlmfs_inode_cache);
 
 	bdi_destroy(&dlmfs_backing_dev_info);

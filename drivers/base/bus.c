@@ -21,8 +21,7 @@
 #include "power/power.h"
 
 /* /sys/devices/system */
-/* FIXME: make static after drivers/base/sys.c is deleted */
-struct kset *system_kset;
+static struct kset *system_kset;
 
 #define to_bus_attr(_attr) container_of(_attr, struct bus_attribute, attr)
 
@@ -165,8 +164,6 @@ static const struct kset_uevent_ops bus_uevent_ops = {
 
 static struct kset *bus_kset;
 
-
-#ifdef CONFIG_HOTPLUG
 /* Manually detach a device from its associated driver. */
 static ssize_t driver_unbind(struct device_driver *drv,
 			     const char *buf, size_t count)
@@ -253,7 +250,6 @@ static ssize_t store_drivers_probe(struct bus_type *bus,
 		return -EINVAL;
 	return count;
 }
-#endif
 
 static struct device *next_device(struct klist_iter *i)
 {
@@ -294,7 +290,7 @@ int bus_for_each_dev(struct bus_type *bus, struct device *start,
 	struct device *dev;
 	int error = 0;
 
-	if (!bus)
+	if (!bus || !bus->p)
 		return -EINVAL;
 
 	klist_iter_init_node(&bus->p->klist_devices, &i,
@@ -328,7 +324,7 @@ struct device *bus_find_device(struct bus_type *bus,
 	struct klist_iter i;
 	struct device *dev;
 
-	if (!bus)
+	if (!bus || !bus->p)
 		return NULL;
 
 	klist_iter_init_node(&bus->p->klist_devices, &i,
@@ -619,11 +615,6 @@ static void driver_remove_attrs(struct bus_type *bus,
 	}
 }
 
-#ifdef CONFIG_HOTPLUG
-/*
- * Thanks to drivers making their tables __devinit, we can't allow manual
- * bind and unbind from userspace unless CONFIG_HOTPLUG is enabled.
- */
 static int __must_check add_bind_files(struct device_driver *drv)
 {
 	int ret;
@@ -667,12 +658,6 @@ static void remove_probe_files(struct bus_type *bus)
 	bus_remove_file(bus, &bus_attr_drivers_autoprobe);
 	bus_remove_file(bus, &bus_attr_drivers_probe);
 }
-#else
-static inline int add_bind_files(struct device_driver *drv) { return 0; }
-static inline void remove_bind_files(struct device_driver *drv) {}
-static inline int add_probe_files(struct bus_type *bus) { return 0; }
-static inline void remove_probe_files(struct bus_type *bus) {}
-#endif
 
 static ssize_t driver_uevent_store(struct device_driver *drv,
 				   const char *buf, size_t count)
@@ -715,12 +700,12 @@ int bus_add_driver(struct device_driver *drv)
 	if (error)
 		goto out_unregister;
 
+	klist_add_tail(&priv->knode_bus, &bus->p->klist_drivers);
 	if (drv->bus->p->drivers_autoprobe) {
 		error = driver_attach(drv);
 		if (error)
 			goto out_unregister;
 	}
-	klist_add_tail(&priv->knode_bus, &bus->p->klist_drivers);
 	module_add_driver(drv->owner, drv);
 
 	error = driver_create_file(drv, &driver_attr_uevent);
@@ -744,7 +729,6 @@ int bus_add_driver(struct device_driver *drv)
 		}
 	}
 
-	kobject_uevent(&priv->kobj, KOBJ_ADD);
 	return 0;
 
 out_unregister:
@@ -914,18 +898,18 @@ static ssize_t bus_uevent_store(struct bus_type *bus,
 static BUS_ATTR(uevent, S_IWUSR, NULL, bus_uevent_store);
 
 /**
- * __bus_register - register a driver-core subsystem
+ * bus_register - register a driver-core subsystem
  * @bus: bus to register
- * @key: lockdep class key
  *
  * Once we have that, we register the bus with the kobject
  * infrastructure, then register the children subsystems it has:
  * the devices and drivers that belong to the subsystem.
  */
-int __bus_register(struct bus_type *bus, struct lock_class_key *key)
+int bus_register(struct bus_type *bus)
 {
 	int retval;
 	struct subsys_private *priv;
+	struct lock_class_key *key = &bus->lock_key;
 
 	priv = kzalloc(sizeof(struct subsys_private), GFP_KERNEL);
 	if (!priv)
@@ -997,7 +981,7 @@ out:
 	bus->p = NULL;
 	return retval;
 }
-EXPORT_SYMBOL_GPL(__bus_register);
+EXPORT_SYMBOL_GPL(bus_register);
 
 /**
  * bus_unregister - remove a bus from the system
@@ -1221,6 +1205,49 @@ static void system_root_device_release(struct device *dev)
 {
 	kfree(dev);
 }
+
+static int subsys_register(struct bus_type *subsys,
+			   const struct attribute_group **groups,
+			   struct kobject *parent_of_root)
+{
+	struct device *dev;
+	int err;
+
+	err = bus_register(subsys);
+	if (err < 0)
+		return err;
+
+	dev = kzalloc(sizeof(struct device), GFP_KERNEL);
+	if (!dev) {
+		err = -ENOMEM;
+		goto err_dev;
+	}
+
+	err = dev_set_name(dev, "%s", subsys->name);
+	if (err < 0)
+		goto err_name;
+
+	dev->kobj.parent = parent_of_root;
+	dev->groups = groups;
+	dev->release = system_root_device_release;
+
+	err = device_register(dev);
+	if (err < 0)
+		goto err_dev_reg;
+
+	subsys->dev_root = dev;
+	return 0;
+
+err_dev_reg:
+	put_device(dev);
+	dev = NULL;
+err_name:
+	kfree(dev);
+err_dev:
+	bus_unregister(subsys);
+	return err;
+}
+
 /**
  * subsys_system_register - register a subsystem at /sys/devices/system/
  * @subsys: system subsystem
@@ -1242,44 +1269,33 @@ static void system_root_device_release(struct device *dev)
 int subsys_system_register(struct bus_type *subsys,
 			   const struct attribute_group **groups)
 {
-	struct device *dev;
-	int err;
-
-	err = bus_register(subsys);
-	if (err < 0)
-		return err;
-
-	dev = kzalloc(sizeof(struct device), GFP_KERNEL);
-	if (!dev) {
-		err = -ENOMEM;
-		goto err_dev;
-	}
-
-	err = dev_set_name(dev, "%s", subsys->name);
-	if (err < 0)
-		goto err_name;
-
-	dev->kobj.parent = &system_kset->kobj;
-	dev->groups = groups;
-	dev->release = system_root_device_release;
-
-	err = device_register(dev);
-	if (err < 0)
-		goto err_dev_reg;
-
-	subsys->dev_root = dev;
-	return 0;
-
-err_dev_reg:
-	put_device(dev);
-	dev = NULL;
-err_name:
-	kfree(dev);
-err_dev:
-	bus_unregister(subsys);
-	return err;
+	return subsys_register(subsys, groups, &system_kset->kobj);
 }
 EXPORT_SYMBOL_GPL(subsys_system_register);
+
+/**
+ * subsys_virtual_register - register a subsystem at /sys/devices/virtual/
+ * @subsys: virtual subsystem
+ * @groups: default attributes for the root device
+ *
+ * All 'virtual' subsystems have a /sys/devices/system/<name> root device
+ * with the name of the subystem.  The root device can carry subsystem-wide
+ * attributes.  All registered devices are below this single root device.
+ * There's no restriction on device naming.  This is for kernel software
+ * constructs which need sysfs interface.
+ */
+int subsys_virtual_register(struct bus_type *subsys,
+			    const struct attribute_group **groups)
+{
+	struct kobject *virtual_dir;
+
+	virtual_dir = virtual_device_parent(NULL);
+	if (!virtual_dir)
+		return -ENOMEM;
+
+	return subsys_register(subsys, groups, virtual_dir);
+}
+EXPORT_SYMBOL_GPL(subsys_virtual_register);
 
 int __init buses_init(void)
 {

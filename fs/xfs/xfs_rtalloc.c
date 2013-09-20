@@ -20,7 +20,6 @@
 #include "xfs_types.h"
 #include "xfs_bit.h"
 #include "xfs_log.h"
-#include "xfs_inum.h"
 #include "xfs_trans.h"
 #include "xfs_sb.h"
 #include "xfs_ag.h"
@@ -34,12 +33,12 @@
 #include "xfs_rtalloc.h"
 #include "xfs_fsops.h"
 #include "xfs_error.h"
-#include "xfs_rw.h"
 #include "xfs_inode_item.h"
 #include "xfs_trans_space.h"
 #include "xfs_utils.h"
 #include "xfs_trace.h"
 #include "xfs_buf.h"
+#include "xfs_icache.h"
 
 
 /*
@@ -859,7 +858,7 @@ xfs_rtbuf_get(
 	xfs_buf_t	*bp;		/* block buffer, result */
 	xfs_inode_t	*ip;		/* bitmap or summary inode */
 	xfs_bmbt_irec_t	map;
-	int		nmap;
+	int		nmap = 1;
 	int		error;		/* error value */
 
 	ip = issum ? mp->m_rsumip : mp->m_rbmip;
@@ -871,7 +870,7 @@ xfs_rtbuf_get(
 	ASSERT(map.br_startblock != NULLFSBLOCK);
 	error = xfs_trans_read_buf(mp, tp, mp->m_ddev_targp,
 				   XFS_FSB_TO_DADDR(mp, map.br_startblock),
-				   mp->m_bsize, 0, &bp);
+				   mp->m_bsize, 0, &bp, NULL);
 	if (error)
 		return error;
 	ASSERT(!xfs_buf_geterror(bp));
@@ -1872,11 +1871,16 @@ xfs_growfs_rt(
 	/*
 	 * Read in the last block of the device, make sure it exists.
 	 */
-	bp = xfs_buf_read_uncached(mp, mp->m_rtdev_targp,
+	bp = xfs_buf_read_uncached(mp->m_rtdev_targp,
 				XFS_FSB_TO_BB(mp, nrblocks - 1),
-				XFS_FSB_TO_B(mp, 1), 0);
+				XFS_FSB_TO_BB(mp, 1), 0, NULL);
 	if (!bp)
 		return EIO;
+	if (bp->b_error) {
+		error = bp->b_error;
+		xfs_buf_relse(bp);
+		return error;
+	}
 	xfs_buf_relse(bp);
 
 	/*
@@ -2219,11 +2223,13 @@ xfs_rtmount_init(
 			(unsigned long long) mp->m_sb.sb_rblocks);
 		return XFS_ERROR(EFBIG);
 	}
-	bp = xfs_buf_read_uncached(mp, mp->m_rtdev_targp,
+	bp = xfs_buf_read_uncached(mp->m_rtdev_targp,
 					d - XFS_FSB_TO_BB(mp, 1),
-					XFS_FSB_TO_B(mp, 1), 0);
-	if (!bp) {
+					XFS_FSB_TO_BB(mp, 1), 0, NULL);
+	if (!bp || bp->b_error) {
 		xfs_warn(mp, "realtime device size check failed");
+		if (bp)
+			xfs_buf_relse(bp);
 		return EIO;
 	}
 	xfs_buf_relse(bp);

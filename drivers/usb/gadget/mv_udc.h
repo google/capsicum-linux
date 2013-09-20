@@ -222,8 +222,7 @@ struct mv_udc {
 	struct mv_usb_platform_data     *pdata;
 
 	/* some SOC has mutiple clock sources for USB*/
-	unsigned int    clknum;
-	struct clk      *clk[0];
+	struct clk      *clk;
 };
 
 /* endpoint data structure */
@@ -232,7 +231,6 @@ struct mv_ep {
 	struct mv_udc		*udc;
 	struct list_head	queue;
 	struct mv_dqh		*dqh;
-	const struct usb_endpoint_descriptor	*desc;
 	u32			direction;
 	char			name[14];
 	unsigned		stopped:1,

@@ -1,5 +1,5 @@
 /*
- *    Copyright IBM Corp. 2004,2011
+ *    Copyright IBM Corp. 2004, 2011
  *    Author(s): Martin Schwidefsky <schwidefsky@de.ibm.com>,
  *		 Holger Smolinski <Holger.Smolinski@de.ibm.com>,
  *		 Thomas Spatzier <tspat@de.ibm.com>,
@@ -24,38 +24,66 @@
 #include <asm/irq.h>
 #include "entry.h"
 
+DEFINE_PER_CPU_SHARED_ALIGNED(struct irq_stat, irq_stat);
+EXPORT_PER_CPU_SYMBOL_GPL(irq_stat);
+
 struct irq_class {
 	char *name;
 	char *desc;
 };
 
-static const struct irq_class intrclass_names[] = {
-	{.name = "EXT" },
-	{.name = "I/O" },
-	{.name = "CLK", .desc = "[EXT] Clock Comparator" },
-	{.name = "EXC", .desc = "[EXT] External Call" },
-	{.name = "EMS", .desc = "[EXT] Emergency Signal" },
-	{.name = "TMR", .desc = "[EXT] CPU Timer" },
-	{.name = "TAL", .desc = "[EXT] Timing Alert" },
-	{.name = "PFL", .desc = "[EXT] Pseudo Page Fault" },
-	{.name = "DSD", .desc = "[EXT] DASD Diag" },
-	{.name = "VRT", .desc = "[EXT] Virtio" },
-	{.name = "SCP", .desc = "[EXT] Service Call" },
-	{.name = "IUC", .desc = "[EXT] IUCV" },
-	{.name = "CPM", .desc = "[EXT] CPU Measurement" },
-	{.name = "CIO", .desc = "[I/O] Common I/O Layer Interrupt" },
-	{.name = "QAI", .desc = "[I/O] QDIO Adapter Interrupt" },
-	{.name = "DAS", .desc = "[I/O] DASD" },
-	{.name = "C15", .desc = "[I/O] 3215" },
-	{.name = "C70", .desc = "[I/O] 3270" },
-	{.name = "TAP", .desc = "[I/O] Tape" },
-	{.name = "VMR", .desc = "[I/O] Unit Record Devices" },
-	{.name = "LCS", .desc = "[I/O] LCS" },
-	{.name = "CLW", .desc = "[I/O] CLAW" },
-	{.name = "CTC", .desc = "[I/O] CTC" },
-	{.name = "APB", .desc = "[I/O] AP Bus" },
-	{.name = "CSC", .desc = "[I/O] CHSC Subchannel" },
-	{.name = "NMI", .desc = "[NMI] Machine Check" },
+/*
+ * The list of "main" irq classes on s390. This is the list of interrupts
+ * that appear both in /proc/stat ("intr" line) and /proc/interrupts.
+ * Historically only external and I/O interrupts have been part of /proc/stat.
+ * We can't add the split external and I/O sub classes since the first field
+ * in the "intr" line in /proc/stat is supposed to be the sum of all other
+ * fields.
+ * Since the external and I/O interrupt fields are already sums we would end
+ * up with having a sum which accounts each interrupt twice.
+ */
+static const struct irq_class irqclass_main_desc[NR_IRQS] = {
+	[EXTERNAL_INTERRUPT] = {.name = "EXT"},
+	[IO_INTERRUPT]	     = {.name = "I/O"}
+};
+
+/*
+ * The list of split external and I/O interrupts that appear only in
+ * /proc/interrupts.
+ * In addition this list contains non external / I/O events like NMIs.
+ */
+static const struct irq_class irqclass_sub_desc[NR_ARCH_IRQS] = {
+	[IRQEXT_CLK] = {.name = "CLK", .desc = "[EXT] Clock Comparator"},
+	[IRQEXT_EXC] = {.name = "EXC", .desc = "[EXT] External Call"},
+	[IRQEXT_EMS] = {.name = "EMS", .desc = "[EXT] Emergency Signal"},
+	[IRQEXT_TMR] = {.name = "TMR", .desc = "[EXT] CPU Timer"},
+	[IRQEXT_TLA] = {.name = "TAL", .desc = "[EXT] Timing Alert"},
+	[IRQEXT_PFL] = {.name = "PFL", .desc = "[EXT] Pseudo Page Fault"},
+	[IRQEXT_DSD] = {.name = "DSD", .desc = "[EXT] DASD Diag"},
+	[IRQEXT_VRT] = {.name = "VRT", .desc = "[EXT] Virtio"},
+	[IRQEXT_SCP] = {.name = "SCP", .desc = "[EXT] Service Call"},
+	[IRQEXT_IUC] = {.name = "IUC", .desc = "[EXT] IUCV"},
+	[IRQEXT_CMS] = {.name = "CMS", .desc = "[EXT] CPU-Measurement: Sampling"},
+	[IRQEXT_CMC] = {.name = "CMC", .desc = "[EXT] CPU-Measurement: Counter"},
+	[IRQEXT_CMR] = {.name = "CMR", .desc = "[EXT] CPU-Measurement: RI"},
+	[IRQIO_CIO]  = {.name = "CIO", .desc = "[I/O] Common I/O Layer Interrupt"},
+	[IRQIO_QAI]  = {.name = "QAI", .desc = "[I/O] QDIO Adapter Interrupt"},
+	[IRQIO_DAS]  = {.name = "DAS", .desc = "[I/O] DASD"},
+	[IRQIO_C15]  = {.name = "C15", .desc = "[I/O] 3215"},
+	[IRQIO_C70]  = {.name = "C70", .desc = "[I/O] 3270"},
+	[IRQIO_TAP]  = {.name = "TAP", .desc = "[I/O] Tape"},
+	[IRQIO_VMR]  = {.name = "VMR", .desc = "[I/O] Unit Record Devices"},
+	[IRQIO_LCS]  = {.name = "LCS", .desc = "[I/O] LCS"},
+	[IRQIO_CLW]  = {.name = "CLW", .desc = "[I/O] CLAW"},
+	[IRQIO_CTC]  = {.name = "CTC", .desc = "[I/O] CTC"},
+	[IRQIO_APB]  = {.name = "APB", .desc = "[I/O] AP Bus"},
+	[IRQIO_ADM]  = {.name = "ADM", .desc = "[I/O] EADM Subchannel"},
+	[IRQIO_CSC]  = {.name = "CSC", .desc = "[I/O] CHSC Subchannel"},
+	[IRQIO_PCI]  = {.name = "PCI", .desc = "[I/O] PCI Interrupt" },
+	[IRQIO_MSI]  = {.name = "MSI", .desc = "[I/O] MSI Interrupt" },
+	[IRQIO_VIR]  = {.name = "VIR", .desc = "[I/O] Virtual I/O Devices"},
+	[NMI_NMI]    = {.name = "NMI", .desc = "[NMI] Machine Check"},
+	[CPU_RST]    = {.name = "RST", .desc = "[CPU] CPU Restart"},
 };
 
 /*
@@ -63,30 +91,34 @@ static const struct irq_class intrclass_names[] = {
  */
 int show_interrupts(struct seq_file *p, void *v)
 {
-	int i = *(loff_t *) v, j;
+	int irq = *(loff_t *) v;
+	int cpu;
 
 	get_online_cpus();
-	if (i == 0) {
+	if (irq == 0) {
 		seq_puts(p, "           ");
-		for_each_online_cpu(j)
-			seq_printf(p, "CPU%d       ",j);
+		for_each_online_cpu(cpu)
+			seq_printf(p, "CPU%d       ", cpu);
 		seq_putc(p, '\n');
 	}
-
-	if (i < NR_IRQS) {
-		seq_printf(p, "%s: ", intrclass_names[i].name);
-#ifndef CONFIG_SMP
-		seq_printf(p, "%10u ", kstat_irqs(i));
-#else
-		for_each_online_cpu(j)
-			seq_printf(p, "%10u ", kstat_cpu(j).irqs[i]);
-#endif
-		if (intrclass_names[i].desc)
-			seq_printf(p, "  %s", intrclass_names[i].desc);
-                seq_putc(p, '\n');
-        }
+	if (irq < NR_IRQS) {
+		seq_printf(p, "%s: ", irqclass_main_desc[irq].name);
+		for_each_online_cpu(cpu)
+			seq_printf(p, "%10u ", kstat_cpu(cpu).irqs[irq]);
+		seq_putc(p, '\n');
+		goto skip_arch_irqs;
+	}
+	for (irq = 0; irq < NR_ARCH_IRQS; irq++) {
+		seq_printf(p, "%s: ", irqclass_sub_desc[irq].name);
+		for_each_online_cpu(cpu)
+			seq_printf(p, "%10u ", per_cpu(irq_stat, cpu).irqs[irq]);
+		if (irqclass_sub_desc[irq].desc)
+			seq_printf(p, "  %s", irqclass_sub_desc[irq].desc);
+		seq_putc(p, '\n');
+	}
+skip_arch_irqs:
 	put_online_cpus();
-        return 0;
+	return 0;
 }
 
 /*
@@ -130,10 +162,8 @@ asmlinkage void do_softirq(void)
 #ifdef CONFIG_PROC_FS
 void init_irq_proc(void)
 {
-	struct proc_dir_entry *root_irq_dir;
-
-	root_irq_dir = proc_mkdir("irq", NULL);
-	create_prof_cpu_mask(root_irq_dir);
+	if (proc_mkdir("irq", NULL))
+		create_prof_cpu_mask();
 }
 #endif
 
@@ -204,9 +234,9 @@ int unregister_external_interrupt(u16 code, ext_int_handler_t handler)
 }
 EXPORT_SYMBOL(unregister_external_interrupt);
 
-void __irq_entry do_extint(struct pt_regs *regs, struct ext_code ext_code,
-			   unsigned int param32, unsigned long param64)
+void __irq_entry do_extint(struct pt_regs *regs)
 {
+	struct ext_code ext_code;
 	struct pt_regs *old_regs;
 	struct ext_int_info *p;
 	int index;
@@ -217,7 +247,8 @@ void __irq_entry do_extint(struct pt_regs *regs, struct ext_code ext_code,
 		/* Serve timer interrupts first. */
 		clock_comparator_work();
 	}
-	kstat_cpu(smp_processor_id()).irqs[EXTERNAL_INTERRUPT]++;
+	kstat_incr_irqs_this_cpu(EXTERNAL_INTERRUPT, NULL);
+	ext_code = *(struct ext_code *) &regs->int_code;
 	if (ext_code.code != 0x1004)
 		__get_cpu_var(s390_idle).nohz_delay = 1;
 
@@ -225,7 +256,8 @@ void __irq_entry do_extint(struct pt_regs *regs, struct ext_code ext_code,
 	rcu_read_lock();
 	list_for_each_entry_rcu(p, &ext_int_hash[index], entry)
 		if (likely(p->code == ext_code.code))
-			p->handler(ext_code, param32, param64);
+			p->handler(ext_code, regs->int_parm,
+				   regs->int_parm_long);
 	rcu_read_unlock();
 	irq_exit();
 	set_irq_regs(old_regs);
@@ -281,3 +313,69 @@ void measurement_alert_subclass_unregister(void)
 	spin_unlock(&ma_subclass_lock);
 }
 EXPORT_SYMBOL(measurement_alert_subclass_unregister);
+
+#ifdef CONFIG_SMP
+void synchronize_irq(unsigned int irq)
+{
+	/*
+	 * Not needed, the handler is protected by a lock and IRQs that occur
+	 * after the handler is deleted are just NOPs.
+	 */
+}
+EXPORT_SYMBOL_GPL(synchronize_irq);
+#endif
+
+#ifndef CONFIG_PCI
+
+/* Only PCI devices have dynamically-defined IRQ handlers */
+
+int request_irq(unsigned int irq, irq_handler_t handler,
+		unsigned long irqflags, const char *devname, void *dev_id)
+{
+	return -EINVAL;
+}
+EXPORT_SYMBOL_GPL(request_irq);
+
+void free_irq(unsigned int irq, void *dev_id)
+{
+	WARN_ON(1);
+}
+EXPORT_SYMBOL_GPL(free_irq);
+
+void enable_irq(unsigned int irq)
+{
+	WARN_ON(1);
+}
+EXPORT_SYMBOL_GPL(enable_irq);
+
+void disable_irq(unsigned int irq)
+{
+	WARN_ON(1);
+}
+EXPORT_SYMBOL_GPL(disable_irq);
+
+#endif /* !CONFIG_PCI */
+
+void disable_irq_nosync(unsigned int irq)
+{
+	disable_irq(irq);
+}
+EXPORT_SYMBOL_GPL(disable_irq_nosync);
+
+unsigned long probe_irq_on(void)
+{
+	return 0;
+}
+EXPORT_SYMBOL_GPL(probe_irq_on);
+
+int probe_irq_off(unsigned long val)
+{
+	return 0;
+}
+EXPORT_SYMBOL_GPL(probe_irq_off);
+
+unsigned int probe_irq_mask(unsigned long val)
+{
+	return val;
+}
+EXPORT_SYMBOL_GPL(probe_irq_mask);

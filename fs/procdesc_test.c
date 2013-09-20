@@ -23,7 +23,7 @@
 #include "procdesc_int.h"
 
 /* Hack in prototypes. */
-SYSCALL_DEFINE3(pdfork, int __user *, fdp, int, flags, struct pt_regs *, regs);
+asmlinkage int sys_pdfork(int __user *fdp, int flags);
 
 
 /* These tests can spawn child processes. This doesn't matter, because
@@ -37,7 +37,7 @@ TEST(pd_create) {
 	struct file *f;
 	struct task_struct *p;
 
-	r = sys_pdfork(&fd, 0, task_pt_regs(current));
+	r = sys_pdfork(&fd, 0);
 	EXPECT_GE(r, 0);
 
 	/* We can't get a return value for FD, because it's a userspace pointer

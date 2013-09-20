@@ -39,6 +39,8 @@
  *
  */
 
+#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
+
 #include <linux/pci.h>
 #include "ath5k.h"
 
@@ -156,7 +158,7 @@ void ath5k_unregister_leds(struct ath5k_hw *ah)
 	ath5k_unregister_led(&ah->tx_led);
 }
 
-int __devinit ath5k_init_leds(struct ath5k_hw *ah)
+int ath5k_init_leds(struct ath5k_hw *ah)
 {
 	int ret = 0;
 	struct ieee80211_hw *hw = ah->hw;

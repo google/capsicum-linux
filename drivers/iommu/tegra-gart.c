@@ -29,15 +29,17 @@
 #include <linux/device.h>
 #include <linux/io.h>
 #include <linux/iommu.h>
+#include <linux/of.h>
 
 #include <asm/cacheflush.h>
 
 /* bitmap of the page sizes currently supported */
 #define GART_IOMMU_PGSIZES	(SZ_4K)
 
-#define GART_CONFIG		0x24
-#define GART_ENTRY_ADDR		0x28
-#define GART_ENTRY_DATA		0x2c
+#define GART_REG_BASE		0x24
+#define GART_CONFIG		(0x24 - GART_REG_BASE)
+#define GART_ENTRY_ADDR		(0x28 - GART_REG_BASE)
+#define GART_ENTRY_DATA		(0x2c - GART_REG_BASE)
 #define GART_ENTRY_PHYS_ADDR_VALID	(1 << 31)
 
 #define GART_PAGE_SHIFT		12
@@ -158,10 +160,15 @@ static int gart_iommu_attach_dev(struct iommu_domain *domain,
 	struct gart_client *client, *c;
 	int err = 0;
 
-	gart = dev_get_drvdata(dev->parent);
+	gart = gart_handle;
 	if (!gart)
 		return -EINVAL;
 	domain->priv = gart;
+
+	domain->geometry.aperture_start = gart->iovmm_base;
+	domain->geometry.aperture_end   = gart->iovmm_base +
+					gart->page_count * GART_PAGE_SIZE - 1;
+	domain->geometry.force_aperture = true;
 
 	client = devm_kzalloc(gart->dev, sizeof(*c), GFP_KERNEL);
 	if (!client)
@@ -272,7 +279,7 @@ static size_t gart_iommu_unmap(struct iommu_domain *domain, unsigned long iova,
 }
 
 static phys_addr_t gart_iommu_iova_to_phys(struct iommu_domain *domain,
-					   unsigned long iova)
+					   dma_addr_t iova)
 {
 	struct gart_device *gart = domain->priv;
 	unsigned long pte;
@@ -288,7 +295,8 @@ static phys_addr_t gart_iommu_iova_to_phys(struct iommu_domain *domain,
 
 	pa = (pte & GART_PAGE_MASK);
 	if (!pfn_valid(__phys_to_pfn(pa))) {
-		dev_err(gart->dev, "No entry for %08lx:%08x\n", iova, pa);
+		dev_err(gart->dev, "No entry for %08llx:%08x\n",
+			 (unsigned long long)iova, pa);
 		gart_dump_table(gart);
 		return -EINVAL;
 	}
@@ -391,6 +399,7 @@ static int tegra_gart_probe(struct platform_device *pdev)
 	do_gart_setup(gart, NULL);
 
 	gart_handle = gart;
+	bus_set_iommu(&platform_bus_type, &gart_iommu_ops);
 	return 0;
 
 fail:
@@ -422,6 +431,12 @@ const struct dev_pm_ops tegra_gart_pm_ops = {
 	.resume		= tegra_gart_resume,
 };
 
+static struct of_device_id tegra_gart_of_match[] = {
+	{ .compatible = "nvidia,tegra20-gart", },
+	{ },
+};
+MODULE_DEVICE_TABLE(of, tegra_gart_of_match);
+
 static struct platform_driver tegra_gart_driver = {
 	.probe		= tegra_gart_probe,
 	.remove		= tegra_gart_remove,
@@ -429,12 +444,12 @@ static struct platform_driver tegra_gart_driver = {
 		.owner	= THIS_MODULE,
 		.name	= "tegra-gart",
 		.pm	= &tegra_gart_pm_ops,
+		.of_match_table = tegra_gart_of_match,
 	},
 };
 
-static int __devinit tegra_gart_init(void)
+static int tegra_gart_init(void)
 {
-	bus_set_iommu(&platform_bus_type, &gart_iommu_ops);
 	return platform_driver_register(&tegra_gart_driver);
 }
 
@@ -448,4 +463,5 @@ module_exit(tegra_gart_exit);
 
 MODULE_DESCRIPTION("IOMMU API for GART in Tegra20");
 MODULE_AUTHOR("Hiroshi DOYU <hdoyu@nvidia.com>");
+MODULE_ALIAS("platform:tegra-gart");
 MODULE_LICENSE("GPL v2");

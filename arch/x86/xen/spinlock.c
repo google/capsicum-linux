@@ -7,6 +7,7 @@
 #include <linux/debugfs.h>
 #include <linux/log2.h>
 #include <linux/gfp.h>
+#include <linux/slab.h>
 
 #include <asm/paravirt.h>
 
@@ -165,6 +166,7 @@ static int xen_spin_trylock(struct arch_spinlock *lock)
 	return old == 0;
 }
 
+static DEFINE_PER_CPU(char *, irq_name);
 static DEFINE_PER_CPU(int, lock_kicker_irq) = -1;
 static DEFINE_PER_CPU(struct xen_spinlock *, lock_spinners);
 
@@ -328,7 +330,6 @@ static noinline void xen_spin_unlock_slow(struct xen_spinlock *xl)
 		if (per_cpu(lock_spinners, cpu) == xl) {
 			ADD_STATS(released_slow_kicked, 1);
 			xen_send_IPI_one(cpu, XEN_SPIN_UNLOCK_VECTOR);
-			break;
 		}
 	}
 }
@@ -360,10 +361,20 @@ static irqreturn_t dummy_handler(int irq, void *dev_id)
 	return IRQ_HANDLED;
 }
 
-void __cpuinit xen_init_lock_cpu(int cpu)
+void xen_init_lock_cpu(int cpu)
 {
 	int irq;
-	const char *name;
+	char *name;
+
+	WARN(per_cpu(lock_kicker_irq, cpu) >= 0, "spinlock on CPU%d exists on IRQ%d!\n",
+	     cpu, per_cpu(lock_kicker_irq, cpu));
+
+	/*
+	 * See git commit f10cd522c5fbfec9ae3cc01967868c9c2401ed23
+	 * (xen: disable PV spinlocks on HVM)
+	 */
+	if (xen_hvm_domain())
+		return;
 
 	name = kasprintf(GFP_KERNEL, "spinlock%d", cpu);
 	irq = bind_ipi_to_irqhandler(XEN_SPIN_UNLOCK_VECTOR,
@@ -376,6 +387,7 @@ void __cpuinit xen_init_lock_cpu(int cpu)
 	if (irq >= 0) {
 		disable_irq(irq); /* make sure it's never delivered */
 		per_cpu(lock_kicker_irq, cpu) = irq;
+		per_cpu(irq_name, cpu) = name;
 	}
 
 	printk("cpu %d spinlock event irq %d\n", cpu, irq);
@@ -383,11 +395,28 @@ void __cpuinit xen_init_lock_cpu(int cpu)
 
 void xen_uninit_lock_cpu(int cpu)
 {
+	/*
+	 * See git commit f10cd522c5fbfec9ae3cc01967868c9c2401ed23
+	 * (xen: disable PV spinlocks on HVM)
+	 */
+	if (xen_hvm_domain())
+		return;
+
 	unbind_from_irqhandler(per_cpu(lock_kicker_irq, cpu), NULL);
+	per_cpu(lock_kicker_irq, cpu) = -1;
+	kfree(per_cpu(irq_name, cpu));
+	per_cpu(irq_name, cpu) = NULL;
 }
 
 void __init xen_init_spinlocks(void)
 {
+	/*
+	 * See git commit f10cd522c5fbfec9ae3cc01967868c9c2401ed23
+	 * (xen: disable PV spinlocks on HVM)
+	 */
+	if (xen_hvm_domain())
+		return;
+
 	BUILD_BUG_ON(sizeof(struct xen_spinlock) > sizeof(arch_spinlock_t));
 
 	pv_lock_ops.spin_is_locked = xen_spin_is_locked;
@@ -440,12 +469,12 @@ static int __init xen_spinlock_debugfs(void)
 	debugfs_create_u64("time_total", 0444, d_spin_debug,
 			   &spinlock_stats.time_total);
 
-	xen_debugfs_create_u32_array("histo_total", 0444, d_spin_debug,
-				     spinlock_stats.histo_spin_total, HISTO_BUCKETS + 1);
-	xen_debugfs_create_u32_array("histo_spinning", 0444, d_spin_debug,
-				     spinlock_stats.histo_spin_spinning, HISTO_BUCKETS + 1);
-	xen_debugfs_create_u32_array("histo_blocked", 0444, d_spin_debug,
-				     spinlock_stats.histo_spin_blocked, HISTO_BUCKETS + 1);
+	debugfs_create_u32_array("histo_total", 0444, d_spin_debug,
+				spinlock_stats.histo_spin_total, HISTO_BUCKETS + 1);
+	debugfs_create_u32_array("histo_spinning", 0444, d_spin_debug,
+				spinlock_stats.histo_spin_spinning, HISTO_BUCKETS + 1);
+	debugfs_create_u32_array("histo_blocked", 0444, d_spin_debug,
+				spinlock_stats.histo_spin_blocked, HISTO_BUCKETS + 1);
 
 	return 0;
 }

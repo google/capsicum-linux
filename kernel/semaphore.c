@@ -118,7 +118,7 @@ EXPORT_SYMBOL(down_killable);
  * down_trylock - try to acquire the semaphore, without waiting
  * @sem: the semaphore to be acquired
  *
- * Try to acquire the semaphore atomically.  Returns 0 if the mutex has
+ * Try to acquire the semaphore atomically.  Returns 0 if the semaphore has
  * been acquired successfully or 1 if it it cannot be acquired.
  *
  * NOTE: This return value is inverted from both spin_trylock and
@@ -193,7 +193,7 @@ EXPORT_SYMBOL(up);
 struct semaphore_waiter {
 	struct list_head list;
 	struct task_struct *task;
-	int up;
+	bool up;
 };
 
 /*
@@ -209,12 +209,12 @@ static inline int __sched __down_common(struct semaphore *sem, long state,
 
 	list_add_tail(&waiter.list, &sem->wait_list);
 	waiter.task = task;
-	waiter.up = 0;
+	waiter.up = false;
 
 	for (;;) {
 		if (signal_pending_state(state, task))
 			goto interrupted;
-		if (timeout <= 0)
+		if (unlikely(timeout <= 0))
 			goto timed_out;
 		__set_task_state(task, state);
 		raw_spin_unlock_irq(&sem->lock);
@@ -258,6 +258,6 @@ static noinline void __sched __up(struct semaphore *sem)
 	struct semaphore_waiter *waiter = list_first_entry(&sem->wait_list,
 						struct semaphore_waiter, list);
 	list_del(&waiter->list);
-	waiter->up = 1;
+	waiter->up = true;
 	wake_up_process(waiter->task);
 }

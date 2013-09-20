@@ -13,7 +13,7 @@ static B_UINT16 CFG_CalculateChecksum(B_UINT8 *pu8Buffer, B_UINT32 u32Size)
 	return u16CheckSum;
 }
 
-BOOLEAN IsReqGpioIsLedInNVM(PMINI_ADAPTER Adapter, UINT gpios)
+BOOLEAN IsReqGpioIsLedInNVM(struct bcm_mini_adapter *Adapter, UINT gpios)
 {
 	INT Status;
 	Status = (Adapter->gpioBitMap & gpios) ^ gpios;
@@ -23,8 +23,8 @@ BOOLEAN IsReqGpioIsLedInNVM(PMINI_ADAPTER Adapter, UINT gpios)
 		return TRUE;
 }
 
-static INT LED_Blink(PMINI_ADAPTER Adapter, UINT GPIO_Num, UCHAR uiLedIndex,
-		ULONG timeout, INT num_of_time, LedEventInfo_t currdriverstate)
+static INT LED_Blink(struct bcm_mini_adapter *Adapter, UINT GPIO_Num, UCHAR uiLedIndex,
+		ULONG timeout, INT num_of_time, enum bcm_led_events currdriverstate)
 {
 	int Status = STATUS_SUCCESS;
 	BOOLEAN bInfinite = FALSE;
@@ -95,9 +95,9 @@ static INT ScaleRateofTransfer(ULONG rate)
 
 
 
-static INT LED_Proportional_Blink(PMINI_ADAPTER Adapter, UCHAR GPIO_Num_tx,
+static INT LED_Proportional_Blink(struct bcm_mini_adapter *Adapter, UCHAR GPIO_Num_tx,
 		UCHAR uiTxLedIndex, UCHAR GPIO_Num_rx, UCHAR uiRxLedIndex,
-		LedEventInfo_t currdriverstate)
+		enum bcm_led_events currdriverstate)
 {
 	/* Initial values of TX and RX packets */
 	ULONG64 Initial_num_of_packts_tx = 0, Initial_num_of_packts_rx = 0;
@@ -261,7 +261,7 @@ static INT LED_Proportional_Blink(PMINI_ADAPTER Adapter, UCHAR GPIO_Num_tx,
  *  <OSAL_STATUS_CODE>
  * -----------------------------------------------------------------------------
  */
-static INT ValidateDSDParamsChecksum(PMINI_ADAPTER Adapter, ULONG ulParamOffset,
+static INT ValidateDSDParamsChecksum(struct bcm_mini_adapter *Adapter, ULONG ulParamOffset,
 					USHORT usParamLen)
 {
 	INT Status = STATUS_SUCCESS;
@@ -347,7 +347,7 @@ exit:
  *  <OSAL_STATUS_CODE>
  * -----------------------------------------------------------------------------
  */
-static INT ValidateHWParmStructure(PMINI_ADAPTER Adapter, ULONG ulHwParamOffset)
+static INT ValidateHWParmStructure(struct bcm_mini_adapter *Adapter, ULONG ulHwParamOffset)
 {
 
 	INT Status = STATUS_SUCCESS;
@@ -371,7 +371,7 @@ static INT ValidateHWParmStructure(PMINI_ADAPTER Adapter, ULONG ulHwParamOffset)
 	return Status;
 } /* ValidateHWParmStructure() */
 
-static int ReadLEDInformationFromEEPROM(PMINI_ADAPTER Adapter,
+static int ReadLEDInformationFromEEPROM(struct bcm_mini_adapter *Adapter,
 					UCHAR GPIO_Array[])
 {
 	int Status = STATUS_SUCCESS;
@@ -477,7 +477,7 @@ static int ReadLEDInformationFromEEPROM(PMINI_ADAPTER Adapter,
 }
 
 
-static int ReadConfigFileStructure(PMINI_ADAPTER Adapter,
+static int ReadConfigFileStructure(struct bcm_mini_adapter *Adapter,
 					BOOLEAN *bEnableThread)
 {
 	int Status = STATUS_SUCCESS;
@@ -580,7 +580,7 @@ static int ReadConfigFileStructure(PMINI_ADAPTER Adapter,
  *
  * -----------------------------------------------------------------------------
  */
-static VOID LedGpioInit(PMINI_ADAPTER Adapter)
+static VOID LedGpioInit(struct bcm_mini_adapter *Adapter)
 {
 	UINT uiResetValue = 0;
 	UINT uiIndex      = 0;
@@ -605,9 +605,9 @@ static VOID LedGpioInit(PMINI_ADAPTER Adapter)
 	Adapter->LEDInfo.bIdle_led_off = FALSE;
 }
 
-static INT BcmGetGPIOPinInfo(PMINI_ADAPTER Adapter, UCHAR *GPIO_num_tx,
+static INT BcmGetGPIOPinInfo(struct bcm_mini_adapter *Adapter, UCHAR *GPIO_num_tx,
 		UCHAR *GPIO_num_rx, UCHAR *uiLedTxIndex, UCHAR *uiLedRxIndex,
-		LedEventInfo_t currdriverstate)
+		enum bcm_led_events currdriverstate)
 {
 	UINT uiIndex = 0;
 
@@ -645,13 +645,13 @@ static INT BcmGetGPIOPinInfo(PMINI_ADAPTER Adapter, UCHAR *GPIO_num_tx,
 	}
 	return STATUS_SUCCESS;
 }
-static VOID LEDControlThread(PMINI_ADAPTER Adapter)
+static VOID LEDControlThread(struct bcm_mini_adapter *Adapter)
 {
 	UINT uiIndex = 0;
 	UCHAR GPIO_num = 0;
 	UCHAR uiLedIndex = 0;
 	UINT uiResetValue = 0;
-	LedEventInfo_t currdriverstate = 0;
+	enum bcm_led_events currdriverstate = 0;
 	ulong timeout = 0;
 
 	INT Status = 0;
@@ -857,7 +857,7 @@ static VOID LEDControlThread(PMINI_ADAPTER Adapter)
 	Adapter->LEDInfo.led_thread_running = BCM_LED_THREAD_DISABLED;
 }
 
-int InitLedSettings(PMINI_ADAPTER Adapter)
+int InitLedSettings(struct bcm_mini_adapter *Adapter)
 {
 	int Status = STATUS_SUCCESS;
 	BOOLEAN bEnableThread = TRUE;

@@ -46,7 +46,6 @@ static DEFINE_MUTEX(isdn_mutex);
 static char *isdn_revision = "$Revision: 1.1.2.3 $";
 
 extern char *isdn_net_revision;
-extern char *isdn_tty_revision;
 #ifdef CONFIG_ISDN_PPP
 extern char *isdn_ppp_revision;
 #else
@@ -877,7 +876,7 @@ isdn_readbchan(int di, int channel, u_char *buf, u_char *fp, int len, wait_queue
  * of the mapping (di,ch)<->minor, happen during the sleep? --he
  */
 int
-isdn_readbchan_tty(int di, int channel, struct tty_struct *tty, int cisco_hack)
+isdn_readbchan_tty(int di, int channel, struct tty_port *port, int cisco_hack)
 {
 	int count;
 	int count_pull;
@@ -892,7 +891,7 @@ isdn_readbchan_tty(int di, int channel, struct tty_struct *tty, int cisco_hack)
 	if (skb_queue_empty(&dev->drv[di]->rpqueue[channel]))
 		return 0;
 
-	len = tty_buffer_request_room(tty, dev->drv[di]->rcvcount[channel]);
+	len = tty_buffer_request_room(port, dev->drv[di]->rcvcount[channel]);
 	if (len == 0)
 		return len;
 
@@ -913,7 +912,7 @@ isdn_readbchan_tty(int di, int channel, struct tty_struct *tty, int cisco_hack)
 			while ((count_pull < skb->len) && (len > 0)) {
 				/* push every character but the last to the tty buffer directly */
 				if (count_put)
-					tty_insert_flip_char(tty, last, TTY_NORMAL);
+					tty_insert_flip_char(port, last, TTY_NORMAL);
 				len--;
 				if (dev->drv[di]->DLEflag & DLEmask) {
 					last = DLE;
@@ -941,7 +940,7 @@ isdn_readbchan_tty(int di, int channel, struct tty_struct *tty, int cisco_hack)
 			}
 			count_put = count_pull;
 			if (count_put > 1)
-				tty_insert_flip_string(tty, skb->data, count_put - 1);
+				tty_insert_flip_string(port, skb->data, count_put - 1);
 			last = skb->data[count_put - 1];
 			len -= count_put;
 #ifdef CONFIG_ISDN_AUDIO
@@ -953,16 +952,16 @@ isdn_readbchan_tty(int di, int channel, struct tty_struct *tty, int cisco_hack)
 			 * Now we can dequeue it.
 			 */
 			if (cisco_hack)
-				tty_insert_flip_char(tty, last, 0xFF);
+				tty_insert_flip_char(port, last, 0xFF);
 			else
-				tty_insert_flip_char(tty, last, TTY_NORMAL);
+				tty_insert_flip_char(port, last, TTY_NORMAL);
 #ifdef CONFIG_ISDN_AUDIO
 			ISDN_AUDIO_SKB_LOCK(skb) = 0;
 #endif
 			skb = skb_dequeue(&dev->drv[di]->rpqueue[channel]);
 			dev_kfree_skb(skb);
 		} else {
-			tty_insert_flip_char(tty, last, TTY_NORMAL);
+			tty_insert_flip_char(port, last, TTY_NORMAL);
 			/* Not yet emptied this buff, so it
 			 * must stay in the queue, for further calls
 			 * but we pull off the data we got until now.
@@ -1059,7 +1058,7 @@ isdn_info_update(void)
 static ssize_t
 isdn_read(struct file *file, char __user *buf, size_t count, loff_t *off)
 {
-	uint minor = iminor(file->f_path.dentry->d_inode);
+	uint minor = iminor(file_inode(file));
 	int len = 0;
 	int drvidx;
 	int chidx;
@@ -1166,7 +1165,7 @@ out:
 static ssize_t
 isdn_write(struct file *file, const char __user *buf, size_t count, loff_t *off)
 {
-	uint minor = iminor(file->f_path.dentry->d_inode);
+	uint minor = iminor(file_inode(file));
 	int drvidx;
 	int chidx;
 	int retval;
@@ -1229,7 +1228,7 @@ static unsigned int
 isdn_poll(struct file *file, poll_table *wait)
 {
 	unsigned int mask = 0;
-	unsigned int minor = iminor(file->f_path.dentry->d_inode);
+	unsigned int minor = iminor(file_inode(file));
 	int drvidx = isdn_minor2drv(minor - ISDN_MINOR_CTRL);
 
 	mutex_lock(&isdn_mutex);
@@ -1270,7 +1269,7 @@ out:
 static int
 isdn_ioctl(struct file *file, uint cmd, ulong arg)
 {
-	uint minor = iminor(file->f_path.dentry->d_inode);
+	uint minor = iminor(file_inode(file));
 	isdn_ctrl c;
 	int drvidx;
 	int ret;
@@ -1313,7 +1312,6 @@ isdn_ioctl(struct file *file, uint cmd, ulong arg)
 			} else
 				return -EINVAL;
 			break;
-#ifdef CONFIG_NETDEVICES
 		case IIOCNETGPN:
 			/* Get peer phone number of a connected
 			 * isdn network interface */
@@ -1323,7 +1321,6 @@ isdn_ioctl(struct file *file, uint cmd, ulong arg)
 				return isdn_net_getpeer(&phone, argp);
 			} else
 				return -EINVAL;
-#endif
 		default:
 			return -EINVAL;
 		}
@@ -1353,7 +1350,6 @@ isdn_ioctl(struct file *file, uint cmd, ulong arg)
 		case IIOCNETLCR:
 			printk(KERN_INFO "INFO: ISDN_ABC_LCR_SUPPORT not enabled\n");
 			return -ENODEV;
-#ifdef CONFIG_NETDEVICES
 		case IIOCNETAIF:
 			/* Add a network-interface */
 			if (arg) {
@@ -1492,7 +1488,6 @@ isdn_ioctl(struct file *file, uint cmd, ulong arg)
 				return -EFAULT;
 			return isdn_net_force_hangup(name);
 			break;
-#endif                          /* CONFIG_NETDEVICES */
 		case IIOCSETVER:
 			dev->net_verbose = arg;
 			printk(KERN_INFO "isdn: Verbose-Level is %d\n", dev->net_verbose);
@@ -2327,8 +2322,6 @@ static int __init isdn_init(void)
 		dev->chanmap[i] = -1;
 		dev->m_idx[i] = -1;
 		strcpy(dev->num[i], "???");
-		init_waitqueue_head(&dev->mdm.info[i].open_wait);
-		init_waitqueue_head(&dev->mdm.info[i].close_wait);
 	}
 	if (register_chrdev(ISDN_MAJOR, "isdn", &isdn_fops)) {
 		printk(KERN_WARNING "isdn: Could not register control devices\n");
@@ -2353,8 +2346,6 @@ static int __init isdn_init(void)
 
 	strcpy(tmprev, isdn_revision);
 	printk(KERN_NOTICE "ISDN subsystem Rev: %s/", isdn_getrev(tmprev));
-	strcpy(tmprev, isdn_tty_revision);
-	printk("%s/", isdn_getrev(tmprev));
 	strcpy(tmprev, isdn_net_revision);
 	printk("%s/", isdn_getrev(tmprev));
 	strcpy(tmprev, isdn_ppp_revision);

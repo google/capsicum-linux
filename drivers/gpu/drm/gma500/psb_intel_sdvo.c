@@ -29,12 +29,11 @@
 #include <linux/i2c.h>
 #include <linux/slab.h>
 #include <linux/delay.h>
-#include "drmP.h"
-#include "drm.h"
-#include "drm_crtc.h"
-#include "drm_edid.h"
+#include <drm/drmP.h>
+#include <drm/drm_crtc.h>
+#include <drm/drm_edid.h>
 #include "psb_intel_drv.h"
-#include "gma_drm.h"
+#include <drm/gma_drm.h>
 #include "psb_drv.h"
 #include "psb_intel_sdvo_regs.h"
 #include "psb_intel_reg.h"
@@ -135,6 +134,9 @@ struct psb_intel_sdvo {
 
 	/* Input timings for adjusted_mode */
 	struct psb_intel_sdvo_dtd input_dtd;
+
+	/* Saved SDVO output states */
+	uint32_t saveSDVO; /* Can be SDVOB or SDVOC depending on sdvo_reg */
 };
 
 struct psb_intel_sdvo_connector {
@@ -498,7 +500,8 @@ static bool psb_intel_sdvo_read_response(struct psb_intel_sdvo *psb_intel_sdvo,
 				  &status))
 		goto log_fail;
 
-	while (status == SDVO_CMD_STATUS_PENDING && retry--) {
+	while ((status == SDVO_CMD_STATUS_PENDING ||
+		status == SDVO_CMD_STATUS_TARGET_NOT_SPECIFIED) && retry--) {
 		udelay(15);
 		if (!psb_intel_sdvo_read_byte(psb_intel_sdvo,
 					  SDVO_I2C_CMD_STATUS,
@@ -901,7 +904,7 @@ static bool psb_intel_sdvo_set_tv_format(struct psb_intel_sdvo *psb_intel_sdvo)
 
 static bool
 psb_intel_sdvo_set_output_timings_from_mode(struct psb_intel_sdvo *psb_intel_sdvo,
-					struct drm_display_mode *mode)
+					const struct drm_display_mode *mode)
 {
 	struct psb_intel_sdvo_dtd output_dtd;
 
@@ -918,7 +921,7 @@ psb_intel_sdvo_set_output_timings_from_mode(struct psb_intel_sdvo *psb_intel_sdv
 
 static bool
 psb_intel_sdvo_set_input_timings_for_mode(struct psb_intel_sdvo *psb_intel_sdvo,
-					struct drm_display_mode *mode,
+					const struct drm_display_mode *mode,
 					struct drm_display_mode *adjusted_mode)
 {
 	/* Reset the input timing to the screen. Assume always input 0. */
@@ -942,7 +945,7 @@ psb_intel_sdvo_set_input_timings_for_mode(struct psb_intel_sdvo *psb_intel_sdvo,
 }
 
 static bool psb_intel_sdvo_mode_fixup(struct drm_encoder *encoder,
-				  struct drm_display_mode *mode,
+				  const struct drm_display_mode *mode,
 				  struct drm_display_mode *adjusted_mode)
 {
 	struct psb_intel_sdvo *psb_intel_sdvo = to_psb_intel_sdvo(encoder);
@@ -1141,7 +1144,6 @@ static void psb_intel_sdvo_dpms(struct drm_encoder *encoder, int mode)
 static int psb_intel_sdvo_mode_valid(struct drm_connector *connector,
 				 struct drm_display_mode *mode)
 {
-	struct drm_psb_private *dev_priv = connector->dev->dev_private;
 	struct psb_intel_sdvo *psb_intel_sdvo = intel_attached_sdvo(connector);
 
 	if (mode->flags & DRM_MODE_FLAG_DBLSCAN)
@@ -1160,11 +1162,6 @@ static int psb_intel_sdvo_mode_valid(struct drm_connector *connector,
 		if (mode->vdisplay > psb_intel_sdvo->sdvo_lvds_fixed_mode->vdisplay)
 			return MODE_PANEL;
 	}
-
-	/* We assume worst case scenario of 32 bpp here, since we don't know */
-	if ((ALIGN(mode->hdisplay * 4, 64) * mode->vdisplay) >
-	    dev_priv->vram_stolen_size)
-		return MODE_MEM;
 
 	return MODE_OK;
 }
@@ -1298,7 +1295,6 @@ psb_intel_sdvo_get_analog_edid(struct drm_connector *connector)
 
 	return drm_get_edid(connector,
 			    &dev_priv->gmbus[dev_priv->crt_ddc_pin].adapter);
-	return NULL;
 }
 
 static enum drm_connector_status
@@ -1349,7 +1345,6 @@ psb_intel_sdvo_hdmi_sink_detect(struct drm_connector *connector)
 			}
 		} else
 			status = connector_status_disconnected;
-		connector->display_info.raw_edid = NULL;
 		kfree(edid);
 	}
 
@@ -1410,7 +1405,6 @@ psb_intel_sdvo_detect(struct drm_connector *connector, bool force)
 				ret = connector_status_disconnected;
 			else
 				ret = connector_status_connected;
-			connector->display_info.raw_edid = NULL;
 			kfree(edid);
 		} else
 			ret = connector_status_connected;
@@ -1459,7 +1453,6 @@ static void psb_intel_sdvo_get_ddc_modes(struct drm_connector *connector)
 			drm_add_edid_modes(connector, edid);
 		}
 
-		connector->display_info.raw_edid = NULL;
 		kfree(edid);
 	}
 }
@@ -1705,7 +1698,7 @@ psb_intel_sdvo_set_property(struct drm_connector *connector,
 	uint8_t cmd;
 	int ret;
 
-	ret = drm_connector_property_set_value(connector, property, val);
+	ret = drm_object_property_set_value(&connector->base, property, val);
 	if (ret)
 		return ret;
 
@@ -1760,7 +1753,7 @@ psb_intel_sdvo_set_property(struct drm_connector *connector,
 	} else if (IS_TV_OR_LVDS(psb_intel_sdvo_connector)) {
 		temp_value = val;
 		if (psb_intel_sdvo_connector->left == property) {
-			drm_connector_property_set_value(connector,
+			drm_object_property_set_value(&connector->base,
 							 psb_intel_sdvo_connector->right, val);
 			if (psb_intel_sdvo_connector->left_margin == temp_value)
 				return 0;
@@ -1772,7 +1765,7 @@ psb_intel_sdvo_set_property(struct drm_connector *connector,
 			cmd = SDVO_CMD_SET_OVERSCAN_H;
 			goto set_value;
 		} else if (psb_intel_sdvo_connector->right == property) {
-			drm_connector_property_set_value(connector,
+			drm_object_property_set_value(&connector->base,
 							 psb_intel_sdvo_connector->left, val);
 			if (psb_intel_sdvo_connector->right_margin == temp_value)
 				return 0;
@@ -1784,7 +1777,7 @@ psb_intel_sdvo_set_property(struct drm_connector *connector,
 			cmd = SDVO_CMD_SET_OVERSCAN_H;
 			goto set_value;
 		} else if (psb_intel_sdvo_connector->top == property) {
-			drm_connector_property_set_value(connector,
+			drm_object_property_set_value(&connector->base,
 							 psb_intel_sdvo_connector->bottom, val);
 			if (psb_intel_sdvo_connector->top_margin == temp_value)
 				return 0;
@@ -1796,7 +1789,7 @@ psb_intel_sdvo_set_property(struct drm_connector *connector,
 			cmd = SDVO_CMD_SET_OVERSCAN_V;
 			goto set_value;
 		} else if (psb_intel_sdvo_connector->bottom == property) {
-			drm_connector_property_set_value(connector,
+			drm_object_property_set_value(&connector->base,
 							 psb_intel_sdvo_connector->top, val);
 			if (psb_intel_sdvo_connector->bottom_margin == temp_value)
 				return 0;
@@ -1841,6 +1834,34 @@ done:
 #undef CHECK_PROPERTY
 }
 
+static void psb_intel_sdvo_save(struct drm_connector *connector)
+{
+	struct drm_device *dev = connector->dev;
+	struct psb_intel_encoder *psb_intel_encoder =
+					psb_intel_attached_encoder(connector);
+	struct psb_intel_sdvo *sdvo =
+				to_psb_intel_sdvo(&psb_intel_encoder->base);
+
+	sdvo->saveSDVO = REG_READ(sdvo->sdvo_reg);
+}
+
+static void psb_intel_sdvo_restore(struct drm_connector *connector)
+{
+	struct drm_device *dev = connector->dev;
+	struct drm_encoder *encoder =
+				&psb_intel_attached_encoder(connector)->base;
+	struct psb_intel_sdvo *sdvo = to_psb_intel_sdvo(encoder);
+	struct drm_crtc *crtc = encoder->crtc;
+
+	REG_WRITE(sdvo->sdvo_reg, sdvo->saveSDVO);
+
+	/* Force a full mode set on the crtc. We're supposed to have the
+	   mode_config lock already. */
+	if (connector->status == connector_status_connected)
+		drm_crtc_helper_set_mode(crtc, &crtc->mode, crtc->x, crtc->y,
+					 NULL);
+}
+
 static const struct drm_encoder_helper_funcs psb_intel_sdvo_helper_funcs = {
 	.dpms = psb_intel_sdvo_dpms,
 	.mode_fixup = psb_intel_sdvo_mode_fixup,
@@ -1851,6 +1872,8 @@ static const struct drm_encoder_helper_funcs psb_intel_sdvo_helper_funcs = {
 
 static const struct drm_connector_funcs psb_intel_sdvo_connector_funcs = {
 	.dpms = drm_helper_connector_dpms,
+	.save = psb_intel_sdvo_save,
+	.restore = psb_intel_sdvo_restore,
 	.detect = psb_intel_sdvo_detect,
 	.fill_modes = drm_helper_probe_single_connector_modes,
 	.set_property = psb_intel_sdvo_set_property,
@@ -2044,8 +2067,7 @@ psb_intel_sdvo_add_hdmi_properties(struct psb_intel_sdvo_connector *connector)
 	struct drm_device *dev = connector->base.base.dev;
 
 	intel_attach_force_audio_property(&connector->base.base);
-	if (INTEL_INFO(dev)->gen >= 4 && IS_MOBILE(dev))
-		intel_attach_broadcast_rgb_property(&connector->base.base);
+	intel_attach_broadcast_rgb_property(&connector->base.base);
 	*/
 }
 
@@ -2298,7 +2320,7 @@ static bool psb_intel_sdvo_tv_create_property(struct psb_intel_sdvo *psb_intel_s
 				i, tv_format_names[psb_intel_sdvo_connector->tv_format_supported[i]]);
 
 	psb_intel_sdvo->tv_format_index = psb_intel_sdvo_connector->tv_format_supported[0];
-	drm_connector_attach_property(&psb_intel_sdvo_connector->base.base,
+	drm_object_attach_property(&psb_intel_sdvo_connector->base.base.base,
 				      psb_intel_sdvo_connector->tv_format, 0);
 	return true;
 
@@ -2314,7 +2336,7 @@ static bool psb_intel_sdvo_tv_create_property(struct psb_intel_sdvo *psb_intel_s
 		psb_intel_sdvo_connector->name = \
 			drm_property_create_range(dev, 0, #name, 0, data_value[0]); \
 		if (!psb_intel_sdvo_connector->name) return false; \
-		drm_connector_attach_property(connector, \
+		drm_object_attach_property(&connector->base, \
 					      psb_intel_sdvo_connector->name, \
 					      psb_intel_sdvo_connector->cur_##name); \
 		DRM_DEBUG_KMS(#name ": max %d, default %d, current %d\n", \
@@ -2351,7 +2373,7 @@ psb_intel_sdvo_create_enhance_property_tv(struct psb_intel_sdvo *psb_intel_sdvo,
 		if (!psb_intel_sdvo_connector->left)
 			return false;
 
-		drm_connector_attach_property(connector,
+		drm_object_attach_property(&connector->base,
 					      psb_intel_sdvo_connector->left,
 					      psb_intel_sdvo_connector->left_margin);
 
@@ -2360,7 +2382,7 @@ psb_intel_sdvo_create_enhance_property_tv(struct psb_intel_sdvo *psb_intel_sdvo,
 		if (!psb_intel_sdvo_connector->right)
 			return false;
 
-		drm_connector_attach_property(connector,
+		drm_object_attach_property(&connector->base,
 					      psb_intel_sdvo_connector->right,
 					      psb_intel_sdvo_connector->right_margin);
 		DRM_DEBUG_KMS("h_overscan: max %d, "
@@ -2387,7 +2409,7 @@ psb_intel_sdvo_create_enhance_property_tv(struct psb_intel_sdvo *psb_intel_sdvo,
 		if (!psb_intel_sdvo_connector->top)
 			return false;
 
-		drm_connector_attach_property(connector,
+		drm_object_attach_property(&connector->base,
 					      psb_intel_sdvo_connector->top,
 					      psb_intel_sdvo_connector->top_margin);
 
@@ -2396,7 +2418,7 @@ psb_intel_sdvo_create_enhance_property_tv(struct psb_intel_sdvo *psb_intel_sdvo,
 		if (!psb_intel_sdvo_connector->bottom)
 			return false;
 
-		drm_connector_attach_property(connector,
+		drm_object_attach_property(&connector->base,
 					      psb_intel_sdvo_connector->bottom,
 					      psb_intel_sdvo_connector->bottom_margin);
 		DRM_DEBUG_KMS("v_overscan: max %d, "
@@ -2428,7 +2450,7 @@ psb_intel_sdvo_create_enhance_property_tv(struct psb_intel_sdvo *psb_intel_sdvo,
 		if (!psb_intel_sdvo_connector->dot_crawl)
 			return false;
 
-		drm_connector_attach_property(connector,
+		drm_object_attach_property(&connector->base,
 					      psb_intel_sdvo_connector->dot_crawl,
 					      psb_intel_sdvo_connector->cur_dot_crawl);
 		DRM_DEBUG_KMS("dot crawl: current %d\n", response);

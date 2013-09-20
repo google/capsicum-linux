@@ -50,10 +50,41 @@ static char sclp_init_sccb[PAGE_SIZE] __attribute__((__aligned__(PAGE_SIZE)));
 /* Suspend request */
 static DECLARE_COMPLETION(sclp_request_queue_flushed);
 
+/* Number of console pages to allocate, used by sclp_con.c and sclp_vt220.c */
+int sclp_console_pages = SCLP_CONSOLE_PAGES;
+/* Flag to indicate if buffer pages are dropped on buffer full condition */
+int sclp_console_drop = 0;
+/* Number of times the console dropped buffer pages */
+unsigned long sclp_console_full;
+
 static void sclp_suspend_req_cb(struct sclp_req *req, void *data)
 {
 	complete(&sclp_request_queue_flushed);
 }
+
+static int __init sclp_setup_console_pages(char *str)
+{
+	int pages, rc;
+
+	rc = kstrtoint(str, 0, &pages);
+	if (!rc && pages >= SCLP_CONSOLE_PAGES)
+		sclp_console_pages = pages;
+	return 1;
+}
+
+__setup("sclp_con_pages=", sclp_setup_console_pages);
+
+static int __init sclp_setup_console_drop(char *str)
+{
+	int drop, rc;
+
+	rc = kstrtoint(str, 0, &drop);
+	if (!rc && drop)
+		sclp_console_drop = 1;
+	return 1;
+}
+
+__setup("sclp_con_drop=", sclp_setup_console_drop);
 
 static struct sclp_req sclp_suspend_req;
 
@@ -117,14 +148,19 @@ static int sclp_init(void);
 int
 sclp_service_call(sclp_cmdw_t command, void *sccb)
 {
-	int cc;
+	int cc = 4; /* Initialize for program check handling */
 
 	asm volatile(
-		"	.insn	rre,0xb2200000,%1,%2\n"  /* servc %1,%2 */
-		"	ipm	%0\n"
-		"	srl	%0,28"
-		: "=&d" (cc) : "d" (command), "a" (__pa(sccb))
+		"0:	.insn	rre,0xb2200000,%1,%2\n"  /* servc %1,%2 */
+		"1:	ipm	%0\n"
+		"	srl	%0,28\n"
+		"2:\n"
+		EX_TABLE(0b, 2b)
+		EX_TABLE(1b, 2b)
+		: "+&d" (cc) : "d" (command), "a" (__pa(sccb))
 		: "cc", "memory");
+	if (cc == 4)
+		return -EINVAL;
 	if (cc == 3)
 		return -EIO;
 	if (cc == 2)
@@ -334,7 +370,7 @@ sclp_dispatch_evbufs(struct sccb_header *sccb)
 			reg->receiver_fn(evbuf);
 			spin_lock_irqsave(&sclp_lock, flags);
 		} else if (reg == NULL)
-			rc = -ENOSYS;
+			rc = -EOPNOTSUPP;
 	}
 	spin_unlock_irqrestore(&sclp_lock, flags);
 	return rc;
@@ -400,7 +436,7 @@ static void sclp_interrupt_handler(struct ext_code ext_code,
 	u32 finished_sccb;
 	u32 evbuf_pending;
 
-	kstat_cpu(smp_processor_id()).irqs[EXTINT_SCP]++;
+	inc_irq_stat(IRQEXT_SCP);
 	spin_lock(&sclp_lock);
 	finished_sccb = param32 & 0xfffffff8;
 	evbuf_pending = param32 & 0x3;
@@ -450,7 +486,7 @@ sclp_sync_wait(void)
 	timeout = 0;
 	if (timer_pending(&sclp_request_timer)) {
 		/* Get timeout TOD value */
-		timeout = get_clock() +
+		timeout = get_tod_clock() +
 			  sclp_tod_from_jiffies(sclp_request_timer.expires -
 						jiffies);
 	}
@@ -472,7 +508,7 @@ sclp_sync_wait(void)
 	while (sclp_running_state != sclp_running_state_idle) {
 		/* Check for expired request timer */
 		if (timer_pending(&sclp_request_timer) &&
-		    get_clock() > timeout &&
+		    get_tod_clock() > timeout &&
 		    del_timer(&sclp_request_timer))
 			sclp_request_timer.function(sclp_request_timer.data);
 		cpu_relax();
@@ -654,16 +690,6 @@ sclp_remove_processed(struct sccb_header *sccb)
 
 EXPORT_SYMBOL(sclp_remove_processed);
 
-struct init_sccb {
-	struct sccb_header header;
-	u16 _reserved;
-	u16 mask_length;
-	sccb_mask_t receive_mask;
-	sccb_mask_t send_mask;
-	sccb_mask_t sclp_receive_mask;
-	sccb_mask_t sclp_send_mask;
-} __attribute__((packed));
-
 /* Prepare init mask request. Called while sclp_lock is locked. */
 static inline void
 __sclp_make_init_req(u32 receive_mask, u32 send_mask)
@@ -823,7 +849,7 @@ static void sclp_check_handler(struct ext_code ext_code,
 {
 	u32 finished_sccb;
 
-	kstat_cpu(smp_processor_id()).irqs[EXTINT_SCP]++;
+	inc_irq_stat(IRQEXT_SCP);
 	finished_sccb = param32 & 0xfffffff8;
 	/* Is this the interrupt we are waiting for? */
 	if (finished_sccb == 0)
@@ -1023,11 +1049,47 @@ static const struct dev_pm_ops sclp_pm_ops = {
 	.restore	= sclp_restore,
 };
 
+static ssize_t sclp_show_console_pages(struct device_driver *dev, char *buf)
+{
+	return sprintf(buf, "%i\n", sclp_console_pages);
+}
+
+static DRIVER_ATTR(con_pages, S_IRUSR, sclp_show_console_pages, NULL);
+
+static ssize_t sclp_show_con_drop(struct device_driver *dev, char *buf)
+{
+	return sprintf(buf, "%i\n", sclp_console_drop);
+}
+
+static DRIVER_ATTR(con_drop, S_IRUSR, sclp_show_con_drop, NULL);
+
+static ssize_t sclp_show_console_full(struct device_driver *dev, char *buf)
+{
+	return sprintf(buf, "%lu\n", sclp_console_full);
+}
+
+static DRIVER_ATTR(con_full, S_IRUSR, sclp_show_console_full, NULL);
+
+static struct attribute *sclp_drv_attrs[] = {
+	&driver_attr_con_pages.attr,
+	&driver_attr_con_drop.attr,
+	&driver_attr_con_full.attr,
+	NULL,
+};
+static struct attribute_group sclp_drv_attr_group = {
+	.attrs = sclp_drv_attrs,
+};
+static const struct attribute_group *sclp_drv_attr_groups[] = {
+	&sclp_drv_attr_group,
+	NULL,
+};
+
 static struct platform_driver sclp_pdrv = {
 	.driver = {
 		.name	= "sclp",
 		.owner	= THIS_MODULE,
 		.pm	= &sclp_pm_ops,
+		.groups = sclp_drv_attr_groups,
 	},
 };
 
@@ -1106,10 +1168,12 @@ static __init int sclp_initcall(void)
 	rc = platform_driver_register(&sclp_pdrv);
 	if (rc)
 		return rc;
+
 	sclp_pdev = platform_device_register_simple("sclp", -1, NULL, 0);
-	rc = IS_ERR(sclp_pdev) ? PTR_ERR(sclp_pdev) : 0;
+	rc = PTR_RET(sclp_pdev);
 	if (rc)
 		goto fail_platform_driver_unregister;
+
 	rc = atomic_notifier_chain_register(&panic_notifier_list,
 					    &sclp_on_panic_nb);
 	if (rc)

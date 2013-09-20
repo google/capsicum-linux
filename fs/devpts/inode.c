@@ -98,8 +98,8 @@ static struct vfsmount *devpts_mnt;
 struct pts_mount_opts {
 	int setuid;
 	int setgid;
-	uid_t   uid;
-	gid_t   gid;
+	kuid_t   uid;
+	kgid_t   gid;
 	umode_t mode;
 	umode_t ptmxmode;
 	int newinstance;
@@ -158,11 +158,13 @@ static inline struct super_block *pts_sb_from_inode(struct inode *inode)
 static int parse_mount_options(char *data, int op, struct pts_mount_opts *opts)
 {
 	char *p;
+	kuid_t uid;
+	kgid_t gid;
 
 	opts->setuid  = 0;
 	opts->setgid  = 0;
-	opts->uid     = 0;
-	opts->gid     = 0;
+	opts->uid     = GLOBAL_ROOT_UID;
+	opts->gid     = GLOBAL_ROOT_GID;
 	opts->mode    = DEVPTS_DEFAULT_MODE;
 	opts->ptmxmode = DEVPTS_DEFAULT_PTMX_MODE;
 	opts->max     = NR_UNIX98_PTY_MAX;
@@ -184,13 +186,19 @@ static int parse_mount_options(char *data, int op, struct pts_mount_opts *opts)
 		case Opt_uid:
 			if (match_int(&args[0], &option))
 				return -EINVAL;
-			opts->uid = option;
+			uid = make_kuid(current_user_ns(), option);
+			if (!uid_valid(uid))
+				return -EINVAL;
+			opts->uid = uid;
 			opts->setuid = 1;
 			break;
 		case Opt_gid:
 			if (match_int(&args[0], &option))
 				return -EINVAL;
-			opts->gid = option;
+			gid = make_kgid(current_user_ns(), option);
+			if (!gid_valid(gid))
+				return -EINVAL;
+			opts->gid = gid;
 			opts->setgid = 1;
 			break;
 		case Opt_mode:
@@ -235,6 +243,13 @@ static int mknod_ptmx(struct super_block *sb)
 	struct dentry *root = sb->s_root;
 	struct pts_fs_info *fsi = DEVPTS_SB(sb);
 	struct pts_mount_opts *opts = &fsi->mount_opts;
+	kuid_t root_uid;
+	kgid_t root_gid;
+
+	root_uid = make_kuid(current_user_ns(), 0);
+	root_gid = make_kgid(current_user_ns(), 0);
+	if (!uid_valid(root_uid) || !gid_valid(root_gid))
+		return -EINVAL;
 
 	mutex_lock(&root->d_inode->i_mutex);
 
@@ -265,6 +280,8 @@ static int mknod_ptmx(struct super_block *sb)
 
 	mode = S_IFCHR|opts->ptmxmode;
 	init_special_inode(inode, mode, MKDEV(TTYAUX_MAJOR, 2));
+	inode->i_uid = root_uid;
+	inode->i_gid = root_gid;
 
 	d_add(dentry, inode);
 
@@ -315,9 +332,9 @@ static int devpts_show_options(struct seq_file *seq, struct dentry *root)
 	struct pts_mount_opts *opts = &fsi->mount_opts;
 
 	if (opts->setuid)
-		seq_printf(seq, ",uid=%u", opts->uid);
+		seq_printf(seq, ",uid=%u", from_kuid_munged(&init_user_ns, opts->uid));
 	if (opts->setgid)
-		seq_printf(seq, ",gid=%u", opts->gid);
+		seq_printf(seq, ",gid=%u", from_kgid_munged(&init_user_ns, opts->gid));
 	seq_printf(seq, ",mode=%03o", opts->mode);
 #ifdef CONFIG_DEVPTS_MULTIPLE_INSTANCES
 	seq_printf(seq, ",ptmxmode=%03o", opts->ptmxmode);
@@ -430,16 +447,22 @@ static struct dentry *devpts_mount(struct file_system_type *fs_type,
 	if (error)
 		return ERR_PTR(error);
 
+	/* Require newinstance for all user namespace mounts to ensure
+	 * the mount options are not changed.
+	 */
+	if ((current_user_ns() != &init_user_ns) && !opts.newinstance)
+		return ERR_PTR(-EINVAL);
+
 	if (opts.newinstance)
-		s = sget(fs_type, NULL, set_anon_super, NULL);
+		s = sget(fs_type, NULL, set_anon_super, flags, NULL);
 	else
-		s = sget(fs_type, compare_init_pts_sb, set_anon_super, NULL);
+		s = sget(fs_type, compare_init_pts_sb, set_anon_super, flags,
+			 NULL);
 
 	if (IS_ERR(s))
 		return ERR_CAST(s);
 
 	if (!s->s_root) {
-		s->s_flags = flags;
 		error = devpts_fill_super(s, data, flags & MS_SILENT ? 1 : 0);
 		if (error)
 			goto out_undo_sget;
@@ -483,6 +506,9 @@ static struct file_system_type devpts_fs_type = {
 	.name		= "devpts",
 	.mount		= devpts_mount,
 	.kill_sb	= devpts_kill_sb,
+#ifdef CONFIG_DEVPTS_MULTIPLE_INSTANCES
+	.fs_flags	= FS_USERNS_MOUNT | FS_USERNS_DEV_MOUNT,
+#endif
 };
 
 /*
@@ -537,37 +563,38 @@ void devpts_kill_index(struct inode *ptmx_inode, int idx)
 	mutex_unlock(&allocated_ptys_lock);
 }
 
-int devpts_pty_new(struct inode *ptmx_inode, struct tty_struct *tty)
+/**
+ * devpts_pty_new -- create a new inode in /dev/pts/
+ * @ptmx_inode: inode of the master
+ * @device: major+minor of the node to be created
+ * @index: used as a name of the node
+ * @priv: what's given back by devpts_get_priv
+ *
+ * The created inode is returned. Remove it from /dev/pts/ by devpts_pty_kill.
+ */
+struct inode *devpts_pty_new(struct inode *ptmx_inode, dev_t device, int index,
+		void *priv)
 {
-	/* tty layer puts index from devpts_new_index() in here */
-	int number = tty->index;
-	struct tty_driver *driver = tty->driver;
-	dev_t device = MKDEV(driver->major, driver->minor_start+number);
 	struct dentry *dentry;
 	struct super_block *sb = pts_sb_from_inode(ptmx_inode);
-	struct inode *inode = new_inode(sb);
+	struct inode *inode;
 	struct dentry *root = sb->s_root;
 	struct pts_fs_info *fsi = DEVPTS_SB(sb);
 	struct pts_mount_opts *opts = &fsi->mount_opts;
-	int ret = 0;
 	char s[12];
 
-	/* We're supposed to be given the slave end of a pty */
-	BUG_ON(driver->type != TTY_DRIVER_TYPE_PTY);
-	BUG_ON(driver->subtype != PTY_TYPE_SLAVE);
-
+	inode = new_inode(sb);
 	if (!inode)
-		return -ENOMEM;
+		return ERR_PTR(-ENOMEM);
 
-	inode->i_ino = number + 3;
+	inode->i_ino = index + 3;
 	inode->i_uid = opts->setuid ? opts->uid : current_fsuid();
 	inode->i_gid = opts->setgid ? opts->gid : current_fsgid();
 	inode->i_mtime = inode->i_atime = inode->i_ctime = CURRENT_TIME;
 	init_special_inode(inode, S_IFCHR|opts->mode, device);
-	inode->i_private = tty;
-	tty->driver_data = inode;
+	inode->i_private = priv;
 
-	sprintf(s, "%d", number);
+	sprintf(s, "%d", index);
 
 	mutex_lock(&root->d_inode->i_mutex);
 
@@ -577,18 +604,24 @@ int devpts_pty_new(struct inode *ptmx_inode, struct tty_struct *tty)
 		fsnotify_create(root->d_inode, dentry);
 	} else {
 		iput(inode);
-		ret = -ENOMEM;
+		inode = ERR_PTR(-ENOMEM);
 	}
 
 	mutex_unlock(&root->d_inode->i_mutex);
 
-	return ret;
+	return inode;
 }
 
-struct tty_struct *devpts_get_tty(struct inode *pts_inode, int number)
+/**
+ * devpts_get_priv -- get private data for a slave
+ * @pts_inode: inode of the slave
+ *
+ * Returns whatever was passed as priv in devpts_pty_new for a given inode.
+ */
+void *devpts_get_priv(struct inode *pts_inode)
 {
 	struct dentry *dentry;
-	struct tty_struct *tty;
+	void *priv = NULL;
 
 	BUG_ON(pts_inode->i_rdev == MKDEV(TTYAUX_MAJOR, PTMX_MINOR));
 
@@ -597,18 +630,22 @@ struct tty_struct *devpts_get_tty(struct inode *pts_inode, int number)
 	if (!dentry)
 		return NULL;
 
-	tty = NULL;
 	if (pts_inode->i_sb->s_magic == DEVPTS_SUPER_MAGIC)
-		tty = (struct tty_struct *)pts_inode->i_private;
+		priv = pts_inode->i_private;
 
 	dput(dentry);
 
-	return tty;
+	return priv;
 }
 
-void devpts_pty_kill(struct tty_struct *tty)
+/**
+ * devpts_pty_kill -- remove inode form /dev/pts/
+ * @inode: inode of the slave to be removed
+ *
+ * This is an inverse operation of devpts_pty_new.
+ */
+void devpts_pty_kill(struct inode *inode)
 {
-	struct inode *inode = tty->driver_data;
 	struct super_block *sb = pts_sb_from_inode(inode);
 	struct dentry *root = sb->s_root;
 	struct dentry *dentry;

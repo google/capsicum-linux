@@ -109,13 +109,12 @@ int cachefiles_set_object_xattr(struct cachefiles_object *object,
 	struct dentry *dentry = object->dentry;
 	int ret;
 
-	ASSERT(object->fscache.cookie);
 	ASSERT(dentry);
 
 	_enter("%p,#%d", object, auxdata->len);
 
 	/* attempt to install the cache metadata directly */
-	_debug("SET %s #%u", object->fscache.cookie->def->name, auxdata->len);
+	_debug("SET #%u", auxdata->len);
 
 	ret = vfs_setxattr(dentry, cachefiles_xattr_cache,
 			   &auxdata->type, auxdata->len,
@@ -138,13 +137,12 @@ int cachefiles_update_object_xattr(struct cachefiles_object *object,
 	struct dentry *dentry = object->dentry;
 	int ret;
 
-	ASSERT(object->fscache.cookie);
 	ASSERT(dentry);
 
 	_enter("%p,#%d", object, auxdata->len);
 
 	/* attempt to install the cache metadata directly */
-	_debug("SET %s #%u", object->fscache.cookie->def->name, auxdata->len);
+	_debug("SET #%u", auxdata->len);
 
 	ret = vfs_setxattr(dentry, cachefiles_xattr_cache,
 			   &auxdata->type, auxdata->len,
@@ -174,7 +172,7 @@ int cachefiles_check_object_xattr(struct cachefiles_object *object,
 	ASSERT(dentry);
 	ASSERT(dentry->d_inode);
 
-	auxbuf = kmalloc(sizeof(struct cachefiles_xattr) + 512, GFP_KERNEL);
+	auxbuf = kmalloc(sizeof(struct cachefiles_xattr) + 512, cachefiles_gfp);
 	if (!auxbuf) {
 		_leave(" = -ENOMEM");
 		return -ENOMEM;

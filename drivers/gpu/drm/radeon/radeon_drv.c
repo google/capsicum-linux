@@ -29,12 +29,11 @@
  * OTHER DEALINGS IN THE SOFTWARE.
  */
 
-#include "drmP.h"
-#include "drm.h"
-#include "radeon_drm.h"
+#include <drm/drmP.h>
+#include <drm/radeon_drm.h>
 #include "radeon_drv.h"
 
-#include "drm_pciids.h"
+#include <drm/drm_pciids.h>
 #include <linux/console.h>
 #include <linux/module.h>
 
@@ -57,9 +56,28 @@
  *   2.13.0 - virtual memory support, streamout
  *   2.14.0 - add evergreen tiling informations
  *   2.15.0 - add max_pipes query
+ *   2.16.0 - fix evergreen 2D tiled surface calculation
+ *   2.17.0 - add STRMOUT_BASE_UPDATE for r7xx
+ *   2.18.0 - r600-eg: allow "invalid" DB formats
+ *   2.19.0 - r600-eg: MSAA textures
+ *   2.20.0 - r600-si: RADEON_INFO_TIMESTAMP query
+ *   2.21.0 - r600-r700: FMASK and CMASK
+ *   2.22.0 - r600 only: RESOLVE_BOX allowed
+ *   2.23.0 - allow STRMOUT_BASE_UPDATE on RS780 and RS880
+ *   2.24.0 - eg only: allow MIP_ADDRESS=0 for MSAA textures
+ *   2.25.0 - eg+: new info request for num SE and num SH
+ *   2.26.0 - r600-eg: fix htile size computation
+ *   2.27.0 - r600-SI: Add CS ioctl support for async DMA
+ *   2.28.0 - r600-eg: Add MEM_WRITE packet support
+ *   2.29.0 - R500 FP16 color clear registers
+ *   2.30.0 - fix for FMASK texturing
+ *   2.31.0 - Add fastfb support for rs690
+ *   2.32.0 - new info request for rings working
+ *   2.33.0 - Add SI tiling mode array query
+ *   2.34.0 - Add CIK tiling mode array query
  */
 #define KMS_DRIVER_MAJOR	2
-#define KMS_DRIVER_MINOR	15
+#define KMS_DRIVER_MINOR	34
 #define KMS_DRIVER_PATCHLEVEL	0
 int radeon_driver_load_kms(struct drm_device *dev, unsigned long flags);
 int radeon_driver_unload_kms(struct drm_device *dev);
@@ -105,12 +123,30 @@ int radeon_mode_dumb_create(struct drm_file *file_priv,
 int radeon_mode_dumb_destroy(struct drm_file *file_priv,
 			     struct drm_device *dev,
 			     uint32_t handle);
+struct sg_table *radeon_gem_prime_get_sg_table(struct drm_gem_object *obj);
+struct drm_gem_object *radeon_gem_prime_import_sg_table(struct drm_device *dev,
+							size_t size,
+							struct sg_table *sg);
+int radeon_gem_prime_pin(struct drm_gem_object *obj);
+void radeon_gem_prime_unpin(struct drm_gem_object *obj);
+void *radeon_gem_prime_vmap(struct drm_gem_object *obj);
+void radeon_gem_prime_vunmap(struct drm_gem_object *obj, void *vaddr);
+extern long radeon_kms_compat_ioctl(struct file *filp, unsigned int cmd,
+				    unsigned long arg);
 
 #if defined(CONFIG_DEBUG_FS)
 int radeon_debugfs_init(struct drm_minor *minor);
 void radeon_debugfs_cleanup(struct drm_minor *minor);
 #endif
 
+/* atpx handler */
+#if defined(CONFIG_VGA_SWITCHEROO)
+void radeon_register_atpx_handler(void);
+void radeon_unregister_atpx_handler(void);
+#else
+static inline void radeon_register_atpx_handler(void) {}
+static inline void radeon_unregister_atpx_handler(void) {}
+#endif
 
 int radeon_no_wb;
 int radeon_modeset = -1;
@@ -126,8 +162,12 @@ int radeon_tv = 1;
 int radeon_audio = 0;
 int radeon_disp_priority = 0;
 int radeon_hw_i2c = 0;
-int radeon_pcie_gen2 = 0;
+int radeon_pcie_gen2 = -1;
 int radeon_msi = -1;
+int radeon_lockup_timeout = 10000;
+int radeon_fastfb = 0;
+int radeon_dpm = -1;
+int radeon_aspm = -1;
 
 MODULE_PARM_DESC(no_wb, "Disable AGP writeback for scratch registers");
 module_param_named(no_wb, radeon_no_wb, int, 0444);
@@ -171,11 +211,31 @@ module_param_named(disp_priority, radeon_disp_priority, int, 0444);
 MODULE_PARM_DESC(hw_i2c, "hw i2c engine enable (0 = disable)");
 module_param_named(hw_i2c, radeon_hw_i2c, int, 0444);
 
-MODULE_PARM_DESC(pcie_gen2, "PCIE Gen2 mode (1 = enable)");
+MODULE_PARM_DESC(pcie_gen2, "PCIE Gen2 mode (-1 = auto, 0 = disable, 1 = enable)");
 module_param_named(pcie_gen2, radeon_pcie_gen2, int, 0444);
 
 MODULE_PARM_DESC(msi, "MSI support (1 = enable, 0 = disable, -1 = auto)");
 module_param_named(msi, radeon_msi, int, 0444);
+
+MODULE_PARM_DESC(lockup_timeout, "GPU lockup timeout in ms (defaul 10000 = 10 seconds, 0 = disable)");
+module_param_named(lockup_timeout, radeon_lockup_timeout, int, 0444);
+
+MODULE_PARM_DESC(fastfb, "Direct FB access for IGP chips (0 = disable, 1 = enable)");
+module_param_named(fastfb, radeon_fastfb, int, 0444);
+
+MODULE_PARM_DESC(dpm, "DPM support (1 = enable, 0 = disable, -1 = auto)");
+module_param_named(dpm, radeon_dpm, int, 0444);
+
+MODULE_PARM_DESC(aspm, "ASPM support (1 = enable, 0 = disable, -1 = auto)");
+module_param_named(aspm, radeon_aspm, int, 0444);
+
+static struct pci_device_id pciidlist[] = {
+	radeon_PCI_IDS
+};
+
+MODULE_DEVICE_TABLE(pci, pciidlist);
+
+#ifdef CONFIG_DRM_RADEON_UMS
 
 static int radeon_suspend(struct drm_device *dev, pm_message_t state)
 {
@@ -204,14 +264,6 @@ static int radeon_resume(struct drm_device *dev)
 	RADEON_WRITE(RADEON_GEN_INT_CNTL, dev_priv->irq_enable_reg);
 	return 0;
 }
-
-static struct pci_device_id pciidlist[] = {
-	radeon_PCI_IDS
-};
-
-#if defined(CONFIG_DRM_RADEON_KMS)
-MODULE_DEVICE_TABLE(pci, pciidlist);
-#endif
 
 static const struct file_operations radeon_driver_old_fops = {
 	.owner = THIS_MODULE,
@@ -251,7 +303,6 @@ static struct drm_driver driver_old = {
 	.irq_postinstall = radeon_driver_irq_postinstall,
 	.irq_uninstall = radeon_driver_irq_uninstall,
 	.irq_handler = radeon_driver_irq_handler,
-	.reclaim_buffers = drm_core_reclaim_buffers,
 	.ioctls = radeon_ioctls,
 	.dma_ioctl = radeon_cp_buffers,
 	.fops = &radeon_driver_old_fops,
@@ -263,14 +314,19 @@ static struct drm_driver driver_old = {
 	.patchlevel = DRIVER_PATCHLEVEL,
 };
 
+#endif
+
 static struct drm_driver kms_driver;
 
-static void radeon_kick_out_firmware_fb(struct pci_dev *pdev)
+static int radeon_kick_out_firmware_fb(struct pci_dev *pdev)
 {
 	struct apertures_struct *ap;
 	bool primary = false;
 
 	ap = alloc_apertures(1);
+	if (!ap)
+		return -ENOMEM;
+
 	ap->ranges[0].base = pci_resource_start(pdev, 0);
 	ap->ranges[0].size = pci_resource_len(pdev, 0);
 
@@ -279,13 +335,19 @@ static void radeon_kick_out_firmware_fb(struct pci_dev *pdev)
 #endif
 	remove_conflicting_framebuffers(ap, "radeondrmfb", primary);
 	kfree(ap);
+
+	return 0;
 }
 
-static int __devinit
-radeon_pci_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
+static int radeon_pci_probe(struct pci_dev *pdev,
+			    const struct pci_device_id *ent)
 {
+	int ret;
+
 	/* Get rid of things like offb */
-	radeon_kick_out_firmware_fb(pdev);
+	ret = radeon_kick_out_firmware_fb(pdev);
+	if (ret)
+		return ret;
 
 	return drm_get_pci_dev(pdev, ent, &kms_driver);
 }
@@ -329,7 +391,8 @@ static const struct file_operations radeon_driver_kms_fops = {
 static struct drm_driver kms_driver = {
 	.driver_features =
 	    DRIVER_USE_AGP | DRIVER_USE_MTRR | DRIVER_PCI_DMA | DRIVER_SG |
-	    DRIVER_HAVE_IRQ | DRIVER_HAVE_DMA | DRIVER_IRQ_SHARED | DRIVER_GEM,
+	    DRIVER_HAVE_IRQ | DRIVER_HAVE_DMA | DRIVER_IRQ_SHARED | DRIVER_GEM |
+	    DRIVER_PRIME,
 	.dev_priv_size = 0,
 	.load = radeon_driver_load_kms,
 	.firstopen = radeon_driver_firstopen_kms,
@@ -353,7 +416,6 @@ static struct drm_driver kms_driver = {
 	.irq_postinstall = radeon_driver_irq_postinstall_kms,
 	.irq_uninstall = radeon_driver_irq_uninstall_kms,
 	.irq_handler = radeon_driver_irq_handler_kms,
-	.reclaim_buffers = drm_core_reclaim_buffers,
 	.ioctls = radeon_ioctls_kms,
 	.gem_init_object = radeon_gem_object_init,
 	.gem_free_object = radeon_gem_object_free,
@@ -364,6 +426,18 @@ static struct drm_driver kms_driver = {
 	.dumb_map_offset = radeon_mode_dumb_mmap,
 	.dumb_destroy = radeon_mode_dumb_destroy,
 	.fops = &radeon_driver_kms_fops,
+
+	.prime_handle_to_fd = drm_gem_prime_handle_to_fd,
+	.prime_fd_to_handle = drm_gem_prime_fd_to_handle,
+	.gem_prime_export = drm_gem_prime_export,
+	.gem_prime_import = drm_gem_prime_import,
+	.gem_prime_pin = radeon_gem_prime_pin,
+	.gem_prime_unpin = radeon_gem_prime_unpin,
+	.gem_prime_get_sg_table = radeon_gem_prime_get_sg_table,
+	.gem_prime_import_sg_table = radeon_gem_prime_import_sg_table,
+	.gem_prime_vmap = radeon_gem_prime_vmap,
+	.gem_prime_vunmap = radeon_gem_prime_vunmap,
+
 	.name = DRIVER_NAME,
 	.desc = DRIVER_DESC,
 	.date = DRIVER_DATE,
@@ -375,10 +449,12 @@ static struct drm_driver kms_driver = {
 static struct drm_driver *driver;
 static struct pci_driver *pdriver;
 
+#ifdef CONFIG_DRM_RADEON_UMS
 static struct pci_driver radeon_pci_driver = {
 	.name = DRIVER_NAME,
 	.id_table = pciidlist,
 };
+#endif
 
 static struct pci_driver radeon_kms_pci_driver = {
 	.name = DRIVER_NAME,
@@ -391,28 +467,16 @@ static struct pci_driver radeon_kms_pci_driver = {
 
 static int __init radeon_init(void)
 {
-	driver = &driver_old;
-	pdriver = &radeon_pci_driver;
-	driver->num_ioctls = radeon_max_ioctl;
 #ifdef CONFIG_VGA_CONSOLE
 	if (vgacon_text_force() && radeon_modeset == -1) {
 		DRM_INFO("VGACON disable radeon kernel modesetting.\n");
-		driver = &driver_old;
-		pdriver = &radeon_pci_driver;
-		driver->driver_features &= ~DRIVER_MODESET;
 		radeon_modeset = 0;
 	}
 #endif
-	/* if enabled by default */
-	if (radeon_modeset == -1) {
-#ifdef CONFIG_DRM_RADEON_KMS
-		DRM_INFO("radeon defaulting to kernel modesetting.\n");
+	/* set to modesetting by default if not nomodeset */
+	if (radeon_modeset == -1)
 		radeon_modeset = 1;
-#else
-		DRM_INFO("radeon defaulting to userspace modesetting.\n");
-		radeon_modeset = 0;
-#endif
-	}
+
 	if (radeon_modeset == 1) {
 		DRM_INFO("radeon kernel modesetting enabled.\n");
 		driver = &kms_driver;
@@ -420,9 +484,21 @@ static int __init radeon_init(void)
 		driver->driver_features |= DRIVER_MODESET;
 		driver->num_ioctls = radeon_max_kms_ioctl;
 		radeon_register_atpx_handler();
+
+	} else {
+#ifdef CONFIG_DRM_RADEON_UMS
+		DRM_INFO("radeon userspace modesetting enabled.\n");
+		driver = &driver_old;
+		pdriver = &radeon_pci_driver;
+		driver->driver_features &= ~DRIVER_MODESET;
+		driver->num_ioctls = radeon_max_ioctl;
+#else
+		DRM_ERROR("No UMS support in radeon module!\n");
+		return -EINVAL;
+#endif
 	}
-	/* if the vga console setting is enabled still
-	 * let modprobe override it */
+
+	/* let modprobe override vga console setting */
 	return drm_pci_init(driver, pdriver);
 }
 

@@ -95,7 +95,7 @@ static u32 dn_neigh_hash(const void *pkey,
 
 struct neigh_table dn_neigh_table = {
 	.family =			PF_DECnet,
-	.entry_size =			sizeof(struct dn_neigh),
+	.entry_size =			NEIGH_ENTRY_SIZE(sizeof(struct dn_neigh)),
 	.key_len =			sizeof(__le16),
 	.hash =				dn_neigh_hash,
 	.constructor =			dn_neigh_construct,
@@ -162,8 +162,8 @@ static int dn_neigh_construct(struct neighbour *neigh)
 	else if ((dev->type == ARPHRD_ETHER) || (dev->type == ARPHRD_LOOPBACK))
 		dn_dn2eth(neigh->ha, dn->addr);
 	else {
-		if (net_ratelimit())
-			printk(KERN_DEBUG "Trying to create neigh for hw %d\n",  dev->type);
+		net_dbg_ratelimited("Trying to create neigh for hw %d\n",
+				    dev->type);
 		return -EINVAL;
 	}
 
@@ -202,7 +202,7 @@ static int dn_neigh_output_packet(struct sk_buff *skb)
 {
 	struct dst_entry *dst = skb_dst(skb);
 	struct dn_route *rt = (struct dn_route *)dst;
-	struct neighbour *neigh = dst_get_neighbour_noref(dst);
+	struct neighbour *neigh = rt->n;
 	struct net_device *dev = neigh->dev;
 	char mac_addr[ETH_ALEN];
 	unsigned int seq;
@@ -236,15 +236,13 @@ static int dn_long_output(struct neighbour *neigh, struct sk_buff *skb)
 	if (skb_headroom(skb) < headroom) {
 		struct sk_buff *skb2 = skb_realloc_headroom(skb, headroom);
 		if (skb2 == NULL) {
-			if (net_ratelimit())
-				printk(KERN_CRIT "dn_long_output: no memory\n");
+			net_crit_ratelimited("dn_long_output: no memory\n");
 			kfree_skb(skb);
 			return -ENOBUFS;
 		}
-		kfree_skb(skb);
+		consume_skb(skb);
 		skb = skb2;
-		if (net_ratelimit())
-			printk(KERN_INFO "dn_long_output: Increasing headroom\n");
+		net_info_ratelimited("dn_long_output: Increasing headroom\n");
 	}
 
 	data = skb_push(skb, sizeof(struct dn_long_packet) + 3);
@@ -281,15 +279,13 @@ static int dn_short_output(struct neighbour *neigh, struct sk_buff *skb)
 	if (skb_headroom(skb) < headroom) {
 		struct sk_buff *skb2 = skb_realloc_headroom(skb, headroom);
 		if (skb2 == NULL) {
-			if (net_ratelimit())
-				printk(KERN_CRIT "dn_short_output: no memory\n");
+			net_crit_ratelimited("dn_short_output: no memory\n");
 			kfree_skb(skb);
 			return -ENOBUFS;
 		}
-		kfree_skb(skb);
+		consume_skb(skb);
 		skb = skb2;
-		if (net_ratelimit())
-			printk(KERN_INFO "dn_short_output: Increasing headroom\n");
+		net_info_ratelimited("dn_short_output: Increasing headroom\n");
 	}
 
 	data = skb_push(skb, sizeof(struct dn_short_packet) + 2);
@@ -322,15 +318,13 @@ static int dn_phase3_output(struct neighbour *neigh, struct sk_buff *skb)
 	if (skb_headroom(skb) < headroom) {
 		struct sk_buff *skb2 = skb_realloc_headroom(skb, headroom);
 		if (skb2 == NULL) {
-			if (net_ratelimit())
-				printk(KERN_CRIT "dn_phase3_output: no memory\n");
+			net_crit_ratelimited("dn_phase3_output: no memory\n");
 			kfree_skb(skb);
 			return -ENOBUFS;
 		}
-		kfree_skb(skb);
+		consume_skb(skb);
 		skb = skb2;
-		if (net_ratelimit())
-			printk(KERN_INFO "dn_phase3_output: Increasing headroom\n");
+		net_info_ratelimited("dn_phase3_output: Increasing headroom\n");
 	}
 
 	data = skb_push(skb, sizeof(struct dn_short_packet) + 2);
@@ -596,11 +590,12 @@ static const struct file_operations dn_neigh_seq_fops = {
 void __init dn_neigh_init(void)
 {
 	neigh_table_init(&dn_neigh_table);
-	proc_net_fops_create(&init_net, "decnet_neigh", S_IRUGO, &dn_neigh_seq_fops);
+	proc_create("decnet_neigh", S_IRUGO, init_net.proc_net,
+		    &dn_neigh_seq_fops);
 }
 
 void __exit dn_neigh_cleanup(void)
 {
-	proc_net_remove(&init_net, "decnet_neigh");
+	remove_proc_entry("decnet_neigh", init_net.proc_net);
 	neigh_table_clear(&dn_neigh_table);
 }

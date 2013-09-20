@@ -134,7 +134,7 @@ static int altera_spi_txrx(struct spi_device *spi, struct spi_transfer *t)
 	hw->tx = t->tx_buf;
 	hw->rx = t->rx_buf;
 	hw->count = 0;
-	hw->bytes_per_word = (t->bits_per_word ? : spi->bits_per_word) / 8;
+	hw->bytes_per_word = t->bits_per_word / 8;
 	hw->len = t->len / hw->bytes_per_word;
 
 	if (hw->irq >= 0) {
@@ -215,7 +215,7 @@ static irqreturn_t altera_spi_irq(int irq, void *dev)
 	return IRQ_HANDLED;
 }
 
-static int __devinit altera_spi_probe(struct platform_device *pdev)
+static int altera_spi_probe(struct platform_device *pdev)
 {
 	struct altera_spi_platform_data *platp = pdev->dev.platform_data;
 	struct altera_spi *hw;
@@ -285,18 +285,16 @@ static int __devinit altera_spi_probe(struct platform_device *pdev)
 exit_busy:
 	err = -EBUSY;
 exit:
-	platform_set_drvdata(pdev, NULL);
 	spi_master_put(master);
 	return err;
 }
 
-static int __devexit altera_spi_remove(struct platform_device *dev)
+static int altera_spi_remove(struct platform_device *dev)
 {
 	struct altera_spi *hw = platform_get_drvdata(dev);
 	struct spi_master *master = hw->bitbang.master;
 
 	spi_bitbang_stop(&hw->bitbang);
-	platform_set_drvdata(dev, NULL);
 	spi_master_put(master);
 	return 0;
 }
@@ -307,18 +305,16 @@ static const struct of_device_id altera_spi_match[] = {
 	{},
 };
 MODULE_DEVICE_TABLE(of, altera_spi_match);
-#else /* CONFIG_OF */
-#define altera_spi_match NULL
 #endif /* CONFIG_OF */
 
 static struct platform_driver altera_spi_driver = {
 	.probe = altera_spi_probe,
-	.remove = __devexit_p(altera_spi_remove),
+	.remove = altera_spi_remove,
 	.driver = {
 		.name = DRV_NAME,
 		.owner = THIS_MODULE,
 		.pm = NULL,
-		.of_match_table = altera_spi_match,
+		.of_match_table = of_match_ptr(altera_spi_match),
 	},
 };
 module_platform_driver(altera_spi_driver);

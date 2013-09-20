@@ -115,6 +115,8 @@ enum ib_device_cap_flags {
 	IB_DEVICE_XRC			= (1<<20),
 	IB_DEVICE_MEM_MGT_EXTENSIONS	= (1<<21),
 	IB_DEVICE_BLOCK_MULTICAST_LOOPBACK = (1<<22),
+	IB_DEVICE_MEM_WINDOW_TYPE_2A	= (1<<23),
+	IB_DEVICE_MEM_WINDOW_TYPE_2B	= (1<<24)
 };
 
 enum ib_atomic_cap {
@@ -605,15 +607,32 @@ enum ib_qp_type {
 	IB_QPT_UD,
 	IB_QPT_RAW_IPV6,
 	IB_QPT_RAW_ETHERTYPE,
-	/* Save 8 for RAW_PACKET */
+	IB_QPT_RAW_PACKET = 8,
 	IB_QPT_XRC_INI = 9,
 	IB_QPT_XRC_TGT,
-	IB_QPT_MAX
+	IB_QPT_MAX,
+	/* Reserve a range for qp types internal to the low level driver.
+	 * These qp types will not be visible at the IB core layer, so the
+	 * IB_QPT_MAX usages should not be affected in the core layer
+	 */
+	IB_QPT_RESERVED1 = 0x1000,
+	IB_QPT_RESERVED2,
+	IB_QPT_RESERVED3,
+	IB_QPT_RESERVED4,
+	IB_QPT_RESERVED5,
+	IB_QPT_RESERVED6,
+	IB_QPT_RESERVED7,
+	IB_QPT_RESERVED8,
+	IB_QPT_RESERVED9,
+	IB_QPT_RESERVED10,
 };
 
 enum ib_qp_create_flags {
 	IB_QP_CREATE_IPOIB_UD_LSO		= 1 << 0,
 	IB_QP_CREATE_BLOCK_MULTICAST_LOOPBACK	= 1 << 1,
+	/* reserve bits 26-31 for low level drivers' internal use */
+	IB_QP_CREATE_RESERVED_START		= 1 << 26,
+	IB_QP_CREATE_RESERVED_END		= 1 << 31,
 };
 
 struct ib_qp_init_attr {
@@ -712,6 +731,11 @@ enum ib_mig_state {
 	IB_MIG_ARMED
 };
 
+enum ib_mw_type {
+	IB_MW_TYPE_1 = 1,
+	IB_MW_TYPE_2 = 2
+};
+
 struct ib_qp_attr {
 	enum ib_qp_state	qp_state;
 	enum ib_qp_state	cur_qp_state;
@@ -755,6 +779,20 @@ enum ib_wr_opcode {
 	IB_WR_FAST_REG_MR,
 	IB_WR_MASKED_ATOMIC_CMP_AND_SWP,
 	IB_WR_MASKED_ATOMIC_FETCH_AND_ADD,
+	IB_WR_BIND_MW,
+	/* reserve values for low level drivers' internal use.
+	 * These values will not be used at all in the ib core layer.
+	 */
+	IB_WR_RESERVED1 = 0xf0,
+	IB_WR_RESERVED2,
+	IB_WR_RESERVED3,
+	IB_WR_RESERVED4,
+	IB_WR_RESERVED5,
+	IB_WR_RESERVED6,
+	IB_WR_RESERVED7,
+	IB_WR_RESERVED8,
+	IB_WR_RESERVED9,
+	IB_WR_RESERVED10,
 };
 
 enum ib_send_flags {
@@ -762,7 +800,11 @@ enum ib_send_flags {
 	IB_SEND_SIGNALED	= (1<<1),
 	IB_SEND_SOLICITED	= (1<<2),
 	IB_SEND_INLINE		= (1<<3),
-	IB_SEND_IP_CSUM		= (1<<4)
+	IB_SEND_IP_CSUM		= (1<<4),
+
+	/* reserve bits 26-31 for low level drivers' internal use */
+	IB_SEND_RESERVED_START	= (1 << 26),
+	IB_SEND_RESERVED_END	= (1 << 31),
 };
 
 struct ib_sge {
@@ -775,6 +817,23 @@ struct ib_fast_reg_page_list {
 	struct ib_device       *device;
 	u64		       *page_list;
 	unsigned int		max_page_list_len;
+};
+
+/**
+ * struct ib_mw_bind_info - Parameters for a memory window bind operation.
+ * @mr: A memory region to bind the memory window to.
+ * @addr: The address where the memory window should begin.
+ * @length: The length of the memory window, in bytes.
+ * @mw_access_flags: Access flags from enum ib_access_flags for the window.
+ *
+ * This struct contains the shared parameters for type 1 and type 2
+ * memory window bind operations.
+ */
+struct ib_mw_bind_info {
+	struct ib_mr   *mr;
+	u64		addr;
+	u64		length;
+	int		mw_access_flags;
 };
 
 struct ib_send_wr {
@@ -820,6 +879,12 @@ struct ib_send_wr {
 			int				access_flags;
 			u32				rkey;
 		} fast_reg;
+		struct {
+			struct ib_mw            *mw;
+			/* The new rkey for the memory window. */
+			u32                      rkey;
+			struct ib_mw_bind_info   bind_info;
+		} bind_mw;
 	} wr;
 	u32			xrc_remote_srq_num;	/* XRC TGT QPs only */
 };
@@ -836,7 +901,8 @@ enum ib_access_flags {
 	IB_ACCESS_REMOTE_WRITE	= (1<<1),
 	IB_ACCESS_REMOTE_READ	= (1<<2),
 	IB_ACCESS_REMOTE_ATOMIC	= (1<<3),
-	IB_ACCESS_MW_BIND	= (1<<4)
+	IB_ACCESS_MW_BIND	= (1<<4),
+	IB_ZERO_BASED		= (1<<5)
 };
 
 struct ib_phys_buf {
@@ -859,13 +925,16 @@ enum ib_mr_rereg_flags {
 	IB_MR_REREG_ACCESS	= (1<<2)
 };
 
+/**
+ * struct ib_mw_bind - Parameters for a type 1 memory window bind operation.
+ * @wr_id:      Work request id.
+ * @send_flags: Flags from ib_send_flags enum.
+ * @bind_info:  More parameters of the bind operation.
+ */
 struct ib_mw_bind {
-	struct ib_mr   *mr;
-	u64		wr_id;
-	u64		addr;
-	u32		length;
-	int		send_flags;
-	int		mw_access_flags;
+	u64                    wr_id;
+	int                    send_flags;
+	struct ib_mw_bind_info bind_info;
 };
 
 struct ib_fmr_attr {
@@ -964,7 +1033,7 @@ struct ib_qp {
 	struct ib_srq	       *srq;
 	struct ib_xrcd	       *xrcd; /* XRC TGT QPs only */
 	struct list_head	xrcd_list;
-	atomic_t		usecnt; /* count times opened */
+	atomic_t		usecnt; /* count times opened, mcast attaches */
 	struct list_head	open_list;
 	struct ib_qp           *real_qp;
 	struct ib_uobject      *uobject;
@@ -988,6 +1057,7 @@ struct ib_mw {
 	struct ib_pd		*pd;
 	struct ib_uobject	*uobject;
 	u32			rkey;
+	enum ib_mw_type         type;
 };
 
 struct ib_fmr {
@@ -1199,7 +1269,8 @@ struct ib_device {
 						    int num_phys_buf,
 						    int mr_access_flags,
 						    u64 *iova_start);
-	struct ib_mw *             (*alloc_mw)(struct ib_pd *pd);
+	struct ib_mw *             (*alloc_mw)(struct ib_pd *pd,
+					       enum ib_mw_type type);
 	int                        (*bind_mw)(struct ib_qp *qp,
 					      struct ib_mw *mw,
 					      struct ib_mw_bind *mw_bind);
@@ -2016,6 +2087,8 @@ int ib_query_mr(struct ib_mr *mr, struct ib_mr_attr *mr_attr);
  * ib_dereg_mr - Deregisters a memory region and removes it from the
  *   HCA translation table.
  * @mr: The memory region to deregister.
+ *
+ * This function can fail, if the memory region has memory windows bound to it.
  */
 int ib_dereg_mr(struct ib_mr *mr);
 
@@ -2068,10 +2141,22 @@ static inline void ib_update_fast_reg_key(struct ib_mr *mr, u8 newkey)
 }
 
 /**
+ * ib_inc_rkey - increments the key portion of the given rkey. Can be used
+ * for calculating a new rkey for type 2 memory windows.
+ * @rkey - the rkey to increment.
+ */
+static inline u32 ib_inc_rkey(u32 rkey)
+{
+	const u32 mask = 0x000000ff;
+	return ((rkey + 1) & mask) | (rkey & ~mask);
+}
+
+/**
  * ib_alloc_mw - Allocates a memory window.
  * @pd: The protection domain associated with the memory window.
+ * @type: The type of the memory window (1 or 2).
  */
-struct ib_mw *ib_alloc_mw(struct ib_pd *pd);
+struct ib_mw *ib_alloc_mw(struct ib_pd *pd, enum ib_mw_type type);
 
 /**
  * ib_bind_mw - Posts a work request to the send queue of the specified
@@ -2081,6 +2166,10 @@ struct ib_mw *ib_alloc_mw(struct ib_pd *pd);
  * @mw: The memory window to bind.
  * @mw_bind: Specifies information about the memory window, including
  *   its address range, remote access rights, and associated memory region.
+ *
+ * If there is no immediate error, the function will update the rkey member
+ * of the mw parameter to its new value. The bind operation can still fail
+ * asynchronously.
  */
 static inline int ib_bind_mw(struct ib_qp *qp,
 			     struct ib_mw *mw,

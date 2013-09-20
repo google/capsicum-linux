@@ -38,14 +38,14 @@
 
 #include <mach/pxa27x.h>
 #include <mach/regs-uart.h>
-#include <mach/ohci.h>
-#include <mach/mmc.h>
+#include <linux/platform_data/usb-ohci-pxa27x.h>
+#include <linux/platform_data/mmc-pxamci.h>
 #include <mach/pxa27x-udc.h>
 #include <mach/udc.h>
-#include <mach/pxafb.h>
+#include <linux/platform_data/video-pxafb.h>
 #include <mach/pm.h>
 #include <mach/audio.h>
-#include <mach/arcom-pcmcia.h>
+#include <linux/platform_data/pcmcia-pxa2xx_viper.h>
 #include <mach/zeus.h>
 #include <mach/smemc.h>
 
@@ -910,7 +910,7 @@ MACHINE_START(ARCOM_ZEUS, "Arcom/Eurotech ZEUS")
 	.nr_irqs	= ZEUS_NR_IRQS,
 	.init_irq	= zeus_init_irq,
 	.handle_irq	= pxa27x_handle_irq,
-	.timer		= &pxa_timer,
+	.init_time	= pxa_timer_init,
 	.init_machine	= zeus_init,
 	.restart	= pxa_restart,
 MACHINE_END

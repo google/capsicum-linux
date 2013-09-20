@@ -50,7 +50,7 @@
 #include <linux/slab.h>
 
 /* Steal the hardware definitions from the bttv driver. */
-#include "../media/video/bt8xx/bt848.h"
+#include "../media/pci/bt8xx/bt848.h"
 
 
 #define BT8XXGPIO_NR_GPIOS		24 /* We have 24 GPIO pins */
@@ -286,7 +286,7 @@ static int bt8xxgpio_resume(struct pci_dev *pdev)
 	unsigned long flags;
 	int err;
 
-	pci_set_power_state(pdev, 0);
+	pci_set_power_state(pdev, PCI_D0);
 	err = pci_enable_device(pdev);
 	if (err)
 		return err;
@@ -310,7 +310,7 @@ static int bt8xxgpio_resume(struct pci_dev *pdev)
 #define bt8xxgpio_resume NULL
 #endif /* CONFIG_PM */
 
-static struct pci_device_id bt8xxgpio_pci_tbl[] = {
+static DEFINE_PCI_DEVICE_TABLE(bt8xxgpio_pci_tbl) = {
 	{ PCI_DEVICE(PCI_VENDOR_ID_BROOKTREE, PCI_DEVICE_ID_BT848) },
 	{ PCI_DEVICE(PCI_VENDOR_ID_BROOKTREE, PCI_DEVICE_ID_BT849) },
 	{ PCI_DEVICE(PCI_VENDOR_ID_BROOKTREE, PCI_DEVICE_ID_BT878) },
@@ -328,17 +328,7 @@ static struct pci_driver bt8xxgpio_pci_driver = {
 	.resume		= bt8xxgpio_resume,
 };
 
-static int __init bt8xxgpio_init(void)
-{
-	return pci_register_driver(&bt8xxgpio_pci_driver);
-}
-module_init(bt8xxgpio_init)
-
-static void __exit bt8xxgpio_exit(void)
-{
-	pci_unregister_driver(&bt8xxgpio_pci_driver);
-}
-module_exit(bt8xxgpio_exit)
+module_pci_driver(bt8xxgpio_pci_driver);
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Michael Buesch");

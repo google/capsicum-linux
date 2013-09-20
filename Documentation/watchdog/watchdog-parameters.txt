@@ -78,6 +78,11 @@ wd0_timeout: Default watchdog0 timeout in 1/10secs
 wd1_timeout: Default watchdog1 timeout in 1/10secs
 wd2_timeout: Default watchdog2 timeout in 1/10secs
 -------------------------------------------------
+da9052wdt:
+timeout: Watchdog timeout in seconds. 2<= timeout <=131, default=2.048s
+nowayout: Watchdog cannot be stopped once started
+	(default=kernel config parameter)
+-------------------------------------------------
 davinci_wdt:
 heartbeat: Watchdog heartbeat period in seconds from 1 to 600, default 60
 -------------------------------------------------
@@ -188,14 +193,6 @@ timeout: Watchdog timeout in ticks. (0<timeout<65536, default=65535)
 reset: Watchdog Interrupt/Reset Mode. 0 = interrupt, 1 = reset
 nowayout: Watchdog cannot be stopped once started
 	(default=kernel config parameter)
--------------------------------------------------
-mpcore_wdt:
-mpcore_margin: MPcore timer margin in seconds.
-	(0 < mpcore_margin < 65536, default=60)
-nowayout: Watchdog cannot be stopped once started
-	(default=kernel config parameter)
-mpcore_noboot: MPcore watchdog action, set to 1 to ignore reboots,
-	0 to reboot (default=0
 -------------------------------------------------
 mv64x60_wdt:
 nowayout: Watchdog cannot be stopped once started

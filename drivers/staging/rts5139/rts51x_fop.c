@@ -36,7 +36,6 @@
 #include "rts51x_card.h"
 #include "rts51x_fop.h"
 #include "sd_cprm.h"
-#include "rts51x.h"
 
 #define RTS5139_IOC_MAGIC		0x39
 
@@ -71,7 +70,7 @@ static int rts51x_sd_direct_cmnd(struct rts51x_chip *chip,
 	switch (dir) {
 	case 0:
 		/* No data */
-		retval = ext_sd_execute_no_data(chip, chip->card2lun[SD_CARD],
+		retval = ext_rts51x_sd_execute_no_data(chip, chip->card2lun[SD_CARD],
 						cmd_idx, standby, acmd,
 						rsp_code, arg);
 		if (retval != TRANSPORT_GOOD)
@@ -80,11 +79,11 @@ static int rts51x_sd_direct_cmnd(struct rts51x_chip *chip,
 
 	case 1:
 		/* Read from card */
-		buf = kmalloc(cmnd->buf_len, GFP_KERNEL);
+		buf = kzalloc(cmnd->buf_len, GFP_KERNEL);
 		if (!buf)
 			TRACE_RET(chip, STATUS_NOMEM);
 
-		retval = ext_sd_execute_read_data(chip, chip->card2lun[SD_CARD],
+		retval = ext_rts51x_sd_execute_read_data(chip, chip->card2lun[SD_CARD],
 						  cmd_idx, cmd12, standby, acmd,
 						  rsp_code, arg, len, buf,
 						  cmnd->buf_len, 0);
@@ -118,7 +117,7 @@ static int rts51x_sd_direct_cmnd(struct rts51x_chip *chip,
 		}
 
 		retval =
-		    ext_sd_execute_write_data(chip, chip->card2lun[SD_CARD],
+		    ext_rts51x_sd_execute_write_data(chip, chip->card2lun[SD_CARD],
 					      cmd_idx, cmd12, standby, acmd,
 					      rsp_code, arg, len, buf,
 					      cmnd->buf_len, 0);
@@ -234,12 +233,7 @@ ssize_t rts51x_write(struct file *filp, const char __user *buf, size_t count,
 	return 0;
 }
 
-#if 0 /* LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 36) */
-int rts51x_ioctl(struct inode *inode, struct file *filp, unsigned int cmd,
-		 unsigned long arg)
-#else
 long rts51x_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
-#endif
 {
 	struct rts51x_chip *chip;
 	struct sd_direct_cmnd cmnd;

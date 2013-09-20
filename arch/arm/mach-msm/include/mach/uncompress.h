@@ -37,7 +37,7 @@ static void putc(int c)
 	 * Wait for TX_READY to be set; but skip it if we have a
 	 * TX underrun.
 	 */
-	if (UART_DM_SR & 0x08)
+	if (!(UART_DM_SR & 0x08))
 		while (!(UART_DM_ISR & 0x80))
 			cpu_relax();
 
@@ -57,10 +57,6 @@ static inline void flush(void)
 }
 
 static inline void arch_decomp_setup(void)
-{
-}
-
-static inline void arch_decomp_wdog(void)
 {
 }
 

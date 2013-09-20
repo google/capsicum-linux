@@ -16,20 +16,11 @@
 #include <linux/usb/serial.h>
 #include <linux/uaccess.h>
 
-static bool debug;
-
 static const struct usb_device_id id_table[] = {
 	{ USB_DEVICE(0x1404, 0xcddc) },
 	{ },
 };
 MODULE_DEVICE_TABLE(usb, id_table);
-
-static struct usb_driver funsoft_driver = {
-	.name =		"funsoft",
-	.probe =	usb_serial_probe,
-	.disconnect =	usb_serial_disconnect,
-	.id_table =	id_table,
-};
 
 static struct usb_serial_driver funsoft_device = {
 	.driver = {
@@ -44,9 +35,6 @@ static struct usb_serial_driver * const serial_drivers[] = {
 	&funsoft_device, NULL
 };
 
-module_usb_serial_driver(funsoft_driver, serial_drivers);
+module_usb_serial_driver(serial_drivers, id_table);
 
 MODULE_LICENSE("GPL");
-
-module_param(debug, bool, S_IRUGO | S_IWUSR);
-MODULE_PARM_DESC(debug, "Debug enabled or not");

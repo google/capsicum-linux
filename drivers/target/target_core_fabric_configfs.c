@@ -4,10 +4,9 @@
  * This file contains generic fabric module configfs infrastructure for
  * TCM v4.x code
  *
- * Copyright (c) 2010,2011 Rising Tide Systems
- * Copyright (c) 2010,2011 Linux-iSCSI.org
+ * (c) Copyright 2010-2012 RisingTide Systems LLC.
  *
- * Copyright (c) Nicholas A. Bellinger <nab@linux-iscsi.org>
+ * Nicholas A. Bellinger <nab@linux-iscsi.org>
 *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -22,7 +21,6 @@
 
 #include <linux/module.h>
 #include <linux/moduleparam.h>
-#include <generated/utsrelease.h>
 #include <linux/utsname.h>
 #include <linux/init.h>
 #include <linux/fs.h>
@@ -72,6 +70,12 @@ static int target_fabric_mappedlun_link(
 	struct se_portal_group *se_tpg;
 	struct config_item *nacl_ci, *tpg_ci, *tpg_ci_s, *wwn_ci, *wwn_ci_s;
 	int ret = 0, lun_access;
+
+	if (lun->lun_link_magic != SE_LUN_LINK_MAGIC) {
+		pr_err("Bad lun->lun_link_magic, not a valid lun_ci pointer:"
+			" %p to struct lun: %p\n", lun_ci, lun);
+		return -EFAULT;
+	}
 	/*
 	 * Ensure that the source port exists
 	 */
@@ -350,16 +354,24 @@ static struct config_group *target_fabric_make_mappedlun(
 		ret = -EINVAL;
 		goto out;
 	}
+	if (mapped_lun > (TRANSPORT_MAX_LUNS_PER_TPG-1)) {
+		pr_err("Mapped LUN: %lu exceeds TRANSPORT_MAX_LUNS_PER_TPG"
+			"-1: %u for Target Portal Group: %u\n", mapped_lun,
+			TRANSPORT_MAX_LUNS_PER_TPG-1,
+			se_tpg->se_tpg_tfo->tpg_get_tag(se_tpg));
+		ret = -EINVAL;
+		goto out;
+	}
 
-	lacl = core_dev_init_initiator_node_lun_acl(se_tpg, mapped_lun,
-			config_item_name(acl_ci), &ret);
+	lacl = core_dev_init_initiator_node_lun_acl(se_tpg, se_nacl,
+			mapped_lun, &ret);
 	if (!lacl) {
 		ret = -EINVAL;
 		goto out;
 	}
 
 	lacl_cg = &lacl->se_lun_group;
-	lacl_cg->default_groups = kzalloc(sizeof(struct config_group) * 2,
+	lacl_cg->default_groups = kmalloc(sizeof(struct config_group *) * 2,
 				GFP_KERNEL);
 	if (!lacl_cg->default_groups) {
 		pr_err("Unable to allocate lacl_cg->default_groups\n");
@@ -375,7 +387,7 @@ static struct config_group *target_fabric_make_mappedlun(
 	lacl_cg->default_groups[1] = NULL;
 
 	ml_stat_grp = &lacl->ml_stat_grps.stat_group;
-	ml_stat_grp->default_groups = kzalloc(sizeof(struct config_group) * 3,
+	ml_stat_grp->default_groups = kmalloc(sizeof(struct config_group *) * 3,
 				GFP_KERNEL);
 	if (!ml_stat_grp->default_groups) {
 		pr_err("Unable to allocate ml_stat_grp->default_groups\n");
@@ -735,16 +747,25 @@ static int target_fabric_port_link(
 	struct config_item *se_dev_ci)
 {
 	struct config_item *tpg_ci;
-	struct se_device *dev;
 	struct se_lun *lun = container_of(to_config_group(lun_ci),
 				struct se_lun, lun_group);
 	struct se_lun *lun_p;
 	struct se_portal_group *se_tpg;
-	struct se_subsystem_dev *se_dev = container_of(
-				to_config_group(se_dev_ci), struct se_subsystem_dev,
-				se_dev_group);
+	struct se_device *dev =
+		container_of(to_config_group(se_dev_ci), struct se_device, dev_group);
 	struct target_fabric_configfs *tf;
 	int ret;
+
+	if (dev->dev_link_magic != SE_DEV_LINK_MAGIC) {
+		pr_err("Bad dev->dev_link_magic, not a valid se_dev_ci pointer:"
+			" %p to struct se_device: %p\n", se_dev_ci, dev);
+		return -EFAULT;
+	}
+
+	if (!(dev->dev_flags & DF_CONFIGURED)) {
+		pr_err("se_device not configured yet, cannot port link\n");
+		return -ENODEV;
+	}
 
 	tpg_ci = &lun_ci->ci_parent->ci_group->cg_item;
 	se_tpg = container_of(to_config_group(tpg_ci),
@@ -756,16 +777,7 @@ static int target_fabric_port_link(
 		return -EEXIST;
 	}
 
-	dev = se_dev->se_dev_ptr;
-	if (!dev) {
-		pr_err("Unable to locate struct se_device pointer from"
-			" %s\n", config_item_name(se_dev_ci));
-		ret = -ENODEV;
-		goto out;
-	}
-
-	lun_p = core_dev_add_lun(se_tpg, dev->se_hba, dev,
-				lun->unpacked_lun);
+	lun_p = core_dev_add_lun(se_tpg, dev, lun->unpacked_lun);
 	if (IS_ERR(lun_p)) {
 		pr_err("core_dev_add_lun() failed\n");
 		ret = PTR_ERR(lun_p);
@@ -871,7 +883,7 @@ static struct config_group *target_fabric_make_lun(
 		return ERR_PTR(-EINVAL);
 
 	lun_cg = &lun->lun_group;
-	lun_cg->default_groups = kzalloc(sizeof(struct config_group) * 2,
+	lun_cg->default_groups = kmalloc(sizeof(struct config_group *) * 2,
 				GFP_KERNEL);
 	if (!lun_cg->default_groups) {
 		pr_err("Unable to allocate lun_cg->default_groups\n");
@@ -953,6 +965,19 @@ TF_CIT_SETUP(tpg_attrib, &target_fabric_tpg_attrib_item_ops, NULL, NULL);
 
 /* End of tfc_tpg_attrib_cit */
 
+/* Start of tfc_tpg_auth_cit */
+
+CONFIGFS_EATTR_OPS(target_fabric_tpg_auth, se_portal_group, tpg_auth_group);
+
+static struct configfs_item_operations target_fabric_tpg_auth_item_ops = {
+	.show_attribute		= target_fabric_tpg_auth_attr_show,
+	.store_attribute	= target_fabric_tpg_auth_attr_store,
+};
+
+TF_CIT_SETUP(tpg_auth, &target_fabric_tpg_auth_item_ops, NULL, NULL);
+
+/* End of tfc_tpg_attrib_cit */
+
 /* Start of tfc_tpg_param_cit */
 
 CONFIGFS_EATTR_OPS(target_fabric_tpg_param, se_portal_group, tpg_param_group);
@@ -1018,8 +1043,9 @@ static struct config_group *target_fabric_make_tpg(
 	se_tpg->tpg_group.default_groups[1] = &se_tpg->tpg_np_group;
 	se_tpg->tpg_group.default_groups[2] = &se_tpg->tpg_acl_group;
 	se_tpg->tpg_group.default_groups[3] = &se_tpg->tpg_attrib_group;
-	se_tpg->tpg_group.default_groups[4] = &se_tpg->tpg_param_group;
-	se_tpg->tpg_group.default_groups[5] = NULL;
+	se_tpg->tpg_group.default_groups[4] = &se_tpg->tpg_auth_group;
+	se_tpg->tpg_group.default_groups[5] = &se_tpg->tpg_param_group;
+	se_tpg->tpg_group.default_groups[6] = NULL;
 
 	config_group_init_type_name(&se_tpg->tpg_group, name,
 			&TF_CIT_TMPL(tf)->tfc_tpg_base_cit);
@@ -1031,6 +1057,8 @@ static struct config_group *target_fabric_make_tpg(
 			&TF_CIT_TMPL(tf)->tfc_tpg_nacl_cit);
 	config_group_init_type_name(&se_tpg->tpg_attrib_group, "attrib",
 			&TF_CIT_TMPL(tf)->tfc_tpg_attrib_cit);
+	config_group_init_type_name(&se_tpg->tpg_auth_group, "auth",
+			&TF_CIT_TMPL(tf)->tfc_tpg_auth_cit);
 	config_group_init_type_name(&se_tpg->tpg_param_group, "param",
 			&TF_CIT_TMPL(tf)->tfc_tpg_param_cit);
 
@@ -1190,6 +1218,7 @@ int target_fabric_setup_cits(struct target_fabric_configfs *tf)
 	target_fabric_setup_tpg_np_cit(tf);
 	target_fabric_setup_tpg_np_base_cit(tf);
 	target_fabric_setup_tpg_attrib_cit(tf);
+	target_fabric_setup_tpg_auth_cit(tf);
 	target_fabric_setup_tpg_param_cit(tf);
 	target_fabric_setup_tpg_nacl_cit(tf);
 	target_fabric_setup_tpg_nacl_base_cit(tf);

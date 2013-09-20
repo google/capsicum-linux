@@ -19,37 +19,31 @@
 struct smack_known smack_known_huh = {
 	.smk_known	= "?",
 	.smk_secid	= 2,
-	.smk_cipso	= NULL,
 };
 
 struct smack_known smack_known_hat = {
 	.smk_known	= "^",
 	.smk_secid	= 3,
-	.smk_cipso	= NULL,
 };
 
 struct smack_known smack_known_star = {
 	.smk_known	= "*",
 	.smk_secid	= 4,
-	.smk_cipso	= NULL,
 };
 
 struct smack_known smack_known_floor = {
 	.smk_known	= "_",
 	.smk_secid	= 5,
-	.smk_cipso	= NULL,
 };
 
 struct smack_known smack_known_invalid = {
 	.smk_known	= "",
 	.smk_secid	= 6,
-	.smk_cipso	= NULL,
 };
 
 struct smack_known smack_known_web = {
 	.smk_known	= "@",
 	.smk_secid	= 7,
-	.smk_cipso	= NULL,
 };
 
 LIST_HEAD(smack_known_list);
@@ -99,7 +93,7 @@ int smk_access_entry(char *subject_label, char *object_label,
 
 	list_for_each_entry_rcu(srp, rule_list, list) {
 		if (srp->smk_object == object_label &&
-		    srp->smk_subject == subject_label) {
+		    srp->smk_subject->smk_known == subject_label) {
 			may = srp->smk_access;
 			break;
 		}
@@ -110,7 +104,7 @@ int smk_access_entry(char *subject_label, char *object_label,
 
 /**
  * smk_access - determine if a subject has a specific access to an object
- * @subject_label: a pointer to the subject's Smack label
+ * @subject_known: a pointer to the subject's Smack label entry
  * @object_label: a pointer to the object's Smack label
  * @request: the access requested, in "MAY" format
  * @a : a pointer to the audit data
@@ -121,10 +115,9 @@ int smk_access_entry(char *subject_label, char *object_label,
  *
  * Smack labels are shared on smack_list
  */
-int smk_access(char *subject_label, char *object_label, int request,
-	       struct smk_audit_info *a)
+int smk_access(struct smack_known *subject_known, char *object_label,
+		int request, struct smk_audit_info *a)
 {
-	struct smack_known *skp;
 	int may = MAY_NOT;
 	int rc = 0;
 
@@ -133,7 +126,7 @@ int smk_access(char *subject_label, char *object_label, int request,
 	 *
 	 * A star subject can't access any object.
 	 */
-	if (subject_label == smack_known_star.smk_known) {
+	if (subject_known == &smack_known_star) {
 		rc = -EACCES;
 		goto out_audit;
 	}
@@ -143,7 +136,7 @@ int smk_access(char *subject_label, char *object_label, int request,
 	 * An internet subject can access any object.
 	 */
 	if (object_label == smack_known_web.smk_known ||
-	    subject_label == smack_known_web.smk_known)
+	    subject_known == &smack_known_web)
 		goto out_audit;
 	/*
 	 * A star object can be accessed by any subject.
@@ -154,7 +147,7 @@ int smk_access(char *subject_label, char *object_label, int request,
 	 * An object can be accessed in any way by a subject
 	 * with the same label.
 	 */
-	if (subject_label == object_label)
+	if (subject_known->smk_known == object_label)
 		goto out_audit;
 	/*
 	 * A hat subject can read any object.
@@ -163,7 +156,7 @@ int smk_access(char *subject_label, char *object_label, int request,
 	if ((request & MAY_ANYREAD) == request) {
 		if (object_label == smack_known_floor.smk_known)
 			goto out_audit;
-		if (subject_label == smack_known_hat.smk_known)
+		if (subject_known == &smack_known_hat)
 			goto out_audit;
 	}
 	/*
@@ -173,9 +166,9 @@ int smk_access(char *subject_label, char *object_label, int request,
 	 * good. A negative response from smk_access_entry()
 	 * indicates there is no entry for this pair.
 	 */
-	skp = smk_find_entry(subject_label);
 	rcu_read_lock();
-	may = smk_access_entry(subject_label, object_label, &skp->smk_rules);
+	may = smk_access_entry(subject_known->smk_known, object_label,
+				&subject_known->smk_rules);
 	rcu_read_unlock();
 
 	if (may > 0 && (request & may) == request)
@@ -185,7 +178,8 @@ int smk_access(char *subject_label, char *object_label, int request,
 out_audit:
 #ifdef CONFIG_AUDIT
 	if (a)
-		smack_log(subject_label, object_label, request, rc, a);
+		smack_log(subject_known->smk_known, object_label, request,
+				rc, a);
 #endif
 	return rc;
 }
@@ -204,20 +198,21 @@ out_audit:
 int smk_curacc(char *obj_label, u32 mode, struct smk_audit_info *a)
 {
 	struct task_smack *tsp = current_security();
-	char *sp = smk_of_task(tsp);
+	struct smack_known *skp = smk_of_task(tsp);
 	int may;
 	int rc;
 
 	/*
 	 * Check the global rule list
 	 */
-	rc = smk_access(sp, obj_label, mode, NULL);
+	rc = smk_access(skp, obj_label, mode, NULL);
 	if (rc == 0) {
 		/*
 		 * If there is an entry in the task's rule list
 		 * it can further restrict access.
 		 */
-		may = smk_access_entry(sp, obj_label, &tsp->smk_rules);
+		may = smk_access_entry(skp->smk_known, obj_label,
+					&tsp->smk_rules);
 		if (may < 0)
 			goto out_audit;
 		if ((mode & may) == mode)
@@ -226,20 +221,15 @@ int smk_curacc(char *obj_label, u32 mode, struct smk_audit_info *a)
 	}
 
 	/*
-	 * Return if a specific label has been designated as the
-	 * only one that gets privilege and current does not
-	 * have that label.
+	 * Allow for priviliged to override policy.
 	 */
-	if (smack_onlycap != NULL && smack_onlycap != sp)
-		goto out_audit;
-
-	if (capable(CAP_MAC_OVERRIDE))
+	if (rc != 0 && smack_privileged(CAP_MAC_OVERRIDE))
 		rc = 0;
 
 out_audit:
 #ifdef CONFIG_AUDIT
 	if (a)
-		smack_log(sp, obj_label, mode, rc, a);
+		smack_log(skp->smk_known, obj_label, mode, rc, a);
 #endif
 	return rc;
 }
@@ -263,6 +253,8 @@ static inline void smack_str_from_perm(char *string, int access)
 		string[i++] = 'x';
 	if (access & MAY_APPEND)
 		string[i++] = 'a';
+	if (access & MAY_TRANSMUTE)
+		string[i++] = 't';
 	string[i] = '\0';
 }
 /**
@@ -331,7 +323,7 @@ void smack_log(char *subject_label, char *object_label, int request,
 }
 #endif
 
-static DEFINE_MUTEX(smack_known_lock);
+DEFINE_MUTEX(smack_known_lock);
 
 /**
  * smk_find_entry - find a label on the list, return the list entry
@@ -345,7 +337,7 @@ struct smack_known *smk_find_entry(const char *string)
 	struct smack_known *skp;
 
 	list_for_each_entry_rcu(skp, &smack_known_list, list) {
-		if (strncmp(skp->smk_known, string, SMK_MAXLEN) == 0)
+		if (strcmp(skp->smk_known, string) == 0)
 			return skp;
 	}
 
@@ -356,27 +348,78 @@ struct smack_known *smk_find_entry(const char *string)
  * smk_parse_smack - parse smack label from a text string
  * @string: a text string that might contain a Smack label
  * @len: the maximum size, or zero if it is NULL terminated.
- * @smack: parsed smack label, or NULL if parse error
+ *
+ * Returns a pointer to the clean label, or NULL
  */
-void smk_parse_smack(const char *string, int len, char *smack)
+char *smk_parse_smack(const char *string, int len)
 {
-	int found;
+	char *smack;
 	int i;
 
-	if (len <= 0 || len > SMK_MAXLEN)
-		len = SMK_MAXLEN;
+	if (len <= 0)
+		len = strlen(string) + 1;
 
-	for (i = 0, found = 0; i < SMK_LABELLEN; i++) {
-		if (found)
-			smack[i] = '\0';
-		else if (i >= len || string[i] > '~' || string[i] <= ' ' ||
-			 string[i] == '/' || string[i] == '"' ||
-			 string[i] == '\\' || string[i] == '\'') {
-			smack[i] = '\0';
-			found = 1;
-		} else
-			smack[i] = string[i];
+	/*
+	 * Reserve a leading '-' as an indicator that
+	 * this isn't a label, but an option to interfaces
+	 * including /smack/cipso and /smack/cipso2
+	 */
+	if (string[0] == '-')
+		return NULL;
+
+	for (i = 0; i < len; i++)
+		if (string[i] > '~' || string[i] <= ' ' || string[i] == '/' ||
+		    string[i] == '"' || string[i] == '\\' || string[i] == '\'')
+			break;
+
+	if (i == 0 || i >= SMK_LONGLABEL)
+		return NULL;
+
+	smack = kzalloc(i + 1, GFP_KERNEL);
+	if (smack != NULL) {
+		strncpy(smack, string, i + 1);
+		smack[i] = '\0';
 	}
+	return smack;
+}
+
+/**
+ * smk_netlbl_mls - convert a catset to netlabel mls categories
+ * @catset: the Smack categories
+ * @sap: where to put the netlabel categories
+ *
+ * Allocates and fills attr.mls
+ * Returns 0 on success, error code on failure.
+ */
+int smk_netlbl_mls(int level, char *catset, struct netlbl_lsm_secattr *sap,
+			int len)
+{
+	unsigned char *cp;
+	unsigned char m;
+	int cat;
+	int rc;
+	int byte;
+
+	sap->flags |= NETLBL_SECATTR_MLS_CAT;
+	sap->attr.mls.lvl = level;
+	sap->attr.mls.cat = netlbl_secattr_catmap_alloc(GFP_ATOMIC);
+	if (!sap->attr.mls.cat)
+		return -ENOMEM;
+	sap->attr.mls.cat->startbit = 0;
+
+	for (cat = 1, cp = catset, byte = 0; byte < len; cp++, byte++)
+		for (m = 0x80; m != 0; m >>= 1, cat++) {
+			if ((m & *cp) == 0)
+				continue;
+			rc = netlbl_secattr_catmap_setbit(sap->attr.mls.cat,
+							  cat, GFP_ATOMIC);
+			if (rc < 0) {
+				netlbl_secattr_catmap_free(sap->attr.mls.cat);
+				return rc;
+			}
+		}
+
+	return 0;
 }
 
 /**
@@ -390,33 +433,59 @@ void smk_parse_smack(const char *string, int len, char *smack)
 struct smack_known *smk_import_entry(const char *string, int len)
 {
 	struct smack_known *skp;
-	char smack[SMK_LABELLEN];
+	char *smack;
+	int slen;
+	int rc;
 
-	smk_parse_smack(string, len, smack);
-	if (smack[0] == '\0')
+	smack = smk_parse_smack(string, len);
+	if (smack == NULL)
 		return NULL;
 
 	mutex_lock(&smack_known_lock);
 
 	skp = smk_find_entry(smack);
+	if (skp != NULL)
+		goto freeout;
 
-	if (skp == NULL) {
-		skp = kzalloc(sizeof(struct smack_known), GFP_KERNEL);
-		if (skp != NULL) {
-			strncpy(skp->smk_known, smack, SMK_MAXLEN);
-			skp->smk_secid = smack_next_secid++;
-			skp->smk_cipso = NULL;
-			INIT_LIST_HEAD(&skp->smk_rules);
-			spin_lock_init(&skp->smk_cipsolock);
-			mutex_init(&skp->smk_rules_lock);
-			/*
-			 * Make sure that the entry is actually
-			 * filled before putting it on the list.
-			 */
-			list_add_rcu(&skp->list, &smack_known_list);
-		}
+	skp = kzalloc(sizeof(*skp), GFP_KERNEL);
+	if (skp == NULL)
+		goto freeout;
+
+	skp->smk_known = smack;
+	skp->smk_secid = smack_next_secid++;
+	skp->smk_netlabel.domain = skp->smk_known;
+	skp->smk_netlabel.flags =
+		NETLBL_SECATTR_DOMAIN | NETLBL_SECATTR_MLS_LVL;
+	/*
+	 * If direct labeling works use it.
+	 * Otherwise use mapped labeling.
+	 */
+	slen = strlen(smack);
+	if (slen < SMK_CIPSOLEN)
+		rc = smk_netlbl_mls(smack_cipso_direct, skp->smk_known,
+			       &skp->smk_netlabel, slen);
+	else
+		rc = smk_netlbl_mls(smack_cipso_mapped, (char *)&skp->smk_secid,
+			       &skp->smk_netlabel, sizeof(skp->smk_secid));
+
+	if (rc >= 0) {
+		INIT_LIST_HEAD(&skp->smk_rules);
+		mutex_init(&skp->smk_rules_lock);
+		/*
+		 * Make sure that the entry is actually
+		 * filled before putting it on the list.
+		 */
+		list_add_rcu(&skp->list, &smack_known_list);
+		goto unlockout;
 	}
-
+	/*
+	 * smk_netlbl_mls failed.
+	 */
+	kfree(skp);
+	skp = NULL;
+freeout:
+	kfree(smack);
+unlockout:
 	mutex_unlock(&smack_known_lock);
 
 	return skp;
@@ -447,10 +516,10 @@ char *smk_import(const char *string, int len)
  * smack_from_secid - find the Smack label associated with a secid
  * @secid: an integer that might be associated with a Smack label
  *
- * Returns a pointer to the appropriate Smack label if there is one,
+ * Returns a pointer to the appropriate Smack label entry if there is one,
  * otherwise a pointer to the invalid Smack label.
  */
-char *smack_from_secid(const u32 secid)
+struct smack_known *smack_from_secid(const u32 secid)
 {
 	struct smack_known *skp;
 
@@ -458,7 +527,7 @@ char *smack_from_secid(const u32 secid)
 	list_for_each_entry_rcu(skp, &smack_known_list, list) {
 		if (skp->smk_secid == secid) {
 			rcu_read_unlock();
-			return skp->smk_known;
+			return skp;
 		}
 	}
 
@@ -467,7 +536,7 @@ char *smack_from_secid(const u32 secid)
 	 * of a secid that is not on the list.
 	 */
 	rcu_read_unlock();
-	return smack_known_invalid.smk_known;
+	return &smack_known_invalid;
 }
 
 /**
@@ -479,79 +548,9 @@ char *smack_from_secid(const u32 secid)
  */
 u32 smack_to_secid(const char *smack)
 {
-	struct smack_known *skp;
+	struct smack_known *skp = smk_find_entry(smack);
 
-	rcu_read_lock();
-	list_for_each_entry_rcu(skp, &smack_known_list, list) {
-		if (strncmp(skp->smk_known, smack, SMK_MAXLEN) == 0) {
-			rcu_read_unlock();
-			return skp->smk_secid;
-		}
-	}
-	rcu_read_unlock();
-	return 0;
-}
-
-/**
- * smack_from_cipso - find the Smack label associated with a CIPSO option
- * @level: Bell & LaPadula level from the network
- * @cp: Bell & LaPadula categories from the network
- *
- * This is a simple lookup in the label table.
- *
- * Return the matching label from the label list or NULL.
- */
-char *smack_from_cipso(u32 level, char *cp)
-{
-	struct smack_known *kp;
-	char *final = NULL;
-
-	rcu_read_lock();
-	list_for_each_entry(kp, &smack_known_list, list) {
-		if (kp->smk_cipso == NULL)
-			continue;
-
-		spin_lock_bh(&kp->smk_cipsolock);
-
-		if (kp->smk_cipso->smk_level == level &&
-		    memcmp(kp->smk_cipso->smk_catset, cp, SMK_LABELLEN) == 0)
-			final = kp->smk_known;
-
-		spin_unlock_bh(&kp->smk_cipsolock);
-
-		if (final != NULL)
-			break;
-	}
-	rcu_read_unlock();
-
-	return final;
-}
-
-/**
- * smack_to_cipso - find the CIPSO option to go with a Smack label
- * @smack: a pointer to the smack label in question
- * @cp: where to put the result
- *
- * Returns zero if a value is available, non-zero otherwise.
- */
-int smack_to_cipso(const char *smack, struct smack_cipso *cp)
-{
-	struct smack_known *kp;
-	int found = 0;
-
-	rcu_read_lock();
-	list_for_each_entry_rcu(kp, &smack_known_list, list) {
-		if (kp->smk_known == smack ||
-		    strcmp(kp->smk_known, smack) == 0) {
-			found = 1;
-			break;
-		}
-	}
-	rcu_read_unlock();
-
-	if (found == 0 || kp->smk_cipso == NULL)
-		return -ENOENT;
-
-	memcpy(cp, kp->smk_cipso, sizeof(struct smack_cipso));
-	return 0;
+	if (skp == NULL)
+		return 0;
+	return skp->smk_secid;
 }

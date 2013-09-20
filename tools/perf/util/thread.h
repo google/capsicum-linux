@@ -3,6 +3,7 @@
 
 #include <linux/rbtree.h>
 #include <unistd.h>
+#include <sys/types.h>
 #include "symbol.h"
 
 struct thread {
@@ -12,20 +13,25 @@ struct thread {
 	};
 	struct map_groups	mg;
 	pid_t			pid;
+	pid_t			ppid;
 	char			shortname[3];
 	bool			comm_set;
 	char			*comm;
 	int			comm_len;
+
+	void			*priv;
 };
 
 struct machine;
 
+struct thread *thread__new(pid_t pid);
 void thread__delete(struct thread *self);
 
 int thread__set_comm(struct thread *self, const char *comm);
 int thread__comm_len(struct thread *self);
 void thread__insert_map(struct thread *self, struct map *map);
 int thread__fork(struct thread *self, struct thread *parent);
+size_t thread__fprintf(struct thread *thread, FILE *fp);
 
 static inline struct map *thread__find_map(struct thread *self,
 					   enum map_type type, u64 addr)

@@ -36,7 +36,8 @@ struct snd_usb_audio {
 	struct snd_card *card;
 	struct usb_interface *pm_intf;
 	u32 usb_id;
-	struct mutex shutdown_mutex;
+	struct mutex mutex;
+	struct rw_semaphore shutdown_rwsem;
 	unsigned int shutdown:1;
 	unsigned int probing:1;
 	unsigned int autosuspended:1;	
@@ -46,6 +47,7 @@ struct snd_usb_audio {
 	int num_suspended_intf;
 
 	struct list_head pcm_list;	/* list of pcm streams */
+	struct list_head ep_list;	/* list of audio-related endpoints */
 	int pcm_devs;
 
 	struct list_head midi_list;	/* list of midi interfaces */
@@ -54,7 +56,7 @@ struct snd_usb_audio {
 
 	int setup;			/* from the 'device_setup' module param */
 	int nrpacks;			/* from the 'nrpacks' module param */
-	int async_unlink;		/* from the 'async_unlink' module param */
+	bool autoclock;			/* from the 'autoclock' module param */
 
 	struct usb_host_interface *ctrl_intf;	/* the audio control interface */
 };
@@ -70,9 +72,11 @@ struct snd_usb_audio {
 enum quirk_type {
 	QUIRK_IGNORE_INTERFACE,
 	QUIRK_COMPOSITE,
+	QUIRK_AUTODETECT,
 	QUIRK_MIDI_STANDARD_INTERFACE,
 	QUIRK_MIDI_FIXED_ENDPOINT,
 	QUIRK_MIDI_YAMAHA,
+	QUIRK_MIDI_ROLAND,
 	QUIRK_MIDI_MIDIMAN,
 	QUIRK_MIDI_NOVATION,
 	QUIRK_MIDI_RAW_BYTES,

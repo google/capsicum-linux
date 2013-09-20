@@ -150,13 +150,38 @@ typedef struct xfs_icdinode {
 	__uint16_t	di_dmstate;	/* DMIG state info */
 	__uint16_t	di_flags;	/* random flags, XFS_DIFLAG_... */
 	__uint32_t	di_gen;		/* generation number */
+
+	/* di_next_unlinked is the only non-core field in the old dinode */
+	xfs_agino_t	di_next_unlinked;/* agi unlinked list ptr */
+
+	/* start of the extended dinode, writable fields */
+	__uint32_t	di_crc;		/* CRC of the inode */
+	__uint64_t	di_changecount;	/* number of attribute changes */
+	xfs_lsn_t	di_lsn;		/* flush sequence */
+	__uint64_t	di_flags2;	/* more random flags */
+	__uint8_t	di_pad2[16];	/* more padding for future expansion */
+
+	/* fields only written to during inode creation */
+	xfs_ictimestamp_t di_crtime;	/* time created */
+	xfs_ino_t	di_ino;		/* inode number */
+	uuid_t		di_uuid;	/* UUID of the filesystem */
+
+	/* structure must be padded to 64 bit alignment */
 } xfs_icdinode_t;
+
+static inline uint xfs_icdinode_size(int version)
+{
+	if (version == 3)
+		return sizeof(struct xfs_icdinode);
+	return offsetof(struct xfs_icdinode, di_next_unlinked);
+}
 
 /*
  * Flags for xfs_ichgtime().
  */
 #define	XFS_ICHGTIME_MOD	0x1	/* data fork modification timestamp */
 #define	XFS_ICHGTIME_CHG	0x2	/* inode field change timestamp */
+#define	XFS_ICHGTIME_CREATE	0x4	/* inode create timestamp */
 
 /*
  * Per-fork incore inode flags.
@@ -180,10 +205,11 @@ typedef struct xfs_icdinode {
 #define XFS_IFORK_DSIZE(ip) \
 	(XFS_IFORK_Q(ip) ? \
 		XFS_IFORK_BOFF(ip) : \
-		XFS_LITINO((ip)->i_mount))
+		XFS_LITINO((ip)->i_mount, (ip)->i_d.di_version))
 #define XFS_IFORK_ASIZE(ip) \
 	(XFS_IFORK_Q(ip) ? \
-		XFS_LITINO((ip)->i_mount) - XFS_IFORK_BOFF(ip) : \
+		XFS_LITINO((ip)->i_mount, (ip)->i_d.di_version) - \
+			XFS_IFORK_BOFF(ip) : \
 		0)
 #define XFS_IFORK_SIZE(ip,w) \
 	((w) == XFS_DATA_FORK ? \
@@ -224,6 +250,7 @@ typedef struct xfs_inode {
 	struct xfs_mount	*i_mount;	/* fs mount struct ptr */
 	struct xfs_dquot	*i_udquot;	/* user dquot */
 	struct xfs_dquot	*i_gdquot;	/* group dquot */
+	struct xfs_dquot	*i_pdquot;	/* project dquot */
 
 	/* Inode location stuff */
 	xfs_ino_t		i_ino;		/* inode number (agno/agino)*/
@@ -419,6 +446,7 @@ static inline void xfs_iflock(struct xfs_inode *ip)
 static inline void xfs_ifunlock(struct xfs_inode *ip)
 {
 	xfs_iflags_clear(ip, XFS_IFLOCK);
+	smp_mb();
 	wake_up_bit(&ip->i_flags, __XFS_IFLOCK_BIT);
 }
 
@@ -487,8 +515,6 @@ static inline int xfs_isiflocked(struct xfs_inode *ip)
 #define XFS_IOLOCK_DEP(flags)	(((flags) & XFS_IOLOCK_DEP_MASK) >> XFS_IOLOCK_SHIFT)
 #define XFS_ILOCK_DEP(flags)	(((flags) & XFS_ILOCK_DEP_MASK) >> XFS_ILOCK_SHIFT)
 
-extern struct lock_class_key xfs_iolock_reclaimable;
-
 /*
  * For multiple groups support: if S_ISGID bit is set in the parent
  * directory, group of new file is set to that of the parent, and
@@ -498,11 +524,10 @@ extern struct lock_class_key xfs_iolock_reclaimable;
 	(((pip)->i_mount->m_flags & XFS_MOUNT_GRPID) || \
 	 ((pip)->i_d.di_mode & S_ISGID))
 
+
 /*
- * xfs_iget.c prototypes.
+ * xfs_inode.c prototypes.
  */
-int		xfs_iget(struct xfs_mount *, struct xfs_trans *, xfs_ino_t,
-			 uint, uint, xfs_inode_t **);
 void		xfs_ilock(xfs_inode_t *, uint);
 int		xfs_ilock_nowait(xfs_inode_t *, uint);
 void		xfs_iunlock(xfs_inode_t *, uint);
@@ -510,14 +535,9 @@ void		xfs_ilock_demote(xfs_inode_t *, uint);
 int		xfs_isilocked(xfs_inode_t *, uint);
 uint		xfs_ilock_map_shared(xfs_inode_t *);
 void		xfs_iunlock_map_shared(xfs_inode_t *, uint);
-void		xfs_inode_free(struct xfs_inode *ip);
-
-/*
- * xfs_inode.c prototypes.
- */
 int		xfs_ialloc(struct xfs_trans *, xfs_inode_t *, umode_t,
 			   xfs_nlink_t, xfs_dev_t, prid_t, int,
-			   struct xfs_buf **, boolean_t *, xfs_inode_t **);
+			   struct xfs_buf **, xfs_inode_t **);
 
 uint		xfs_ip2xflags(struct xfs_inode *);
 uint		xfs_dic2xflags(struct xfs_dinode *);
@@ -529,10 +549,11 @@ int		xfs_iunlink(struct xfs_trans *, xfs_inode_t *);
 
 void		xfs_iext_realloc(xfs_inode_t *, int, int);
 void		xfs_iunpin_wait(xfs_inode_t *);
-int		xfs_iflush(xfs_inode_t *, uint);
-void		xfs_promote_inode(struct xfs_inode *);
+int		xfs_iflush(struct xfs_inode *, struct xfs_buf **);
 void		xfs_lock_inodes(xfs_inode_t **, int, uint);
 void		xfs_lock_two_inodes(xfs_inode_t *, xfs_inode_t *, uint);
+
+xfs_extlen_t	xfs_get_extsz_hint(struct xfs_inode *ip);
 
 #define IHOLD(ip) \
 do { \
@@ -556,14 +577,12 @@ do { \
 #define XFS_IGET_UNTRUSTED	0x2
 #define XFS_IGET_DONTCACHE	0x4
 
-int		xfs_inotobp(struct xfs_mount *, struct xfs_trans *,
-			    xfs_ino_t, struct xfs_dinode **,
-			    struct xfs_buf **, int *, uint);
-int		xfs_itobp(struct xfs_mount *, struct xfs_trans *,
-			  struct xfs_inode *, struct xfs_dinode **,
-			  struct xfs_buf **, uint);
+int		xfs_imap_to_bp(struct xfs_mount *, struct xfs_trans *,
+			       struct xfs_imap *, struct xfs_dinode **,
+			       struct xfs_buf **, uint, uint);
 int		xfs_iread(struct xfs_mount *, struct xfs_trans *,
 			  struct xfs_inode *, uint);
+void		xfs_dinode_calc_crc(struct xfs_mount *, struct xfs_dinode *);
 void		xfs_dinode_to_disk(struct xfs_dinode *,
 				   struct xfs_icdinode *);
 void		xfs_idestroy_fork(struct xfs_inode *, int);
@@ -595,6 +614,7 @@ void		xfs_iext_irec_compact(xfs_ifork_t *);
 void		xfs_iext_irec_compact_pages(xfs_ifork_t *);
 void		xfs_iext_irec_compact_full(xfs_ifork_t *);
 void		xfs_iext_irec_update_extoffs(xfs_ifork_t *, int, int);
+bool		xfs_can_free_eofblocks(struct xfs_inode *, bool);
 
 #define xfs_ipincount(ip)	((unsigned int) atomic_read(&ip->i_pincount))
 
@@ -607,5 +627,6 @@ void		xfs_inobp_check(struct xfs_mount *, struct xfs_buf *);
 extern struct kmem_zone	*xfs_ifork_zone;
 extern struct kmem_zone	*xfs_inode_zone;
 extern struct kmem_zone	*xfs_ili_zone;
+extern const struct xfs_buf_ops xfs_inode_buf_ops;
 
 #endif	/* __XFS_INODE_H__ */

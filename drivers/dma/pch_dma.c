@@ -476,7 +476,7 @@ static struct pch_dma_desc *pdc_desc_get(struct pch_dma_chan *pd_chan)
 	dev_dbg(chan2dev(&pd_chan->chan), "scanned %d descriptors\n", i);
 
 	if (!ret) {
-		ret = pdc_alloc_desc(&pd_chan->chan, GFP_NOIO);
+		ret = pdc_alloc_desc(&pd_chan->chan, GFP_ATOMIC);
 		if (ret) {
 			spin_lock(&pd_chan->lock);
 			pd_chan->descs_allocated++;
@@ -621,7 +621,7 @@ static struct dma_async_tx_descriptor *pd_prep_slave_sg(struct dma_chan *chan,
 			goto err_desc_get;
 
 		desc->regs.dev_addr = reg;
-		desc->regs.mem_addr = sg_phys(sg);
+		desc->regs.mem_addr = sg_dma_address(sg);
 		desc->regs.size = sg_dma_len(sg);
 		desc->regs.next = DMA_DESC_FOLLOW_WITHOUT_IRQ;
 
@@ -843,7 +843,7 @@ static int pch_dma_resume(struct pci_dev *pdev)
 }
 #endif
 
-static int __devinit pch_dma_probe(struct pci_dev *pdev,
+static int pch_dma_probe(struct pci_dev *pdev,
 				   const struct pci_device_id *id)
 {
 	struct pch_dma *pd;
@@ -867,6 +867,7 @@ static int __devinit pch_dma_probe(struct pci_dev *pdev,
 
 	if (!(pci_resource_flags(pdev, 1) & IORESOURCE_MEM)) {
 		dev_err(&pdev->dev, "Cannot find proper base address\n");
+		err = -ENODEV;
 		goto err_disable_pdev;
 	}
 
@@ -961,7 +962,7 @@ err_free_mem:
 	return err;
 }
 
-static void __devexit pch_dma_remove(struct pci_dev *pdev)
+static void pch_dma_remove(struct pci_dev *pdev)
 {
 	struct pch_dma *pd = pci_get_drvdata(pdev);
 	struct pch_dma_chan *pd_chan;
@@ -1022,25 +1023,14 @@ static struct pci_driver pch_dma_driver = {
 	.name		= DRV_NAME,
 	.id_table	= pch_dma_id_table,
 	.probe		= pch_dma_probe,
-	.remove		= __devexit_p(pch_dma_remove),
+	.remove		= pch_dma_remove,
 #ifdef CONFIG_PM
 	.suspend	= pch_dma_suspend,
 	.resume		= pch_dma_resume,
 #endif
 };
 
-static int __init pch_dma_init(void)
-{
-	return pci_register_driver(&pch_dma_driver);
-}
-
-static void __exit pch_dma_exit(void)
-{
-	pci_unregister_driver(&pch_dma_driver);
-}
-
-module_init(pch_dma_init);
-module_exit(pch_dma_exit);
+module_pci_driver(pch_dma_driver);
 
 MODULE_DESCRIPTION("Intel EG20T PCH / LAPIS Semicon ML7213/ML7223/ML7831 IOH "
 		   "DMA controller driver");

@@ -77,6 +77,7 @@ typedef	struct xfs_bmap_free
  * from written to unwritten, otherwise convert from unwritten to written.
  */
 #define XFS_BMAPI_CONVERT	0x040
+#define XFS_BMAPI_STACK_SWITCH	0x080
 
 #define XFS_BMAPI_FLAGS \
 	{ XFS_BMAPI_ENTIRE,	"ENTIRE" }, \
@@ -85,7 +86,8 @@ typedef	struct xfs_bmap_free
 	{ XFS_BMAPI_PREALLOC,	"PREALLOC" }, \
 	{ XFS_BMAPI_IGSTATE,	"IGSTATE" }, \
 	{ XFS_BMAPI_CONTIG,	"CONTIG" }, \
-	{ XFS_BMAPI_CONVERT,	"CONVERT" }
+	{ XFS_BMAPI_CONVERT,	"CONVERT" }, \
+	{ XFS_BMAPI_STACK_SWITCH, "STACK_SWITCH" }
 
 
 static inline int xfs_bmapi_aflag(int w)
@@ -133,6 +135,11 @@ typedef struct xfs_bmalloca {
 	char			userdata;/* set if is user data */
 	char			aeof;	/* allocated space at eof */
 	char			conv;	/* overwriting unwritten extents */
+	char			stack_switch;
+	int			flags;
+	struct completion	*done;
+	struct work_struct	work;
+	int			result;
 } xfs_bmalloca_t;
 
 /*
@@ -165,6 +172,7 @@ void	xfs_bmap_trace_exlist(struct xfs_inode *ip, xfs_extnum_t cnt,
 #endif
 
 int	xfs_bmap_add_attrfork(struct xfs_inode *ip, int size, int rsvd);
+void	xfs_bmap_local_to_extents_empty(struct xfs_inode *ip, int whichfork);
 void	xfs_bmap_add_free(xfs_fsblock_t bno, xfs_filblks_t len,
 		struct xfs_bmap_free *flist, struct xfs_mount *mp);
 void	xfs_bmap_cancel(struct xfs_bmap_free *flist);
@@ -211,6 +219,9 @@ int	xfs_bmap_count_blocks(struct xfs_trans *tp, struct xfs_inode *ip,
 		int whichfork, int *count);
 int	xfs_bmap_punch_delalloc_range(struct xfs_inode *ip,
 		xfs_fileoff_t start_fsb, xfs_fileoff_t length);
+
+xfs_daddr_t xfs_fsb_to_db(struct xfs_inode *ip, xfs_fsblock_t fsb);
+
 #endif	/* __KERNEL__ */
 
 #endif	/* __XFS_BMAP_H__ */

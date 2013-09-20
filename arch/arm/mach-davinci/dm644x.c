@@ -12,23 +12,23 @@
 #include <linux/clk.h>
 #include <linux/serial_8250.h>
 #include <linux/platform_device.h>
+#include <linux/platform_data/edma.h>
 
 #include <asm/mach/map.h>
 
 #include <mach/cputype.h>
-#include <mach/edma.h>
 #include <mach/irqs.h>
 #include <mach/psc.h>
 #include <mach/mux.h>
 #include <mach/time.h>
 #include <mach/serial.h>
 #include <mach/common.h>
-#include <mach/asp.h>
 #include <mach/gpio-davinci.h>
 
 #include "davinci.h"
 #include "clock.h"
 #include "mux.h"
+#include "asp.h"
 
 /*
  * Device specific clocks
@@ -300,8 +300,8 @@ static struct clk_lookup dm644x_clks[] = {
 	CLK(NULL, "dsp", &dsp_clk),
 	CLK(NULL, "arm", &arm_clk),
 	CLK(NULL, "vicp", &vicp_clk),
-	CLK(NULL, "vpss_master", &vpss_master_clk),
-	CLK(NULL, "vpss_slave", &vpss_slave_clk),
+	CLK("vpss", "master", &vpss_master_clk),
+	CLK("vpss", "slave", &vpss_slave_clk),
 	CLK(NULL, "arm", &arm_clk),
 	CLK(NULL, "uart0", &uart0_clk),
 	CLK(NULL, "uart1", &uart1_clk),
@@ -310,7 +310,7 @@ static struct clk_lookup dm644x_clks[] = {
 	CLK("i2c_davinci.1", NULL, &i2c_clk),
 	CLK("palm_bk3710", NULL, &ide_clk),
 	CLK("davinci-mcbsp", NULL, &asp_clk),
-	CLK("davinci_mmc.0", NULL, &mmcsd_clk),
+	CLK("dm6441-mmc.0", NULL, &mmcsd_clk),
 	CLK(NULL, "spi", &spi_clk),
 	CLK(NULL, "gpio", &gpio_clk),
 	CLK(NULL, "usb", &usb_clk),
@@ -497,7 +497,7 @@ static u8 dm644x_default_priorities[DAVINCI_N_AINTC_IRQ] = {
 
 /*----------------------------------------------------------------------*/
 
-static const s8
+static s8
 queue_tc_mapping[][2] = {
 	/* {event queue no, TC no} */
 	{0, 0},
@@ -505,7 +505,7 @@ queue_tc_mapping[][2] = {
 	{-1, -1},
 };
 
-static const s8
+static s8
 queue_priority_mapping[][2] = {
 	/* {event queue no, Priority} */
 	{0, 3},
@@ -669,19 +669,14 @@ static struct resource dm644x_osd_resources[] = {
 	},
 };
 
-static struct osd_platform_data dm644x_osd_data = {
-	.vpbe_type     = VPBE_VERSION_1,
-};
-
 static struct platform_device dm644x_osd_dev = {
-	.name		= VPBE_OSD_SUBDEV_NAME,
+	.name		= DM644X_VPBE_OSD_SUBDEV_NAME,
 	.id		= -1,
 	.num_resources	= ARRAY_SIZE(dm644x_osd_resources),
 	.resource	= dm644x_osd_resources,
 	.dev		= {
 		.dma_mask		= &dm644x_video_dma_mask,
 		.coherent_dma_mask	= DMA_BIT_MASK(32),
-		.platform_data		= &dm644x_osd_data,
 	},
 };
 
@@ -701,7 +696,7 @@ static struct resource dm644x_venc_resources[] = {
 #define DM644X_VPSS_DACCLKEN                  BIT(4)
 
 static int dm644x_venc_setup_clock(enum vpbe_enc_timings_type type,
-				   unsigned int mode)
+				   unsigned int pclock)
 {
 	int ret = 0;
 	u32 v = DM644X_VPSS_VENCLKEN;
@@ -711,27 +706,17 @@ static int dm644x_venc_setup_clock(enum vpbe_enc_timings_type type,
 		v |= DM644X_VPSS_DACCLKEN;
 		writel(v, DAVINCI_SYSMOD_VIRT(SYSMOD_VPSS_CLKCTL));
 		break;
-	case VPBE_ENC_DV_PRESET:
-		switch (mode) {
-		case V4L2_DV_480P59_94:
-		case V4L2_DV_576P50:
-			v |= DM644X_VPSS_MUXSEL_PLL2_MODE |
-			     DM644X_VPSS_DACCLKEN;
+	case VPBE_ENC_DV_TIMINGS:
+		if (pclock <= 27000000) {
+			v |= DM644X_VPSS_DACCLKEN;
 			writel(v, DAVINCI_SYSMOD_VIRT(SYSMOD_VPSS_CLKCTL));
-			break;
-		case V4L2_DV_720P60:
-		case V4L2_DV_1080I60:
-		case V4L2_DV_1080P30:
+		} else {
 			/*
 			 * For HD, use external clock source since
 			 * HD requires higher clock rate
 			 */
 			v |= DM644X_VPSS_MUXSEL_VPBECLK_MODE;
 			writel(v, DAVINCI_SYSMOD_VIRT(SYSMOD_VPSS_CLKCTL));
-			break;
-		default:
-			ret = -EINVAL;
-			break;
 		}
 		break;
 	default:
@@ -761,12 +746,11 @@ static struct platform_device dm644x_vpbe_display = {
 };
 
 static struct venc_platform_data dm644x_venc_pdata = {
-	.venc_type	= VPBE_VERSION_1,
 	.setup_clock	= dm644x_venc_setup_clock,
 };
 
 static struct platform_device dm644x_venc_dev = {
-	.name		= VPBE_VENC_SUBDEV_NAME,
+	.name		= DM644X_VPBE_VENC_SUBDEV_NAME,
 	.id		= -1,
 	.num_resources	= ARRAY_SIZE(dm644x_venc_resources),
 	.resource	= dm644x_venc_resources,
@@ -794,12 +778,6 @@ static struct map_desc dm644x_io_desc[] = {
 		.pfn		= __phys_to_pfn(IO_PHYS),
 		.length		= IO_SIZE,
 		.type		= MT_DEVICE
-	},
-	{
-		.virtual	= SRAM_VIRT,
-		.pfn		= __phys_to_pfn(0x00008000),
-		.length		= SZ_16K,
-		.type		= MT_MEMORY_NONCACHED,
 	},
 };
 
@@ -923,11 +901,6 @@ int __init dm644x_init_video(struct vpfe_config *vpfe_cfg,
 		dm644x_vpfe_dev.dev.platform_data = vpfe_cfg;
 		platform_device_register(&dm644x_ccdc_dev);
 		platform_device_register(&dm644x_vpfe_dev);
-		/* Add ccdc clock aliases */
-		clk_add_alias("master", dm644x_ccdc_dev.name,
-			      "vpss_master", NULL);
-		clk_add_alias("slave", dm644x_ccdc_dev.name,
-			      "vpss_slave", NULL);
 	}
 
 	if (vpbe_cfg) {

@@ -33,11 +33,9 @@
 #include <linux/delay.h>
 #include <linux/workqueue.h>
 #include <linux/hardirq.h>
-#include <linux/interrupt.h>
 #include <linux/platform_device.h>
 #include <linux/pm_runtime.h>
-
-#include <plat/clock.h>
+#include <linux/sizes.h>
 
 #include <video/omapdss.h>
 
@@ -47,21 +45,6 @@
 
 /* DISPC */
 #define DISPC_SZ_REGS			SZ_4K
-
-#define DISPC_IRQ_MASK_ERROR            (DISPC_IRQ_GFX_FIFO_UNDERFLOW | \
-					 DISPC_IRQ_OCP_ERR | \
-					 DISPC_IRQ_VID1_FIFO_UNDERFLOW | \
-					 DISPC_IRQ_VID2_FIFO_UNDERFLOW | \
-					 DISPC_IRQ_SYNC_LOST | \
-					 DISPC_IRQ_SYNC_LOST_DIGIT)
-
-#define DISPC_MAX_NR_ISRS		8
-
-struct omap_dispc_isr_data {
-	omap_dispc_isr_t	isr;
-	void			*arg;
-	u32			mask;
-};
 
 enum omap_burst_size {
 	BURST_SIZE_X2 = 0,
@@ -75,11 +58,41 @@ enum omap_burst_size {
 #define REG_FLD_MOD(idx, val, start, end)				\
 	dispc_write_reg(idx, FLD_MOD(dispc_read_reg(idx), val, start, end))
 
-struct dispc_irq_stats {
-	unsigned long last_reset;
-	unsigned irq_count;
-	unsigned irqs[32];
+struct dispc_features {
+	u8 sw_start;
+	u8 fp_start;
+	u8 bp_start;
+	u16 sw_max;
+	u16 vp_max;
+	u16 hp_max;
+	u8 mgr_width_start;
+	u8 mgr_height_start;
+	u16 mgr_width_max;
+	u16 mgr_height_max;
+	unsigned long max_lcd_pclk;
+	unsigned long max_tv_pclk;
+	int (*calc_scaling) (unsigned long pclk, unsigned long lclk,
+		const struct omap_video_timings *mgr_timings,
+		u16 width, u16 height, u16 out_width, u16 out_height,
+		enum omap_color_mode color_mode, bool *five_taps,
+		int *x_predecim, int *y_predecim, int *decim_x, int *decim_y,
+		u16 pos_x, unsigned long *core_clk, bool mem_to_mem);
+	unsigned long (*calc_core_clk) (unsigned long pclk,
+		u16 width, u16 height, u16 out_width, u16 out_height,
+		bool mem_to_mem);
+	u8 num_fifos;
+
+	/* swap GFX & WB fifos */
+	bool gfx_fifo_workaround:1;
+
+	/* no DISPC_IRQ_FRAMEDONETV on this SoC */
+	bool no_framedone_tv:1;
+
+	/* revert to the OMAP4 mechanism of DISPC Smart Standby operation */
+	bool mstandby_workaround:1;
 };
+
+#define DISPC_MAX_NR_FIFOS 5
 
 static struct {
 	struct platform_device *pdev;
@@ -88,23 +101,18 @@ static struct {
 	int		ctx_loss_cnt;
 
 	int irq;
-	struct clk *dss_clk;
 
-	u32	fifo_size[MAX_DSS_OVERLAYS];
+	unsigned long core_clk_rate;
+	unsigned long tv_pclk_rate;
 
-	spinlock_t irq_lock;
-	u32 irq_error_mask;
-	struct omap_dispc_isr_data registered_isr[DISPC_MAX_NR_ISRS];
-	u32 error_irqs;
-	struct work_struct error_work;
+	u32 fifo_size[DISPC_MAX_NR_FIFOS];
+	/* maps which plane is using a fifo. fifo-id -> plane-id */
+	int fifo_assignment[DISPC_MAX_NR_FIFOS];
 
 	bool		ctx_valid;
 	u32		ctx[DISPC_SZ_REGS / sizeof(u32)];
 
-#ifdef CONFIG_OMAP2_DSS_COLLECT_IRQ_STATS
-	spinlock_t irq_stats_lock;
-	struct dispc_irq_stats irq_stats;
-#endif
+	const struct dispc_features *feat;
 } dispc;
 
 enum omap_color_component {
@@ -119,7 +127,104 @@ enum omap_color_component {
 	DISPC_COLOR_COMPONENT_UV		= 1 << 1,
 };
 
-static void _omap_dispc_set_irqs(void);
+enum mgr_reg_fields {
+	DISPC_MGR_FLD_ENABLE,
+	DISPC_MGR_FLD_STNTFT,
+	DISPC_MGR_FLD_GO,
+	DISPC_MGR_FLD_TFTDATALINES,
+	DISPC_MGR_FLD_STALLMODE,
+	DISPC_MGR_FLD_TCKENABLE,
+	DISPC_MGR_FLD_TCKSELECTION,
+	DISPC_MGR_FLD_CPR,
+	DISPC_MGR_FLD_FIFOHANDCHECK,
+	/* used to maintain a count of the above fields */
+	DISPC_MGR_FLD_NUM,
+};
+
+static const struct {
+	const char *name;
+	u32 vsync_irq;
+	u32 framedone_irq;
+	u32 sync_lost_irq;
+	struct reg_field reg_desc[DISPC_MGR_FLD_NUM];
+} mgr_desc[] = {
+	[OMAP_DSS_CHANNEL_LCD] = {
+		.name		= "LCD",
+		.vsync_irq	= DISPC_IRQ_VSYNC,
+		.framedone_irq	= DISPC_IRQ_FRAMEDONE,
+		.sync_lost_irq	= DISPC_IRQ_SYNC_LOST,
+		.reg_desc	= {
+			[DISPC_MGR_FLD_ENABLE]		= { DISPC_CONTROL,  0,  0 },
+			[DISPC_MGR_FLD_STNTFT]		= { DISPC_CONTROL,  3,  3 },
+			[DISPC_MGR_FLD_GO]		= { DISPC_CONTROL,  5,  5 },
+			[DISPC_MGR_FLD_TFTDATALINES]	= { DISPC_CONTROL,  9,  8 },
+			[DISPC_MGR_FLD_STALLMODE]	= { DISPC_CONTROL, 11, 11 },
+			[DISPC_MGR_FLD_TCKENABLE]	= { DISPC_CONFIG,  10, 10 },
+			[DISPC_MGR_FLD_TCKSELECTION]	= { DISPC_CONFIG,  11, 11 },
+			[DISPC_MGR_FLD_CPR]		= { DISPC_CONFIG,  15, 15 },
+			[DISPC_MGR_FLD_FIFOHANDCHECK]	= { DISPC_CONFIG,  16, 16 },
+		},
+	},
+	[OMAP_DSS_CHANNEL_DIGIT] = {
+		.name		= "DIGIT",
+		.vsync_irq	= DISPC_IRQ_EVSYNC_ODD | DISPC_IRQ_EVSYNC_EVEN,
+		.framedone_irq	= DISPC_IRQ_FRAMEDONETV,
+		.sync_lost_irq	= DISPC_IRQ_SYNC_LOST_DIGIT,
+		.reg_desc	= {
+			[DISPC_MGR_FLD_ENABLE]		= { DISPC_CONTROL,  1,  1 },
+			[DISPC_MGR_FLD_STNTFT]		= { },
+			[DISPC_MGR_FLD_GO]		= { DISPC_CONTROL,  6,  6 },
+			[DISPC_MGR_FLD_TFTDATALINES]	= { },
+			[DISPC_MGR_FLD_STALLMODE]	= { },
+			[DISPC_MGR_FLD_TCKENABLE]	= { DISPC_CONFIG,  12, 12 },
+			[DISPC_MGR_FLD_TCKSELECTION]	= { DISPC_CONFIG,  13, 13 },
+			[DISPC_MGR_FLD_CPR]		= { },
+			[DISPC_MGR_FLD_FIFOHANDCHECK]	= { DISPC_CONFIG,  16, 16 },
+		},
+	},
+	[OMAP_DSS_CHANNEL_LCD2] = {
+		.name		= "LCD2",
+		.vsync_irq	= DISPC_IRQ_VSYNC2,
+		.framedone_irq	= DISPC_IRQ_FRAMEDONE2,
+		.sync_lost_irq	= DISPC_IRQ_SYNC_LOST2,
+		.reg_desc	= {
+			[DISPC_MGR_FLD_ENABLE]		= { DISPC_CONTROL2,  0,  0 },
+			[DISPC_MGR_FLD_STNTFT]		= { DISPC_CONTROL2,  3,  3 },
+			[DISPC_MGR_FLD_GO]		= { DISPC_CONTROL2,  5,  5 },
+			[DISPC_MGR_FLD_TFTDATALINES]	= { DISPC_CONTROL2,  9,  8 },
+			[DISPC_MGR_FLD_STALLMODE]	= { DISPC_CONTROL2, 11, 11 },
+			[DISPC_MGR_FLD_TCKENABLE]	= { DISPC_CONFIG2,  10, 10 },
+			[DISPC_MGR_FLD_TCKSELECTION]	= { DISPC_CONFIG2,  11, 11 },
+			[DISPC_MGR_FLD_CPR]		= { DISPC_CONFIG2,  15, 15 },
+			[DISPC_MGR_FLD_FIFOHANDCHECK]	= { DISPC_CONFIG2,  16, 16 },
+		},
+	},
+	[OMAP_DSS_CHANNEL_LCD3] = {
+		.name		= "LCD3",
+		.vsync_irq	= DISPC_IRQ_VSYNC3,
+		.framedone_irq	= DISPC_IRQ_FRAMEDONE3,
+		.sync_lost_irq	= DISPC_IRQ_SYNC_LOST3,
+		.reg_desc	= {
+			[DISPC_MGR_FLD_ENABLE]		= { DISPC_CONTROL3,  0,  0 },
+			[DISPC_MGR_FLD_STNTFT]		= { DISPC_CONTROL3,  3,  3 },
+			[DISPC_MGR_FLD_GO]		= { DISPC_CONTROL3,  5,  5 },
+			[DISPC_MGR_FLD_TFTDATALINES]	= { DISPC_CONTROL3,  9,  8 },
+			[DISPC_MGR_FLD_STALLMODE]	= { DISPC_CONTROL3, 11, 11 },
+			[DISPC_MGR_FLD_TCKENABLE]	= { DISPC_CONFIG3,  10, 10 },
+			[DISPC_MGR_FLD_TCKSELECTION]	= { DISPC_CONFIG3,  11, 11 },
+			[DISPC_MGR_FLD_CPR]		= { DISPC_CONFIG3,  15, 15 },
+			[DISPC_MGR_FLD_FIFOHANDCHECK]	= { DISPC_CONFIG3,  16, 16 },
+		},
+	},
+};
+
+struct color_conv_coef {
+	int ry, rcr, rcb, gy, gcr, gcb, by, bcr, bcb;
+	int full_range;
+};
+
+static unsigned long dispc_plane_pclk_rate(enum omap_plane plane);
+static unsigned long dispc_plane_lclk_rate(enum omap_plane plane);
 
 static inline void dispc_write_reg(const u16 idx, u32 val)
 {
@@ -131,21 +236,16 @@ static inline u32 dispc_read_reg(const u16 idx)
 	return __raw_readl(dispc.base + idx);
 }
 
-static int dispc_get_ctx_loss_count(void)
+static u32 mgr_fld_read(enum omap_channel channel, enum mgr_reg_fields regfld)
 {
-	struct device *dev = &dispc.pdev->dev;
-	struct omap_display_platform_data *pdata = dev->platform_data;
-	struct omap_dss_board_info *board_data = pdata->board_data;
-	int cnt;
+	const struct reg_field rfld = mgr_desc[channel].reg_desc[regfld];
+	return REG_GET(rfld.reg, rfld.high, rfld.low);
+}
 
-	if (!board_data->get_context_loss_count)
-		return -ENOENT;
-
-	cnt = board_data->get_context_loss_count(dev);
-
-	WARN_ONCE(cnt < 0, "get_context_loss_count failed: %d\n", cnt);
-
-	return cnt;
+static void mgr_fld_write(enum omap_channel channel,
+					enum mgr_reg_fields regfld, int val) {
+	const struct reg_field rfld = mgr_desc[channel].reg_desc[regfld];
+	REG_FLD_MOD(rfld.reg, val, rfld.high, rfld.low);
 }
 
 #define SR(reg) \
@@ -169,6 +269,10 @@ static void dispc_save_context(void)
 	if (dss_has_feature(FEAT_MGR_LCD2)) {
 		SR(CONTROL2);
 		SR(CONFIG2);
+	}
+	if (dss_has_feature(FEAT_MGR_LCD3)) {
+		SR(CONTROL3);
+		SR(CONFIG3);
 	}
 
 	for (i = 0; i < dss_feat_get_num_mgrs(); i++) {
@@ -251,7 +355,7 @@ static void dispc_save_context(void)
 	if (dss_has_feature(FEAT_CORE_CLK_DIV))
 		SR(DIVISOR);
 
-	dispc.ctx_loss_cnt = dispc_get_ctx_loss_count();
+	dispc.ctx_loss_cnt = dss_get_ctx_loss_count();
 	dispc.ctx_valid = true;
 
 	DSSDBG("context saved, ctx_loss_count %d\n", dispc.ctx_loss_cnt);
@@ -266,7 +370,7 @@ static void dispc_restore_context(void)
 	if (!dispc.ctx_valid)
 		return;
 
-	ctx = dispc_get_ctx_loss_count();
+	ctx = dss_get_ctx_loss_count();
 
 	if (ctx >= 0 && ctx == dispc.ctx_loss_cnt)
 		return;
@@ -283,6 +387,8 @@ static void dispc_restore_context(void)
 		RR(GLOBAL_ALPHA);
 	if (dss_has_feature(FEAT_MGR_LCD2))
 		RR(CONFIG2);
+	if (dss_has_feature(FEAT_MGR_LCD3))
+		RR(CONFIG3);
 
 	for (i = 0; i < dss_feat_get_num_mgrs(); i++) {
 		RR(DEFAULT_COLOR(i));
@@ -368,8 +474,10 @@ static void dispc_restore_context(void)
 	RR(CONTROL);
 	if (dss_has_feature(FEAT_MGR_LCD2))
 		RR(CONTROL2);
+	if (dss_has_feature(FEAT_MGR_LCD3))
+		RR(CONTROL3);
 	/* clear spurious SYNC_LOST_DIGIT interrupts */
-	dispc_write_reg(DISPC_IRQSTATUS, DISPC_IRQ_SYNC_LOST_DIGIT);
+	dispc_clear_irqstatus(DISPC_IRQ_SYNC_LOST_DIGIT);
 
 	/*
 	 * enable last so IRQs won't trigger before
@@ -393,6 +501,7 @@ int dispc_runtime_get(void)
 	WARN_ON(r < 0);
 	return r < 0 ? r : 0;
 }
+EXPORT_SYMBOL(dispc_runtime_get);
 
 void dispc_runtime_put(void)
 {
@@ -401,110 +510,75 @@ void dispc_runtime_put(void)
 	DSSDBG("dispc_runtime_put\n");
 
 	r = pm_runtime_put_sync(&dispc.pdev->dev);
-	WARN_ON(r < 0);
+	WARN_ON(r < 0 && r != -ENOSYS);
 }
-
-static inline bool dispc_mgr_is_lcd(enum omap_channel channel)
-{
-	if (channel == OMAP_DSS_CHANNEL_LCD ||
-			channel == OMAP_DSS_CHANNEL_LCD2)
-		return true;
-	else
-		return false;
-}
-
-static struct omap_dss_device *dispc_mgr_get_device(enum omap_channel channel)
-{
-	struct omap_overlay_manager *mgr =
-		omap_dss_get_overlay_manager(channel);
-
-	return mgr ? mgr->device : NULL;
-}
+EXPORT_SYMBOL(dispc_runtime_put);
 
 u32 dispc_mgr_get_vsync_irq(enum omap_channel channel)
 {
-	switch (channel) {
-	case OMAP_DSS_CHANNEL_LCD:
-		return DISPC_IRQ_VSYNC;
-	case OMAP_DSS_CHANNEL_LCD2:
-		return DISPC_IRQ_VSYNC2;
-	case OMAP_DSS_CHANNEL_DIGIT:
-		return DISPC_IRQ_EVSYNC_ODD | DISPC_IRQ_EVSYNC_EVEN;
-	default:
-		BUG();
-	}
+	return mgr_desc[channel].vsync_irq;
 }
+EXPORT_SYMBOL(dispc_mgr_get_vsync_irq);
 
 u32 dispc_mgr_get_framedone_irq(enum omap_channel channel)
 {
-	switch (channel) {
-	case OMAP_DSS_CHANNEL_LCD:
-		return DISPC_IRQ_FRAMEDONE;
-	case OMAP_DSS_CHANNEL_LCD2:
-		return DISPC_IRQ_FRAMEDONE2;
-	case OMAP_DSS_CHANNEL_DIGIT:
+	if (channel == OMAP_DSS_CHANNEL_DIGIT && dispc.feat->no_framedone_tv)
 		return 0;
-	default:
-		BUG();
-	}
+
+	return mgr_desc[channel].framedone_irq;
+}
+EXPORT_SYMBOL(dispc_mgr_get_framedone_irq);
+
+u32 dispc_mgr_get_sync_lost_irq(enum omap_channel channel)
+{
+	return mgr_desc[channel].sync_lost_irq;
+}
+EXPORT_SYMBOL(dispc_mgr_get_sync_lost_irq);
+
+u32 dispc_wb_get_framedone_irq(void)
+{
+	return DISPC_IRQ_FRAMEDONEWB;
 }
 
 bool dispc_mgr_go_busy(enum omap_channel channel)
 {
-	int bit;
-
-	if (dispc_mgr_is_lcd(channel))
-		bit = 5; /* GOLCD */
-	else
-		bit = 6; /* GODIGIT */
-
-	if (channel == OMAP_DSS_CHANNEL_LCD2)
-		return REG_GET(DISPC_CONTROL2, bit, bit) == 1;
-	else
-		return REG_GET(DISPC_CONTROL, bit, bit) == 1;
+	return mgr_fld_read(channel, DISPC_MGR_FLD_GO) == 1;
 }
+EXPORT_SYMBOL(dispc_mgr_go_busy);
 
 void dispc_mgr_go(enum omap_channel channel)
 {
-	int bit;
-	bool enable_bit, go_bit;
+	WARN_ON(dispc_mgr_is_enabled(channel) == false);
+	WARN_ON(dispc_mgr_go_busy(channel));
 
-	if (dispc_mgr_is_lcd(channel))
-		bit = 0; /* LCDENABLE */
-	else
-		bit = 1; /* DIGITALENABLE */
+	DSSDBG("GO %s\n", mgr_desc[channel].name);
 
-	/* if the channel is not enabled, we don't need GO */
-	if (channel == OMAP_DSS_CHANNEL_LCD2)
-		enable_bit = REG_GET(DISPC_CONTROL2, bit, bit) == 1;
-	else
-		enable_bit = REG_GET(DISPC_CONTROL, bit, bit) == 1;
+	mgr_fld_write(channel, DISPC_MGR_FLD_GO, 1);
+}
+EXPORT_SYMBOL(dispc_mgr_go);
 
-	if (!enable_bit)
+bool dispc_wb_go_busy(void)
+{
+	return REG_GET(DISPC_CONTROL2, 6, 6) == 1;
+}
+
+void dispc_wb_go(void)
+{
+	enum omap_plane plane = OMAP_DSS_WB;
+	bool enable, go;
+
+	enable = REG_GET(DISPC_OVL_ATTRIBUTES(plane), 0, 0) == 1;
+
+	if (!enable)
 		return;
 
-	if (dispc_mgr_is_lcd(channel))
-		bit = 5; /* GOLCD */
-	else
-		bit = 6; /* GODIGIT */
-
-	if (channel == OMAP_DSS_CHANNEL_LCD2)
-		go_bit = REG_GET(DISPC_CONTROL2, bit, bit) == 1;
-	else
-		go_bit = REG_GET(DISPC_CONTROL, bit, bit) == 1;
-
-	if (go_bit) {
-		DSSERR("GO bit not down for channel %d\n", channel);
+	go = REG_GET(DISPC_CONTROL2, 6, 6) == 1;
+	if (go) {
+		DSSERR("GO bit not down for WB\n");
 		return;
 	}
 
-	DSSDBG("GO %s\n", channel == OMAP_DSS_CHANNEL_LCD ? "LCD" :
-		(channel == OMAP_DSS_CHANNEL_LCD2 ? "LCD2" : "DIGIT"));
-
-	if (channel == OMAP_DSS_CHANNEL_LCD2)
-		REG_FLD_MOD(DISPC_CONTROL2, 1, bit, bit);
-	else
-		REG_FLD_MOD(DISPC_CONTROL, 1, bit, bit);
+	REG_FLD_MOD(DISPC_CONTROL2, 1, 6, 6);
 }
 
 static void dispc_ovl_write_firh_reg(enum omap_plane plane, int reg, u32 value)
@@ -589,41 +663,41 @@ static void dispc_ovl_set_scale_coef(enum omap_plane plane, int fir_hinc,
 	}
 }
 
-static void _dispc_setup_color_conv_coef(void)
+
+static void dispc_ovl_write_color_conv_coef(enum omap_plane plane,
+		const struct color_conv_coef *ct)
 {
-	int i;
-	const struct color_conv_coef {
-		int  ry,  rcr,  rcb,   gy,  gcr,  gcb,   by,  bcr,  bcb;
-		int  full_range;
-	}  ctbl_bt601_5 = {
-		298,  409,    0,  298, -208, -100,  298,    0,  517, 0,
-	};
-
-	const struct color_conv_coef *ct;
-
 #define CVAL(x, y) (FLD_VAL(x, 26, 16) | FLD_VAL(y, 10, 0))
 
-	ct = &ctbl_bt601_5;
+	dispc_write_reg(DISPC_OVL_CONV_COEF(plane, 0), CVAL(ct->rcr, ct->ry));
+	dispc_write_reg(DISPC_OVL_CONV_COEF(plane, 1), CVAL(ct->gy,  ct->rcb));
+	dispc_write_reg(DISPC_OVL_CONV_COEF(plane, 2), CVAL(ct->gcb, ct->gcr));
+	dispc_write_reg(DISPC_OVL_CONV_COEF(plane, 3), CVAL(ct->bcr, ct->by));
+	dispc_write_reg(DISPC_OVL_CONV_COEF(plane, 4), CVAL(0, ct->bcb));
 
-	for (i = 1; i < dss_feat_get_num_ovls(); i++) {
-		dispc_write_reg(DISPC_OVL_CONV_COEF(i, 0),
-			CVAL(ct->rcr, ct->ry));
-		dispc_write_reg(DISPC_OVL_CONV_COEF(i, 1),
-			CVAL(ct->gy,  ct->rcb));
-		dispc_write_reg(DISPC_OVL_CONV_COEF(i, 2),
-			CVAL(ct->gcb, ct->gcr));
-		dispc_write_reg(DISPC_OVL_CONV_COEF(i, 3),
-			CVAL(ct->bcr, ct->by));
-		dispc_write_reg(DISPC_OVL_CONV_COEF(i, 4),
-			CVAL(0, ct->bcb));
-
-		REG_FLD_MOD(DISPC_OVL_ATTRIBUTES(i), ct->full_range,
-			11, 11);
-	}
+	REG_FLD_MOD(DISPC_OVL_ATTRIBUTES(plane), ct->full_range, 11, 11);
 
 #undef CVAL
 }
 
+static void dispc_setup_color_conv_coef(void)
+{
+	int i;
+	int num_ovl = dss_feat_get_num_ovls();
+	int num_wb = dss_feat_get_num_wbs();
+	const struct color_conv_coef ctbl_bt601_5_ovl = {
+		298, 409, 0, 298, -208, -100, 298, 0, 517, 0,
+	};
+	const struct color_conv_coef ctbl_bt601_5_wb = {
+		66, 112, -38, 129, -94, -74, 25, -18, 112, 0,
+	};
+
+	for (i = 1; i < num_ovl; i++)
+		dispc_ovl_write_color_conv_coef(i, &ctbl_bt601_5_ovl);
+
+	for (; i < num_wb; i++)
+		dispc_ovl_write_color_conv_coef(i, &ctbl_bt601_5_wb);
+}
 
 static void dispc_ovl_set_ba0(enum omap_plane plane, u32 paddr)
 {
@@ -645,24 +719,32 @@ static void dispc_ovl_set_ba1_uv(enum omap_plane plane, u32 paddr)
 	dispc_write_reg(DISPC_OVL_BA1_UV(plane), paddr);
 }
 
-static void dispc_ovl_set_pos(enum omap_plane plane, int x, int y)
+static void dispc_ovl_set_pos(enum omap_plane plane,
+		enum omap_overlay_caps caps, int x, int y)
 {
-	u32 val = FLD_VAL(y, 26, 16) | FLD_VAL(x, 10, 0);
+	u32 val;
+
+	if ((caps & OMAP_DSS_OVL_CAP_POS) == 0)
+		return;
+
+	val = FLD_VAL(y, 26, 16) | FLD_VAL(x, 10, 0);
 
 	dispc_write_reg(DISPC_OVL_POSITION(plane), val);
 }
 
-static void dispc_ovl_set_pic_size(enum omap_plane plane, int width, int height)
+static void dispc_ovl_set_input_size(enum omap_plane plane, int width,
+		int height)
 {
 	u32 val = FLD_VAL(height - 1, 26, 16) | FLD_VAL(width - 1, 10, 0);
 
-	if (plane == OMAP_DSS_GFX)
+	if (plane == OMAP_DSS_GFX || plane == OMAP_DSS_WB)
 		dispc_write_reg(DISPC_OVL_SIZE(plane), val);
 	else
 		dispc_write_reg(DISPC_OVL_PICTURE_SIZE(plane), val);
 }
 
-static void dispc_ovl_set_vid_size(enum omap_plane plane, int width, int height)
+static void dispc_ovl_set_output_size(enum omap_plane plane, int width,
+		int height)
 {
 	u32 val;
 
@@ -670,14 +752,16 @@ static void dispc_ovl_set_vid_size(enum omap_plane plane, int width, int height)
 
 	val = FLD_VAL(height - 1, 26, 16) | FLD_VAL(width - 1, 10, 0);
 
-	dispc_write_reg(DISPC_OVL_SIZE(plane), val);
+	if (plane == OMAP_DSS_WB)
+		dispc_write_reg(DISPC_OVL_PICTURE_SIZE(plane), val);
+	else
+		dispc_write_reg(DISPC_OVL_SIZE(plane), val);
 }
 
-static void dispc_ovl_set_zorder(enum omap_plane plane, u8 zorder)
+static void dispc_ovl_set_zorder(enum omap_plane plane,
+		enum omap_overlay_caps caps, u8 zorder)
 {
-	struct omap_overlay *ovl = omap_dss_get_overlay(plane);
-
-	if ((ovl->caps & OMAP_DSS_OVL_CAP_ZORDER) == 0)
+	if ((caps & OMAP_DSS_OVL_CAP_ZORDER) == 0)
 		return;
 
 	REG_FLD_MOD(DISPC_OVL_ATTRIBUTES(plane), zorder, 27, 26);
@@ -694,23 +778,22 @@ static void dispc_ovl_enable_zorder_planes(void)
 		REG_FLD_MOD(DISPC_OVL_ATTRIBUTES(i), 1, 25, 25);
 }
 
-static void dispc_ovl_set_pre_mult_alpha(enum omap_plane plane, bool enable)
+static void dispc_ovl_set_pre_mult_alpha(enum omap_plane plane,
+		enum omap_overlay_caps caps, bool enable)
 {
-	struct omap_overlay *ovl = omap_dss_get_overlay(plane);
-
-	if ((ovl->caps & OMAP_DSS_OVL_CAP_PRE_MULT_ALPHA) == 0)
+	if ((caps & OMAP_DSS_OVL_CAP_PRE_MULT_ALPHA) == 0)
 		return;
 
 	REG_FLD_MOD(DISPC_OVL_ATTRIBUTES(plane), enable ? 1 : 0, 28, 28);
 }
 
-static void dispc_ovl_setup_global_alpha(enum omap_plane plane, u8 global_alpha)
+static void dispc_ovl_setup_global_alpha(enum omap_plane plane,
+		enum omap_overlay_caps caps, u8 global_alpha)
 {
 	static const unsigned shifts[] = { 0, 8, 16, 24, };
 	int shift;
-	struct omap_overlay *ovl = omap_dss_get_overlay(plane);
 
-	if ((ovl->caps & OMAP_DSS_OVL_CAP_GLOBAL_ALPHA) == 0)
+	if ((caps & OMAP_DSS_OVL_CAP_GLOBAL_ALPHA) == 0)
 		return;
 
 	shift = shifts[plane];
@@ -764,7 +847,7 @@ static void dispc_ovl_set_color_mode(enum omap_plane plane,
 		case OMAP_DSS_COLOR_XRGB16_1555:
 			m = 0xf; break;
 		default:
-			BUG(); break;
+			BUG(); return;
 		}
 	} else {
 		switch (color_mode) {
@@ -801,11 +884,23 @@ static void dispc_ovl_set_color_mode(enum omap_plane plane,
 		case OMAP_DSS_COLOR_XRGB16_1555:
 			m = 0xf; break;
 		default:
-			BUG(); break;
+			BUG(); return;
 		}
 	}
 
 	REG_FLD_MOD(DISPC_OVL_ATTRIBUTES(plane), m, 4, 1);
+}
+
+static void dispc_ovl_configure_burst_type(enum omap_plane plane,
+		enum omap_dss_rotation_type rotation_type)
+{
+	if (dss_has_feature(FEAT_BURST_2D) == 0)
+		return;
+
+	if (rotation_type == OMAP_DSS_ROT_TILER)
+		REG_FLD_MOD(DISPC_OVL_ATTRIBUTES(plane), 1, 29, 29);
+	else
+		REG_FLD_MOD(DISPC_OVL_ATTRIBUTES(plane), 0, 29, 29);
 }
 
 void dispc_ovl_set_channel_out(enum omap_plane plane, enum omap_channel channel)
@@ -843,8 +938,18 @@ void dispc_ovl_set_channel_out(enum omap_plane plane, enum omap_channel channel)
 			chan = 0;
 			chan2 = 1;
 			break;
+		case OMAP_DSS_CHANNEL_LCD3:
+			if (dss_has_feature(FEAT_MGR_LCD3)) {
+				chan = 0;
+				chan2 = 2;
+			} else {
+				BUG();
+				return;
+			}
+			break;
 		default:
 			BUG();
+			return;
 		}
 
 		val = FLD_MOD(val, chan, shift, shift);
@@ -854,6 +959,7 @@ void dispc_ovl_set_channel_out(enum omap_plane plane, enum omap_channel channel)
 	}
 	dispc_write_reg(DISPC_OVL_ATTRIBUTES(plane), val);
 }
+EXPORT_SYMBOL(dispc_ovl_set_channel_out);
 
 static enum omap_channel dispc_ovl_get_channel_out(enum omap_plane plane)
 {
@@ -872,11 +978,19 @@ static enum omap_channel dispc_ovl_get_channel_out(enum omap_plane plane)
 		break;
 	default:
 		BUG();
+		return 0;
 	}
 
 	val = dispc_read_reg(DISPC_OVL_ATTRIBUTES(plane));
 
-	if (dss_has_feature(FEAT_MGR_LCD2)) {
+	if (dss_has_feature(FEAT_MGR_LCD3)) {
+		if (FLD_GET(val, 31, 30) == 0)
+			channel = FLD_GET(val, shift, shift);
+		else if (FLD_GET(val, 31, 30) == 1)
+			channel = OMAP_DSS_CHANNEL_LCD2;
+		else
+			channel = OMAP_DSS_CHANNEL_LCD3;
+	} else if (dss_has_feature(FEAT_MGR_LCD2)) {
 		if (FLD_GET(val, 31, 30) == 0)
 			channel = FLD_GET(val, shift, shift);
 		else
@@ -888,10 +1002,17 @@ static enum omap_channel dispc_ovl_get_channel_out(enum omap_plane plane)
 	return channel;
 }
 
+void dispc_wb_set_channel_in(enum dss_writeback_channel channel)
+{
+	enum omap_plane plane = OMAP_DSS_WB;
+
+	REG_FLD_MOD(DISPC_OVL_ATTRIBUTES(plane), channel, 18, 16);
+}
+
 static void dispc_ovl_set_burst_size(enum omap_plane plane,
 		enum omap_burst_size burst_size)
 {
-	static const unsigned shifts[] = { 6, 14, 14, 14, };
+	static const unsigned shifts[] = { 6, 14, 14, 14, 14, };
 	int shift;
 
 	shift = shifts[plane];
@@ -904,7 +1025,7 @@ static void dispc_configure_burst_sizes(void)
 	const int burst_size = BURST_SIZE_X8;
 
 	/* Configure burst size always to maximum size */
-	for (i = 0; i < omap_dss_get_num_overlays(); ++i)
+	for (i = 0; i < dss_feat_get_num_ovls(); ++i)
 		dispc_ovl_set_burst_size(i, burst_size);
 }
 
@@ -931,24 +1052,18 @@ void dispc_enable_gamma_table(bool enable)
 
 static void dispc_mgr_enable_cpr(enum omap_channel channel, bool enable)
 {
-	u16 reg;
-
-	if (channel == OMAP_DSS_CHANNEL_LCD)
-		reg = DISPC_CONFIG;
-	else if (channel == OMAP_DSS_CHANNEL_LCD2)
-		reg = DISPC_CONFIG2;
-	else
+	if (channel == OMAP_DSS_CHANNEL_DIGIT)
 		return;
 
-	REG_FLD_MOD(reg, enable, 15, 15);
+	mgr_fld_write(channel, DISPC_MGR_FLD_CPR, enable);
 }
 
 static void dispc_mgr_set_cpr_coef(enum omap_channel channel,
-		struct omap_dss_cpr_coefs *coefs)
+		const struct omap_dss_cpr_coefs *coefs)
 {
 	u32 coef_r, coef_g, coef_b;
 
-	if (!dispc_mgr_is_lcd(channel))
+	if (!dss_mgr_is_lcd(channel))
 		return;
 
 	coef_r = FLD_VAL(coefs->rr, 31, 22) | FLD_VAL(coefs->rg, 20, 11) |
@@ -974,35 +1089,34 @@ static void dispc_ovl_set_vid_color_conv(enum omap_plane plane, bool enable)
 	dispc_write_reg(DISPC_OVL_ATTRIBUTES(plane), val);
 }
 
-static void dispc_ovl_enable_replication(enum omap_plane plane, bool enable)
+static void dispc_ovl_enable_replication(enum omap_plane plane,
+		enum omap_overlay_caps caps, bool enable)
 {
 	static const unsigned shifts[] = { 5, 10, 10, 10 };
 	int shift;
+
+	if ((caps & OMAP_DSS_OVL_CAP_REPLICATION) == 0)
+		return;
 
 	shift = shifts[plane];
 	REG_FLD_MOD(DISPC_OVL_ATTRIBUTES(plane), enable, shift, shift);
 }
 
-void dispc_mgr_set_lcd_size(enum omap_channel channel, u16 width, u16 height)
+static void dispc_mgr_set_size(enum omap_channel channel, u16 width,
+		u16 height)
 {
 	u32 val;
-	BUG_ON((width > (1 << 11)) || (height > (1 << 11)));
-	val = FLD_VAL(height - 1, 26, 16) | FLD_VAL(width - 1, 10, 0);
+
+	val = FLD_VAL(height - 1, dispc.feat->mgr_height_start, 16) |
+		FLD_VAL(width - 1, dispc.feat->mgr_width_start, 0);
+
 	dispc_write_reg(DISPC_SIZE_MGR(channel), val);
 }
 
-void dispc_set_digit_size(u16 width, u16 height)
-{
-	u32 val;
-	BUG_ON((width > (1 << 11)) || (height > (1 << 11)));
-	val = FLD_VAL(height - 1, 26, 16) | FLD_VAL(width - 1, 10, 0);
-	dispc_write_reg(DISPC_SIZE_MGR(OMAP_DSS_CHANNEL_DIGIT), val);
-}
-
-static void dispc_read_plane_fifo_sizes(void)
+static void dispc_init_fifos(void)
 {
 	u32 size;
-	int plane;
+	int fifo;
 	u8 start, end;
 	u32 unit;
 
@@ -1010,16 +1124,53 @@ static void dispc_read_plane_fifo_sizes(void)
 
 	dss_feat_get_reg_field(FEAT_REG_FIFOSIZE, &start, &end);
 
-	for (plane = 0; plane < dss_feat_get_num_ovls(); ++plane) {
-		size = REG_GET(DISPC_OVL_FIFO_SIZE_STATUS(plane), start, end);
+	for (fifo = 0; fifo < dispc.feat->num_fifos; ++fifo) {
+		size = REG_GET(DISPC_OVL_FIFO_SIZE_STATUS(fifo), start, end);
 		size *= unit;
-		dispc.fifo_size[plane] = size;
+		dispc.fifo_size[fifo] = size;
+
+		/*
+		 * By default fifos are mapped directly to overlays, fifo 0 to
+		 * ovl 0, fifo 1 to ovl 1, etc.
+		 */
+		dispc.fifo_assignment[fifo] = fifo;
+	}
+
+	/*
+	 * The GFX fifo on OMAP4 is smaller than the other fifos. The small fifo
+	 * causes problems with certain use cases, like using the tiler in 2D
+	 * mode. The below hack swaps the fifos of GFX and WB planes, thus
+	 * giving GFX plane a larger fifo. WB but should work fine with a
+	 * smaller fifo.
+	 */
+	if (dispc.feat->gfx_fifo_workaround) {
+		u32 v;
+
+		v = dispc_read_reg(DISPC_GLOBAL_BUFFER);
+
+		v = FLD_MOD(v, 4, 2, 0); /* GFX BUF top to WB */
+		v = FLD_MOD(v, 4, 5, 3); /* GFX BUF bottom to WB */
+		v = FLD_MOD(v, 0, 26, 24); /* WB BUF top to GFX */
+		v = FLD_MOD(v, 0, 29, 27); /* WB BUF bottom to GFX */
+
+		dispc_write_reg(DISPC_GLOBAL_BUFFER, v);
+
+		dispc.fifo_assignment[OMAP_DSS_GFX] = OMAP_DSS_WB;
+		dispc.fifo_assignment[OMAP_DSS_WB] = OMAP_DSS_GFX;
 	}
 }
 
 static u32 dispc_ovl_get_fifo_size(enum omap_plane plane)
 {
-	return dispc.fifo_size[plane];
+	int fifo;
+	u32 size = 0;
+
+	for (fifo = 0; fifo < dispc.feat->num_fifos; ++fifo) {
+		if (dispc.fifo_assignment[fifo] == plane)
+			size += dispc.fifo_size[fifo];
+	}
+
+	return size;
 }
 
 void dispc_ovl_set_fifo_threshold(enum omap_plane plane, u32 low, u32 high)
@@ -1063,7 +1214,8 @@ void dispc_enable_fifomerge(bool enable)
 }
 
 void dispc_ovl_compute_fifo_thresholds(enum omap_plane plane,
-		u32 *fifo_low, u32 *fifo_high, bool use_fifomerge)
+		u32 *fifo_low, u32 *fifo_high, bool use_fifomerge,
+		bool manual_update)
 {
 	/*
 	 * All sizes are in bytes. Both the buffer and burst are made of
@@ -1079,7 +1231,7 @@ void dispc_ovl_compute_fifo_thresholds(enum omap_plane plane,
 
 	if (use_fifomerge) {
 		total_fifo_size = 0;
-		for (i = 0; i < omap_dss_get_num_overlays(); ++i)
+		for (i = 0; i < dss_feat_get_num_ovls(); ++i)
 			total_fifo_size += dispc_ovl_get_fifo_size(i);
 	} else {
 		total_fifo_size = ovl_fifo_size;
@@ -1091,9 +1243,17 @@ void dispc_ovl_compute_fifo_thresholds(enum omap_plane plane,
 	 * combined fifo size
 	 */
 
-	if (dss_has_feature(FEAT_OMAP3_DSI_FIFO_BUG)) {
+	if (manual_update && dss_has_feature(FEAT_OMAP3_DSI_FIFO_BUG)) {
 		*fifo_low = ovl_fifo_size - burst_size * 2;
 		*fifo_high = total_fifo_size - burst_size;
+	} else if (plane == OMAP_DSS_WB) {
+		/*
+		 * Most optimal configuration for writeback is to push out data
+		 * to the interconnect the moment writeback pushes enough pixels
+		 * in the FIFO to form a burst
+		 */
+		*fifo_low = 0;
+		*fifo_high = burst_size;
 	} else {
 		*fifo_low = ovl_fifo_size - burst_size;
 		*fifo_high = total_fifo_size - buf_unit;
@@ -1185,6 +1345,94 @@ static void dispc_ovl_set_scale_param(enum omap_plane plane,
 	dispc_ovl_set_fir(plane, fir_hinc, fir_vinc, color_comp);
 }
 
+static void dispc_ovl_set_accu_uv(enum omap_plane plane,
+		u16 orig_width,	u16 orig_height, u16 out_width, u16 out_height,
+		bool ilace, enum omap_color_mode color_mode, u8 rotation)
+{
+	int h_accu2_0, h_accu2_1;
+	int v_accu2_0, v_accu2_1;
+	int chroma_hinc, chroma_vinc;
+	int idx;
+
+	struct accu {
+		s8 h0_m, h0_n;
+		s8 h1_m, h1_n;
+		s8 v0_m, v0_n;
+		s8 v1_m, v1_n;
+	};
+
+	const struct accu *accu_table;
+	const struct accu *accu_val;
+
+	static const struct accu accu_nv12[4] = {
+		{  0, 1,  0, 1 , -1, 2, 0, 1 },
+		{  1, 2, -3, 4 ,  0, 1, 0, 1 },
+		{ -1, 1,  0, 1 , -1, 2, 0, 1 },
+		{ -1, 2, -1, 2 , -1, 1, 0, 1 },
+	};
+
+	static const struct accu accu_nv12_ilace[4] = {
+		{  0, 1,  0, 1 , -3, 4, -1, 4 },
+		{ -1, 4, -3, 4 ,  0, 1,  0, 1 },
+		{ -1, 1,  0, 1 , -1, 4, -3, 4 },
+		{ -3, 4, -3, 4 , -1, 1,  0, 1 },
+	};
+
+	static const struct accu accu_yuv[4] = {
+		{  0, 1, 0, 1,  0, 1, 0, 1 },
+		{  0, 1, 0, 1,  0, 1, 0, 1 },
+		{ -1, 1, 0, 1,  0, 1, 0, 1 },
+		{  0, 1, 0, 1, -1, 1, 0, 1 },
+	};
+
+	switch (rotation) {
+	case OMAP_DSS_ROT_0:
+		idx = 0;
+		break;
+	case OMAP_DSS_ROT_90:
+		idx = 1;
+		break;
+	case OMAP_DSS_ROT_180:
+		idx = 2;
+		break;
+	case OMAP_DSS_ROT_270:
+		idx = 3;
+		break;
+	default:
+		BUG();
+		return;
+	}
+
+	switch (color_mode) {
+	case OMAP_DSS_COLOR_NV12:
+		if (ilace)
+			accu_table = accu_nv12_ilace;
+		else
+			accu_table = accu_nv12;
+		break;
+	case OMAP_DSS_COLOR_YUV2:
+	case OMAP_DSS_COLOR_UYVY:
+		accu_table = accu_yuv;
+		break;
+	default:
+		BUG();
+		return;
+	}
+
+	accu_val = &accu_table[idx];
+
+	chroma_hinc = 1024 * orig_width / out_width;
+	chroma_vinc = 1024 * orig_height / out_height;
+
+	h_accu2_0 = (accu_val->h0_m * chroma_hinc / accu_val->h0_n) % 1024;
+	h_accu2_1 = (accu_val->h1_m * chroma_hinc / accu_val->h1_n) % 1024;
+	v_accu2_0 = (accu_val->v0_m * chroma_vinc / accu_val->v0_n) % 1024;
+	v_accu2_1 = (accu_val->v1_m * chroma_vinc / accu_val->v1_n) % 1024;
+
+	dispc_ovl_set_vid_accu2_0(plane, h_accu2_0, v_accu2_0);
+	dispc_ovl_set_vid_accu2_1(plane, h_accu2_1, v_accu2_1);
+}
+
 static void dispc_ovl_set_scaling_common(enum omap_plane plane,
 		u16 orig_width, u16 orig_height,
 		u16 out_width, u16 out_height,
@@ -1248,6 +1496,7 @@ static void dispc_ovl_set_scaling_uv(enum omap_plane plane,
 {
 	int scale_x = out_width != orig_width;
 	int scale_y = out_height != orig_height;
+	bool chroma_upscale = plane != OMAP_DSS_WB ? true : false;
 
 	if (!dss_has_feature(FEAT_HANDLE_UV_SEPARATE))
 		return;
@@ -1255,31 +1504,48 @@ static void dispc_ovl_set_scaling_uv(enum omap_plane plane,
 			color_mode != OMAP_DSS_COLOR_UYVY &&
 			color_mode != OMAP_DSS_COLOR_NV12)) {
 		/* reset chroma resampling for RGB formats  */
-		REG_FLD_MOD(DISPC_OVL_ATTRIBUTES2(plane), 0, 8, 8);
+		if (plane != OMAP_DSS_WB)
+			REG_FLD_MOD(DISPC_OVL_ATTRIBUTES2(plane), 0, 8, 8);
 		return;
 	}
+
+	dispc_ovl_set_accu_uv(plane, orig_width, orig_height, out_width,
+			out_height, ilace, color_mode, rotation);
+
 	switch (color_mode) {
 	case OMAP_DSS_COLOR_NV12:
-		/* UV is subsampled by 2 vertically*/
-		orig_height >>= 1;
-		/* UV is subsampled by 2 horz.*/
-		orig_width >>= 1;
+		if (chroma_upscale) {
+			/* UV is subsampled by 2 horizontally and vertically */
+			orig_height >>= 1;
+			orig_width >>= 1;
+		} else {
+			/* UV is downsampled by 2 horizontally and vertically */
+			orig_height <<= 1;
+			orig_width <<= 1;
+		}
+
 		break;
 	case OMAP_DSS_COLOR_YUV2:
 	case OMAP_DSS_COLOR_UYVY:
-		/*For YUV422 with 90/270 rotation,
-		 *we don't upsample chroma
-		 */
+		/* For YUV422 with 90/270 rotation, we don't upsample chroma */
 		if (rotation == OMAP_DSS_ROT_0 ||
-			rotation == OMAP_DSS_ROT_180)
-			/* UV is subsampled by 2 hrz*/
-			orig_width >>= 1;
+				rotation == OMAP_DSS_ROT_180) {
+			if (chroma_upscale)
+				/* UV is subsampled by 2 horizontally */
+				orig_width >>= 1;
+			else
+				/* UV is downsampled by 2 horizontally */
+				orig_width <<= 1;
+		}
+
 		/* must use FIR for YUV422 if rotated */
 		if (rotation != OMAP_DSS_ROT_0)
 			scale_x = scale_y = true;
+
 		break;
 	default:
 		BUG();
+		return;
 	}
 
 	if (out_width != orig_width)
@@ -1291,15 +1557,14 @@ static void dispc_ovl_set_scaling_uv(enum omap_plane plane,
 			out_width, out_height, five_taps,
 				rotation, DISPC_COLOR_COMPONENT_UV);
 
-	REG_FLD_MOD(DISPC_OVL_ATTRIBUTES2(plane),
-		(scale_x || scale_y) ? 1 : 0, 8, 8);
+	if (plane != OMAP_DSS_WB)
+		REG_FLD_MOD(DISPC_OVL_ATTRIBUTES2(plane),
+			(scale_x || scale_y) ? 1 : 0, 8, 8);
+
 	/* set H scaling */
 	REG_FLD_MOD(DISPC_OVL_ATTRIBUTES(plane), scale_x ? 1 : 0, 5, 5);
 	/* set V scaling */
 	REG_FLD_MOD(DISPC_OVL_ATTRIBUTES(plane), scale_y ? 1 : 0, 6, 6);
-
-	dispc_ovl_set_vid_accu2_0(plane, 0x80, 0);
-	dispc_ovl_set_vid_accu2_1(plane, 0x80, 0);
 }
 
 static void dispc_ovl_set_scaling(enum omap_plane plane,
@@ -1327,6 +1592,7 @@ static void dispc_ovl_set_scaling(enum omap_plane plane,
 }
 
 static void dispc_ovl_set_rotation_attrs(enum omap_plane plane, u8 rotation,
+		enum omap_dss_rotation_type rotation_type,
 		bool mirroring, enum omap_color_mode color_mode)
 {
 	bool row_repeat = false;
@@ -1377,6 +1643,15 @@ static void dispc_ovl_set_rotation_attrs(enum omap_plane plane, u8 rotation,
 	if (dss_has_feature(FEAT_ROWREPEATENABLE))
 		REG_FLD_MOD(DISPC_OVL_ATTRIBUTES(plane),
 			row_repeat ? 1 : 0, 18, 18);
+
+	if (color_mode == OMAP_DSS_COLOR_NV12) {
+		bool doublestride = (rotation_type == OMAP_DSS_ROT_TILER) &&
+					(rotation == OMAP_DSS_ROT_0 ||
+					rotation == OMAP_DSS_ROT_180);
+		/* DOUBLESTRIDE */
+		REG_FLD_MOD(DISPC_OVL_ATTRIBUTES(plane), doublestride, 22, 22);
+	}
+
 }
 
 static int color_mode_to_bpp(enum omap_color_mode color_mode)
@@ -1410,6 +1685,7 @@ static int color_mode_to_bpp(enum omap_color_mode color_mode)
 		return 32;
 	default:
 		BUG();
+		return 0;
 	}
 }
 
@@ -1423,6 +1699,7 @@ static s32 pixinc(int pixels, u8 ps)
 		return 1 - (-pixels + 1) * ps;
 	else
 		BUG();
+		return 0;
 }
 
 static void calc_vrfb_rotation_offset(u8 rotation, bool mirror,
@@ -1431,7 +1708,7 @@ static void calc_vrfb_rotation_offset(u8 rotation, bool mirror,
 		enum omap_color_mode color_mode, bool fieldmode,
 		unsigned int field_offset,
 		unsigned *offset0, unsigned *offset1,
-		s32 *row_inc, s32 *pix_inc)
+		s32 *row_inc, s32 *pix_inc, int x_predecim, int y_predecim)
 {
 	u8 ps;
 
@@ -1477,10 +1754,10 @@ static void calc_vrfb_rotation_offset(u8 rotation, bool mirror,
 		else
 			*offset0 = 0;
 
-		*row_inc = pixinc(1 + (screen_width - width) +
-				(fieldmode ? screen_width : 0),
-				ps);
-		*pix_inc = pixinc(1, ps);
+		*row_inc = pixinc(1 +
+			(y_predecim * screen_width - x_predecim * width) +
+			(fieldmode ? screen_width : 0), ps);
+		*pix_inc = pixinc(x_predecim, ps);
 		break;
 
 	case OMAP_DSS_ROT_0 + 4:
@@ -1498,14 +1775,15 @@ static void calc_vrfb_rotation_offset(u8 rotation, bool mirror,
 			*offset0 = field_offset * screen_width * ps;
 		else
 			*offset0 = 0;
-		*row_inc = pixinc(1 - (screen_width + width) -
-				(fieldmode ? screen_width : 0),
-				ps);
-		*pix_inc = pixinc(1, ps);
+		*row_inc = pixinc(1 -
+			(y_predecim * screen_width + x_predecim * width) -
+			(fieldmode ? screen_width : 0), ps);
+		*pix_inc = pixinc(x_predecim, ps);
 		break;
 
 	default:
 		BUG();
+		return;
 	}
 }
 
@@ -1515,7 +1793,7 @@ static void calc_dma_rotation_offset(u8 rotation, bool mirror,
 		enum omap_color_mode color_mode, bool fieldmode,
 		unsigned int field_offset,
 		unsigned *offset0, unsigned *offset1,
-		s32 *row_inc, s32 *pix_inc)
+		s32 *row_inc, s32 *pix_inc, int x_predecim, int y_predecim)
 {
 	u8 ps;
 	u16 fbw, fbh;
@@ -1557,10 +1835,14 @@ static void calc_dma_rotation_offset(u8 rotation, bool mirror,
 			*offset0 = *offset1 + field_offset * screen_width * ps;
 		else
 			*offset0 = *offset1;
-		*row_inc = pixinc(1 + (screen_width - fbw) +
-				(fieldmode ? screen_width : 0),
-				ps);
-		*pix_inc = pixinc(1, ps);
+		*row_inc = pixinc(1 +
+			(y_predecim * screen_width - fbw * x_predecim) +
+			(fieldmode ? screen_width : 0),	ps);
+		if (color_mode == OMAP_DSS_COLOR_YUV2 ||
+			color_mode == OMAP_DSS_COLOR_UYVY)
+			*pix_inc = pixinc(x_predecim, 2 * ps);
+		else
+			*pix_inc = pixinc(x_predecim, ps);
 		break;
 	case OMAP_DSS_ROT_90:
 		*offset1 = screen_width * (fbh - 1) * ps;
@@ -1568,9 +1850,9 @@ static void calc_dma_rotation_offset(u8 rotation, bool mirror,
 			*offset0 = *offset1 + field_offset * ps;
 		else
 			*offset0 = *offset1;
-		*row_inc = pixinc(screen_width * (fbh - 1) + 1 +
-				(fieldmode ? 1 : 0), ps);
-		*pix_inc = pixinc(-screen_width, ps);
+		*row_inc = pixinc(screen_width * (fbh * x_predecim - 1) +
+				y_predecim + (fieldmode ? 1 : 0), ps);
+		*pix_inc = pixinc(-x_predecim * screen_width, ps);
 		break;
 	case OMAP_DSS_ROT_180:
 		*offset1 = (screen_width * (fbh - 1) + fbw - 1) * ps;
@@ -1579,10 +1861,13 @@ static void calc_dma_rotation_offset(u8 rotation, bool mirror,
 		else
 			*offset0 = *offset1;
 		*row_inc = pixinc(-1 -
-				(screen_width - fbw) -
-				(fieldmode ? screen_width : 0),
-				ps);
-		*pix_inc = pixinc(-1, ps);
+			(y_predecim * screen_width - fbw * x_predecim) -
+			(fieldmode ? screen_width : 0),	ps);
+		if (color_mode == OMAP_DSS_COLOR_YUV2 ||
+			color_mode == OMAP_DSS_COLOR_UYVY)
+			*pix_inc = pixinc(-x_predecim, 2 * ps);
+		else
+			*pix_inc = pixinc(-x_predecim, ps);
 		break;
 	case OMAP_DSS_ROT_270:
 		*offset1 = (fbw - 1) * ps;
@@ -1590,9 +1875,9 @@ static void calc_dma_rotation_offset(u8 rotation, bool mirror,
 			*offset0 = *offset1 - field_offset * ps;
 		else
 			*offset0 = *offset1;
-		*row_inc = pixinc(-screen_width * (fbh - 1) - 1 -
-				(fieldmode ? 1 : 0), ps);
-		*pix_inc = pixinc(screen_width, ps);
+		*row_inc = pixinc(-screen_width * (fbh * x_predecim - 1) -
+				y_predecim - (fieldmode ? 1 : 0), ps);
+		*pix_inc = pixinc(x_predecim * screen_width, ps);
 		break;
 
 	/* mirroring */
@@ -1602,10 +1887,14 @@ static void calc_dma_rotation_offset(u8 rotation, bool mirror,
 			*offset0 = *offset1 + field_offset * screen_width * ps;
 		else
 			*offset0 = *offset1;
-		*row_inc = pixinc(screen_width * 2 - 1 +
+		*row_inc = pixinc(y_predecim * screen_width * 2 - 1 +
 				(fieldmode ? screen_width : 0),
 				ps);
-		*pix_inc = pixinc(-1, ps);
+		if (color_mode == OMAP_DSS_COLOR_YUV2 ||
+			color_mode == OMAP_DSS_COLOR_UYVY)
+			*pix_inc = pixinc(-x_predecim, 2 * ps);
+		else
+			*pix_inc = pixinc(-x_predecim, ps);
 		break;
 
 	case OMAP_DSS_ROT_90 + 4:
@@ -1614,10 +1903,10 @@ static void calc_dma_rotation_offset(u8 rotation, bool mirror,
 			*offset0 = *offset1 + field_offset * ps;
 		else
 			*offset0 = *offset1;
-		*row_inc = pixinc(-screen_width * (fbh - 1) + 1 +
-				(fieldmode ? 1 : 0),
+		*row_inc = pixinc(-screen_width * (fbh * x_predecim - 1) +
+				y_predecim + (fieldmode ? 1 : 0),
 				ps);
-		*pix_inc = pixinc(screen_width, ps);
+		*pix_inc = pixinc(x_predecim * screen_width, ps);
 		break;
 
 	case OMAP_DSS_ROT_180 + 4:
@@ -1626,10 +1915,14 @@ static void calc_dma_rotation_offset(u8 rotation, bool mirror,
 			*offset0 = *offset1 - field_offset * screen_width * ps;
 		else
 			*offset0 = *offset1;
-		*row_inc = pixinc(1 - screen_width * 2 -
+		*row_inc = pixinc(1 - y_predecim * screen_width * 2 -
 				(fieldmode ? screen_width : 0),
 				ps);
-		*pix_inc = pixinc(1, ps);
+		if (color_mode == OMAP_DSS_COLOR_YUV2 ||
+			color_mode == OMAP_DSS_COLOR_UYVY)
+			*pix_inc = pixinc(x_predecim, 2 * ps);
+		else
+			*pix_inc = pixinc(x_predecim, ps);
 		break;
 
 	case OMAP_DSS_ROT_270 + 4:
@@ -1638,34 +1931,125 @@ static void calc_dma_rotation_offset(u8 rotation, bool mirror,
 			*offset0 = *offset1 - field_offset * ps;
 		else
 			*offset0 = *offset1;
-		*row_inc = pixinc(screen_width * (fbh - 1) - 1 -
-				(fieldmode ? 1 : 0),
+		*row_inc = pixinc(screen_width * (fbh * x_predecim - 1) -
+				y_predecim - (fieldmode ? 1 : 0),
 				ps);
-		*pix_inc = pixinc(-screen_width, ps);
+		*pix_inc = pixinc(-x_predecim * screen_width, ps);
 		break;
 
 	default:
 		BUG();
+		return;
 	}
 }
 
-static unsigned long calc_fclk_five_taps(enum omap_channel channel, u16 width,
+static void calc_tiler_rotation_offset(u16 screen_width, u16 width,
+		enum omap_color_mode color_mode, bool fieldmode,
+		unsigned int field_offset, unsigned *offset0, unsigned *offset1,
+		s32 *row_inc, s32 *pix_inc, int x_predecim, int y_predecim)
+{
+	u8 ps;
+
+	switch (color_mode) {
+	case OMAP_DSS_COLOR_CLUT1:
+	case OMAP_DSS_COLOR_CLUT2:
+	case OMAP_DSS_COLOR_CLUT4:
+	case OMAP_DSS_COLOR_CLUT8:
+		BUG();
+		return;
+	default:
+		ps = color_mode_to_bpp(color_mode) / 8;
+		break;
+	}
+
+	DSSDBG("scrw %d, width %d\n", screen_width, width);
+
+	/*
+	 * field 0 = even field = bottom field
+	 * field 1 = odd field = top field
+	 */
+	*offset1 = 0;
+	if (field_offset)
+		*offset0 = *offset1 + field_offset * screen_width * ps;
+	else
+		*offset0 = *offset1;
+	*row_inc = pixinc(1 + (y_predecim * screen_width - width * x_predecim) +
+			(fieldmode ? screen_width : 0), ps);
+	if (color_mode == OMAP_DSS_COLOR_YUV2 ||
+		color_mode == OMAP_DSS_COLOR_UYVY)
+		*pix_inc = pixinc(x_predecim, 2 * ps);
+	else
+		*pix_inc = pixinc(x_predecim, ps);
+}
+
+/*
+ * This function is used to avoid synclosts in OMAP3, because of some
+ * undocumented horizontal position and timing related limitations.
+ */
+static int check_horiz_timing_omap3(unsigned long pclk, unsigned long lclk,
+		const struct omap_video_timings *t, u16 pos_x,
+		u16 width, u16 height, u16 out_width, u16 out_height)
+{
+	const int ds = DIV_ROUND_UP(height, out_height);
+	unsigned long nonactive;
+	static const u8 limits[3] = { 8, 10, 20 };
+	u64 val, blank;
+	int i;
+
+	nonactive = t->x_res + t->hfp + t->hsw + t->hbp - out_width;
+
+	i = 0;
+	if (out_height < height)
+		i++;
+	if (out_width < width)
+		i++;
+	blank = div_u64((u64)(t->hbp + t->hsw + t->hfp) * lclk, pclk);
+	DSSDBG("blanking period + ppl = %llu (limit = %u)\n", blank, limits[i]);
+	if (blank <= limits[i])
+		return -EINVAL;
+
+	/*
+	 * Pixel data should be prepared before visible display point starts.
+	 * So, atleast DS-2 lines must have already been fetched by DISPC
+	 * during nonactive - pos_x period.
+	 */
+	val = div_u64((u64)(nonactive - pos_x) * lclk, pclk);
+	DSSDBG("(nonactive - pos_x) * pcd = %llu max(0, DS - 2) * width = %d\n",
+		val, max(0, ds - 2) * width);
+	if (val < max(0, ds - 2) * width)
+		return -EINVAL;
+
+	/*
+	 * All lines need to be refilled during the nonactive period of which
+	 * only one line can be loaded during the active period. So, atleast
+	 * DS - 1 lines should be loaded during nonactive period.
+	 */
+	val =  div_u64((u64)nonactive * lclk, pclk);
+	DSSDBG("nonactive * pcd  = %llu, max(0, DS - 1) * width = %d\n",
+		val, max(0, ds - 1) * width);
+	if (val < max(0, ds - 1) * width)
+		return -EINVAL;
+
+	return 0;
+}
+
+static unsigned long calc_core_clk_five_taps(unsigned long pclk,
+		const struct omap_video_timings *mgr_timings, u16 width,
 		u16 height, u16 out_width, u16 out_height,
 		enum omap_color_mode color_mode)
 {
-	u32 fclk = 0;
-	u64 tmp, pclk = dispc_mgr_pclk_rate(channel);
+	u32 core_clk = 0;
+	u64 tmp;
 
 	if (height <= out_height && width <= out_width)
 		return (unsigned long) pclk;
 
 	if (height > out_height) {
-		struct omap_dss_device *dssdev = dispc_mgr_get_device(channel);
-		unsigned int ppl = dssdev->panel.timings.x_res;
+		unsigned int ppl = mgr_timings->x_res;
 
 		tmp = pclk * height * out_width;
 		do_div(tmp, 2 * out_height * ppl);
-		fclk = tmp;
+		core_clk = tmp;
 
 		if (height > 2 * out_height) {
 			if (ppl == out_width)
@@ -1673,27 +2057,35 @@ static unsigned long calc_fclk_five_taps(enum omap_channel channel, u16 width,
 
 			tmp = pclk * (height - 2 * out_height) * out_width;
 			do_div(tmp, 2 * out_height * (ppl - out_width));
-			fclk = max(fclk, (u32) tmp);
+			core_clk = max_t(u32, core_clk, tmp);
 		}
 	}
 
 	if (width > out_width) {
 		tmp = pclk * width;
 		do_div(tmp, out_width);
-		fclk = max(fclk, (u32) tmp);
+		core_clk = max_t(u32, core_clk, tmp);
 
 		if (color_mode == OMAP_DSS_COLOR_RGB24U)
-			fclk <<= 1;
+			core_clk <<= 1;
 	}
 
-	return fclk;
+	return core_clk;
 }
 
-static unsigned long calc_fclk(enum omap_channel channel, u16 width,
-		u16 height, u16 out_width, u16 out_height)
+static unsigned long calc_core_clk_24xx(unsigned long pclk, u16 width,
+		u16 height, u16 out_width, u16 out_height, bool mem_to_mem)
+{
+	if (height > out_height && width > out_width)
+		return pclk * 4;
+	else
+		return pclk * 2;
+}
+
+static unsigned long calc_core_clk_34xx(unsigned long pclk, u16 width,
+		u16 height, u16 out_width, u16 out_height, bool mem_to_mem)
 {
 	unsigned int hf, vf;
-	unsigned long pclk = dispc_mgr_pclk_rate(channel);
 
 	/*
 	 * FIXME how to determine the 'A' factor
@@ -1708,156 +2100,352 @@ static unsigned long calc_fclk(enum omap_channel channel, u16 width,
 		hf = 2;
 	else
 		hf = 1;
-
 	if (height > out_height)
 		vf = 2;
 	else
 		vf = 1;
 
-	if (cpu_is_omap24xx()) {
-		if (vf > 1 && hf > 1)
-			return pclk * 4;
-		else
-			return pclk * 2;
-	} else if (cpu_is_omap34xx()) {
-		return pclk * vf * hf;
-	} else {
-		if (hf > 1)
-			return DIV_ROUND_UP(pclk, out_width) * width;
-		else
-			return pclk;
-	}
+	return pclk * vf * hf;
 }
 
-static int dispc_ovl_calc_scaling(enum omap_plane plane,
-		enum omap_channel channel, u16 width, u16 height,
-		u16 out_width, u16 out_height,
-		enum omap_color_mode color_mode, bool *five_taps)
+static unsigned long calc_core_clk_44xx(unsigned long pclk, u16 width,
+		u16 height, u16 out_width, u16 out_height, bool mem_to_mem)
 {
-	struct omap_overlay *ovl = omap_dss_get_overlay(plane);
-	const int maxdownscale = dss_feat_get_param_max(FEAT_PARAM_DOWNSCALE);
+	/*
+	 * If the overlay/writeback is in mem to mem mode, there are no
+	 * downscaling limitations with respect to pixel clock, return 1 as
+	 * required core clock to represent that we have sufficient enough
+	 * core clock to do maximum downscaling
+	 */
+	if (mem_to_mem)
+		return 1;
+
+	if (width > out_width)
+		return DIV_ROUND_UP(pclk, out_width) * width;
+	else
+		return pclk;
+}
+
+static int dispc_ovl_calc_scaling_24xx(unsigned long pclk, unsigned long lclk,
+		const struct omap_video_timings *mgr_timings,
+		u16 width, u16 height, u16 out_width, u16 out_height,
+		enum omap_color_mode color_mode, bool *five_taps,
+		int *x_predecim, int *y_predecim, int *decim_x, int *decim_y,
+		u16 pos_x, unsigned long *core_clk, bool mem_to_mem)
+{
+	int error;
+	u16 in_width, in_height;
+	int min_factor = min(*decim_x, *decim_y);
+	const int maxsinglelinewidth =
+			dss_feat_get_param_max(FEAT_PARAM_LINEWIDTH);
+
+	*five_taps = false;
+
+	do {
+		in_height = DIV_ROUND_UP(height, *decim_y);
+		in_width = DIV_ROUND_UP(width, *decim_x);
+		*core_clk = dispc.feat->calc_core_clk(pclk, in_width,
+				in_height, out_width, out_height, mem_to_mem);
+		error = (in_width > maxsinglelinewidth || !*core_clk ||
+			*core_clk > dispc_core_clk_rate());
+		if (error) {
+			if (*decim_x == *decim_y) {
+				*decim_x = min_factor;
+				++*decim_y;
+			} else {
+				swap(*decim_x, *decim_y);
+				if (*decim_x < *decim_y)
+					++*decim_x;
+			}
+		}
+	} while (*decim_x <= *x_predecim && *decim_y <= *y_predecim && error);
+
+	if (in_width > maxsinglelinewidth) {
+		DSSERR("Cannot scale max input width exceeded");
+		return -EINVAL;
+	}
+	return 0;
+}
+
+static int dispc_ovl_calc_scaling_34xx(unsigned long pclk, unsigned long lclk,
+		const struct omap_video_timings *mgr_timings,
+		u16 width, u16 height, u16 out_width, u16 out_height,
+		enum omap_color_mode color_mode, bool *five_taps,
+		int *x_predecim, int *y_predecim, int *decim_x, int *decim_y,
+		u16 pos_x, unsigned long *core_clk, bool mem_to_mem)
+{
+	int error;
+	u16 in_width, in_height;
+	int min_factor = min(*decim_x, *decim_y);
+	const int maxsinglelinewidth =
+			dss_feat_get_param_max(FEAT_PARAM_LINEWIDTH);
+
+	do {
+		in_height = DIV_ROUND_UP(height, *decim_y);
+		in_width = DIV_ROUND_UP(width, *decim_x);
+		*core_clk = calc_core_clk_five_taps(pclk, mgr_timings,
+			in_width, in_height, out_width, out_height, color_mode);
+
+		error = check_horiz_timing_omap3(pclk, lclk, mgr_timings,
+				pos_x, in_width, in_height, out_width,
+				out_height);
+
+		if (in_width > maxsinglelinewidth)
+			if (in_height > out_height &&
+						in_height < out_height * 2)
+				*five_taps = false;
+		if (!*five_taps)
+			*core_clk = dispc.feat->calc_core_clk(pclk, in_width,
+					in_height, out_width, out_height,
+					mem_to_mem);
+
+		error = (error || in_width > maxsinglelinewidth * 2 ||
+			(in_width > maxsinglelinewidth && *five_taps) ||
+			!*core_clk || *core_clk > dispc_core_clk_rate());
+		if (error) {
+			if (*decim_x == *decim_y) {
+				*decim_x = min_factor;
+				++*decim_y;
+			} else {
+				swap(*decim_x, *decim_y);
+				if (*decim_x < *decim_y)
+					++*decim_x;
+			}
+		}
+	} while (*decim_x <= *x_predecim && *decim_y <= *y_predecim && error);
+
+	if (check_horiz_timing_omap3(pclk, lclk, mgr_timings, pos_x, width,
+				height, out_width, out_height)){
+			DSSERR("horizontal timing too tight\n");
+			return -EINVAL;
+	}
+
+	if (in_width > (maxsinglelinewidth * 2)) {
+		DSSERR("Cannot setup scaling");
+		DSSERR("width exceeds maximum width possible");
+		return -EINVAL;
+	}
+
+	if (in_width > maxsinglelinewidth && *five_taps) {
+		DSSERR("cannot setup scaling with five taps");
+		return -EINVAL;
+	}
+	return 0;
+}
+
+static int dispc_ovl_calc_scaling_44xx(unsigned long pclk, unsigned long lclk,
+		const struct omap_video_timings *mgr_timings,
+		u16 width, u16 height, u16 out_width, u16 out_height,
+		enum omap_color_mode color_mode, bool *five_taps,
+		int *x_predecim, int *y_predecim, int *decim_x, int *decim_y,
+		u16 pos_x, unsigned long *core_clk, bool mem_to_mem)
+{
+	u16 in_width, in_width_max;
+	int decim_x_min = *decim_x;
+	u16 in_height = DIV_ROUND_UP(height, *decim_y);
 	const int maxsinglelinewidth =
 				dss_feat_get_param_max(FEAT_PARAM_LINEWIDTH);
-	unsigned long fclk = 0;
+	const int maxdownscale = dss_feat_get_param_max(FEAT_PARAM_DOWNSCALE);
+
+	if (mem_to_mem) {
+		in_width_max = out_width * maxdownscale;
+	} else {
+		in_width_max = dispc_core_clk_rate() /
+					DIV_ROUND_UP(pclk, out_width);
+	}
+
+	*decim_x = DIV_ROUND_UP(width, in_width_max);
+
+	*decim_x = *decim_x > decim_x_min ? *decim_x : decim_x_min;
+	if (*decim_x > *x_predecim)
+		return -EINVAL;
+
+	do {
+		in_width = DIV_ROUND_UP(width, *decim_x);
+	} while (*decim_x <= *x_predecim &&
+			in_width > maxsinglelinewidth && ++*decim_x);
+
+	if (in_width > maxsinglelinewidth) {
+		DSSERR("Cannot scale width exceeds max line width");
+		return -EINVAL;
+	}
+
+	*core_clk = dispc.feat->calc_core_clk(pclk, in_width, in_height,
+				out_width, out_height, mem_to_mem);
+	return 0;
+}
+
+static int dispc_ovl_calc_scaling(unsigned long pclk, unsigned long lclk,
+		enum omap_overlay_caps caps,
+		const struct omap_video_timings *mgr_timings,
+		u16 width, u16 height, u16 out_width, u16 out_height,
+		enum omap_color_mode color_mode, bool *five_taps,
+		int *x_predecim, int *y_predecim, u16 pos_x,
+		enum omap_dss_rotation_type rotation_type, bool mem_to_mem)
+{
+	const int maxdownscale = dss_feat_get_param_max(FEAT_PARAM_DOWNSCALE);
+	const int max_decim_limit = 16;
+	unsigned long core_clk = 0;
+	int decim_x, decim_y, ret;
 
 	if (width == out_width && height == out_height)
 		return 0;
 
-	if ((ovl->caps & OMAP_DSS_OVL_CAP_SCALE) == 0)
+	if ((caps & OMAP_DSS_OVL_CAP_SCALE) == 0)
 		return -EINVAL;
 
-	if (out_width < width / maxdownscale ||
-			out_width > width * 8)
-		return -EINVAL;
-
-	if (out_height < height / maxdownscale ||
-			out_height > height * 8)
-		return -EINVAL;
-
-	if (cpu_is_omap24xx()) {
-		if (width > maxsinglelinewidth)
-			DSSERR("Cannot scale max input width exceeded");
-		*five_taps = false;
-		fclk = calc_fclk(channel, width, height, out_width,
-								out_height);
-	} else if (cpu_is_omap34xx()) {
-		if (width > (maxsinglelinewidth * 2)) {
-			DSSERR("Cannot setup scaling");
-			DSSERR("width exceeds maximum width possible");
-			return -EINVAL;
-		}
-		fclk = calc_fclk_five_taps(channel, width, height, out_width,
-						out_height, color_mode);
-		if (width > maxsinglelinewidth) {
-			if (height > out_height && height < out_height * 2)
-				*five_taps = false;
-			else {
-				DSSERR("cannot setup scaling with five taps");
-				return -EINVAL;
-			}
-		}
-		if (!*five_taps)
-			fclk = calc_fclk(channel, width, height, out_width,
-					out_height);
+	if (mem_to_mem) {
+		*x_predecim = *y_predecim = 1;
 	} else {
-		if (width > maxsinglelinewidth) {
-			DSSERR("Cannot scale width exceeds max line width");
-			return -EINVAL;
-		}
-		fclk = calc_fclk(channel, width, height, out_width,
-				out_height);
+		*x_predecim = max_decim_limit;
+		*y_predecim = (rotation_type == OMAP_DSS_ROT_TILER &&
+				dss_has_feature(FEAT_BURST_2D)) ?
+				2 : max_decim_limit;
 	}
 
-	DSSDBG("required fclk rate = %lu Hz\n", fclk);
-	DSSDBG("current fclk rate = %lu Hz\n", dispc_fclk_rate());
+	if (color_mode == OMAP_DSS_COLOR_CLUT1 ||
+	    color_mode == OMAP_DSS_COLOR_CLUT2 ||
+	    color_mode == OMAP_DSS_COLOR_CLUT4 ||
+	    color_mode == OMAP_DSS_COLOR_CLUT8) {
+		*x_predecim = 1;
+		*y_predecim = 1;
+		*five_taps = false;
+		return 0;
+	}
 
-	if (!fclk || fclk > dispc_fclk_rate()) {
+	decim_x = DIV_ROUND_UP(DIV_ROUND_UP(width, out_width), maxdownscale);
+	decim_y = DIV_ROUND_UP(DIV_ROUND_UP(height, out_height), maxdownscale);
+
+	if (decim_x > *x_predecim || out_width > width * 8)
+		return -EINVAL;
+
+	if (decim_y > *y_predecim || out_height > height * 8)
+		return -EINVAL;
+
+	ret = dispc.feat->calc_scaling(pclk, lclk, mgr_timings, width, height,
+		out_width, out_height, color_mode, five_taps,
+		x_predecim, y_predecim, &decim_x, &decim_y, pos_x, &core_clk,
+		mem_to_mem);
+	if (ret)
+		return ret;
+
+	DSSDBG("required core clk rate = %lu Hz\n", core_clk);
+	DSSDBG("current core clk rate = %lu Hz\n", dispc_core_clk_rate());
+
+	if (!core_clk || core_clk > dispc_core_clk_rate()) {
 		DSSERR("failed to set up scaling, "
-			"required fclk rate = %lu Hz, "
-			"current fclk rate = %lu Hz\n",
-			fclk, dispc_fclk_rate());
+			"required core clk rate = %lu Hz, "
+			"current core clk rate = %lu Hz\n",
+			core_clk, dispc_core_clk_rate());
 		return -EINVAL;
 	}
 
+	*x_predecim = decim_x;
+	*y_predecim = decim_y;
 	return 0;
 }
 
-int dispc_ovl_setup(enum omap_plane plane, struct omap_overlay_info *oi,
-		bool ilace, bool replication)
+int dispc_ovl_check(enum omap_plane plane, enum omap_channel channel,
+		const struct omap_overlay_info *oi,
+		const struct omap_video_timings *timings,
+		int *x_predecim, int *y_predecim)
 {
-	struct omap_overlay *ovl = omap_dss_get_overlay(plane);
+	enum omap_overlay_caps caps = dss_feat_get_overlay_caps(plane);
+	bool five_taps = true;
+	bool fieldmode = 0;
+	u16 in_height = oi->height;
+	u16 in_width = oi->width;
+	bool ilace = timings->interlace;
+	u16 out_width, out_height;
+	int pos_x = oi->pos_x;
+	unsigned long pclk = dispc_mgr_pclk_rate(channel);
+	unsigned long lclk = dispc_mgr_lclk_rate(channel);
+
+	out_width = oi->out_width == 0 ? oi->width : oi->out_width;
+	out_height = oi->out_height == 0 ? oi->height : oi->out_height;
+
+	if (ilace && oi->height == out_height)
+		fieldmode = 1;
+
+	if (ilace) {
+		if (fieldmode)
+			in_height /= 2;
+		out_height /= 2;
+
+		DSSDBG("adjusting for ilace: height %d, out_height %d\n",
+				in_height, out_height);
+	}
+
+	if (!dss_feat_color_mode_supported(plane, oi->color_mode))
+		return -EINVAL;
+
+	return dispc_ovl_calc_scaling(pclk, lclk, caps, timings, in_width,
+			in_height, out_width, out_height, oi->color_mode,
+			&five_taps, x_predecim, y_predecim, pos_x,
+			oi->rotation_type, false);
+}
+EXPORT_SYMBOL(dispc_ovl_check);
+
+static int dispc_ovl_setup_common(enum omap_plane plane,
+		enum omap_overlay_caps caps, u32 paddr, u32 p_uv_addr,
+		u16 screen_width, int pos_x, int pos_y, u16 width, u16 height,
+		u16 out_width, u16 out_height, enum omap_color_mode color_mode,
+		u8 rotation, bool mirror, u8 zorder, u8 pre_mult_alpha,
+		u8 global_alpha, enum omap_dss_rotation_type rotation_type,
+		bool replication, const struct omap_video_timings *mgr_timings,
+		bool mem_to_mem)
+{
 	bool five_taps = true;
 	bool fieldmode = 0;
 	int r, cconv = 0;
 	unsigned offset0, offset1;
 	s32 row_inc;
 	s32 pix_inc;
-	u16 frame_height = oi->height;
+	u16 frame_width, frame_height;
 	unsigned int field_offset = 0;
-	u16 outw, outh;
-	enum omap_channel channel;
+	u16 in_height = height;
+	u16 in_width = width;
+	int x_predecim = 1, y_predecim = 1;
+	bool ilace = mgr_timings->interlace;
+	unsigned long pclk = dispc_plane_pclk_rate(plane);
+	unsigned long lclk = dispc_plane_lclk_rate(plane);
 
-	channel = dispc_ovl_get_channel_out(plane);
-
-	DSSDBG("dispc_ovl_setup %d, pa %x, pa_uv %x, sw %d, %d,%d, %dx%d -> "
-		"%dx%d, cmode %x, rot %d, mir %d, ilace %d chan %d repl %d\n",
-		plane, oi->paddr, oi->p_uv_addr,
-		oi->screen_width, oi->pos_x, oi->pos_y, oi->width, oi->height,
-		oi->out_width, oi->out_height, oi->color_mode, oi->rotation,
-		oi->mirror, ilace, channel, replication);
-
-	if (oi->paddr == 0)
+	if (paddr == 0)
 		return -EINVAL;
 
-	outw = oi->out_width == 0 ? oi->width : oi->out_width;
-	outh = oi->out_height == 0 ? oi->height : oi->out_height;
+	out_width = out_width == 0 ? width : out_width;
+	out_height = out_height == 0 ? height : out_height;
 
-	if (ilace && oi->height == outh)
+	if (ilace && height == out_height)
 		fieldmode = 1;
 
 	if (ilace) {
 		if (fieldmode)
-			oi->height /= 2;
-		oi->pos_y /= 2;
-		outh /= 2;
+			in_height /= 2;
+		pos_y /= 2;
+		out_height /= 2;
 
 		DSSDBG("adjusting for ilace: height %d, pos_y %d, "
-				"out_height %d\n",
-				oi->height, oi->pos_y, outh);
+			"out_height %d\n", in_height, pos_y,
+			out_height);
 	}
 
-	if (!dss_feat_color_mode_supported(plane, oi->color_mode))
+	if (!dss_feat_color_mode_supported(plane, color_mode))
 		return -EINVAL;
 
-	r = dispc_ovl_calc_scaling(plane, channel, oi->width, oi->height,
-			outw, outh, oi->color_mode,
-			&five_taps);
+	r = dispc_ovl_calc_scaling(pclk, lclk, caps, mgr_timings, in_width,
+			in_height, out_width, out_height, color_mode,
+			&five_taps, &x_predecim, &y_predecim, pos_x,
+			rotation_type, mem_to_mem);
 	if (r)
 		return r;
 
-	if (oi->color_mode == OMAP_DSS_COLOR_YUV2 ||
-			oi->color_mode == OMAP_DSS_COLOR_UYVY ||
-			oi->color_mode == OMAP_DSS_COLOR_NV12)
+	in_width = DIV_ROUND_UP(in_width, x_predecim);
+	in_height = DIV_ROUND_UP(in_height, y_predecim);
+
+	if (color_mode == OMAP_DSS_COLOR_YUV2 ||
+			color_mode == OMAP_DSS_COLOR_UYVY ||
+			color_mode == OMAP_DSS_COLOR_NV12)
 		cconv = 1;
 
 	if (ilace && !fieldmode) {
@@ -1868,70 +2456,167 @@ int dispc_ovl_setup(enum omap_plane plane, struct omap_overlay_info *oi,
 		 * so the integer part must be added to the base address of the
 		 * bottom field.
 		 */
-		if (!oi->height || oi->height == outh)
+		if (!in_height || in_height == out_height)
 			field_offset = 0;
 		else
-			field_offset = oi->height / outh / 2;
+			field_offset = in_height / out_height / 2;
 	}
 
 	/* Fields are independent but interleaved in memory. */
 	if (fieldmode)
 		field_offset = 1;
 
-	if (oi->rotation_type == OMAP_DSS_ROT_DMA)
-		calc_dma_rotation_offset(oi->rotation, oi->mirror,
-				oi->screen_width, oi->width, frame_height,
-				oi->color_mode, fieldmode, field_offset,
-				&offset0, &offset1, &row_inc, &pix_inc);
+	offset0 = 0;
+	offset1 = 0;
+	row_inc = 0;
+	pix_inc = 0;
+
+	if (plane == OMAP_DSS_WB) {
+		frame_width = out_width;
+		frame_height = out_height;
+	} else {
+		frame_width = in_width;
+		frame_height = height;
+	}
+
+	if (rotation_type == OMAP_DSS_ROT_TILER)
+		calc_tiler_rotation_offset(screen_width, frame_width,
+				color_mode, fieldmode, field_offset,
+				&offset0, &offset1, &row_inc, &pix_inc,
+				x_predecim, y_predecim);
+	else if (rotation_type == OMAP_DSS_ROT_DMA)
+		calc_dma_rotation_offset(rotation, mirror, screen_width,
+				frame_width, frame_height,
+				color_mode, fieldmode, field_offset,
+				&offset0, &offset1, &row_inc, &pix_inc,
+				x_predecim, y_predecim);
 	else
-		calc_vrfb_rotation_offset(oi->rotation, oi->mirror,
-				oi->screen_width, oi->width, frame_height,
-				oi->color_mode, fieldmode, field_offset,
-				&offset0, &offset1, &row_inc, &pix_inc);
+		calc_vrfb_rotation_offset(rotation, mirror,
+				screen_width, frame_width, frame_height,
+				color_mode, fieldmode, field_offset,
+				&offset0, &offset1, &row_inc, &pix_inc,
+				x_predecim, y_predecim);
 
 	DSSDBG("offset0 %u, offset1 %u, row_inc %d, pix_inc %d\n",
 			offset0, offset1, row_inc, pix_inc);
 
-	dispc_ovl_set_color_mode(plane, oi->color_mode);
+	dispc_ovl_set_color_mode(plane, color_mode);
 
-	dispc_ovl_set_ba0(plane, oi->paddr + offset0);
-	dispc_ovl_set_ba1(plane, oi->paddr + offset1);
+	dispc_ovl_configure_burst_type(plane, rotation_type);
 
-	if (OMAP_DSS_COLOR_NV12 == oi->color_mode) {
-		dispc_ovl_set_ba0_uv(plane, oi->p_uv_addr + offset0);
-		dispc_ovl_set_ba1_uv(plane, oi->p_uv_addr + offset1);
+	dispc_ovl_set_ba0(plane, paddr + offset0);
+	dispc_ovl_set_ba1(plane, paddr + offset1);
+
+	if (OMAP_DSS_COLOR_NV12 == color_mode) {
+		dispc_ovl_set_ba0_uv(plane, p_uv_addr + offset0);
+		dispc_ovl_set_ba1_uv(plane, p_uv_addr + offset1);
 	}
-
 
 	dispc_ovl_set_row_inc(plane, row_inc);
 	dispc_ovl_set_pix_inc(plane, pix_inc);
 
-	DSSDBG("%d,%d %dx%d -> %dx%d\n", oi->pos_x, oi->pos_y, oi->width,
-			oi->height, outw, outh);
+	DSSDBG("%d,%d %dx%d -> %dx%d\n", pos_x, pos_y, in_width,
+			in_height, out_width, out_height);
 
-	dispc_ovl_set_pos(plane, oi->pos_x, oi->pos_y);
+	dispc_ovl_set_pos(plane, caps, pos_x, pos_y);
 
-	dispc_ovl_set_pic_size(plane, oi->width, oi->height);
+	dispc_ovl_set_input_size(plane, in_width, in_height);
 
-	if (ovl->caps & OMAP_DSS_OVL_CAP_SCALE) {
-		dispc_ovl_set_scaling(plane, oi->width, oi->height,
-				   outw, outh,
-				   ilace, five_taps, fieldmode,
-				   oi->color_mode, oi->rotation);
-		dispc_ovl_set_vid_size(plane, outw, outh);
+	if (caps & OMAP_DSS_OVL_CAP_SCALE) {
+		dispc_ovl_set_scaling(plane, in_width, in_height, out_width,
+				   out_height, ilace, five_taps, fieldmode,
+				   color_mode, rotation);
+		dispc_ovl_set_output_size(plane, out_width, out_height);
 		dispc_ovl_set_vid_color_conv(plane, cconv);
 	}
 
-	dispc_ovl_set_rotation_attrs(plane, oi->rotation, oi->mirror,
-			oi->color_mode);
+	dispc_ovl_set_rotation_attrs(plane, rotation, rotation_type, mirror,
+			color_mode);
 
-	dispc_ovl_set_zorder(plane, oi->zorder);
-	dispc_ovl_set_pre_mult_alpha(plane, oi->pre_mult_alpha);
-	dispc_ovl_setup_global_alpha(plane, oi->global_alpha);
+	dispc_ovl_set_zorder(plane, caps, zorder);
+	dispc_ovl_set_pre_mult_alpha(plane, caps, pre_mult_alpha);
+	dispc_ovl_setup_global_alpha(plane, caps, global_alpha);
 
-	dispc_ovl_enable_replication(plane, replication);
+	dispc_ovl_enable_replication(plane, caps, replication);
 
 	return 0;
+}
+
+int dispc_ovl_setup(enum omap_plane plane, const struct omap_overlay_info *oi,
+		bool replication, const struct omap_video_timings *mgr_timings,
+		bool mem_to_mem)
+{
+	int r;
+	enum omap_overlay_caps caps = dss_feat_get_overlay_caps(plane);
+	enum omap_channel channel;
+
+	channel = dispc_ovl_get_channel_out(plane);
+
+	DSSDBG("dispc_ovl_setup %d, pa %x, pa_uv %x, sw %d, %d,%d, %dx%d -> "
+		"%dx%d, cmode %x, rot %d, mir %d, chan %d repl %d\n",
+		plane, oi->paddr, oi->p_uv_addr, oi->screen_width, oi->pos_x,
+		oi->pos_y, oi->width, oi->height, oi->out_width, oi->out_height,
+		oi->color_mode, oi->rotation, oi->mirror, channel, replication);
+
+	r = dispc_ovl_setup_common(plane, caps, oi->paddr, oi->p_uv_addr,
+		oi->screen_width, oi->pos_x, oi->pos_y, oi->width, oi->height,
+		oi->out_width, oi->out_height, oi->color_mode, oi->rotation,
+		oi->mirror, oi->zorder, oi->pre_mult_alpha, oi->global_alpha,
+		oi->rotation_type, replication, mgr_timings, mem_to_mem);
+
+	return r;
+}
+EXPORT_SYMBOL(dispc_ovl_setup);
+
+int dispc_wb_setup(const struct omap_dss_writeback_info *wi,
+		bool mem_to_mem, const struct omap_video_timings *mgr_timings)
+{
+	int r;
+	u32 l;
+	enum omap_plane plane = OMAP_DSS_WB;
+	const int pos_x = 0, pos_y = 0;
+	const u8 zorder = 0, global_alpha = 0;
+	const bool replication = false;
+	bool truncation;
+	int in_width = mgr_timings->x_res;
+	int in_height = mgr_timings->y_res;
+	enum omap_overlay_caps caps =
+		OMAP_DSS_OVL_CAP_SCALE | OMAP_DSS_OVL_CAP_PRE_MULT_ALPHA;
+
+	DSSDBG("dispc_wb_setup, pa %x, pa_uv %x, %d,%d -> %dx%d, cmode %x, "
+		"rot %d, mir %d\n", wi->paddr, wi->p_uv_addr, in_width,
+		in_height, wi->width, wi->height, wi->color_mode, wi->rotation,
+		wi->mirror);
+
+	r = dispc_ovl_setup_common(plane, caps, wi->paddr, wi->p_uv_addr,
+		wi->buf_width, pos_x, pos_y, in_width, in_height, wi->width,
+		wi->height, wi->color_mode, wi->rotation, wi->mirror, zorder,
+		wi->pre_mult_alpha, global_alpha, wi->rotation_type,
+		replication, mgr_timings, mem_to_mem);
+
+	switch (wi->color_mode) {
+	case OMAP_DSS_COLOR_RGB16:
+	case OMAP_DSS_COLOR_RGB24P:
+	case OMAP_DSS_COLOR_ARGB16:
+	case OMAP_DSS_COLOR_RGBA16:
+	case OMAP_DSS_COLOR_RGB12U:
+	case OMAP_DSS_COLOR_ARGB16_1555:
+	case OMAP_DSS_COLOR_XRGB16_1555:
+	case OMAP_DSS_COLOR_RGBX16:
+		truncation = true;
+		break;
+	default:
+		truncation = false;
+		break;
+	}
+
+	/* setup extra DISPC_WB_ATTRIBUTES */
+	l = dispc_read_reg(DISPC_OVL_ATTRIBUTES(plane));
+	l = FLD_MOD(l, truncation, 10, 10);	/* TRUNCATIONENABLE */
+	l = FLD_MOD(l, mem_to_mem, 19, 19);	/* WRITEBACKMODE */
+	dispc_write_reg(DISPC_OVL_ATTRIBUTES(plane), l);
+
+	return r;
 }
 
 int dispc_ovl_enable(enum omap_plane plane, bool enable)
@@ -1942,166 +2627,39 @@ int dispc_ovl_enable(enum omap_plane plane, bool enable)
 
 	return 0;
 }
+EXPORT_SYMBOL(dispc_ovl_enable);
 
-static void dispc_disable_isr(void *data, u32 mask)
+bool dispc_ovl_enabled(enum omap_plane plane)
 {
-	struct completion *compl = data;
-	complete(compl);
+	return REG_GET(DISPC_OVL_ATTRIBUTES(plane), 0, 0);
 }
-
-static void _enable_lcd_out(enum omap_channel channel, bool enable)
-{
-	if (channel == OMAP_DSS_CHANNEL_LCD2) {
-		REG_FLD_MOD(DISPC_CONTROL2, enable ? 1 : 0, 0, 0);
-		/* flush posted write */
-		dispc_read_reg(DISPC_CONTROL2);
-	} else {
-		REG_FLD_MOD(DISPC_CONTROL, enable ? 1 : 0, 0, 0);
-		dispc_read_reg(DISPC_CONTROL);
-	}
-}
-
-static void dispc_mgr_enable_lcd_out(enum omap_channel channel, bool enable)
-{
-	struct completion frame_done_completion;
-	bool is_on;
-	int r;
-	u32 irq;
-
-	/* When we disable LCD output, we need to wait until frame is done.
-	 * Otherwise the DSS is still working, and turning off the clocks
-	 * prevents DSS from going to OFF mode */
-	is_on = channel == OMAP_DSS_CHANNEL_LCD2 ?
-			REG_GET(DISPC_CONTROL2, 0, 0) :
-			REG_GET(DISPC_CONTROL, 0, 0);
-
-	irq = channel == OMAP_DSS_CHANNEL_LCD2 ? DISPC_IRQ_FRAMEDONE2 :
-			DISPC_IRQ_FRAMEDONE;
-
-	if (!enable && is_on) {
-		init_completion(&frame_done_completion);
-
-		r = omap_dispc_register_isr(dispc_disable_isr,
-				&frame_done_completion, irq);
-
-		if (r)
-			DSSERR("failed to register FRAMEDONE isr\n");
-	}
-
-	_enable_lcd_out(channel, enable);
-
-	if (!enable && is_on) {
-		if (!wait_for_completion_timeout(&frame_done_completion,
-					msecs_to_jiffies(100)))
-			DSSERR("timeout waiting for FRAME DONE\n");
-
-		r = omap_dispc_unregister_isr(dispc_disable_isr,
-				&frame_done_completion, irq);
-
-		if (r)
-			DSSERR("failed to unregister FRAMEDONE isr\n");
-	}
-}
-
-static void _enable_digit_out(bool enable)
-{
-	REG_FLD_MOD(DISPC_CONTROL, enable ? 1 : 0, 1, 1);
-	/* flush posted write */
-	dispc_read_reg(DISPC_CONTROL);
-}
-
-static void dispc_mgr_enable_digit_out(bool enable)
-{
-	struct completion frame_done_completion;
-	enum dss_hdmi_venc_clk_source_select src;
-	int r, i;
-	u32 irq_mask;
-	int num_irqs;
-
-	if (REG_GET(DISPC_CONTROL, 1, 1) == enable)
-		return;
-
-	src = dss_get_hdmi_venc_clk_source();
-
-	if (enable) {
-		unsigned long flags;
-		/* When we enable digit output, we'll get an extra digit
-		 * sync lost interrupt, that we need to ignore */
-		spin_lock_irqsave(&dispc.irq_lock, flags);
-		dispc.irq_error_mask &= ~DISPC_IRQ_SYNC_LOST_DIGIT;
-		_omap_dispc_set_irqs();
-		spin_unlock_irqrestore(&dispc.irq_lock, flags);
-	}
-
-	/* When we disable digit output, we need to wait until fields are done.
-	 * Otherwise the DSS is still working, and turning off the clocks
-	 * prevents DSS from going to OFF mode. And when enabling, we need to
-	 * wait for the extra sync losts */
-	init_completion(&frame_done_completion);
-
-	if (src == DSS_HDMI_M_PCLK && enable == false) {
-		irq_mask = DISPC_IRQ_FRAMEDONETV;
-		num_irqs = 1;
-	} else {
-		irq_mask = DISPC_IRQ_EVSYNC_EVEN | DISPC_IRQ_EVSYNC_ODD;
-		/* XXX I understand from TRM that we should only wait for the
-		 * current field to complete. But it seems we have to wait for
-		 * both fields */
-		num_irqs = 2;
-	}
-
-	r = omap_dispc_register_isr(dispc_disable_isr, &frame_done_completion,
-			irq_mask);
-	if (r)
-		DSSERR("failed to register %x isr\n", irq_mask);
-
-	_enable_digit_out(enable);
-
-	for (i = 0; i < num_irqs; ++i) {
-		if (!wait_for_completion_timeout(&frame_done_completion,
-					msecs_to_jiffies(100)))
-			DSSERR("timeout waiting for digit out to %s\n",
-					enable ? "start" : "stop");
-	}
-
-	r = omap_dispc_unregister_isr(dispc_disable_isr, &frame_done_completion,
-			irq_mask);
-	if (r)
-		DSSERR("failed to unregister %x isr\n", irq_mask);
-
-	if (enable) {
-		unsigned long flags;
-		spin_lock_irqsave(&dispc.irq_lock, flags);
-		dispc.irq_error_mask |= DISPC_IRQ_SYNC_LOST_DIGIT;
-		dispc_write_reg(DISPC_IRQSTATUS, DISPC_IRQ_SYNC_LOST_DIGIT);
-		_omap_dispc_set_irqs();
-		spin_unlock_irqrestore(&dispc.irq_lock, flags);
-	}
-}
-
-bool dispc_mgr_is_enabled(enum omap_channel channel)
-{
-	if (channel == OMAP_DSS_CHANNEL_LCD)
-		return !!REG_GET(DISPC_CONTROL, 0, 0);
-	else if (channel == OMAP_DSS_CHANNEL_DIGIT)
-		return !!REG_GET(DISPC_CONTROL, 1, 1);
-	else if (channel == OMAP_DSS_CHANNEL_LCD2)
-		return !!REG_GET(DISPC_CONTROL2, 0, 0);
-	else
-		BUG();
-}
+EXPORT_SYMBOL(dispc_ovl_enabled);
 
 void dispc_mgr_enable(enum omap_channel channel, bool enable)
 {
-	if (dispc_mgr_is_lcd(channel))
-		dispc_mgr_enable_lcd_out(channel, enable);
-	else if (channel == OMAP_DSS_CHANNEL_DIGIT)
-		dispc_mgr_enable_digit_out(enable);
-	else
-		BUG();
+	mgr_fld_write(channel, DISPC_MGR_FLD_ENABLE, enable);
+	/* flush posted write */
+	mgr_fld_read(channel, DISPC_MGR_FLD_ENABLE);
+}
+EXPORT_SYMBOL(dispc_mgr_enable);
+
+bool dispc_mgr_is_enabled(enum omap_channel channel)
+{
+	return !!mgr_fld_read(channel, DISPC_MGR_FLD_ENABLE);
+}
+EXPORT_SYMBOL(dispc_mgr_is_enabled);
+
+void dispc_wb_enable(bool enable)
+{
+	dispc_ovl_enable(OMAP_DSS_WB, enable);
 }
 
-void dispc_lcd_enable_signal_polarity(bool act_high)
+bool dispc_wb_is_enabled(void)
+{
+	return dispc_ovl_enabled(OMAP_DSS_WB);
+}
+
+static void dispc_lcd_enable_signal_polarity(bool act_high)
 {
 	if (!dss_has_feature(FEAT_LCDENABLEPOL))
 		return;
@@ -2125,38 +2683,15 @@ void dispc_pck_free_enable(bool enable)
 	REG_FLD_MOD(DISPC_CONTROL, enable ? 1 : 0, 27, 27);
 }
 
-void dispc_mgr_enable_fifohandcheck(enum omap_channel channel, bool enable)
+static void dispc_mgr_enable_fifohandcheck(enum omap_channel channel, bool enable)
 {
-	if (channel == OMAP_DSS_CHANNEL_LCD2)
-		REG_FLD_MOD(DISPC_CONFIG2, enable ? 1 : 0, 16, 16);
-	else
-		REG_FLD_MOD(DISPC_CONFIG, enable ? 1 : 0, 16, 16);
+	mgr_fld_write(channel, DISPC_MGR_FLD_FIFOHANDCHECK, enable);
 }
 
 
-void dispc_mgr_set_lcd_display_type(enum omap_channel channel,
-		enum omap_lcd_display_type type)
+static void dispc_mgr_set_lcd_type_tft(enum omap_channel channel)
 {
-	int mode;
-
-	switch (type) {
-	case OMAP_DSS_LCD_DISPLAY_STN:
-		mode = 0;
-		break;
-
-	case OMAP_DSS_LCD_DISPLAY_TFT:
-		mode = 1;
-		break;
-
-	default:
-		BUG();
-		return;
-	}
-
-	if (channel == OMAP_DSS_CHANNEL_LCD2)
-		REG_FLD_MOD(DISPC_CONTROL2, mode, 3, 3);
-	else
-		REG_FLD_MOD(DISPC_CONTROL, mode, 3, 3);
+	mgr_fld_write(channel, DISPC_MGR_FLD_STNTFT, 1);
 }
 
 void dispc_set_loadmode(enum omap_dss_load_mode mode)
@@ -2174,24 +2709,14 @@ static void dispc_mgr_set_trans_key(enum omap_channel ch,
 		enum omap_dss_trans_key_type type,
 		u32 trans_key)
 {
-	if (ch == OMAP_DSS_CHANNEL_LCD)
-		REG_FLD_MOD(DISPC_CONFIG, type, 11, 11);
-	else if (ch == OMAP_DSS_CHANNEL_DIGIT)
-		REG_FLD_MOD(DISPC_CONFIG, type, 13, 13);
-	else /* OMAP_DSS_CHANNEL_LCD2 */
-		REG_FLD_MOD(DISPC_CONFIG2, type, 11, 11);
+	mgr_fld_write(ch, DISPC_MGR_FLD_TCKSELECTION, type);
 
 	dispc_write_reg(DISPC_TRANS_COLOR(ch), trans_key);
 }
 
 static void dispc_mgr_enable_trans_key(enum omap_channel ch, bool enable)
 {
-	if (ch == OMAP_DSS_CHANNEL_LCD)
-		REG_FLD_MOD(DISPC_CONFIG, enable, 10, 10);
-	else if (ch == OMAP_DSS_CHANNEL_DIGIT)
-		REG_FLD_MOD(DISPC_CONFIG, enable, 12, 12);
-	else /* OMAP_DSS_CHANNEL_LCD2 */
-		REG_FLD_MOD(DISPC_CONFIG2, enable, 10, 10);
+	mgr_fld_write(ch, DISPC_MGR_FLD_TCKENABLE, enable);
 }
 
 static void dispc_mgr_enable_alpha_fixed_zorder(enum omap_channel ch,
@@ -2207,7 +2732,7 @@ static void dispc_mgr_enable_alpha_fixed_zorder(enum omap_channel ch,
 }
 
 void dispc_mgr_setup(enum omap_channel channel,
-		struct omap_overlay_manager_info *info)
+		const struct omap_overlay_manager_info *info)
 {
 	dispc_mgr_set_default_color(channel, info->default_color);
 	dispc_mgr_set_trans_key(channel, info->trans_key_type, info->trans_key);
@@ -2219,8 +2744,9 @@ void dispc_mgr_setup(enum omap_channel channel,
 		dispc_mgr_set_cpr_coef(channel, &info->cpr_coefs);
 	}
 }
+EXPORT_SYMBOL(dispc_mgr_setup);
 
-void dispc_mgr_set_tft_data_lines(enum omap_channel channel, u8 data_lines)
+static void dispc_mgr_set_tft_data_lines(enum omap_channel channel, u8 data_lines)
 {
 	int code;
 
@@ -2242,13 +2768,10 @@ void dispc_mgr_set_tft_data_lines(enum omap_channel channel, u8 data_lines)
 		return;
 	}
 
-	if (channel == OMAP_DSS_CHANNEL_LCD2)
-		REG_FLD_MOD(DISPC_CONTROL2, code, 9, 8);
-	else
-		REG_FLD_MOD(DISPC_CONTROL, code, 9, 8);
+	mgr_fld_write(channel, DISPC_MGR_FLD_TFTDATALINES, code);
 }
 
-void dispc_mgr_set_io_pad_mode(enum dss_io_pad_mode mode)
+static void dispc_mgr_set_io_pad_mode(enum dss_io_pad_mode mode)
 {
 	u32 l;
 	int gpout0, gpout1;
@@ -2277,101 +2800,178 @@ void dispc_mgr_set_io_pad_mode(enum dss_io_pad_mode mode)
 	dispc_write_reg(DISPC_CONTROL, l);
 }
 
-void dispc_mgr_enable_stallmode(enum omap_channel channel, bool enable)
+static void dispc_mgr_enable_stallmode(enum omap_channel channel, bool enable)
 {
-	if (channel == OMAP_DSS_CHANNEL_LCD2)
-		REG_FLD_MOD(DISPC_CONTROL2, enable, 11, 11);
-	else
-		REG_FLD_MOD(DISPC_CONTROL, enable, 11, 11);
+	mgr_fld_write(channel, DISPC_MGR_FLD_STALLMODE, enable);
+}
+
+void dispc_mgr_set_lcd_config(enum omap_channel channel,
+		const struct dss_lcd_mgr_config *config)
+{
+	dispc_mgr_set_io_pad_mode(config->io_pad_mode);
+
+	dispc_mgr_enable_stallmode(channel, config->stallmode);
+	dispc_mgr_enable_fifohandcheck(channel, config->fifohandcheck);
+
+	dispc_mgr_set_clock_div(channel, &config->clock_info);
+
+	dispc_mgr_set_tft_data_lines(channel, config->video_port_width);
+
+	dispc_lcd_enable_signal_polarity(config->lcden_sig_polarity);
+
+	dispc_mgr_set_lcd_type_tft(channel);
+}
+EXPORT_SYMBOL(dispc_mgr_set_lcd_config);
+
+static bool _dispc_mgr_size_ok(u16 width, u16 height)
+{
+	return width <= dispc.feat->mgr_width_max &&
+		height <= dispc.feat->mgr_height_max;
 }
 
 static bool _dispc_lcd_timings_ok(int hsw, int hfp, int hbp,
 		int vsw, int vfp, int vbp)
 {
-	if (cpu_is_omap24xx() || omap_rev() < OMAP3430_REV_ES3_0) {
-		if (hsw < 1 || hsw > 64 ||
-				hfp < 1 || hfp > 256 ||
-				hbp < 1 || hbp > 256 ||
-				vsw < 1 || vsw > 64 ||
-				vfp < 0 || vfp > 255 ||
-				vbp < 0 || vbp > 255)
-			return false;
-	} else {
-		if (hsw < 1 || hsw > 256 ||
-				hfp < 1 || hfp > 4096 ||
-				hbp < 1 || hbp > 4096 ||
-				vsw < 1 || vsw > 256 ||
-				vfp < 0 || vfp > 4095 ||
-				vbp < 0 || vbp > 4095)
-			return false;
-	}
-
+	if (hsw < 1 || hsw > dispc.feat->sw_max ||
+			hfp < 1 || hfp > dispc.feat->hp_max ||
+			hbp < 1 || hbp > dispc.feat->hp_max ||
+			vsw < 1 || vsw > dispc.feat->sw_max ||
+			vfp < 0 || vfp > dispc.feat->vp_max ||
+			vbp < 0 || vbp > dispc.feat->vp_max)
+		return false;
 	return true;
 }
 
-bool dispc_lcd_timings_ok(struct omap_video_timings *timings)
+static bool _dispc_mgr_pclk_ok(enum omap_channel channel,
+		unsigned long pclk)
 {
-	return _dispc_lcd_timings_ok(timings->hsw, timings->hfp,
-			timings->hbp, timings->vsw,
-			timings->vfp, timings->vbp);
+	if (dss_mgr_is_lcd(channel))
+		return pclk <= dispc.feat->max_lcd_pclk ? true : false;
+	else
+		return pclk <= dispc.feat->max_tv_pclk ? true : false;
+}
+
+bool dispc_mgr_timings_ok(enum omap_channel channel,
+		const struct omap_video_timings *timings)
+{
+	bool timings_ok;
+
+	timings_ok = _dispc_mgr_size_ok(timings->x_res, timings->y_res);
+
+	timings_ok &= _dispc_mgr_pclk_ok(channel, timings->pixel_clock * 1000);
+
+	if (dss_mgr_is_lcd(channel)) {
+		timings_ok &= _dispc_lcd_timings_ok(timings->hsw, timings->hfp,
+				timings->hbp, timings->vsw, timings->vfp,
+				timings->vbp);
+	}
+
+	return timings_ok;
 }
 
 static void _dispc_mgr_set_lcd_timings(enum omap_channel channel, int hsw,
-		int hfp, int hbp, int vsw, int vfp, int vbp)
+		int hfp, int hbp, int vsw, int vfp, int vbp,
+		enum omap_dss_signal_level vsync_level,
+		enum omap_dss_signal_level hsync_level,
+		enum omap_dss_signal_edge data_pclk_edge,
+		enum omap_dss_signal_level de_level,
+		enum omap_dss_signal_edge sync_pclk_edge)
+
 {
-	u32 timing_h, timing_v;
+	u32 timing_h, timing_v, l;
+	bool onoff, rf, ipc;
 
-	if (cpu_is_omap24xx() || omap_rev() < OMAP3430_REV_ES3_0) {
-		timing_h = FLD_VAL(hsw-1, 5, 0) | FLD_VAL(hfp-1, 15, 8) |
-			FLD_VAL(hbp-1, 27, 20);
-
-		timing_v = FLD_VAL(vsw-1, 5, 0) | FLD_VAL(vfp, 15, 8) |
-			FLD_VAL(vbp, 27, 20);
-	} else {
-		timing_h = FLD_VAL(hsw-1, 7, 0) | FLD_VAL(hfp-1, 19, 8) |
-			FLD_VAL(hbp-1, 31, 20);
-
-		timing_v = FLD_VAL(vsw-1, 7, 0) | FLD_VAL(vfp, 19, 8) |
-			FLD_VAL(vbp, 31, 20);
-	}
+	timing_h = FLD_VAL(hsw-1, dispc.feat->sw_start, 0) |
+			FLD_VAL(hfp-1, dispc.feat->fp_start, 8) |
+			FLD_VAL(hbp-1, dispc.feat->bp_start, 20);
+	timing_v = FLD_VAL(vsw-1, dispc.feat->sw_start, 0) |
+			FLD_VAL(vfp, dispc.feat->fp_start, 8) |
+			FLD_VAL(vbp, dispc.feat->bp_start, 20);
 
 	dispc_write_reg(DISPC_TIMING_H(channel), timing_h);
 	dispc_write_reg(DISPC_TIMING_V(channel), timing_v);
+
+	switch (data_pclk_edge) {
+	case OMAPDSS_DRIVE_SIG_RISING_EDGE:
+		ipc = false;
+		break;
+	case OMAPDSS_DRIVE_SIG_FALLING_EDGE:
+		ipc = true;
+		break;
+	case OMAPDSS_DRIVE_SIG_OPPOSITE_EDGES:
+	default:
+		BUG();
+	}
+
+	switch (sync_pclk_edge) {
+	case OMAPDSS_DRIVE_SIG_OPPOSITE_EDGES:
+		onoff = false;
+		rf = false;
+		break;
+	case OMAPDSS_DRIVE_SIG_FALLING_EDGE:
+		onoff = true;
+		rf = false;
+		break;
+	case OMAPDSS_DRIVE_SIG_RISING_EDGE:
+		onoff = true;
+		rf = true;
+		break;
+	default:
+		BUG();
+	};
+
+	l = dispc_read_reg(DISPC_POL_FREQ(channel));
+	l |= FLD_VAL(onoff, 17, 17);
+	l |= FLD_VAL(rf, 16, 16);
+	l |= FLD_VAL(de_level, 15, 15);
+	l |= FLD_VAL(ipc, 14, 14);
+	l |= FLD_VAL(hsync_level, 13, 13);
+	l |= FLD_VAL(vsync_level, 12, 12);
+	dispc_write_reg(DISPC_POL_FREQ(channel), l);
 }
 
 /* change name to mode? */
-void dispc_mgr_set_lcd_timings(enum omap_channel channel,
-		struct omap_video_timings *timings)
+void dispc_mgr_set_timings(enum omap_channel channel,
+		const struct omap_video_timings *timings)
 {
 	unsigned xtot, ytot;
 	unsigned long ht, vt;
+	struct omap_video_timings t = *timings;
 
-	if (!_dispc_lcd_timings_ok(timings->hsw, timings->hfp,
-				timings->hbp, timings->vsw,
-				timings->vfp, timings->vbp))
+	DSSDBG("channel %d xres %u yres %u\n", channel, t.x_res, t.y_res);
+
+	if (!dispc_mgr_timings_ok(channel, &t)) {
 		BUG();
+		return;
+	}
 
-	_dispc_mgr_set_lcd_timings(channel, timings->hsw, timings->hfp,
-			timings->hbp, timings->vsw, timings->vfp,
-			timings->vbp);
+	if (dss_mgr_is_lcd(channel)) {
+		_dispc_mgr_set_lcd_timings(channel, t.hsw, t.hfp, t.hbp, t.vsw,
+				t.vfp, t.vbp, t.vsync_level, t.hsync_level,
+				t.data_pclk_edge, t.de_level, t.sync_pclk_edge);
 
-	dispc_mgr_set_lcd_size(channel, timings->x_res, timings->y_res);
+		xtot = t.x_res + t.hfp + t.hsw + t.hbp;
+		ytot = t.y_res + t.vfp + t.vsw + t.vbp;
 
-	xtot = timings->x_res + timings->hfp + timings->hsw + timings->hbp;
-	ytot = timings->y_res + timings->vfp + timings->vsw + timings->vbp;
+		ht = (timings->pixel_clock * 1000) / xtot;
+		vt = (timings->pixel_clock * 1000) / xtot / ytot;
 
-	ht = (timings->pixel_clock * 1000) / xtot;
-	vt = (timings->pixel_clock * 1000) / xtot / ytot;
+		DSSDBG("pck %u\n", timings->pixel_clock);
+		DSSDBG("hsw %d hfp %d hbp %d vsw %d vfp %d vbp %d\n",
+			t.hsw, t.hfp, t.hbp, t.vsw, t.vfp, t.vbp);
+		DSSDBG("vsync_level %d hsync_level %d data_pclk_edge %d de_level %d sync_pclk_edge %d\n",
+			t.vsync_level, t.hsync_level, t.data_pclk_edge,
+			t.de_level, t.sync_pclk_edge);
 
-	DSSDBG("channel %d xres %u yres %u\n", channel, timings->x_res,
-			timings->y_res);
-	DSSDBG("pck %u\n", timings->pixel_clock);
-	DSSDBG("hsw %d hfp %d hbp %d vsw %d vfp %d vbp %d\n",
-			timings->hsw, timings->hfp, timings->hbp,
-			timings->vsw, timings->vfp, timings->vbp);
+		DSSDBG("hsync %luHz, vsync %luHz\n", ht, vt);
+	} else {
+		if (t.interlace == true)
+			t.y_res /= 2;
+	}
 
-	DSSDBG("hsync %luHz, vsync %luHz\n", ht, vt);
+	dispc_mgr_set_size(channel, t.x_res, t.y_res);
 }
+EXPORT_SYMBOL(dispc_mgr_set_timings);
 
 static void dispc_mgr_set_lcd_divisor(enum omap_channel channel, u16 lck_div,
 		u16 pck_div)
@@ -2381,6 +2981,10 @@ static void dispc_mgr_set_lcd_divisor(enum omap_channel channel, u16 lck_div,
 
 	dispc_write_reg(DISPC_DIVISORo(channel),
 			FLD_VAL(lck_div, 23, 16) | FLD_VAL(pck_div, 7, 0));
+
+	if (dss_has_feature(FEAT_CORE_CLK_DIV) == false &&
+			channel == OMAP_DSS_CHANNEL_LCD)
+		dispc.core_clk_rate = dispc_fclk_rate() / lck_div;
 }
 
 static void dispc_mgr_get_lcd_divisor(enum omap_channel channel, int *lck_div,
@@ -2399,7 +3003,7 @@ unsigned long dispc_fclk_rate(void)
 
 	switch (dss_get_dispc_clk_source()) {
 	case OMAP_DSS_CLK_SRC_FCK:
-		r = clk_get_rate(dispc.dss_clk);
+		r = dss_get_dispc_clk_rate();
 		break;
 	case OMAP_DSS_CLK_SRC_DSI_PLL_HSDIV_DISPC:
 		dsidev = dsi_get_dsidev_from_id(0);
@@ -2411,6 +3015,7 @@ unsigned long dispc_fclk_rate(void)
 		break;
 	default:
 		BUG();
+		return 0;
 	}
 
 	return r;
@@ -2423,34 +3028,39 @@ unsigned long dispc_mgr_lclk_rate(enum omap_channel channel)
 	unsigned long r;
 	u32 l;
 
-	l = dispc_read_reg(DISPC_DIVISORo(channel));
+	if (dss_mgr_is_lcd(channel)) {
+		l = dispc_read_reg(DISPC_DIVISORo(channel));
 
-	lcd = FLD_GET(l, 23, 16);
+		lcd = FLD_GET(l, 23, 16);
 
-	switch (dss_get_lcd_clk_source(channel)) {
-	case OMAP_DSS_CLK_SRC_FCK:
-		r = clk_get_rate(dispc.dss_clk);
-		break;
-	case OMAP_DSS_CLK_SRC_DSI_PLL_HSDIV_DISPC:
-		dsidev = dsi_get_dsidev_from_id(0);
-		r = dsi_get_pll_hsdiv_dispc_rate(dsidev);
-		break;
-	case OMAP_DSS_CLK_SRC_DSI2_PLL_HSDIV_DISPC:
-		dsidev = dsi_get_dsidev_from_id(1);
-		r = dsi_get_pll_hsdiv_dispc_rate(dsidev);
-		break;
-	default:
-		BUG();
+		switch (dss_get_lcd_clk_source(channel)) {
+		case OMAP_DSS_CLK_SRC_FCK:
+			r = dss_get_dispc_clk_rate();
+			break;
+		case OMAP_DSS_CLK_SRC_DSI_PLL_HSDIV_DISPC:
+			dsidev = dsi_get_dsidev_from_id(0);
+			r = dsi_get_pll_hsdiv_dispc_rate(dsidev);
+			break;
+		case OMAP_DSS_CLK_SRC_DSI2_PLL_HSDIV_DISPC:
+			dsidev = dsi_get_dsidev_from_id(1);
+			r = dsi_get_pll_hsdiv_dispc_rate(dsidev);
+			break;
+		default:
+			BUG();
+			return 0;
+		}
+
+		return r / lcd;
+	} else {
+		return dispc_fclk_rate();
 	}
-
-	return r / lcd;
 }
 
 unsigned long dispc_mgr_pclk_rate(enum omap_channel channel)
 {
 	unsigned long r;
 
-	if (dispc_mgr_is_lcd(channel)) {
+	if (dss_mgr_is_lcd(channel)) {
 		int pcd;
 		u32 l;
 
@@ -2462,26 +3072,70 @@ unsigned long dispc_mgr_pclk_rate(enum omap_channel channel)
 
 		return r / pcd;
 	} else {
-		struct omap_dss_device *dssdev =
-			dispc_mgr_get_device(channel);
-
-		switch (dssdev->type) {
-		case OMAP_DISPLAY_TYPE_VENC:
-			return venc_get_pixel_clock();
-		case OMAP_DISPLAY_TYPE_HDMI:
-			return hdmi_get_pixel_clock();
-		default:
-			BUG();
-		}
+		return dispc.tv_pclk_rate;
 	}
+}
+
+void dispc_set_tv_pclk(unsigned long pclk)
+{
+	dispc.tv_pclk_rate = pclk;
+}
+
+unsigned long dispc_core_clk_rate(void)
+{
+	return dispc.core_clk_rate;
+}
+
+static unsigned long dispc_plane_pclk_rate(enum omap_plane plane)
+{
+	enum omap_channel channel;
+
+	if (plane == OMAP_DSS_WB)
+		return 0;
+
+	channel = dispc_ovl_get_channel_out(plane);
+
+	return dispc_mgr_pclk_rate(channel);
+}
+
+static unsigned long dispc_plane_lclk_rate(enum omap_plane plane)
+{
+	enum omap_channel channel;
+
+	if (plane == OMAP_DSS_WB)
+		return 0;
+
+	channel	= dispc_ovl_get_channel_out(plane);
+
+	return dispc_mgr_lclk_rate(channel);
+}
+
+static void dispc_dump_clocks_channel(struct seq_file *s, enum omap_channel channel)
+{
+	int lcd, pcd;
+	enum omap_dss_clk_source lcd_clk_src;
+
+	seq_printf(s, "- %s -\n", mgr_desc[channel].name);
+
+	lcd_clk_src = dss_get_lcd_clk_source(channel);
+
+	seq_printf(s, "%s clk source = %s (%s)\n", mgr_desc[channel].name,
+		dss_get_generic_clk_source_name(lcd_clk_src),
+		dss_feat_get_clk_source_name(lcd_clk_src));
+
+	dispc_mgr_get_lcd_divisor(channel, &lcd, &pcd);
+
+	seq_printf(s, "lck\t\t%-16lulck div\t%u\n",
+		dispc_mgr_lclk_rate(channel), lcd);
+	seq_printf(s, "pck\t\t%-16lupck div\t%u\n",
+		dispc_mgr_pclk_rate(channel), pcd);
 }
 
 void dispc_dump_clocks(struct seq_file *s)
 {
-	int lcd, pcd;
+	int lcd;
 	u32 l;
 	enum omap_dss_clk_source dispc_clk_src = dss_get_dispc_clk_source();
-	enum omap_dss_clk_source lcd_clk_src;
 
 	if (dispc_runtime_get())
 		return;
@@ -2502,99 +3156,25 @@ void dispc_dump_clocks(struct seq_file *s)
 		seq_printf(s, "lck\t\t%-16lulck div\t%u\n",
 				(dispc_fclk_rate()/lcd), lcd);
 	}
-	seq_printf(s, "- LCD1 -\n");
 
-	lcd_clk_src = dss_get_lcd_clk_source(OMAP_DSS_CHANNEL_LCD);
+	dispc_dump_clocks_channel(s, OMAP_DSS_CHANNEL_LCD);
 
-	seq_printf(s, "lcd1_clk source = %s (%s)\n",
-		dss_get_generic_clk_source_name(lcd_clk_src),
-		dss_feat_get_clk_source_name(lcd_clk_src));
-
-	dispc_mgr_get_lcd_divisor(OMAP_DSS_CHANNEL_LCD, &lcd, &pcd);
-
-	seq_printf(s, "lck\t\t%-16lulck div\t%u\n",
-			dispc_mgr_lclk_rate(OMAP_DSS_CHANNEL_LCD), lcd);
-	seq_printf(s, "pck\t\t%-16lupck div\t%u\n",
-			dispc_mgr_pclk_rate(OMAP_DSS_CHANNEL_LCD), pcd);
-	if (dss_has_feature(FEAT_MGR_LCD2)) {
-		seq_printf(s, "- LCD2 -\n");
-
-		lcd_clk_src = dss_get_lcd_clk_source(OMAP_DSS_CHANNEL_LCD2);
-
-		seq_printf(s, "lcd2_clk source = %s (%s)\n",
-			dss_get_generic_clk_source_name(lcd_clk_src),
-			dss_feat_get_clk_source_name(lcd_clk_src));
-
-		dispc_mgr_get_lcd_divisor(OMAP_DSS_CHANNEL_LCD2, &lcd, &pcd);
-
-		seq_printf(s, "lck\t\t%-16lulck div\t%u\n",
-				dispc_mgr_lclk_rate(OMAP_DSS_CHANNEL_LCD2), lcd);
-		seq_printf(s, "pck\t\t%-16lupck div\t%u\n",
-				dispc_mgr_pclk_rate(OMAP_DSS_CHANNEL_LCD2), pcd);
-	}
+	if (dss_has_feature(FEAT_MGR_LCD2))
+		dispc_dump_clocks_channel(s, OMAP_DSS_CHANNEL_LCD2);
+	if (dss_has_feature(FEAT_MGR_LCD3))
+		dispc_dump_clocks_channel(s, OMAP_DSS_CHANNEL_LCD3);
 
 	dispc_runtime_put();
 }
 
-#ifdef CONFIG_OMAP2_DSS_COLLECT_IRQ_STATS
-void dispc_dump_irqs(struct seq_file *s)
-{
-	unsigned long flags;
-	struct dispc_irq_stats stats;
-
-	spin_lock_irqsave(&dispc.irq_stats_lock, flags);
-
-	stats = dispc.irq_stats;
-	memset(&dispc.irq_stats, 0, sizeof(dispc.irq_stats));
-	dispc.irq_stats.last_reset = jiffies;
-
-	spin_unlock_irqrestore(&dispc.irq_stats_lock, flags);
-
-	seq_printf(s, "period %u ms\n",
-			jiffies_to_msecs(jiffies - stats.last_reset));
-
-	seq_printf(s, "irqs %d\n", stats.irq_count);
-#define PIS(x) \
-	seq_printf(s, "%-20s %10d\n", #x, stats.irqs[ffs(DISPC_IRQ_##x)-1]);
-
-	PIS(FRAMEDONE);
-	PIS(VSYNC);
-	PIS(EVSYNC_EVEN);
-	PIS(EVSYNC_ODD);
-	PIS(ACBIAS_COUNT_STAT);
-	PIS(PROG_LINE_NUM);
-	PIS(GFX_FIFO_UNDERFLOW);
-	PIS(GFX_END_WIN);
-	PIS(PAL_GAMMA_MASK);
-	PIS(OCP_ERR);
-	PIS(VID1_FIFO_UNDERFLOW);
-	PIS(VID1_END_WIN);
-	PIS(VID2_FIFO_UNDERFLOW);
-	PIS(VID2_END_WIN);
-	if (dss_feat_get_num_ovls() > 3) {
-		PIS(VID3_FIFO_UNDERFLOW);
-		PIS(VID3_END_WIN);
-	}
-	PIS(SYNC_LOST);
-	PIS(SYNC_LOST_DIGIT);
-	PIS(WAKEUP);
-	if (dss_has_feature(FEAT_MGR_LCD2)) {
-		PIS(FRAMEDONE2);
-		PIS(VSYNC2);
-		PIS(ACBIAS_COUNT_STAT2);
-		PIS(SYNC_LOST2);
-	}
-#undef PIS
-}
-#endif
-
-void dispc_dump_regs(struct seq_file *s)
+static void dispc_dump_regs(struct seq_file *s)
 {
 	int i, j;
 	const char *mgr_names[] = {
 		[OMAP_DSS_CHANNEL_LCD]		= "LCD",
 		[OMAP_DSS_CHANNEL_DIGIT]	= "TV",
 		[OMAP_DSS_CHANNEL_LCD2]		= "LCD2",
+		[OMAP_DSS_CHANNEL_LCD3]		= "LCD3",
 	};
 	const char *ovl_names[] = {
 		[OMAP_DSS_GFX]		= "GFX",
@@ -2627,12 +3207,16 @@ void dispc_dump_regs(struct seq_file *s)
 		DUMPREG(DISPC_CONTROL2);
 		DUMPREG(DISPC_CONFIG2);
 	}
+	if (dss_has_feature(FEAT_MGR_LCD3)) {
+		DUMPREG(DISPC_CONTROL3);
+		DUMPREG(DISPC_CONFIG3);
+	}
 
 #undef DUMPREG
 
 #define DISPC_REG(i, name) name(i)
 #define DUMPREG(i, r) seq_printf(s, "%s(%s)%*s %08x\n", #r, p_names[i], \
-	48 - strlen(#r) - strlen(p_names[i]), " ", \
+	(int)(48 - strlen(#r) - strlen(p_names[i])), " ", \
 	dispc_read_reg(DISPC_REG(i, r)))
 
 	p_names = mgr_names;
@@ -2709,7 +3293,7 @@ void dispc_dump_regs(struct seq_file *s)
 #define DISPC_REG(plane, name, i) name(plane, i)
 #define DUMPREG(plane, name, i) \
 	seq_printf(s, "%s_%d(%s)%*s %08x\n", #name, i, p_names[plane], \
-	46 - strlen(#name) - strlen(p_names[plane]), " ", \
+	(int)(46 - strlen(#name) - strlen(p_names[plane])), " ", \
 	dispc_read_reg(DISPC_REG(plane, name, i)))
 
 	/* Video pipeline coefficient registers */
@@ -2748,90 +3332,6 @@ void dispc_dump_regs(struct seq_file *s)
 #undef DUMPREG
 }
 
-static void _dispc_mgr_set_pol_freq(enum omap_channel channel, bool onoff,
-		bool rf, bool ieo, bool ipc, bool ihs, bool ivs, u8 acbi,
-		u8 acb)
-{
-	u32 l = 0;
-
-	DSSDBG("onoff %d rf %d ieo %d ipc %d ihs %d ivs %d acbi %d acb %d\n",
-			onoff, rf, ieo, ipc, ihs, ivs, acbi, acb);
-
-	l |= FLD_VAL(onoff, 17, 17);
-	l |= FLD_VAL(rf, 16, 16);
-	l |= FLD_VAL(ieo, 15, 15);
-	l |= FLD_VAL(ipc, 14, 14);
-	l |= FLD_VAL(ihs, 13, 13);
-	l |= FLD_VAL(ivs, 12, 12);
-	l |= FLD_VAL(acbi, 11, 8);
-	l |= FLD_VAL(acb, 7, 0);
-
-	dispc_write_reg(DISPC_POL_FREQ(channel), l);
-}
-
-void dispc_mgr_set_pol_freq(enum omap_channel channel,
-		enum omap_panel_config config, u8 acbi, u8 acb)
-{
-	_dispc_mgr_set_pol_freq(channel, (config & OMAP_DSS_LCD_ONOFF) != 0,
-			(config & OMAP_DSS_LCD_RF) != 0,
-			(config & OMAP_DSS_LCD_IEO) != 0,
-			(config & OMAP_DSS_LCD_IPC) != 0,
-			(config & OMAP_DSS_LCD_IHS) != 0,
-			(config & OMAP_DSS_LCD_IVS) != 0,
-			acbi, acb);
-}
-
-/* with fck as input clock rate, find dispc dividers that produce req_pck */
-void dispc_find_clk_divs(bool is_tft, unsigned long req_pck, unsigned long fck,
-		struct dispc_clock_info *cinfo)
-{
-	u16 pcd_min, pcd_max;
-	unsigned long best_pck;
-	u16 best_ld, cur_ld;
-	u16 best_pd, cur_pd;
-
-	pcd_min = dss_feat_get_param_min(FEAT_PARAM_DSS_PCD);
-	pcd_max = dss_feat_get_param_max(FEAT_PARAM_DSS_PCD);
-
-	if (!is_tft)
-		pcd_min = 3;
-
-	best_pck = 0;
-	best_ld = 0;
-	best_pd = 0;
-
-	for (cur_ld = 1; cur_ld <= 255; ++cur_ld) {
-		unsigned long lck = fck / cur_ld;
-
-		for (cur_pd = pcd_min; cur_pd <= pcd_max; ++cur_pd) {
-			unsigned long pck = lck / cur_pd;
-			long old_delta = abs(best_pck - req_pck);
-			long new_delta = abs(pck - req_pck);
-
-			if (best_pck == 0 || new_delta < old_delta) {
-				best_pck = pck;
-				best_ld = cur_ld;
-				best_pd = cur_pd;
-
-				if (pck == req_pck)
-					goto found;
-			}
-
-			if (pck < req_pck)
-				break;
-		}
-
-		if (lck / pcd_min < req_pck)
-			break;
-	}
-
-found:
-	cinfo->lck_div = best_ld;
-	cinfo->pck_div = best_pd;
-	cinfo->lck = fck / cinfo->lck_div;
-	cinfo->pck = cinfo->lck / cinfo->pck_div;
-}
-
 /* calculate clock rates using dividers in cinfo */
 int dispc_calc_clock_rates(unsigned long dispc_fclk_rate,
 		struct dispc_clock_info *cinfo)
@@ -2847,15 +3347,73 @@ int dispc_calc_clock_rates(unsigned long dispc_fclk_rate,
 	return 0;
 }
 
-int dispc_mgr_set_clock_div(enum omap_channel channel,
-		struct dispc_clock_info *cinfo)
+bool dispc_div_calc(unsigned long dispc,
+		unsigned long pck_min, unsigned long pck_max,
+		dispc_div_calc_func func, void *data)
+{
+	int lckd, lckd_start, lckd_stop;
+	int pckd, pckd_start, pckd_stop;
+	unsigned long pck, lck;
+	unsigned long lck_max;
+	unsigned long pckd_hw_min, pckd_hw_max;
+	unsigned min_fck_per_pck;
+	unsigned long fck;
+
+#ifdef CONFIG_OMAP2_DSS_MIN_FCK_PER_PCK
+	min_fck_per_pck = CONFIG_OMAP2_DSS_MIN_FCK_PER_PCK;
+#else
+	min_fck_per_pck = 0;
+#endif
+
+	pckd_hw_min = dss_feat_get_param_min(FEAT_PARAM_DSS_PCD);
+	pckd_hw_max = dss_feat_get_param_max(FEAT_PARAM_DSS_PCD);
+
+	lck_max = dss_feat_get_param_max(FEAT_PARAM_DSS_FCK);
+
+	pck_min = pck_min ? pck_min : 1;
+	pck_max = pck_max ? pck_max : ULONG_MAX;
+
+	lckd_start = max(DIV_ROUND_UP(dispc, lck_max), 1ul);
+	lckd_stop = min(dispc / pck_min, 255ul);
+
+	for (lckd = lckd_start; lckd <= lckd_stop; ++lckd) {
+		lck = dispc / lckd;
+
+		pckd_start = max(DIV_ROUND_UP(lck, pck_max), pckd_hw_min);
+		pckd_stop = min(lck / pck_min, pckd_hw_max);
+
+		for (pckd = pckd_start; pckd <= pckd_stop; ++pckd) {
+			pck = lck / pckd;
+
+			/*
+			 * For OMAP2/3 the DISPC fclk is the same as LCD's logic
+			 * clock, which means we're configuring DISPC fclk here
+			 * also. Thus we need to use the calculated lck. For
+			 * OMAP4+ the DISPC fclk is a separate clock.
+			 */
+			if (dss_has_feature(FEAT_CORE_CLK_DIV))
+				fck = dispc_core_clk_rate();
+			else
+				fck = lck;
+
+			if (fck < pck * min_fck_per_pck)
+				continue;
+
+			if (func(lckd, pckd, lck, pck, data))
+				return true;
+		}
+	}
+
+	return false;
+}
+
+void dispc_mgr_set_clock_div(enum omap_channel channel,
+		const struct dispc_clock_info *cinfo)
 {
 	DSSDBG("lck = %lu (%u)\n", cinfo->lck, cinfo->lck_div);
 	DSSDBG("pck = %lu (%u)\n", cinfo->pck, cinfo->pck_div);
 
 	dispc_mgr_set_lcd_divisor(channel, cinfo->lck_div, cinfo->pck_div);
-
-	return 0;
 }
 
 int dispc_mgr_get_clock_div(enum omap_channel channel,
@@ -2874,422 +3432,34 @@ int dispc_mgr_get_clock_div(enum omap_channel channel,
 	return 0;
 }
 
-/* dispc.irq_lock has to be locked by the caller */
-static void _omap_dispc_set_irqs(void)
+u32 dispc_read_irqstatus(void)
 {
-	u32 mask;
-	u32 old_mask;
-	int i;
-	struct omap_dispc_isr_data *isr_data;
+	return dispc_read_reg(DISPC_IRQSTATUS);
+}
+EXPORT_SYMBOL(dispc_read_irqstatus);
 
-	mask = dispc.irq_error_mask;
+void dispc_clear_irqstatus(u32 mask)
+{
+	dispc_write_reg(DISPC_IRQSTATUS, mask);
+}
+EXPORT_SYMBOL(dispc_clear_irqstatus);
 
-	for (i = 0; i < DISPC_MAX_NR_ISRS; i++) {
-		isr_data = &dispc.registered_isr[i];
+u32 dispc_read_irqenable(void)
+{
+	return dispc_read_reg(DISPC_IRQENABLE);
+}
+EXPORT_SYMBOL(dispc_read_irqenable);
 
-		if (isr_data->isr == NULL)
-			continue;
+void dispc_write_irqenable(u32 mask)
+{
+	u32 old_mask = dispc_read_reg(DISPC_IRQENABLE);
 
-		mask |= isr_data->mask;
-	}
-
-	old_mask = dispc_read_reg(DISPC_IRQENABLE);
 	/* clear the irqstatus for newly enabled irqs */
-	dispc_write_reg(DISPC_IRQSTATUS, (mask ^ old_mask) & mask);
+	dispc_clear_irqstatus((mask ^ old_mask) & mask);
 
 	dispc_write_reg(DISPC_IRQENABLE, mask);
 }
-
-int omap_dispc_register_isr(omap_dispc_isr_t isr, void *arg, u32 mask)
-{
-	int i;
-	int ret;
-	unsigned long flags;
-	struct omap_dispc_isr_data *isr_data;
-
-	if (isr == NULL)
-		return -EINVAL;
-
-	spin_lock_irqsave(&dispc.irq_lock, flags);
-
-	/* check for duplicate entry */
-	for (i = 0; i < DISPC_MAX_NR_ISRS; i++) {
-		isr_data = &dispc.registered_isr[i];
-		if (isr_data->isr == isr && isr_data->arg == arg &&
-				isr_data->mask == mask) {
-			ret = -EINVAL;
-			goto err;
-		}
-	}
-
-	isr_data = NULL;
-	ret = -EBUSY;
-
-	for (i = 0; i < DISPC_MAX_NR_ISRS; i++) {
-		isr_data = &dispc.registered_isr[i];
-
-		if (isr_data->isr != NULL)
-			continue;
-
-		isr_data->isr = isr;
-		isr_data->arg = arg;
-		isr_data->mask = mask;
-		ret = 0;
-
-		break;
-	}
-
-	if (ret)
-		goto err;
-
-	_omap_dispc_set_irqs();
-
-	spin_unlock_irqrestore(&dispc.irq_lock, flags);
-
-	return 0;
-err:
-	spin_unlock_irqrestore(&dispc.irq_lock, flags);
-
-	return ret;
-}
-EXPORT_SYMBOL(omap_dispc_register_isr);
-
-int omap_dispc_unregister_isr(omap_dispc_isr_t isr, void *arg, u32 mask)
-{
-	int i;
-	unsigned long flags;
-	int ret = -EINVAL;
-	struct omap_dispc_isr_data *isr_data;
-
-	spin_lock_irqsave(&dispc.irq_lock, flags);
-
-	for (i = 0; i < DISPC_MAX_NR_ISRS; i++) {
-		isr_data = &dispc.registered_isr[i];
-		if (isr_data->isr != isr || isr_data->arg != arg ||
-				isr_data->mask != mask)
-			continue;
-
-		/* found the correct isr */
-
-		isr_data->isr = NULL;
-		isr_data->arg = NULL;
-		isr_data->mask = 0;
-
-		ret = 0;
-		break;
-	}
-
-	if (ret == 0)
-		_omap_dispc_set_irqs();
-
-	spin_unlock_irqrestore(&dispc.irq_lock, flags);
-
-	return ret;
-}
-EXPORT_SYMBOL(omap_dispc_unregister_isr);
-
-#ifdef DEBUG
-static void print_irq_status(u32 status)
-{
-	if ((status & dispc.irq_error_mask) == 0)
-		return;
-
-	printk(KERN_DEBUG "DISPC IRQ: 0x%x: ", status);
-
-#define PIS(x) \
-	if (status & DISPC_IRQ_##x) \
-		printk(#x " ");
-	PIS(GFX_FIFO_UNDERFLOW);
-	PIS(OCP_ERR);
-	PIS(VID1_FIFO_UNDERFLOW);
-	PIS(VID2_FIFO_UNDERFLOW);
-	if (dss_feat_get_num_ovls() > 3)
-		PIS(VID3_FIFO_UNDERFLOW);
-	PIS(SYNC_LOST);
-	PIS(SYNC_LOST_DIGIT);
-	if (dss_has_feature(FEAT_MGR_LCD2))
-		PIS(SYNC_LOST2);
-#undef PIS
-
-	printk("\n");
-}
-#endif
-
-/* Called from dss.c. Note that we don't touch clocks here,
- * but we presume they are on because we got an IRQ. However,
- * an irq handler may turn the clocks off, so we may not have
- * clock later in the function. */
-static irqreturn_t omap_dispc_irq_handler(int irq, void *arg)
-{
-	int i;
-	u32 irqstatus, irqenable;
-	u32 handledirqs = 0;
-	u32 unhandled_errors;
-	struct omap_dispc_isr_data *isr_data;
-	struct omap_dispc_isr_data registered_isr[DISPC_MAX_NR_ISRS];
-
-	spin_lock(&dispc.irq_lock);
-
-	irqstatus = dispc_read_reg(DISPC_IRQSTATUS);
-	irqenable = dispc_read_reg(DISPC_IRQENABLE);
-
-	/* IRQ is not for us */
-	if (!(irqstatus & irqenable)) {
-		spin_unlock(&dispc.irq_lock);
-		return IRQ_NONE;
-	}
-
-#ifdef CONFIG_OMAP2_DSS_COLLECT_IRQ_STATS
-	spin_lock(&dispc.irq_stats_lock);
-	dispc.irq_stats.irq_count++;
-	dss_collect_irq_stats(irqstatus, dispc.irq_stats.irqs);
-	spin_unlock(&dispc.irq_stats_lock);
-#endif
-
-#ifdef DEBUG
-	if (dss_debug)
-		print_irq_status(irqstatus);
-#endif
-	/* Ack the interrupt. Do it here before clocks are possibly turned
-	 * off */
-	dispc_write_reg(DISPC_IRQSTATUS, irqstatus);
-	/* flush posted write */
-	dispc_read_reg(DISPC_IRQSTATUS);
-
-	/* make a copy and unlock, so that isrs can unregister
-	 * themselves */
-	memcpy(registered_isr, dispc.registered_isr,
-			sizeof(registered_isr));
-
-	spin_unlock(&dispc.irq_lock);
-
-	for (i = 0; i < DISPC_MAX_NR_ISRS; i++) {
-		isr_data = &registered_isr[i];
-
-		if (!isr_data->isr)
-			continue;
-
-		if (isr_data->mask & irqstatus) {
-			isr_data->isr(isr_data->arg, irqstatus);
-			handledirqs |= isr_data->mask;
-		}
-	}
-
-	spin_lock(&dispc.irq_lock);
-
-	unhandled_errors = irqstatus & ~handledirqs & dispc.irq_error_mask;
-
-	if (unhandled_errors) {
-		dispc.error_irqs |= unhandled_errors;
-
-		dispc.irq_error_mask &= ~unhandled_errors;
-		_omap_dispc_set_irqs();
-
-		schedule_work(&dispc.error_work);
-	}
-
-	spin_unlock(&dispc.irq_lock);
-
-	return IRQ_HANDLED;
-}
-
-static void dispc_error_worker(struct work_struct *work)
-{
-	int i;
-	u32 errors;
-	unsigned long flags;
-	static const unsigned fifo_underflow_bits[] = {
-		DISPC_IRQ_GFX_FIFO_UNDERFLOW,
-		DISPC_IRQ_VID1_FIFO_UNDERFLOW,
-		DISPC_IRQ_VID2_FIFO_UNDERFLOW,
-		DISPC_IRQ_VID3_FIFO_UNDERFLOW,
-	};
-
-	static const unsigned sync_lost_bits[] = {
-		DISPC_IRQ_SYNC_LOST,
-		DISPC_IRQ_SYNC_LOST_DIGIT,
-		DISPC_IRQ_SYNC_LOST2,
-	};
-
-	spin_lock_irqsave(&dispc.irq_lock, flags);
-	errors = dispc.error_irqs;
-	dispc.error_irqs = 0;
-	spin_unlock_irqrestore(&dispc.irq_lock, flags);
-
-	dispc_runtime_get();
-
-	for (i = 0; i < omap_dss_get_num_overlays(); ++i) {
-		struct omap_overlay *ovl;
-		unsigned bit;
-
-		ovl = omap_dss_get_overlay(i);
-		bit = fifo_underflow_bits[i];
-
-		if (bit & errors) {
-			DSSERR("FIFO UNDERFLOW on %s, disabling the overlay\n",
-					ovl->name);
-			dispc_ovl_enable(ovl->id, false);
-			dispc_mgr_go(ovl->manager->id);
-			mdelay(50);
-		}
-	}
-
-	for (i = 0; i < omap_dss_get_num_overlay_managers(); ++i) {
-		struct omap_overlay_manager *mgr;
-		unsigned bit;
-
-		mgr = omap_dss_get_overlay_manager(i);
-		bit = sync_lost_bits[i];
-
-		if (bit & errors) {
-			struct omap_dss_device *dssdev = mgr->device;
-			bool enable;
-
-			DSSERR("SYNC_LOST on channel %s, restarting the output "
-					"with video overlays disabled\n",
-					mgr->name);
-
-			enable = dssdev->state == OMAP_DSS_DISPLAY_ACTIVE;
-			dssdev->driver->disable(dssdev);
-
-			for (i = 0; i < omap_dss_get_num_overlays(); ++i) {
-				struct omap_overlay *ovl;
-				ovl = omap_dss_get_overlay(i);
-
-				if (ovl->id != OMAP_DSS_GFX &&
-						ovl->manager == mgr)
-					dispc_ovl_enable(ovl->id, false);
-			}
-
-			dispc_mgr_go(mgr->id);
-			mdelay(50);
-
-			if (enable)
-				dssdev->driver->enable(dssdev);
-		}
-	}
-
-	if (errors & DISPC_IRQ_OCP_ERR) {
-		DSSERR("OCP_ERR\n");
-		for (i = 0; i < omap_dss_get_num_overlay_managers(); ++i) {
-			struct omap_overlay_manager *mgr;
-			mgr = omap_dss_get_overlay_manager(i);
-			if (mgr->device && mgr->device->driver)
-				mgr->device->driver->disable(mgr->device);
-		}
-	}
-
-	spin_lock_irqsave(&dispc.irq_lock, flags);
-	dispc.irq_error_mask |= errors;
-	_omap_dispc_set_irqs();
-	spin_unlock_irqrestore(&dispc.irq_lock, flags);
-
-	dispc_runtime_put();
-}
-
-int omap_dispc_wait_for_irq_timeout(u32 irqmask, unsigned long timeout)
-{
-	void dispc_irq_wait_handler(void *data, u32 mask)
-	{
-		complete((struct completion *)data);
-	}
-
-	int r;
-	DECLARE_COMPLETION_ONSTACK(completion);
-
-	r = omap_dispc_register_isr(dispc_irq_wait_handler, &completion,
-			irqmask);
-
-	if (r)
-		return r;
-
-	timeout = wait_for_completion_timeout(&completion, timeout);
-
-	omap_dispc_unregister_isr(dispc_irq_wait_handler, &completion, irqmask);
-
-	if (timeout == 0)
-		return -ETIMEDOUT;
-
-	if (timeout == -ERESTARTSYS)
-		return -ERESTARTSYS;
-
-	return 0;
-}
-
-int omap_dispc_wait_for_irq_interruptible_timeout(u32 irqmask,
-		unsigned long timeout)
-{
-	void dispc_irq_wait_handler(void *data, u32 mask)
-	{
-		complete((struct completion *)data);
-	}
-
-	int r;
-	DECLARE_COMPLETION_ONSTACK(completion);
-
-	r = omap_dispc_register_isr(dispc_irq_wait_handler, &completion,
-			irqmask);
-
-	if (r)
-		return r;
-
-	timeout = wait_for_completion_interruptible_timeout(&completion,
-			timeout);
-
-	omap_dispc_unregister_isr(dispc_irq_wait_handler, &completion, irqmask);
-
-	if (timeout == 0)
-		return -ETIMEDOUT;
-
-	if (timeout == -ERESTARTSYS)
-		return -ERESTARTSYS;
-
-	return 0;
-}
-
-#ifdef CONFIG_OMAP2_DSS_FAKE_VSYNC
-void dispc_fake_vsync_irq(void)
-{
-	u32 irqstatus = DISPC_IRQ_VSYNC;
-	int i;
-
-	WARN_ON(!in_interrupt());
-
-	for (i = 0; i < DISPC_MAX_NR_ISRS; i++) {
-		struct omap_dispc_isr_data *isr_data;
-		isr_data = &dispc.registered_isr[i];
-
-		if (!isr_data->isr)
-			continue;
-
-		if (isr_data->mask & irqstatus)
-			isr_data->isr(isr_data->arg, irqstatus);
-	}
-}
-#endif
-
-static void _omap_dispc_initialize_irq(void)
-{
-	unsigned long flags;
-
-	spin_lock_irqsave(&dispc.irq_lock, flags);
-
-	memset(dispc.registered_isr, 0, sizeof(dispc.registered_isr));
-
-	dispc.irq_error_mask = DISPC_IRQ_MASK_ERROR;
-	if (dss_has_feature(FEAT_MGR_LCD2))
-		dispc.irq_error_mask |= DISPC_IRQ_SYNC_LOST2;
-	if (dss_feat_get_num_ovls() > 3)
-		dispc.irq_error_mask |= DISPC_IRQ_VID3_FIFO_UNDERFLOW;
-
-	/* there's SYNC_LOST_DIGIT waiting after enabling the DSS,
-	 * so clear it */
-	dispc_write_reg(DISPC_IRQSTATUS, dispc_read_reg(DISPC_IRQSTATUS));
-
-	_omap_dispc_set_irqs();
-
-	spin_unlock_irqrestore(&dispc.irq_lock, flags);
-}
+EXPORT_SYMBOL(dispc_write_irqenable);
 
 void dispc_enable_sidle(void)
 {
@@ -3312,41 +3482,194 @@ static void _omap_dispc_initial_config(void)
 		l = FLD_MOD(l, 1, 0, 0);
 		l = FLD_MOD(l, 1, 23, 16);
 		dispc_write_reg(DISPC_DIVISOR, l);
+
+		dispc.core_clk_rate = dispc_fclk_rate();
 	}
 
 	/* FUNCGATED */
 	if (dss_has_feature(FEAT_FUNCGATED))
 		REG_FLD_MOD(DISPC_CONFIG, 1, 9, 9);
 
-	_dispc_setup_color_conv_coef();
+	dispc_setup_color_conv_coef();
 
 	dispc_set_loadmode(OMAP_DSS_LOAD_FRAME_ONLY);
 
-	dispc_read_plane_fifo_sizes();
+	dispc_init_fifos();
 
 	dispc_configure_burst_sizes();
 
 	dispc_ovl_enable_zorder_planes();
+
+	if (dispc.feat->mstandby_workaround)
+		REG_FLD_MOD(DISPC_MSTANDBY_CTRL, 1, 0, 0);
 }
 
+static const struct dispc_features omap24xx_dispc_feats __initconst = {
+	.sw_start		=	5,
+	.fp_start		=	15,
+	.bp_start		=	27,
+	.sw_max			=	64,
+	.vp_max			=	255,
+	.hp_max			=	256,
+	.mgr_width_start	=	10,
+	.mgr_height_start	=	26,
+	.mgr_width_max		=	2048,
+	.mgr_height_max		=	2048,
+	.max_lcd_pclk		=	66500000,
+	.calc_scaling		=	dispc_ovl_calc_scaling_24xx,
+	.calc_core_clk		=	calc_core_clk_24xx,
+	.num_fifos		=	3,
+	.no_framedone_tv	=	true,
+};
+
+static const struct dispc_features omap34xx_rev1_0_dispc_feats __initconst = {
+	.sw_start		=	5,
+	.fp_start		=	15,
+	.bp_start		=	27,
+	.sw_max			=	64,
+	.vp_max			=	255,
+	.hp_max			=	256,
+	.mgr_width_start	=	10,
+	.mgr_height_start	=	26,
+	.mgr_width_max		=	2048,
+	.mgr_height_max		=	2048,
+	.max_lcd_pclk		=	173000000,
+	.max_tv_pclk		=	59000000,
+	.calc_scaling		=	dispc_ovl_calc_scaling_34xx,
+	.calc_core_clk		=	calc_core_clk_34xx,
+	.num_fifos		=	3,
+	.no_framedone_tv	=	true,
+};
+
+static const struct dispc_features omap34xx_rev3_0_dispc_feats __initconst = {
+	.sw_start		=	7,
+	.fp_start		=	19,
+	.bp_start		=	31,
+	.sw_max			=	256,
+	.vp_max			=	4095,
+	.hp_max			=	4096,
+	.mgr_width_start	=	10,
+	.mgr_height_start	=	26,
+	.mgr_width_max		=	2048,
+	.mgr_height_max		=	2048,
+	.max_lcd_pclk		=	173000000,
+	.max_tv_pclk		=	59000000,
+	.calc_scaling		=	dispc_ovl_calc_scaling_34xx,
+	.calc_core_clk		=	calc_core_clk_34xx,
+	.num_fifos		=	3,
+	.no_framedone_tv	=	true,
+};
+
+static const struct dispc_features omap44xx_dispc_feats __initconst = {
+	.sw_start		=	7,
+	.fp_start		=	19,
+	.bp_start		=	31,
+	.sw_max			=	256,
+	.vp_max			=	4095,
+	.hp_max			=	4096,
+	.mgr_width_start	=	10,
+	.mgr_height_start	=	26,
+	.mgr_width_max		=	2048,
+	.mgr_height_max		=	2048,
+	.max_lcd_pclk		=	170000000,
+	.max_tv_pclk		=	185625000,
+	.calc_scaling		=	dispc_ovl_calc_scaling_44xx,
+	.calc_core_clk		=	calc_core_clk_44xx,
+	.num_fifos		=	5,
+	.gfx_fifo_workaround	=	true,
+};
+
+static const struct dispc_features omap54xx_dispc_feats __initconst = {
+	.sw_start		=	7,
+	.fp_start		=	19,
+	.bp_start		=	31,
+	.sw_max			=	256,
+	.vp_max			=	4095,
+	.hp_max			=	4096,
+	.mgr_width_start	=	11,
+	.mgr_height_start	=	27,
+	.mgr_width_max		=	4096,
+	.mgr_height_max		=	4096,
+	.max_lcd_pclk		=	170000000,
+	.max_tv_pclk		=	186000000,
+	.calc_scaling		=	dispc_ovl_calc_scaling_44xx,
+	.calc_core_clk		=	calc_core_clk_44xx,
+	.num_fifos		=	5,
+	.gfx_fifo_workaround	=	true,
+	.mstandby_workaround	=	true,
+};
+
+static int __init dispc_init_features(struct platform_device *pdev)
+{
+	const struct dispc_features *src;
+	struct dispc_features *dst;
+
+	dst = devm_kzalloc(&pdev->dev, sizeof(*dst), GFP_KERNEL);
+	if (!dst) {
+		dev_err(&pdev->dev, "Failed to allocate DISPC Features\n");
+		return -ENOMEM;
+	}
+
+	switch (omapdss_get_version()) {
+	case OMAPDSS_VER_OMAP24xx:
+		src = &omap24xx_dispc_feats;
+		break;
+
+	case OMAPDSS_VER_OMAP34xx_ES1:
+		src = &omap34xx_rev1_0_dispc_feats;
+		break;
+
+	case OMAPDSS_VER_OMAP34xx_ES3:
+	case OMAPDSS_VER_OMAP3630:
+	case OMAPDSS_VER_AM35xx:
+		src = &omap34xx_rev3_0_dispc_feats;
+		break;
+
+	case OMAPDSS_VER_OMAP4430_ES1:
+	case OMAPDSS_VER_OMAP4430_ES2:
+	case OMAPDSS_VER_OMAP4:
+		src = &omap44xx_dispc_feats;
+		break;
+
+	case OMAPDSS_VER_OMAP5:
+		src = &omap54xx_dispc_feats;
+		break;
+
+	default:
+		return -ENODEV;
+	}
+
+	memcpy(dst, src, sizeof(*dst));
+	dispc.feat = dst;
+
+	return 0;
+}
+
+int dispc_request_irq(irq_handler_t handler, void *dev_id)
+{
+	return devm_request_irq(&dispc.pdev->dev, dispc.irq, handler,
+			     IRQF_SHARED, "OMAP DISPC", dev_id);
+}
+EXPORT_SYMBOL(dispc_request_irq);
+
+void dispc_free_irq(void *dev_id)
+{
+	devm_free_irq(&dispc.pdev->dev, dispc.irq, dev_id);
+}
+EXPORT_SYMBOL(dispc_free_irq);
+
 /* DISPC HW IP initialisation */
-static int omap_dispchw_probe(struct platform_device *pdev)
+static int __init omap_dispchw_probe(struct platform_device *pdev)
 {
 	u32 rev;
 	int r = 0;
 	struct resource *dispc_mem;
-	struct clk *clk;
 
 	dispc.pdev = pdev;
 
-	spin_lock_init(&dispc.irq_lock);
-
-#ifdef CONFIG_OMAP2_DSS_COLLECT_IRQ_STATS
-	spin_lock_init(&dispc.irq_stats_lock);
-	dispc.irq_stats.last_reset = jiffies;
-#endif
-
-	INIT_WORK(&dispc.error_work, dispc_error_worker);
+	r = dispc_init_features(dispc.pdev);
+	if (r)
+		return r;
 
 	dispc_mem = platform_get_resource(dispc.pdev, IORESOURCE_MEM, 0);
 	if (!dispc_mem) {
@@ -3367,22 +3690,6 @@ static int omap_dispchw_probe(struct platform_device *pdev)
 		return -ENODEV;
 	}
 
-	r = devm_request_irq(&pdev->dev, dispc.irq, omap_dispc_irq_handler,
-			     IRQF_SHARED, "OMAP DISPC", dispc.pdev);
-	if (r < 0) {
-		DSSERR("request_irq failed\n");
-		return r;
-	}
-
-	clk = clk_get(&pdev->dev, "fck");
-	if (IS_ERR(clk)) {
-		DSSERR("can't get fck\n");
-		r = PTR_ERR(clk);
-		return r;
-	}
-
-	dispc.dss_clk = clk;
-
 	pm_runtime_enable(&pdev->dev);
 
 	r = dispc_runtime_get();
@@ -3391,27 +3698,28 @@ static int omap_dispchw_probe(struct platform_device *pdev)
 
 	_omap_dispc_initial_config();
 
-	_omap_dispc_initialize_irq();
-
 	rev = dispc_read_reg(DISPC_REVISION);
 	dev_dbg(&pdev->dev, "OMAP DISPC rev %d.%d\n",
 	       FLD_GET(rev, 7, 4), FLD_GET(rev, 3, 0));
 
 	dispc_runtime_put();
 
+	dss_init_overlay_managers();
+
+	dss_debugfs_create_file("dispc", dispc_dump_regs);
+
 	return 0;
 
 err_runtime_get:
 	pm_runtime_disable(&pdev->dev);
-	clk_put(dispc.dss_clk);
 	return r;
 }
 
-static int omap_dispchw_remove(struct platform_device *pdev)
+static int __exit omap_dispchw_remove(struct platform_device *pdev)
 {
 	pm_runtime_disable(&pdev->dev);
 
-	clk_put(dispc.dss_clk);
+	dss_uninit_overlay_managers();
 
 	return 0;
 }
@@ -3419,19 +3727,12 @@ static int omap_dispchw_remove(struct platform_device *pdev)
 static int dispc_runtime_suspend(struct device *dev)
 {
 	dispc_save_context();
-	dss_runtime_put();
 
 	return 0;
 }
 
 static int dispc_runtime_resume(struct device *dev)
 {
-	int r;
-
-	r = dss_runtime_get();
-	if (r < 0)
-		return r;
-
 	dispc_restore_context();
 
 	return 0;
@@ -3443,8 +3744,7 @@ static const struct dev_pm_ops dispc_pm_ops = {
 };
 
 static struct platform_driver omap_dispchw_driver = {
-	.probe          = omap_dispchw_probe,
-	.remove         = omap_dispchw_remove,
+	.remove         = __exit_p(omap_dispchw_remove),
 	.driver         = {
 		.name   = "omapdss_dispc",
 		.owner  = THIS_MODULE,
@@ -3452,12 +3752,12 @@ static struct platform_driver omap_dispchw_driver = {
 	},
 };
 
-int dispc_init_platform_driver(void)
+int __init dispc_init_platform_driver(void)
 {
-	return platform_driver_register(&omap_dispchw_driver);
+	return platform_driver_probe(&omap_dispchw_driver, omap_dispchw_probe);
 }
 
-void dispc_uninit_platform_driver(void)
+void __exit dispc_uninit_platform_driver(void)
 {
-	return platform_driver_unregister(&omap_dispchw_driver);
+	platform_driver_unregister(&omap_dispchw_driver);
 }

@@ -9,7 +9,7 @@
 #include <linux/kernel.h>
 #include <linux/suspend.h>
 #include <linux/slab.h>
-#include <linux/module.h>
+#include <linux/export.h>
 #include <linux/of.h>
 #include <linux/of_address.h>
 #include <linux/of_device.h>
@@ -85,12 +85,11 @@ static const struct platform_suspend_ops sirfsoc_pm_ops = {
 	.valid = suspend_valid_only_mem,
 };
 
-static int __init sirfsoc_pm_init(void)
+int __init sirfsoc_pm_init(void)
 {
 	suspend_set_ops(&sirfsoc_pm_ops);
 	return 0;
 }
-late_initcall(sirfsoc_pm_init);
 
 static const struct of_device_id pwrc_ids[] = {
 	{ .compatible = "sirf,prima2-pwrc" },
@@ -102,8 +101,10 @@ static int __init sirfsoc_of_pwrc_init(void)
 	struct device_node *np;
 
 	np = of_find_matching_node(NULL, pwrc_ids);
-	if (!np)
-		panic("unable to find compatible pwrc node in dtb\n");
+	if (!np) {
+		pr_err("unable to find compatible sirf pwrc node in dtb\n");
+		return -ENOENT;
+	}
 
 	/*
 	 * pwrc behind rtciobrg is not located in memory space
@@ -124,7 +125,7 @@ static const struct of_device_id memc_ids[] = {
 	{}
 };
 
-static int __devinit sirfsoc_memc_probe(struct platform_device *op)
+static int sirfsoc_memc_probe(struct platform_device *op)
 {
 	struct device_node *np = op->dev.of_node;
 

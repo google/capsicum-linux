@@ -189,7 +189,7 @@ int nilfs_transaction_begin(struct super_block *sb,
 	if (ret > 0)
 		return 0;
 
-	vfs_check_frozen(sb, SB_FREEZE_WRITE);
+	sb_start_intwrite(sb);
 
 	nilfs = sb->s_fs_info;
 	down_read(&nilfs->ns_segctor_sem);
@@ -205,6 +205,7 @@ int nilfs_transaction_begin(struct super_block *sb,
 	current->journal_info = ti->ti_save;
 	if (ti->ti_flags & NILFS_TI_DYNAMIC_ALLOC)
 		kmem_cache_free(nilfs_transaction_cachep, ti);
+	sb_end_intwrite(sb);
 	return ret;
 }
 
@@ -246,6 +247,7 @@ int nilfs_transaction_commit(struct super_block *sb)
 		err = nilfs_construct_segment(sb);
 	if (ti->ti_flags & NILFS_TI_DYNAMIC_ALLOC)
 		kmem_cache_free(nilfs_transaction_cachep, ti);
+	sb_end_intwrite(sb);
 	return err;
 }
 
@@ -264,6 +266,7 @@ void nilfs_transaction_abort(struct super_block *sb)
 	current->journal_info = ti->ti_save;
 	if (ti->ti_flags & NILFS_TI_DYNAMIC_ALLOC)
 		kmem_cache_free(nilfs_transaction_cachep, ti);
+	sb_end_intwrite(sb);
 }
 
 void nilfs_relax_pressure_in_lock(struct super_block *sb)
@@ -832,9 +835,9 @@ static int nilfs_segctor_fill_in_checkpoint(struct nilfs_sc_info *sci)
 	raw_cp->cp_snapshot_list.ssl_next = 0;
 	raw_cp->cp_snapshot_list.ssl_prev = 0;
 	raw_cp->cp_inodes_count =
-		cpu_to_le64(atomic_read(&sci->sc_root->inodes_count));
+		cpu_to_le64(atomic64_read(&sci->sc_root->inodes_count));
 	raw_cp->cp_blocks_count =
-		cpu_to_le64(atomic_read(&sci->sc_root->blocks_count));
+		cpu_to_le64(atomic64_read(&sci->sc_root->blocks_count));
 	raw_cp->cp_nblk_inc =
 		cpu_to_le64(sci->sc_nblk_inc + sci->sc_nblk_this_inc);
 	raw_cp->cp_create = cpu_to_le64(sci->sc_seg_ctime);
@@ -2309,6 +2312,8 @@ nilfs_remove_written_gcinodes(struct the_nilfs *nilfs, struct list_head *head)
 		if (!test_bit(NILFS_I_UPDATED, &ii->i_state))
 			continue;
 		list_del_init(&ii->i_dirty);
+		truncate_inode_pages(&ii->vfs_inode.i_data, 0);
+		nilfs_btnode_cache_clear(&ii->i_btnode_cache);
 		iput(&ii->vfs_inode);
 	}
 }

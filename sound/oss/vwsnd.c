@@ -149,17 +149,19 @@
 #include <linux/interrupt.h>
 #include <linux/mutex.h>
 #include <linux/slab.h>
+#include <linux/delay.h>
 
 #include <asm/visws/cobalt.h>
 
 #include "sound_config.h"
+
+static DEFINE_MUTEX(vwsnd_mutex);
 
 /*****************************************************************************/
 /* debug stuff */
 
 #ifdef VWSND_DEBUG
 
-static DEFINE_MUTEX(vwsnd_mutex);
 static int shut_up = 1;
 
 /*
@@ -438,7 +440,7 @@ static __inline__ void li_writeb(lithium_t *lith, int off, unsigned char val)
  *
  * Observe that (mask & -mask) is (1 << low_set_bit_of(mask)).
  * As long as mask is constant, we trust the compiler will change the
- * multipy and divide into shifts.
+ * multiply and divide into shifts.
  */
 
 #define SHIFT_FIELD(val, mask) (((val) * ((mask) & -(mask))) & (mask))

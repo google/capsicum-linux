@@ -82,6 +82,10 @@ struct compressed_bio {
 	u32 sums;
 };
 
+static int btrfs_decompress_biovec(int type, struct page **pages_in,
+				   u64 disk_start, struct bio_vec *bvec,
+				   int vcnt, size_t srclen);
+
 static inline int compressed_bio_size(struct btrfs_root *root,
 				      unsigned long disk_size)
 {
@@ -106,7 +110,6 @@ static int check_compressed_csum(struct inode *inode,
 				 u64 disk_start)
 {
 	int ret;
-	struct btrfs_root *root = BTRFS_I(inode)->root;
 	struct page *page;
 	unsigned long i;
 	char *kaddr;
@@ -121,7 +124,7 @@ static int check_compressed_csum(struct inode *inode,
 		csum = ~(u32)0;
 
 		kaddr = kmap_atomic(page);
-		csum = btrfs_csum_data(root, kaddr, csum, PAGE_CACHE_SIZE);
+		csum = btrfs_csum_data(kaddr, csum, PAGE_CACHE_SIZE);
 		btrfs_csum_final(csum, (char *)&csum);
 		kunmap_atomic(kaddr);
 
@@ -372,7 +375,7 @@ int btrfs_submit_compressed_write(struct inode *inode, u64 start,
 		page = compressed_pages[pg_index];
 		page->mapping = inode->i_mapping;
 		if (bio->bi_size)
-			ret = io_tree->ops->merge_bio_hook(page, 0,
+			ret = io_tree->ops->merge_bio_hook(WRITE, page, 0,
 							   PAGE_CACHE_SIZE,
 							   bio, 0);
 		else
@@ -577,6 +580,7 @@ int btrfs_submit_compressed_read(struct inode *inode, struct bio *bio,
 	u64 em_start;
 	struct extent_map *em;
 	int ret = -ENOMEM;
+	int faili = 0;
 	u32 *sums;
 
 	tree = &BTRFS_I(inode)->io_tree;
@@ -626,9 +630,13 @@ int btrfs_submit_compressed_read(struct inode *inode, struct bio *bio,
 	for (pg_index = 0; pg_index < nr_pages; pg_index++) {
 		cb->compressed_pages[pg_index] = alloc_page(GFP_NOFS |
 							      __GFP_HIGHMEM);
-		if (!cb->compressed_pages[pg_index])
+		if (!cb->compressed_pages[pg_index]) {
+			faili = pg_index - 1;
+			ret = -ENOMEM;
 			goto fail2;
+		}
 	}
+	faili = nr_pages - 1;
 	cb->nr_pages = nr_pages;
 
 	add_ra_bio_pages(inode, em_start + em_len, cb);
@@ -650,7 +658,7 @@ int btrfs_submit_compressed_read(struct inode *inode, struct bio *bio,
 		page->index = em_start >> PAGE_CACHE_SHIFT;
 
 		if (comp_bio->bi_size)
-			ret = tree->ops->merge_bio_hook(page, 0,
+			ret = tree->ops->merge_bio_hook(READ, page, 0,
 							PAGE_CACHE_SIZE,
 							comp_bio, 0);
 		else
@@ -682,7 +690,8 @@ int btrfs_submit_compressed_read(struct inode *inode, struct bio *bio,
 
 			ret = btrfs_map_bio(root, READ, comp_bio,
 					    mirror_num, 0);
-			BUG_ON(ret); /* -ENOMEM */
+			if (ret)
+				bio_endio(comp_bio, ret);
 
 			bio_put(comp_bio);
 
@@ -707,14 +716,17 @@ int btrfs_submit_compressed_read(struct inode *inode, struct bio *bio,
 	}
 
 	ret = btrfs_map_bio(root, READ, comp_bio, mirror_num, 0);
-	BUG_ON(ret); /* -ENOMEM */
+	if (ret)
+		bio_endio(comp_bio, ret);
 
 	bio_put(comp_bio);
 	return 0;
 
 fail2:
-	for (pg_index = 0; pg_index < nr_pages; pg_index++)
-		free_page((unsigned long)cb->compressed_pages[pg_index]);
+	while (faili >= 0) {
+		__free_page(cb->compressed_pages[faili]);
+		faili--;
+	}
 
 	kfree(cb->compressed_pages);
 fail1:
@@ -730,7 +742,7 @@ static int comp_num_workspace[BTRFS_COMPRESS_TYPES];
 static atomic_t comp_alloc_workspace[BTRFS_COMPRESS_TYPES];
 static wait_queue_head_t comp_workspace_wait[BTRFS_COMPRESS_TYPES];
 
-struct btrfs_compress_op *btrfs_compress_op[] = {
+static struct btrfs_compress_op *btrfs_compress_op[] = {
 	&btrfs_zlib_compress,
 	&btrfs_lzo_compress,
 };
@@ -818,6 +830,7 @@ static void free_workspace(int type, struct list_head *workspace)
 	btrfs_compress_op[idx]->free_workspace(workspace);
 	atomic_dec(alloc_workspace);
 wake:
+	smp_mb();
 	if (waitqueue_active(workspace_wait))
 		wake_up(workspace_wait);
 }
@@ -900,8 +913,9 @@ int btrfs_compress_pages(int type, struct address_space *mapping,
  * be contiguous.  They all correspond to the range of bytes covered by
  * the compressed extent.
  */
-int btrfs_decompress_biovec(int type, struct page **pages_in, u64 disk_start,
-			    struct bio_vec *bvec, int vcnt, size_t srclen)
+static int btrfs_decompress_biovec(int type, struct page **pages_in,
+				   u64 disk_start, struct bio_vec *bvec,
+				   int vcnt, size_t srclen)
 {
 	struct list_head *workspace;
 	int ret;

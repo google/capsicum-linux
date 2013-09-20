@@ -28,6 +28,7 @@
 #include <mach/at91_pmc.h>
 #include <mach/cpu.h>
 
+#include "at91_aic.h"
 #include "generic.h"
 #include "pm.h"
 
@@ -35,8 +36,8 @@
  * Show the reason for the previous system reset.
  */
 
-#include <mach/at91_rstc.h>
-#include <mach/at91_shdwc.h>
+#include "at91_rstc.h"
+#include "at91_shdwc.h"
 
 static void __init show_reset_status(void)
 {
@@ -152,7 +153,9 @@ static int at91_pm_verify_clocks(void)
 		}
 	}
 
-#ifdef CONFIG_AT91_PROGRAMMABLE_CLOCKS
+	if (!IS_ENABLED(CONFIG_AT91_PROGRAMMABLE_CLOCKS))
+		return 1;
+
 	/* PCK0..PCK3 must be disabled, or configured to use clk32k */
 	for (i = 0; i < 4; i++) {
 		u32 css;
@@ -166,7 +169,6 @@ static int at91_pm_verify_clocks(void)
 			return 0;
 		}
 	}
-#endif
 
 	return 1;
 }
@@ -199,7 +201,10 @@ extern u32 at91_slow_clock_sz;
 
 static int at91_pm_enter(suspend_state_t state)
 {
-	at91_gpio_suspend();
+	if (of_have_populated_dt())
+		at91_pinctrl_gpio_suspend();
+	else
+		at91_gpio_suspend();
 	at91_irq_suspend();
 
 	pr_debug("AT91: PM - wake mask %08x, pm state %d\n",
@@ -207,7 +212,7 @@ static int at91_pm_enter(suspend_state_t state)
 			(at91_pmc_read(AT91_PMC_PCSR)
 					| (1 << AT91_ID_FIQ)
 					| (1 << AT91_ID_SYS)
-					| (at91_extern_irq))
+					| (at91_get_extern_irq()))
 				& at91_aic_read(AT91_AIC_IMR),
 			state);
 
@@ -261,7 +266,14 @@ static int at91_pm_enter(suspend_state_t state)
 			 * For ARM 926 based chips, this requirement is weaker
 			 * as at91sam9 can access a RAM in self-refresh mode.
 			 */
-			at91_standby();
+			if (cpu_is_at91rm9200())
+				at91rm9200_standby();
+			else if (cpu_is_at91sam9g45())
+				at91sam9g45_standby();
+			else if (cpu_is_at91sam9263())
+				at91sam9263_standby();
+			else
+				at91sam9_standby();
 			break;
 
 		case PM_SUSPEND_ON:
@@ -279,7 +291,10 @@ static int at91_pm_enter(suspend_state_t state)
 error:
 	target_state = PM_SUSPEND_ON;
 	at91_irq_resume();
-	at91_gpio_resume();
+	if (of_have_populated_dt())
+		at91_pinctrl_gpio_resume();
+	else
+		at91_gpio_resume();
 	return 0;
 }
 
@@ -307,10 +322,9 @@ static int __init at91_pm_init(void)
 
 	pr_info("AT91: Power Management%s\n", (slow_clock ? " (with slow clock mode)" : ""));
 
-#ifdef CONFIG_ARCH_AT91RM9200
 	/* AT91RM9200 SDRAM low-power mode cannot be used with self-refresh. */
-	at91_ramc_write(0, AT91RM9200_SDRAMC_LPR, 0);
-#endif
+	if (cpu_is_at91rm9200())
+		at91_ramc_write(0, AT91RM9200_SDRAMC_LPR, 0);
 
 	suspend_set_ops(&at91_pm_ops);
 

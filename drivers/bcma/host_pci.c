@@ -18,7 +18,7 @@ static void bcma_host_pci_switch_core(struct bcma_device *core)
 	pci_write_config_dword(core->bus->host_pci, BCMA_PCI_BAR0_WIN2,
 			       core->wrap);
 	core->bus->mapped_core = core;
-	pr_debug("Switched to core: 0x%X\n", core->id.id);
+	bcma_debug(core->bus, "Switched to core: 0x%X\n", core->id.id);
 }
 
 /* Provides access to the requested core. Returns base offset that has to be
@@ -77,8 +77,8 @@ static void bcma_host_pci_write32(struct bcma_device *core, u16 offset,
 }
 
 #ifdef CONFIG_BCMA_BLOCKIO
-void bcma_host_pci_block_read(struct bcma_device *core, void *buffer,
-			      size_t count, u16 offset, u8 reg_width)
+static void bcma_host_pci_block_read(struct bcma_device *core, void *buffer,
+				     size_t count, u16 offset, u8 reg_width)
 {
 	void __iomem *addr = core->bus->mmio + offset;
 	if (core->bus->mapped_core != core)
@@ -100,8 +100,9 @@ void bcma_host_pci_block_read(struct bcma_device *core, void *buffer,
 	}
 }
 
-void bcma_host_pci_block_write(struct bcma_device *core, const void *buffer,
-			       size_t count, u16 offset, u8 reg_width)
+static void bcma_host_pci_block_write(struct bcma_device *core,
+				      const void *buffer, size_t count,
+				      u16 offset, u8 reg_width)
 {
 	void __iomem *addr = core->bus->mmio + offset;
 	if (core->bus->mapped_core != core)
@@ -139,7 +140,7 @@ static void bcma_host_pci_awrite32(struct bcma_device *core, u16 offset,
 	iowrite32(value, core->bus->mmio + (1 * BCMA_CORE_SIZE) + offset);
 }
 
-const struct bcma_host_ops bcma_host_pci_ops = {
+static const struct bcma_host_ops bcma_host_pci_ops = {
 	.read8		= bcma_host_pci_read8,
 	.read16		= bcma_host_pci_read16,
 	.read32		= bcma_host_pci_read32,
@@ -154,8 +155,8 @@ const struct bcma_host_ops bcma_host_pci_ops = {
 	.awrite32	= bcma_host_pci_awrite32,
 };
 
-static int __devinit bcma_host_pci_probe(struct pci_dev *dev,
-					 const struct pci_device_id *id)
+static int bcma_host_pci_probe(struct pci_dev *dev,
+			       const struct pci_device_id *id)
 {
 	struct bcma_bus *bus;
 	int err = -ENOMEM;
@@ -188,7 +189,7 @@ static int __devinit bcma_host_pci_probe(struct pci_dev *dev,
 
 	/* SSB needed additional powering up, do we have any AMBA PCI cards? */
 	if (!pci_is_pcie(dev))
-		pr_err("PCI card detected, report problems.\n");
+		bcma_err(bus, "PCI card detected, report problems.\n");
 
 	/* Map MMIO */
 	err = -ENOMEM;
@@ -200,6 +201,9 @@ static int __devinit bcma_host_pci_probe(struct pci_dev *dev,
 	bus->host_pci = dev;
 	bus->hosttype = BCMA_HOSTTYPE_PCI;
 	bus->ops = &bcma_host_pci_ops;
+
+	bus->boardinfo.vendor = bus->host_pci->subsystem_vendor;
+	bus->boardinfo.type = bus->host_pci->subsystem_device;
 
 	/* Register */
 	err = bcma_bus_register(bus);
@@ -234,7 +238,7 @@ static void bcma_host_pci_remove(struct pci_dev *dev)
 	pci_set_drvdata(dev, NULL);
 }
 
-#ifdef CONFIG_PM
+#ifdef CONFIG_PM_SLEEP
 static int bcma_host_pci_suspend(struct device *dev)
 {
 	struct pci_dev *pdev = to_pci_dev(dev);
@@ -257,17 +261,21 @@ static SIMPLE_DEV_PM_OPS(bcma_pm_ops, bcma_host_pci_suspend,
 			 bcma_host_pci_resume);
 #define BCMA_PM_OPS	(&bcma_pm_ops)
 
-#else /* CONFIG_PM */
+#else /* CONFIG_PM_SLEEP */
 
 #define BCMA_PM_OPS     NULL
 
-#endif /* CONFIG_PM */
+#endif /* CONFIG_PM_SLEEP */
 
 static DEFINE_PCI_DEVICE_TABLE(bcma_pci_bridge_tbl) = {
 	{ PCI_DEVICE(PCI_VENDOR_ID_BROADCOM, 0x0576) },
+	{ PCI_DEVICE(PCI_VENDOR_ID_BROADCOM, 43224) },
 	{ PCI_DEVICE(PCI_VENDOR_ID_BROADCOM, 0x4331) },
 	{ PCI_DEVICE(PCI_VENDOR_ID_BROADCOM, 0x4353) },
 	{ PCI_DEVICE(PCI_VENDOR_ID_BROADCOM, 0x4357) },
+	{ PCI_DEVICE(PCI_VENDOR_ID_BROADCOM, 0x4358) },
+	{ PCI_DEVICE(PCI_VENDOR_ID_BROADCOM, 0x4359) },
+	{ PCI_DEVICE(PCI_VENDOR_ID_BROADCOM, 0x4365) },
 	{ PCI_DEVICE(PCI_VENDOR_ID_BROADCOM, 0x4727) },
 	{ 0, },
 };

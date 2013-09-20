@@ -39,8 +39,8 @@ static int index_check(struct dm_block_validator *v,
 	__le32 csum_disk;
 
 	if (dm_block_location(b) != le64_to_cpu(mi_le->blocknr)) {
-		DMERR("index_check failed blocknr %llu wanted %llu",
-		      le64_to_cpu(mi_le->blocknr), dm_block_location(b));
+		DMERR_LIMIT("index_check failed: blocknr %llu != wanted %llu",
+			    le64_to_cpu(mi_le->blocknr), dm_block_location(b));
 		return -ENOTBLK;
 	}
 
@@ -48,8 +48,8 @@ static int index_check(struct dm_block_validator *v,
 					       block_size - sizeof(__le32),
 					       INDEX_CSUM_XOR));
 	if (csum_disk != mi_le->csum) {
-		DMERR("index_check failed csum %u wanted %u",
-		      le32_to_cpu(csum_disk), le32_to_cpu(mi_le->csum));
+		DMERR_LIMIT("index_check failed: csum %u != wanted %u",
+			    le32_to_cpu(csum_disk), le32_to_cpu(mi_le->csum));
 		return -EILSEQ;
 	}
 
@@ -89,8 +89,8 @@ static int bitmap_check(struct dm_block_validator *v,
 	__le32 csum_disk;
 
 	if (dm_block_location(b) != le64_to_cpu(disk_header->blocknr)) {
-		DMERR("bitmap check failed blocknr %llu wanted %llu",
-		      le64_to_cpu(disk_header->blocknr), dm_block_location(b));
+		DMERR_LIMIT("bitmap check failed: blocknr %llu != wanted %llu",
+			    le64_to_cpu(disk_header->blocknr), dm_block_location(b));
 		return -ENOTBLK;
 	}
 
@@ -98,8 +98,8 @@ static int bitmap_check(struct dm_block_validator *v,
 					       block_size - sizeof(__le32),
 					       BITMAP_CSUM_XOR));
 	if (csum_disk != disk_header->csum) {
-		DMERR("bitmap check failed csum %u wanted %u",
-		      le32_to_cpu(csum_disk), le32_to_cpu(disk_header->csum));
+		DMERR_LIMIT("bitmap check failed: csum %u != wanted %u",
+			    le32_to_cpu(csum_disk), le32_to_cpu(disk_header->csum));
 		return -EILSEQ;
 	}
 
@@ -224,6 +224,7 @@ static int sm_ll_init(struct ll_disk *ll, struct dm_transaction_manager *tm)
 	ll->nr_blocks = 0;
 	ll->bitmap_root = 0;
 	ll->ref_count_root = 0;
+	ll->bitmap_index_changed = false;
 
 	return 0;
 }
@@ -433,14 +434,14 @@ int sm_ll_insert(struct ll_disk *ll, dm_block_t b,
 	if (ref_count && !old) {
 		*ev = SM_ALLOC;
 		ll->nr_allocated++;
-		ie_disk.nr_free = cpu_to_le32(le32_to_cpu(ie_disk.nr_free) - 1);
+		le32_add_cpu(&ie_disk.nr_free, -1);
 		if (le32_to_cpu(ie_disk.none_free_before) == bit)
 			ie_disk.none_free_before = cpu_to_le32(bit + 1);
 
 	} else if (old && !ref_count) {
 		*ev = SM_FREE;
 		ll->nr_allocated--;
-		ie_disk.nr_free = cpu_to_le32(le32_to_cpu(ie_disk.nr_free) + 1);
+		le32_add_cpu(&ie_disk.nr_free, 1);
 		ie_disk.none_free_before = cpu_to_le32(min(le32_to_cpu(ie_disk.none_free_before), bit));
 	}
 
@@ -476,7 +477,15 @@ int sm_ll_dec(struct ll_disk *ll, dm_block_t b, enum allocation_event *ev)
 
 int sm_ll_commit(struct ll_disk *ll)
 {
-	return ll->commit(ll);
+	int r = 0;
+
+	if (ll->bitmap_index_changed) {
+		r = ll->commit(ll);
+		if (!r)
+			ll->bitmap_index_changed = false;
+	}
+
+	return r;
 }
 
 /*----------------------------------------------------------------*/
@@ -491,6 +500,7 @@ static int metadata_ll_load_ie(struct ll_disk *ll, dm_block_t index,
 static int metadata_ll_save_ie(struct ll_disk *ll, dm_block_t index,
 			       struct disk_index_entry *ie)
 {
+	ll->bitmap_index_changed = true;
 	memcpy(ll->mi_le.index + index, ie, sizeof(*ie));
 	return 0;
 }

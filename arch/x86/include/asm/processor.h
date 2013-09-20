@@ -61,6 +61,19 @@ static inline void *current_text_addr(void)
 # define ARCH_MIN_MMSTRUCT_ALIGN	0
 #endif
 
+enum tlb_infos {
+	ENTRIES,
+	NR_INFO
+};
+
+extern u16 __read_mostly tlb_lli_4k[NR_INFO];
+extern u16 __read_mostly tlb_lli_2m[NR_INFO];
+extern u16 __read_mostly tlb_lli_4m[NR_INFO];
+extern u16 __read_mostly tlb_lld_4k[NR_INFO];
+extern u16 __read_mostly tlb_lld_2m[NR_INFO];
+extern u16 __read_mostly tlb_lld_4m[NR_INFO];
+extern s8  __read_mostly tlb_flushall_shift;
+
 /*
  *  CPU type and hardware bug flags. Kept separately for each CPU.
  *  Members of this structure are referenced in head.S, so think twice
@@ -76,13 +89,9 @@ struct cpuinfo_x86 {
 	char			wp_works_ok;	/* It doesn't on 386's */
 
 	/* Problems on some 486Dx4's and old 386's: */
-	char			hlt_works_ok;
-	char			hard_math;
 	char			rfu;
-	char			fdiv_bug;
-	char			f00f_bug;
-	char			coma_bug;
 	char			pad0;
+	char			pad1;
 #else
 	/* Number of 4K pages in DTLB/ITLB combined(in pages): */
 	int			x86_tlbsize;
@@ -95,7 +104,7 @@ struct cpuinfo_x86 {
 	__u32			extended_cpuid_level;
 	/* Maximum supported CPUID level, -1=no CPUID: */
 	int			cpuid_level;
-	__u32			x86_capability[NCAPINTS];
+	__u32			x86_capability[NCAPINTS + NBUGINTS];
 	char			x86_vendor_id[16];
 	char			x86_model_id[64];
 	/* in KB - valid for CPUS which support this call: */
@@ -152,20 +161,10 @@ DECLARE_PER_CPU_SHARED_ALIGNED(struct cpuinfo_x86, cpu_info);
 
 extern const struct seq_operations cpuinfo_op;
 
-static inline int hlt_works(int cpu)
-{
-#ifdef CONFIG_X86_32
-	return cpu_data(cpu).hlt_works_ok;
-#else
-	return 1;
-#endif
-}
-
 #define cache_line_size()	(boot_cpu_data.x86_cache_alignment)
 
 extern void cpu_detect(struct cpuinfo_x86 *c);
-
-extern struct pt_regs *idle_regs(struct pt_regs *);
+extern void fpu_detect(struct cpuinfo_x86 *c);
 
 extern void early_cpu_init(void);
 extern void identify_boot_cpu(void);
@@ -174,11 +173,19 @@ extern void print_cpu_info(struct cpuinfo_x86 *);
 void print_cpu_msr(struct cpuinfo_x86 *);
 extern void init_scattered_cpuid_features(struct cpuinfo_x86 *c);
 extern unsigned int init_intel_cacheinfo(struct cpuinfo_x86 *c);
-extern unsigned short num_cache_leaves;
+extern void init_amd_cacheinfo(struct cpuinfo_x86 *c);
 
 extern void detect_extended_topology(struct cpuinfo_x86 *c);
 extern void detect_ht(struct cpuinfo_x86 *c);
 
+#ifdef CONFIG_X86_32
+extern int have_cpuid_p(void);
+#else
+static inline int have_cpuid_p(void)
+{
+	return 1;
+}
+#endif
 static inline void native_cpuid(unsigned int *eax, unsigned int *ebx,
 				unsigned int *ecx, unsigned int *edx)
 {
@@ -410,7 +417,6 @@ DECLARE_INIT_PER_CPU(irq_stack_union);
 
 DECLARE_PER_CPU(char *, irq_stack_ptr);
 DECLARE_PER_CPU(unsigned int, irq_count);
-extern unsigned long kernel_eflags;
 extern asmlinkage void ignore_sysret(void);
 #else	/* X86_64 */
 #ifdef CONFIG_CC_STACKPROTECTOR
@@ -544,13 +550,16 @@ static inline void load_sp0(struct tss_struct *tss,
  * enable), so that any CPU's that boot up
  * after us can get the correct flags.
  */
-extern unsigned long		mmu_cr4_features;
+extern unsigned long mmu_cr4_features;
+extern u32 *trampoline_cr4_features;
 
 static inline void set_in_cr4(unsigned long mask)
 {
 	unsigned long cr4;
 
 	mmu_cr4_features |= mask;
+	if (trampoline_cr4_features)
+		*trampoline_cr4_features = mmu_cr4_features;
 	cr4 = read_cr4();
 	cr4 |= mask;
 	write_cr4(cr4);
@@ -561,6 +570,8 @@ static inline void clear_in_cr4(unsigned long mask)
 	unsigned long cr4;
 
 	mmu_cr4_features &= ~mask;
+	if (trampoline_cr4_features)
+		*trampoline_cr4_features = mmu_cr4_features;
 	cr4 = read_cr4();
 	cr4 &= ~mask;
 	write_cr4(cr4);
@@ -571,16 +582,8 @@ typedef struct {
 } mm_segment_t;
 
 
-/*
- * create a kernel thread without removing it from tasklists
- */
-extern int kernel_thread(int (*fn)(void *), void *arg, unsigned long flags);
-
 /* Free all resources held by a thread. */
 extern void release_thread(struct task_struct *);
-
-/* Prepare to copy thread state - unlazy all lazy state */
-extern void prepare_to_copy(struct task_struct *tsk);
 
 unsigned long get_wchan(struct task_struct *p);
 
@@ -663,18 +666,29 @@ static inline void sync_core(void)
 {
 	int tmp;
 
-#if defined(CONFIG_M386) || defined(CONFIG_M486)
-	if (boot_cpu_data.x86 < 5)
-		/* There is no speculative execution.
-		 * jmp is a barrier to prefetching. */
-		asm volatile("jmp 1f\n1:\n" ::: "memory");
-	else
+#ifdef CONFIG_M486
+	/*
+	 * Do a CPUID if available, otherwise do a jump.  The jump
+	 * can conveniently enough be the jump around CPUID.
+	 */
+	asm volatile("cmpl %2,%1\n\t"
+		     "jl 1f\n\t"
+		     "cpuid\n"
+		     "1:"
+		     : "=a" (tmp)
+		     : "rm" (boot_cpu_data.cpuid_level), "ri" (0), "0" (1)
+		     : "ebx", "ecx", "edx", "memory");
+#else
+	/*
+	 * CPUID is a barrier to speculative execution.
+	 * Prefetched instructions are automatically
+	 * invalidated when modified.
+	 */
+	asm volatile("cpuid"
+		     : "=a" (tmp)
+		     : "0" (1)
+		     : "ebx", "ecx", "edx", "memory");
 #endif
-		/* cpuid is a barrier to speculative execution.
-		 * Prefetched instructions are automatically
-		 * invalidated when modified. */
-		asm volatile("cpuid" : "=a" (tmp) : "0" (1)
-			     : "ebx", "ecx", "edx", "memory");
 }
 
 static inline void __monitor(const void *eax, unsigned long ecx,
@@ -707,12 +721,13 @@ extern unsigned long		boot_option_idle_override;
 extern bool			amd_e400_c1e_detected;
 
 enum idle_boot_override {IDLE_NO_OVERRIDE=0, IDLE_HALT, IDLE_NOMWAIT,
-			 IDLE_POLL, IDLE_FORCE_MWAIT};
+			 IDLE_POLL};
 
 extern void enable_sep_cpu(void);
 extern int sysenter_setup(void);
 
 extern void early_trap_init(void);
+void early_trap_pf_init(void);
 
 /* Defined in head.S */
 extern struct desc_ptr		early_gdt_descr;
@@ -743,6 +758,8 @@ static inline void update_debugctlmsr(unsigned long debugctlmsr)
 #endif
 	wrmsrl(MSR_IA32_DEBUGCTLMSR, debugctlmsr);
 }
+
+extern void set_task_blockstep(struct task_struct *task, bool on);
 
 /*
  * from system description table in BIOS. Mostly for MCA use, but
@@ -923,7 +940,7 @@ extern void start_thread(struct pt_regs *regs, unsigned long new_ip,
 extern int get_tsc_mode(unsigned long adr);
 extern int set_tsc_mode(unsigned int val);
 
-extern int amd_get_nb_id(int cpu);
+extern u16 amd_get_nb_id(int cpu);
 
 struct aperfmperf {
 	u64 aperf, mperf;
@@ -954,34 +971,16 @@ unsigned long calc_aperfmperf_ratio(struct aperfmperf *old,
 	return ratio;
 }
 
-/*
- * AMD errata checking
- */
-#ifdef CONFIG_CPU_SUP_AMD
-extern const int amd_erratum_383[];
-extern const int amd_erratum_400[];
-extern bool cpu_has_amd_erratum(const int *);
-
-#define AMD_LEGACY_ERRATUM(...)		{ -1, __VA_ARGS__, 0 }
-#define AMD_OSVW_ERRATUM(osvw_id, ...)	{ osvw_id, __VA_ARGS__, 0 }
-#define AMD_MODEL_RANGE(f, m_start, s_start, m_end, s_end) \
-	((f << 24) | (m_start << 16) | (s_start << 12) | (m_end << 4) | (s_end))
-#define AMD_MODEL_RANGE_FAMILY(range)	(((range) >> 24) & 0xff)
-#define AMD_MODEL_RANGE_START(range)	(((range) >> 12) & 0xfff)
-#define AMD_MODEL_RANGE_END(range)	((range) & 0xfff)
-
-#else
-#define cpu_has_amd_erratum(x)	(false)
-#endif /* CONFIG_CPU_SUP_AMD */
-
-void cpu_idle_wait(void);
-
 extern unsigned long arch_align_stack(unsigned long sp);
 extern void free_init_pages(char *what, unsigned long begin, unsigned long end);
 
 void default_idle(void);
-bool set_pm_idle_to_default(void);
+#ifdef	CONFIG_XEN
+bool xen_set_default_idle(void);
+#else
+#define xen_set_default_idle 0
+#endif
 
 void stop_this_cpu(void *dummy);
-
+void df_debug(struct pt_regs *regs, long error_code);
 #endif /* _ASM_X86_PROCESSOR_H */

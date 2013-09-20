@@ -25,19 +25,17 @@
 #include <linux/can/platform/ti_hecc.h>
 #include <linux/davinci_emac.h>
 #include <linux/mmc/host.h>
+#include <linux/usb/musb.h>
+#include <linux/platform_data/gpio-omap.h>
 
-#include <mach/hardware.h>
-#include <mach/am35xx.h>
+#include "am35xx.h"
 #include <asm/mach-types.h>
 #include <asm/mach/arch.h>
 #include <asm/mach/map.h>
 
-#include <plat/board.h>
 #include "common.h"
-#include <plat/usb.h>
 #include <video/omapdss.h>
-#include <video/omap-panel-generic-dpi.h>
-#include <video/omap-panel-dvi.h>
+#include <video/omap-panel-data.h>
 
 #include "am35xx-emac.h"
 #include "mux.h"
@@ -122,63 +120,14 @@ static int __init am3517_evm_i2c_init(void)
 	return 0;
 }
 
-static int lcd_enabled;
-static int dvi_enabled;
-
-#if defined(CONFIG_PANEL_SHARP_LQ043T1DG01) || \
-		defined(CONFIG_PANEL_SHARP_LQ043T1DG01_MODULE)
-static struct gpio am3517_evm_dss_gpios[] __initdata = {
-	/* GPIO 182 = LCD Backlight Power */
-	{ LCD_PANEL_BKLIGHT_PWR, GPIOF_OUT_INIT_HIGH, "lcd_backlight_pwr" },
-	/* GPIO 181 = LCD Panel PWM */
-	{ LCD_PANEL_PWM,	 GPIOF_OUT_INIT_HIGH, "lcd bl enable"	  },
-	/* GPIO 176 = LCD Panel Power enable pin */
-	{ LCD_PANEL_PWR,	 GPIOF_OUT_INIT_HIGH, "dvi enable"	  },
-};
-
-static void __init am3517_evm_display_init(void)
-{
-	int r;
-
-	omap_mux_init_gpio(LCD_PANEL_PWR, OMAP_PIN_INPUT_PULLUP);
-	omap_mux_init_gpio(LCD_PANEL_BKLIGHT_PWR, OMAP_PIN_INPUT_PULLDOWN);
-	omap_mux_init_gpio(LCD_PANEL_PWM, OMAP_PIN_INPUT_PULLDOWN);
-
-	r = gpio_request_array(am3517_evm_dss_gpios,
-			       ARRAY_SIZE(am3517_evm_dss_gpios));
-	if (r) {
-		printk(KERN_ERR "failed to get DSS panel control GPIOs\n");
-		return;
-	}
-
-	printk(KERN_INFO "Display initialized successfully\n");
-}
-#else
-static void __init am3517_evm_display_init(void) {}
-#endif
-
-static int am3517_evm_panel_enable_lcd(struct omap_dss_device *dssdev)
-{
-	if (dvi_enabled) {
-		printk(KERN_ERR "cannot enable LCD, DVI is enabled\n");
-		return -EINVAL;
-	}
-	gpio_set_value(LCD_PANEL_PWR, 1);
-	lcd_enabled = 1;
-
-	return 0;
-}
-
-static void am3517_evm_panel_disable_lcd(struct omap_dss_device *dssdev)
-{
-	gpio_set_value(LCD_PANEL_PWR, 0);
-	lcd_enabled = 0;
-}
-
 static struct panel_generic_dpi_data lcd_panel = {
 	.name			= "sharp_lq",
-	.platform_enable	= am3517_evm_panel_enable_lcd,
-	.platform_disable	= am3517_evm_panel_disable_lcd,
+	.num_gpios		= 3,
+	.gpios			= {
+		LCD_PANEL_PWR,
+		LCD_PANEL_BKLIGHT_PWR,
+		LCD_PANEL_PWM,
+	},
 };
 
 static struct omap_dss_device am3517_evm_lcd_device = {
@@ -189,49 +138,22 @@ static struct omap_dss_device am3517_evm_lcd_device = {
 	.phy.dpi.data_lines 	= 16,
 };
 
-static int am3517_evm_panel_enable_tv(struct omap_dss_device *dssdev)
-{
-	return 0;
-}
-
-static void am3517_evm_panel_disable_tv(struct omap_dss_device *dssdev)
-{
-}
-
 static struct omap_dss_device am3517_evm_tv_device = {
 	.type 			= OMAP_DISPLAY_TYPE_VENC,
 	.name 			= "tv",
 	.driver_name		= "venc",
 	.phy.venc.type		= OMAP_DSS_VENC_TYPE_SVIDEO,
-	.platform_enable	= am3517_evm_panel_enable_tv,
-	.platform_disable	= am3517_evm_panel_disable_tv,
 };
 
-static int am3517_evm_panel_enable_dvi(struct omap_dss_device *dssdev)
-{
-	if (lcd_enabled) {
-		printk(KERN_ERR "cannot enable DVI, LCD is enabled\n");
-		return -EINVAL;
-	}
-	dvi_enabled = 1;
-
-	return 0;
-}
-
-static void am3517_evm_panel_disable_dvi(struct omap_dss_device *dssdev)
-{
-	dvi_enabled = 0;
-}
-
-static struct panel_dvi_platform_data dvi_panel = {
-	.platform_enable	= am3517_evm_panel_enable_dvi,
-	.platform_disable	= am3517_evm_panel_disable_dvi,
+static struct tfp410_platform_data dvi_panel = {
+	.power_down_gpio	= -1,
+	.i2c_bus_num		= -1,
 };
 
 static struct omap_dss_device am3517_evm_dvi_device = {
 	.type			= OMAP_DISPLAY_TYPE_DPI,
 	.name			= "dvi",
-	.driver_name		= "dvi",
+	.driver_name		= "tfp410",
 	.data			= &dvi_panel,
 	.phy.dpi.data_lines	= 24,
 };
@@ -281,7 +203,25 @@ static __init void am3517_evm_musb_init(void)
 	usb_musb_init(&musb_board_data);
 }
 
-static const struct usbhs_omap_board_data usbhs_bdata __initconst = {
+static __init void am3517_evm_mcbsp1_init(void)
+{
+	u32 devconf0;
+
+	/* McBSP1 CLKR/FSR signal to be connected to CLKX/FSX pin */
+	devconf0 = omap_ctrl_readl(OMAP2_CONTROL_DEVCONF0);
+	devconf0 |=  OMAP2_MCBSP1_CLKR_MASK | OMAP2_MCBSP1_FSR_MASK;
+	omap_ctrl_writel(devconf0, OMAP2_CONTROL_DEVCONF0);
+}
+
+static struct usbhs_phy_data phy_data[] __initdata = {
+	{
+		.port = 1,
+		.reset_gpio = 57,
+		.vcc_gpio = -EINVAL,
+	},
+};
+
+static struct usbhs_omap_platform_data usbhs_bdata __initdata = {
 	.port_mode[0] = OMAP_EHCI_PORT_MODE_PHY,
 #if defined(CONFIG_PANEL_SHARP_LQ043T1DG01) || \
 		defined(CONFIG_PANEL_SHARP_LQ043T1DG01_MODULE)
@@ -289,12 +229,6 @@ static const struct usbhs_omap_board_data usbhs_bdata __initconst = {
 #else
 	.port_mode[1] = OMAP_EHCI_PORT_MODE_PHY,
 #endif
-	.port_mode[2] = OMAP_USBHS_PORT_MODE_UNUSED,
-
-	.phy_reset  = true,
-	.reset_gpio_port[0]  = 57,
-	.reset_gpio_port[1]  = -EINVAL,
-	.reset_gpio_port[2]  = -EINVAL
 };
 
 #ifdef CONFIG_OMAP_MUX
@@ -313,8 +247,7 @@ static struct resource am3517_hecc_resources[] = {
 		.flags	= IORESOURCE_MEM,
 	},
 	{
-		.start	= INT_35XX_HECC0_IRQ,
-		.end	= INT_35XX_HECC0_IRQ,
+		.start	= 24 + OMAP_INTC_START,
 		.flags	= IORESOURCE_IRQ,
 	},
 };
@@ -341,9 +274,6 @@ static void am3517_evm_hecc_init(struct ti_hecc_platform_data *pdata)
 	platform_device_register(&am3517_hecc_device);
 }
 
-static struct omap_board_config_kernel am3517_evm_config[] __initdata = {
-};
-
 static struct omap2_hsmmc_info mmc[] = {
 	{
 		.mmc		= 1,
@@ -360,11 +290,8 @@ static struct omap2_hsmmc_info mmc[] = {
 	{}      /* Terminator */
 };
 
-
 static void __init am3517_evm_init(void)
 {
-	omap_board_config = am3517_evm_config;
-	omap_board_config_size = ARRAY_SIZE(am3517_evm_config);
 	omap3_mux_init(board_mux, OMAP_PACKAGE_CBB);
 
 	am3517_evm_i2c_init();
@@ -374,10 +301,10 @@ static void __init am3517_evm_init(void)
 
 	/* Configure GPIO for EHCI port */
 	omap_mux_init_gpio(57, OMAP_PIN_OUTPUT);
+
+	usbhs_init_phys(phy_data, ARRAY_SIZE(phy_data));
 	usbhs_init(&usbhs_bdata);
 	am3517_evm_hecc_init(&am3517_evm_hecc_pdata);
-	/* DSS */
-	am3517_evm_display_init();
 
 	/* RTC - S35390A */
 	am3517_evm_rtc_init();
@@ -389,6 +316,9 @@ static void __init am3517_evm_init(void)
 
 	/* MUSB */
 	am3517_evm_musb_init();
+
+	/* McBSP1 */
+	am3517_evm_mcbsp1_init();
 
 	/* MMC init function */
 	omap_hsmmc_init(mmc);
@@ -402,6 +332,7 @@ MACHINE_START(OMAP3517EVM, "OMAP3517/AM3517 EVM")
 	.init_irq	= omap3_init_irq,
 	.handle_irq	= omap3_intc_handle_irq,
 	.init_machine	= am3517_evm_init,
-	.timer		= &omap3_timer,
-	.restart	= omap_prcm_restart,
+	.init_late	= am35xx_init_late,
+	.init_time	= omap3_sync32k_timer_init,
+	.restart	= omap3xxx_restart,
 MACHINE_END

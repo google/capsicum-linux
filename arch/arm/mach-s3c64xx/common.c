@@ -21,14 +21,15 @@
 #include <linux/ioport.h>
 #include <linux/serial_core.h>
 #include <linux/platform_device.h>
+#include <linux/reboot.h>
 #include <linux/io.h>
 #include <linux/dma-mapping.h>
 #include <linux/irq.h>
 #include <linux/gpio.h>
+#include <linux/irqchip/arm-vic.h>
 
 #include <asm/mach/arch.h>
 #include <asm/mach/map.h>
-#include <asm/hardware/vic.h>
 #include <asm/system_misc.h>
 
 #include <mach/map.h>
@@ -155,7 +156,6 @@ void __init s3c64xx_init_io(struct map_desc *mach_desc, int size)
 	/* initialise the io descriptors we need for initialisation */
 	iotable_init(s3c_iodesc, ARRAY_SIZE(s3c_iodesc));
 	iotable_init(mach_desc, size);
-	init_consistent_dma_size(SZ_8M);
 
 	/* detect cpu id */
 	s3c64xx_init_cpu();
@@ -184,6 +184,12 @@ core_initcall(s3c64xx_dev_init);
 
 void __init s3c64xx_init_irq(u32 vic0_valid, u32 vic1_valid)
 {
+	/*
+	 * FIXME: there is no better place to put this at the moment
+	 * (samsung_wdt_reset_init needs clocks)
+	 */
+	samsung_wdt_reset_init(S3C_VA_WATCHDOG);
+
 	printk(KERN_DEBUG "%s: initialising interrupts\n", __func__);
 
 	/* initialise the pair of VICs */
@@ -376,11 +382,16 @@ static int __init s3c64xx_init_irq_eint(void)
 }
 arch_initcall(s3c64xx_init_irq_eint);
 
-void s3c64xx_restart(char mode, const char *cmd)
+void s3c64xx_restart(enum reboot_mode mode, const char *cmd)
 {
-	if (mode != 's')
-		arch_wdt_reset();
+	if (mode != REBOOT_SOFT)
+		samsung_wdt_reset();
 
 	/* if all else fails, or mode was for soft, jump to 0 */
 	soft_restart(0);
+}
+
+void __init s3c64xx_init_late(void)
+{
+	s3c64xx_pm_late_initcall();
 }

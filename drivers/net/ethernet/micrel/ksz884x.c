@@ -1487,7 +1487,7 @@ struct dev_priv {
 #define DRV_VERSION		"1.0.0"
 #define DRV_RELDATE		"Feb 8, 2010"
 
-static char version[] __devinitdata =
+static char version[] =
 	"Micrel " DEVICE_NAME " " DRV_VERSION " (" DRV_RELDATE ")";
 
 static u8 DEFAULT_MAC_ADDRESS[] = { 0x00, 0x10, 0xA1, 0x88, 0x42, 0x01 };
@@ -3913,7 +3913,7 @@ static void hw_start_rx(struct ksz_hw *hw)
 		hw->rx_stop = 2;
 }
 
-/*
+/**
  * hw_stop_rx - stop receiving
  * @hw: 	The hardware instance.
  *
@@ -4480,14 +4480,12 @@ static void ksz_init_rx_buffers(struct dev_info *adapter)
 		dma_buf->len = adapter->mtu;
 		if (!dma_buf->skb)
 			dma_buf->skb = alloc_skb(dma_buf->len, GFP_ATOMIC);
-		if (dma_buf->skb && !dma_buf->dma) {
-			dma_buf->skb->dev = adapter->dev;
+		if (dma_buf->skb && !dma_buf->dma)
 			dma_buf->dma = pci_map_single(
 				adapter->pdev,
 				skb_tail_pointer(dma_buf->skb),
 				dma_buf->len,
 				PCI_DMA_FROMDEVICE);
-		}
 
 		/* Set descriptor. */
 		set_rx_buf(desc, dma_buf->dma);
@@ -4763,7 +4761,7 @@ static void transmit_cleanup(struct dev_info *hw_priv, int normal)
 	struct ksz_dma_buf *dma_buf;
 	struct net_device *dev = NULL;
 
-	spin_lock(&hw_priv->hwlock);
+	spin_lock_irq(&hw_priv->hwlock);
 	last = info->last;
 
 	while (info->avail < info->alloc) {
@@ -4797,7 +4795,7 @@ static void transmit_cleanup(struct dev_info *hw_priv, int normal)
 		info->avail++;
 	}
 	info->last = last;
-	spin_unlock(&hw_priv->hwlock);
+	spin_unlock_irq(&hw_priv->hwlock);
 
 	/* Notify the network subsystem that the packet has been sent. */
 	if (dev)
@@ -4881,8 +4879,8 @@ static netdev_tx_t netdev_tx(struct sk_buff *skb, struct net_device *dev)
 	left = hw_alloc_pkt(hw, skb->len, num);
 	if (left) {
 		if (left < num ||
-				((CHECKSUM_PARTIAL == skb->ip_summed) &&
-				(ETH_P_IPV6 == htons(skb->protocol)))) {
+		    (CHECKSUM_PARTIAL == skb->ip_summed &&
+		     skb->protocol == htons(ETH_P_IPV6))) {
 			struct sk_buff *org_skb = skb;
 
 			skb = netdev_alloc_skb(dev, org_skb->len);
@@ -5261,11 +5259,15 @@ static irqreturn_t netdev_intr(int irq, void *dev_id)
 	struct dev_info *hw_priv = priv->adapter;
 	struct ksz_hw *hw = &hw_priv->hw;
 
+	spin_lock(&hw_priv->hwlock);
+
 	hw_read_intr(hw, &int_enable);
 
 	/* Not our interrupt! */
-	if (!int_enable)
+	if (!int_enable) {
+		spin_unlock(&hw_priv->hwlock);
 		return IRQ_NONE;
+	}
 
 	do {
 		hw_ack_intr(hw, int_enable);
@@ -5311,6 +5313,8 @@ static irqreturn_t netdev_intr(int irq, void *dev_id)
 	} while (0);
 
 	hw_ena_intr(hw);
+
+	spin_unlock(&hw_priv->hwlock);
 
 	return IRQ_HANDLED;
 }
@@ -5409,8 +5413,8 @@ static int netdev_close(struct net_device *dev)
 		/* Delay for receive task to stop scheduling itself. */
 		msleep(2000 / HZ);
 
-		tasklet_disable(&hw_priv->rx_tasklet);
-		tasklet_disable(&hw_priv->tx_tasklet);
+		tasklet_kill(&hw_priv->rx_tasklet);
+		tasklet_kill(&hw_priv->tx_tasklet);
 		free_irq(dev->irq, hw_priv->dev);
 
 		transmit_cleanup(hw_priv, 0);
@@ -5461,8 +5465,10 @@ static int prepare_hardware(struct net_device *dev)
 	rc = request_irq(dev->irq, netdev_intr, IRQF_SHARED, dev->name, dev);
 	if (rc)
 		return rc;
-	tasklet_enable(&hw_priv->rx_tasklet);
-	tasklet_enable(&hw_priv->tx_tasklet);
+	tasklet_init(&hw_priv->rx_tasklet, rx_proc_task,
+		     (unsigned long) hw_priv);
+	tasklet_init(&hw_priv->tx_tasklet, tx_proc_task,
+		     (unsigned long) hw_priv);
 
 	hw->promiscuous = 0;
 	hw->all_multi = 0;
@@ -6769,7 +6775,7 @@ static int stp;
 /*
  * This enables fast aging in the KSZ8842 switch.  Not sure what situation
  * needs that.  However, fast aging is used to flush the dynamic MAC table when
- * STP suport is enabled.
+ * STP support is enabled.
  */
 static int fast_aging;
 
@@ -6919,8 +6925,7 @@ static void read_other_addr(struct ksz_hw *hw)
 #define PCI_VENDOR_ID_MICREL_KS		0x16c6
 #endif
 
-static int __devinit pcidev_init(struct pci_dev *pdev,
-	const struct pci_device_id *id)
+static int pcidev_init(struct pci_dev *pdev, const struct pci_device_id *id)
 {
 	struct net_device *dev;
 	struct dev_priv *priv;
@@ -7034,16 +7039,6 @@ static int __devinit pcidev_init(struct pci_dev *pdev,
 
 	spin_lock_init(&hw_priv->hwlock);
 	mutex_init(&hw_priv->lock);
-
-	/* tasklet is enabled. */
-	tasklet_init(&hw_priv->rx_tasklet, rx_proc_task,
-		(unsigned long) hw_priv);
-	tasklet_init(&hw_priv->tx_tasklet, tx_proc_task,
-		(unsigned long) hw_priv);
-
-	/* tasklet_enable will decrement the atomic counter. */
-	tasklet_disable(&hw_priv->rx_tasklet);
-	tasklet_disable(&hw_priv->tx_tasklet);
 
 	for (i = 0; i < TOTAL_PORT_NUM; i++)
 		init_waitqueue_head(&hw_priv->counter[i].counter);
@@ -7253,18 +7248,7 @@ static struct pci_driver pci_device_driver = {
 	.remove		= pcidev_exit
 };
 
-static int __init ksz884x_init_module(void)
-{
-	return pci_register_driver(&pci_device_driver);
-}
-
-static void __exit ksz884x_cleanup_module(void)
-{
-	pci_unregister_driver(&pci_device_driver);
-}
-
-module_init(ksz884x_init_module);
-module_exit(ksz884x_cleanup_module);
+module_pci_driver(pci_device_driver);
 
 MODULE_DESCRIPTION("KSZ8841/2 PCI network driver");
 MODULE_AUTHOR("Tristram Ha <Tristram.Ha@micrel.com>");

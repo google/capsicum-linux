@@ -42,6 +42,7 @@
 #define MGMT_STATUS_NOT_POWERED		0x0f
 #define MGMT_STATUS_CANCELLED		0x10
 #define MGMT_STATUS_INVALID_INDEX	0x11
+#define MGMT_STATUS_RFKILLED		0x12
 
 struct mgmt_hdr {
 	__le16	opcode;
@@ -341,6 +342,15 @@ struct mgmt_cp_unblock_device {
 } __packed;
 #define MGMT_UNBLOCK_DEVICE_SIZE	MGMT_ADDR_INFO_SIZE
 
+#define MGMT_OP_SET_DEVICE_ID		0x0028
+struct mgmt_cp_set_device_id {
+	__le16	source;
+	__le16	vendor;
+	__le16	product;
+	__le16	version;
+} __packed;
+#define MGMT_SET_DEVICE_ID_SIZE		8
+
 #define MGMT_EV_CMD_COMPLETE		0x0001
 struct mgmt_ev_cmd_complete {
 	__le16	opcode;
@@ -396,7 +406,16 @@ struct mgmt_ev_device_connected {
 	__u8	eir[0];
 } __packed;
 
+#define MGMT_DEV_DISCONN_UNKNOWN	0x00
+#define MGMT_DEV_DISCONN_TIMEOUT	0x01
+#define MGMT_DEV_DISCONN_LOCAL_HOST	0x02
+#define MGMT_DEV_DISCONN_REMOTE		0x03
+
 #define MGMT_EV_DEVICE_DISCONNECTED	0x000C
+struct mgmt_ev_device_disconnected {
+	struct mgmt_addr_info addr;
+	__u8	reason;
+} __packed;
 
 #define MGMT_EV_CONNECT_FAILED		0x000D
 struct mgmt_ev_connect_failed {
@@ -435,7 +454,7 @@ struct mgmt_ev_auth_failed {
 struct mgmt_ev_device_found {
 	struct mgmt_addr_info addr;
 	__s8	rssi;
-	__u8	flags[4];
+	__le32	flags;
 	__le16	eir_len;
 	__u8	eir[0];
 } __packed;
@@ -459,4 +478,11 @@ struct mgmt_ev_device_unblocked {
 #define MGMT_EV_DEVICE_UNPAIRED		0x0016
 struct mgmt_ev_device_unpaired {
 	struct mgmt_addr_info addr;
+} __packed;
+
+#define MGMT_EV_PASSKEY_NOTIFY		0x0017
+struct mgmt_ev_passkey_notify {
+	struct mgmt_addr_info addr;
+	__le32	passkey;
+	__u8	entered;
 } __packed;

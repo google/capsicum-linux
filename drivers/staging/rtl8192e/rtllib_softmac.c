@@ -19,6 +19,7 @@
 #include <linux/random.h>
 #include <linux/delay.h>
 #include <linux/uaccess.h>
+#include <linux/etherdevice.h>
 #include "dot11d.h"
 
 short rtllib_is_54g(struct rtllib_network *net)
@@ -31,7 +32,7 @@ short rtllib_is_shortslot(const struct rtllib_network *net)
 	return net->capability & WLAN_CAPABILITY_SHORT_SLOT_TIME;
 }
 
-/* returns the total length needed for pleacing the RATE MFIE
+/* returns the total length needed for placing the RATE MFIE
  * tag and the EXTENDED RATE MFIE tag if needed.
  * It encludes two bytes per tag for the tag itself and its len
  */
@@ -49,7 +50,7 @@ static unsigned int rtllib_MFIE_rate_len(struct rtllib_device *ieee)
 	return rate_len;
 }
 
-/* pleace the MFIE rate, tag to the memory (double) poined.
+/* place the MFIE rate, tag to the memory (double) pointed.
  * Then it updates the pointer so that
  * it points after the new MFIE tag added.
  */
@@ -266,7 +267,7 @@ inline void softmac_mgmt_xmit(struct sk_buff *skb, struct rtllib_device *ieee)
 		else
 			ieee->seq_ctrl[0]++;
 
-		/* check wether the managed packet queued greater than 5 */
+		/* check whether the managed packet queued greater than 5 */
 		if (!ieee->check_nic_enough_desc(ieee->dev, tcb_desc->queue_index) ||
 		    (skb_queue_len(&ieee->skb_waitQ[tcb_desc->queue_index]) != 0) ||
 		    (ieee->queue_stop)) {
@@ -557,7 +558,7 @@ void rtllib_softmac_scan_syncro(struct rtllib_device *ieee, u8 is_mesh)
 		 *    new network events, despite for updating the net list,
 		 *    but we are temporarly 'unlinked' as the driver shall
 		 *    not filter RX frames and the channel is changing.
-		 * So the only situation in witch are interested is to check
+		 * So the only situation in which are interested is to check
 		 * if the state become LINKED because of the #1 situation
 		 */
 
@@ -1681,13 +1682,13 @@ inline void rtllib_softmac_new_net(struct rtllib_device *ieee,
 
 		/* if the user set the AP check if match.
 		 * if the network does not broadcast essid we check the
-		 *	 user supplyed ANY essid
+		 *	 user supplied ANY essid
 		 * if the network does broadcast and the user does not set
 		 *	 essid it is OK
 		 * if the network does broadcast and the user did set essid
 		 * check if essid match
 		 * if the ap is not set, check that the user set the bssid
-		 * and the network does bradcast and that those two bssid match
+		 * and the network does broadcast and that those two bssid match
 		 */
 		if ((apset && apmatch &&
 		   ((ssidset && ssidbroad && ssidmatch) ||
@@ -1800,8 +1801,9 @@ static inline u16 auth_parse(struct sk_buff *skb, u8** challenge, int *chlen)
 
 		if (*(t++) == MFIE_TYPE_CHALLENGE) {
 			*chlen = *(t++);
-			*challenge = kmalloc(*chlen, GFP_ATOMIC);
-			memcpy(*challenge, t, *chlen);	/*TODO - check here*/
+			*challenge = kmemdup(t, *chlen, GFP_ATOMIC);
+			if (!*challenge)
+				return -ENOMEM;
 		}
 	}
 	return cpu_to_le16(a->status);
@@ -1843,7 +1845,7 @@ static short probe_rq_parse(struct rtllib_device *ieee, struct sk_buff *skb,
 
 	bssid_match =
 	  (memcmp(header->addr3, ieee->current_network.bssid, ETH_ALEN) != 0) &&
-	  (memcmp(header->addr3, "\xff\xff\xff\xff\xff\xff", ETH_ALEN) != 0);
+	  (!is_broadcast_ether_addr(header->addr3));
 	if (bssid_match)
 		return -1;
 
@@ -2442,18 +2444,18 @@ inline int rtllib_rx_frame_softmac(struct rtllib_device *ieee,
 	return 0;
 }
 
-/* following are for a simplier TX queue management.
+/* following are for a simpler TX queue management.
  * Instead of using netif_[stop/wake]_queue the driver
- * will uses these two function (plus a reset one), that
- * will internally uses the kernel netif_* and takes
+ * will use these two functions (plus a reset one), that
+ * will internally use the kernel netif_* and takes
  * care of the ieee802.11 fragmentation.
  * So the driver receives a fragment per time and might
- * call the stop function when it want without take care
- * to have enought room to TX an entire packet.
- * This might be useful if each fragment need it's own
+ * call the stop function when it wants to not
+ * have enough room to TX an entire packet.
+ * This might be useful if each fragment needs it's own
  * descriptor, thus just keep a total free memory > than
- * the max fragmentation treshold is not enought.. If the
- * ieee802.11 stack passed a TXB struct then you needed
+ * the max fragmentation threshold is not enough.. If the
+ * ieee802.11 stack passed a TXB struct then you need
  * to keep N free descriptors where
  * N = MAX_PACKET_SIZE / MIN_FRAG_TRESHOLD
  * In this way you need just one and the 802.11 stack
@@ -2619,13 +2621,7 @@ void rtllib_wake_all_queues(struct rtllib_device *ieee)
 inline void rtllib_randomize_cell(struct rtllib_device *ieee)
 {
 
-	get_random_bytes(ieee->current_network.bssid, ETH_ALEN);
-
-	/* an IBSS cell address must have the two less significant
-	 * bits of the first byte = 2
-	 */
-	ieee->current_network.bssid[0] &= ~0x01;
-	ieee->current_network.bssid[0] |= 0x02;
+	random_ether_addr(ieee->current_network.bssid);
 }
 
 /* called in user context only */
@@ -2696,15 +2692,15 @@ static void rtllib_start_ibss_wq(void *data)
 	rtllib_softmac_check_all_nets(ieee);
 
 
-	/* if not then the state is not linked. Maybe the user swithced to
+	/* if not then the state is not linked. Maybe the user switched to
 	 * ad-hoc mode just after being in monitor mode, or just after
 	 * being very few time in managed mode (so the card have had no
 	 * time to scan all the chans..) or we have just run up the iface
 	 * after setting ad-hoc mode. So we have to give another try..
 	 * Here, in ibss mode, should be safe to do this without extra care
-	 * (in bss mode we had to make sure no-one tryed to associate when
+	 * (in bss mode we had to make sure no-one tried to associate when
 	 * we had just checked the ieee->state and we was going to start the
-	 * scan) beacause in ibss mode the rtllib_new_net function, when
+	 * scan) because in ibss mode the rtllib_new_net function, when
 	 * finds a good net, just set the ieee->state to RTLLIB_LINKED,
 	 * so, at worst, we waste a bit of time to initiate an unneeded syncro
 	 * scan, that will stop at the first round because it sees the state
@@ -2819,7 +2815,7 @@ void rtllib_start_bss(struct rtllib_device *ieee)
 
 	/* ensure no-one start an associating process (thus setting
 	 * the ieee->state to rtllib_ASSOCIATING) while we
-	 * have just cheked it and we are going to enable scan.
+	 * have just checked it and we are going to enable scan.
 	 * The rtllib_new_net function is always called with
 	 * lock held (from both rtllib_softmac_check_all_nets and
 	 * the rx path), so we cannot be in the middle of such function
@@ -2872,7 +2868,7 @@ static void rtllib_associate_retry_wq(void *data)
 
 	/* until we do not set the state to RTLLIB_NOLINK
 	* there are no possibility to have someone else trying
-	* to start an association procdure (we get here with
+	* to start an association procedure (we get here with
 	* ieee->state = RTLLIB_ASSOCIATING).
 	* When we set the state to RTLLIB_NOLINK it is possible
 	* that the RX path run an attempt to associate, but
@@ -3361,9 +3357,7 @@ static int rtllib_wpa_set_encryption(struct rtllib_device *ieee,
 			       param->u.crypt.key_len);
 		return -EINVAL;
 	}
-	if (param->sta_addr[0] == 0xff && param->sta_addr[1] == 0xff &&
-	    param->sta_addr[2] == 0xff && param->sta_addr[3] == 0xff &&
-	    param->sta_addr[4] == 0xff && param->sta_addr[5] == 0xff) {
+	if (is_broadcast_ether_addr(param->sta_addr)) {
 		if (param->u.crypt.idx >= NUM_WEP_KEYS)
 			return -EINVAL;
 		crypt = &ieee->crypt_info.crypt[param->u.crypt.idx];
@@ -3411,8 +3405,7 @@ static int rtllib_wpa_set_encryption(struct rtllib_device *ieee,
 
 		lib80211_crypt_delayed_deinit(&ieee->crypt_info, crypt);
 
-		new_crypt = (struct lib80211_crypt_data *)
-			kmalloc(sizeof(*new_crypt), GFP_KERNEL);
+		new_crypt = kmalloc(sizeof(*new_crypt), GFP_KERNEL);
 		if (new_crypt == NULL) {
 			ret = -ENOMEM;
 			goto done;
@@ -3679,8 +3672,7 @@ void rtllib_MlmeDisassociateRequest(struct rtllib_device *rtllib, u8 *asSta,
 
 	RemovePeerTS(rtllib, asSta);
 
-
-	if (memcpy(rtllib->current_network.bssid, asSta, 6) == NULL) {
+	if (memcmp(rtllib->current_network.bssid, asSta, 6) == 0) {
 		rtllib->state = RTLLIB_NOLINK;
 
 		for (i = 0; i < 6; i++)

@@ -19,9 +19,7 @@
 #include "xfs.h"
 #include "xfs_fs.h"
 #include "xfs_types.h"
-#include "xfs_bit.h"
 #include "xfs_log.h"
-#include "xfs_inum.h"
 #include "xfs_trans.h"
 #include "xfs_sb.h"
 #include "xfs_ag.h"
@@ -36,16 +34,48 @@
 #include "xfs_btree.h"
 #include "xfs_ialloc.h"
 #include "xfs_alloc.h"
+#include "xfs_extent_busy.h"
 #include "xfs_bmap.h"
 #include "xfs_quota.h"
+#include "xfs_qm.h"
 #include "xfs_trans_priv.h"
 #include "xfs_trans_space.h"
 #include "xfs_inode_item.h"
+#include "xfs_log_priv.h"
+#include "xfs_buf_item.h"
 #include "xfs_trace.h"
 
 kmem_zone_t	*xfs_trans_zone;
 kmem_zone_t	*xfs_log_item_desc_zone;
 
+/*
+ * A buffer has a format structure overhead in the log in addition
+ * to the data, so we need to take this into account when reserving
+ * space in a transaction for a buffer.  Round the space required up
+ * to a multiple of 128 bytes so that we don't change the historical
+ * reservation that has been used for this overhead.
+ */
+STATIC uint
+xfs_buf_log_overhead(void)
+{
+	return round_up(sizeof(struct xlog_op_header) +
+			sizeof(struct xfs_buf_log_format), 128);
+}
+
+/*
+ * Calculate out transaction log reservation per item in bytes.
+ *
+ * The nbufs argument is used to indicate the number of items that
+ * will be changed in a transaction.  size is used to tell how many
+ * bytes should be reserved per item.
+ */
+STATIC uint
+xfs_calc_buf_res(
+	uint		nbufs,
+	uint		size)
+{
+	return nbufs * (size + xfs_buf_log_overhead());
+}
 
 /*
  * Various log reservation values.
@@ -86,18 +116,15 @@ xfs_calc_write_reservation(
 	struct xfs_mount	*mp)
 {
 	return XFS_DQUOT_LOGRES(mp) +
-		MAX((mp->m_sb.sb_inodesize +
-		     XFS_FSB_TO_B(mp, XFS_BM_MAXLEVELS(mp, XFS_DATA_FORK)) +
-		     2 * mp->m_sb.sb_sectsize +
-		     mp->m_sb.sb_sectsize +
-		     XFS_ALLOCFREE_LOG_RES(mp, 2) +
-		     128 * (4 + XFS_BM_MAXLEVELS(mp, XFS_DATA_FORK) +
-			    XFS_ALLOCFREE_LOG_COUNT(mp, 2))),
-		    (2 * mp->m_sb.sb_sectsize +
-		     2 * mp->m_sb.sb_sectsize +
-		     mp->m_sb.sb_sectsize +
-		     XFS_ALLOCFREE_LOG_RES(mp, 2) +
-		     128 * (5 + XFS_ALLOCFREE_LOG_COUNT(mp, 2))));
+		MAX((xfs_calc_buf_res(1, mp->m_sb.sb_inodesize) +
+		     xfs_calc_buf_res(XFS_BM_MAXLEVELS(mp, XFS_DATA_FORK),
+				      XFS_FSB_TO_B(mp, 1)) +
+		     xfs_calc_buf_res(3, mp->m_sb.sb_sectsize) +
+		     xfs_calc_buf_res(XFS_ALLOCFREE_LOG_COUNT(mp, 2),
+				      XFS_FSB_TO_B(mp, 1))),
+		    (xfs_calc_buf_res(5, mp->m_sb.sb_sectsize) +
+		     xfs_calc_buf_res(XFS_ALLOCFREE_LOG_COUNT(mp, 2),
+				      XFS_FSB_TO_B(mp, 1))));
 }
 
 /*
@@ -118,18 +145,17 @@ xfs_calc_itruncate_reservation(
 	struct xfs_mount	*mp)
 {
 	return XFS_DQUOT_LOGRES(mp) +
-		MAX((mp->m_sb.sb_inodesize +
-		     XFS_FSB_TO_B(mp, XFS_BM_MAXLEVELS(mp, XFS_DATA_FORK) + 1) +
-		     128 * (2 + XFS_BM_MAXLEVELS(mp, XFS_DATA_FORK))),
-		    (4 * mp->m_sb.sb_sectsize +
-		     4 * mp->m_sb.sb_sectsize +
-		     mp->m_sb.sb_sectsize +
-		     XFS_ALLOCFREE_LOG_RES(mp, 4) +
-		     128 * (9 + XFS_ALLOCFREE_LOG_COUNT(mp, 4)) +
-		     128 * 5 +
-		     XFS_ALLOCFREE_LOG_RES(mp, 1) +
-		     128 * (2 + XFS_IALLOC_BLOCKS(mp) + mp->m_in_maxlevels +
-			    XFS_ALLOCFREE_LOG_COUNT(mp, 1))));
+		MAX((xfs_calc_buf_res(1, mp->m_sb.sb_inodesize) +
+		     xfs_calc_buf_res(XFS_BM_MAXLEVELS(mp, XFS_DATA_FORK) + 1,
+				      XFS_FSB_TO_B(mp, 1))),
+		    (xfs_calc_buf_res(9, mp->m_sb.sb_sectsize) +
+		     xfs_calc_buf_res(XFS_ALLOCFREE_LOG_COUNT(mp, 4),
+				      XFS_FSB_TO_B(mp, 1)) +
+		    xfs_calc_buf_res(5, 0) +
+		    xfs_calc_buf_res(XFS_ALLOCFREE_LOG_COUNT(mp, 1),
+				     XFS_FSB_TO_B(mp, 1)) +
+		    xfs_calc_buf_res(2 + XFS_IALLOC_BLOCKS(mp) +
+				     mp->m_in_maxlevels, 0)));
 }
 
 /*
@@ -149,14 +175,12 @@ xfs_calc_rename_reservation(
 	struct xfs_mount	*mp)
 {
 	return XFS_DQUOT_LOGRES(mp) +
-		MAX((4 * mp->m_sb.sb_inodesize +
-		     2 * XFS_DIROP_LOG_RES(mp) +
-		     128 * (4 + 2 * XFS_DIROP_LOG_COUNT(mp))),
-		    (3 * mp->m_sb.sb_sectsize +
-		     3 * mp->m_sb.sb_sectsize +
-		     mp->m_sb.sb_sectsize +
-		     XFS_ALLOCFREE_LOG_RES(mp, 3) +
-		     128 * (7 + XFS_ALLOCFREE_LOG_COUNT(mp, 3))));
+		MAX((xfs_calc_buf_res(4, mp->m_sb.sb_inodesize) +
+		     xfs_calc_buf_res(2 * XFS_DIROP_LOG_COUNT(mp),
+				      XFS_FSB_TO_B(mp, 1))),
+		    (xfs_calc_buf_res(7, mp->m_sb.sb_sectsize) +
+		     xfs_calc_buf_res(XFS_ALLOCFREE_LOG_COUNT(mp, 3),
+				      XFS_FSB_TO_B(mp, 1))));
 }
 
 /*
@@ -176,15 +200,12 @@ xfs_calc_link_reservation(
 	struct xfs_mount	*mp)
 {
 	return XFS_DQUOT_LOGRES(mp) +
-		MAX((mp->m_sb.sb_inodesize +
-		     mp->m_sb.sb_inodesize +
-		     XFS_DIROP_LOG_RES(mp) +
-		     128 * (2 + XFS_DIROP_LOG_COUNT(mp))),
-		    (mp->m_sb.sb_sectsize +
-		     mp->m_sb.sb_sectsize +
-		     mp->m_sb.sb_sectsize +
-		     XFS_ALLOCFREE_LOG_RES(mp, 1) +
-		     128 * (3 + XFS_ALLOCFREE_LOG_COUNT(mp, 1))));
+		MAX((xfs_calc_buf_res(2, mp->m_sb.sb_inodesize) +
+		     xfs_calc_buf_res(XFS_DIROP_LOG_COUNT(mp),
+				      XFS_FSB_TO_B(mp, 1))),
+		    (xfs_calc_buf_res(3, mp->m_sb.sb_sectsize) +
+		     xfs_calc_buf_res(XFS_ALLOCFREE_LOG_COUNT(mp, 1),
+				      XFS_FSB_TO_B(mp, 1))));
 }
 
 /*
@@ -204,49 +225,19 @@ xfs_calc_remove_reservation(
 	struct xfs_mount	*mp)
 {
 	return XFS_DQUOT_LOGRES(mp) +
-		MAX((mp->m_sb.sb_inodesize +
-		     mp->m_sb.sb_inodesize +
-		     XFS_DIROP_LOG_RES(mp) +
-		     128 * (2 + XFS_DIROP_LOG_COUNT(mp))),
-		    (2 * mp->m_sb.sb_sectsize +
-		     2 * mp->m_sb.sb_sectsize +
-		     mp->m_sb.sb_sectsize +
-		     XFS_ALLOCFREE_LOG_RES(mp, 2) +
-		     128 * (5 + XFS_ALLOCFREE_LOG_COUNT(mp, 2))));
+		MAX((xfs_calc_buf_res(2, mp->m_sb.sb_inodesize) +
+		     xfs_calc_buf_res(XFS_DIROP_LOG_COUNT(mp),
+				      XFS_FSB_TO_B(mp, 1))),
+		    (xfs_calc_buf_res(5, mp->m_sb.sb_sectsize) +
+		     xfs_calc_buf_res(XFS_ALLOCFREE_LOG_COUNT(mp, 2),
+				      XFS_FSB_TO_B(mp, 1))));
 }
 
 /*
- * For symlink we can modify:
- *    the parent directory inode: inode size
- *    the new inode: inode size
- *    the inode btree entry: 1 block
- *    the directory btree: (max depth + v2) * dir block size
- *    the directory inode's bmap btree: (max depth + v2) * block size
- *    the blocks for the symlink: 1 kB
- * Or in the first xact we allocate some inodes giving:
- *    the agi and agf of the ag getting the new inodes: 2 * sectorsize
- *    the inode blocks allocated: XFS_IALLOC_BLOCKS * blocksize
- *    the inode btree: max depth * blocksize
- *    the allocation btrees: 2 trees * (2 * max depth - 1) * block size
+ * For create, break it in to the two cases that the transaction
+ * covers. We start with the modify case - allocation done by modification
+ * of the state of existing inodes - and the allocation case.
  */
-STATIC uint
-xfs_calc_symlink_reservation(
-	struct xfs_mount	*mp)
-{
-	return XFS_DQUOT_LOGRES(mp) +
-		MAX((mp->m_sb.sb_inodesize +
-		     mp->m_sb.sb_inodesize +
-		     XFS_FSB_TO_B(mp, 1) +
-		     XFS_DIROP_LOG_RES(mp) +
-		     1024 +
-		     128 * (4 + XFS_DIROP_LOG_COUNT(mp))),
-		    (2 * mp->m_sb.sb_sectsize +
-		     XFS_FSB_TO_B(mp, XFS_IALLOC_BLOCKS(mp)) +
-		     XFS_FSB_TO_B(mp, mp->m_in_maxlevels) +
-		     XFS_ALLOCFREE_LOG_RES(mp, 1) +
-		     128 * (2 + XFS_IALLOC_BLOCKS(mp) + mp->m_in_maxlevels +
-			    XFS_ALLOCFREE_LOG_COUNT(mp, 1))));
-}
 
 /*
  * For create we can modify:
@@ -256,7 +247,19 @@ xfs_calc_symlink_reservation(
  *    the superblock for the nlink flag: sector size
  *    the directory btree: (max depth + v2) * dir block size
  *    the directory inode's bmap btree: (max depth + v2) * block size
- * Or in the first xact we allocate some inodes giving:
+ */
+STATIC uint
+xfs_calc_create_resv_modify(
+	struct xfs_mount	*mp)
+{
+	return xfs_calc_buf_res(2, mp->m_sb.sb_inodesize) +
+		xfs_calc_buf_res(1, mp->m_sb.sb_sectsize) +
+		(uint)XFS_FSB_TO_B(mp, 1) +
+		xfs_calc_buf_res(XFS_DIROP_LOG_COUNT(mp), XFS_FSB_TO_B(mp, 1));
+}
+
+/*
+ * For create we can allocate some inodes giving:
  *    the agi and agf of the ag getting the new inodes: 2 * sectorsize
  *    the superblock for the nlink flag: sector size
  *    the inode blocks allocated: XFS_IALLOC_BLOCKS * blocksize
@@ -264,22 +267,60 @@ xfs_calc_symlink_reservation(
  *    the allocation btrees: 2 trees * (max depth - 1) * block size
  */
 STATIC uint
-xfs_calc_create_reservation(
+xfs_calc_create_resv_alloc(
+	struct xfs_mount	*mp)
+{
+	return xfs_calc_buf_res(2, mp->m_sb.sb_sectsize) +
+		mp->m_sb.sb_sectsize +
+		xfs_calc_buf_res(XFS_IALLOC_BLOCKS(mp), XFS_FSB_TO_B(mp, 1)) +
+		xfs_calc_buf_res(mp->m_in_maxlevels, XFS_FSB_TO_B(mp, 1)) +
+		xfs_calc_buf_res(XFS_ALLOCFREE_LOG_COUNT(mp, 1),
+				 XFS_FSB_TO_B(mp, 1));
+}
+
+STATIC uint
+__xfs_calc_create_reservation(
 	struct xfs_mount	*mp)
 {
 	return XFS_DQUOT_LOGRES(mp) +
-		MAX((mp->m_sb.sb_inodesize +
-		     mp->m_sb.sb_inodesize +
-		     mp->m_sb.sb_sectsize +
-		     XFS_FSB_TO_B(mp, 1) +
-		     XFS_DIROP_LOG_RES(mp) +
-		     128 * (3 + XFS_DIROP_LOG_COUNT(mp))),
-		    (3 * mp->m_sb.sb_sectsize +
-		     XFS_FSB_TO_B(mp, XFS_IALLOC_BLOCKS(mp)) +
-		     XFS_FSB_TO_B(mp, mp->m_in_maxlevels) +
-		     XFS_ALLOCFREE_LOG_RES(mp, 1) +
-		     128 * (2 + XFS_IALLOC_BLOCKS(mp) + mp->m_in_maxlevels +
-			    XFS_ALLOCFREE_LOG_COUNT(mp, 1))));
+		MAX(xfs_calc_create_resv_alloc(mp),
+		    xfs_calc_create_resv_modify(mp));
+}
+
+/*
+ * For icreate we can allocate some inodes giving:
+ *    the agi and agf of the ag getting the new inodes: 2 * sectorsize
+ *    the superblock for the nlink flag: sector size
+ *    the inode btree: max depth * blocksize
+ *    the allocation btrees: 2 trees * (max depth - 1) * block size
+ */
+STATIC uint
+xfs_calc_icreate_resv_alloc(
+	struct xfs_mount	*mp)
+{
+	return xfs_calc_buf_res(2, mp->m_sb.sb_sectsize) +
+		mp->m_sb.sb_sectsize +
+		xfs_calc_buf_res(mp->m_in_maxlevels, XFS_FSB_TO_B(mp, 1)) +
+		xfs_calc_buf_res(XFS_ALLOCFREE_LOG_COUNT(mp, 1),
+				 XFS_FSB_TO_B(mp, 1));
+}
+
+STATIC uint
+xfs_calc_icreate_reservation(xfs_mount_t *mp)
+{
+	return XFS_DQUOT_LOGRES(mp) +
+		MAX(xfs_calc_icreate_resv_alloc(mp),
+		    xfs_calc_create_resv_modify(mp));
+}
+
+STATIC uint
+xfs_calc_create_reservation(
+	struct xfs_mount	*mp)
+{
+	if (xfs_sb_version_hascrc(&mp->m_sb))
+		return xfs_calc_icreate_reservation(mp);
+	return __xfs_calc_create_reservation(mp);
+
 }
 
 /*
@@ -290,6 +331,20 @@ xfs_calc_mkdir_reservation(
 	struct xfs_mount	*mp)
 {
 	return xfs_calc_create_reservation(mp);
+}
+
+
+/*
+ * Making a new symplink is the same as creating a new file, but
+ * with the added blocks for remote symlink data which can be up to 1kB in
+ * length (MAXPATHLEN).
+ */
+STATIC uint
+xfs_calc_symlink_reservation(
+	struct xfs_mount	*mp)
+{
+	return xfs_calc_create_reservation(mp) +
+	       xfs_calc_buf_res(1, MAXPATHLEN);
 }
 
 /*
@@ -307,16 +362,16 @@ xfs_calc_ifree_reservation(
 	struct xfs_mount	*mp)
 {
 	return XFS_DQUOT_LOGRES(mp) +
-		mp->m_sb.sb_inodesize +
-		mp->m_sb.sb_sectsize +
-		mp->m_sb.sb_sectsize +
-		XFS_FSB_TO_B(mp, 1) +
+		xfs_calc_buf_res(1, mp->m_sb.sb_inodesize) +
+		xfs_calc_buf_res(2, mp->m_sb.sb_sectsize) +
+		xfs_calc_buf_res(1, XFS_FSB_TO_B(mp, 1)) +
 		MAX((__uint16_t)XFS_FSB_TO_B(mp, 1),
 		    XFS_INODE_CLUSTER_SIZE(mp)) +
-		128 * 5 +
-		XFS_ALLOCFREE_LOG_RES(mp, 1) +
-		128 * (2 + XFS_IALLOC_BLOCKS(mp) + mp->m_in_maxlevels +
-		       XFS_ALLOCFREE_LOG_COUNT(mp, 1));
+		xfs_calc_buf_res(1, 0) +
+		xfs_calc_buf_res(2 + XFS_IALLOC_BLOCKS(mp) +
+				 mp->m_in_maxlevels, 0) +
+		xfs_calc_buf_res(XFS_ALLOCFREE_LOG_COUNT(mp, 1),
+				 XFS_FSB_TO_B(mp, 1));
 }
 
 /*
@@ -344,9 +399,9 @@ STATIC uint
 xfs_calc_growdata_reservation(
 	struct xfs_mount	*mp)
 {
-	return mp->m_sb.sb_sectsize * 3 +
-		XFS_ALLOCFREE_LOG_RES(mp, 1) +
-		128 * (3 + XFS_ALLOCFREE_LOG_COUNT(mp, 1));
+	return xfs_calc_buf_res(3, mp->m_sb.sb_sectsize) +
+		xfs_calc_buf_res(XFS_ALLOCFREE_LOG_COUNT(mp, 1),
+				 XFS_FSB_TO_B(mp, 1));
 }
 
 /*
@@ -363,12 +418,12 @@ STATIC uint
 xfs_calc_growrtalloc_reservation(
 	struct xfs_mount	*mp)
 {
-	return 2 * mp->m_sb.sb_sectsize +
-		XFS_FSB_TO_B(mp, XFS_BM_MAXLEVELS(mp, XFS_DATA_FORK)) +
-		mp->m_sb.sb_inodesize +
-		XFS_ALLOCFREE_LOG_RES(mp, 1) +
-		128 * (3 + XFS_BM_MAXLEVELS(mp, XFS_DATA_FORK) +
-		       XFS_ALLOCFREE_LOG_COUNT(mp, 1));
+	return xfs_calc_buf_res(2, mp->m_sb.sb_sectsize) +
+		xfs_calc_buf_res(XFS_BM_MAXLEVELS(mp, XFS_DATA_FORK),
+				 XFS_FSB_TO_B(mp, 1)) +
+		xfs_calc_buf_res(1, mp->m_sb.sb_inodesize) +
+		xfs_calc_buf_res(XFS_ALLOCFREE_LOG_COUNT(mp, 1),
+				 XFS_FSB_TO_B(mp, 1));
 }
 
 /*
@@ -380,7 +435,7 @@ STATIC uint
 xfs_calc_growrtzero_reservation(
 	struct xfs_mount	*mp)
 {
-	return mp->m_sb.sb_blocksize + 128;
+	return xfs_calc_buf_res(1, mp->m_sb.sb_blocksize);
 }
 
 /*
@@ -397,11 +452,10 @@ STATIC uint
 xfs_calc_growrtfree_reservation(
 	struct xfs_mount	*mp)
 {
-	return mp->m_sb.sb_sectsize +
-		2 * mp->m_sb.sb_inodesize +
-		mp->m_sb.sb_blocksize +
-		mp->m_rsumsize +
-		128 * 5;
+	return xfs_calc_buf_res(1, mp->m_sb.sb_sectsize) +
+		xfs_calc_buf_res(2, mp->m_sb.sb_inodesize) +
+		xfs_calc_buf_res(1, mp->m_sb.sb_blocksize) +
+		xfs_calc_buf_res(1, mp->m_rsumsize);
 }
 
 /*
@@ -412,7 +466,7 @@ STATIC uint
 xfs_calc_swrite_reservation(
 	struct xfs_mount	*mp)
 {
-	return mp->m_sb.sb_inodesize + 128;
+	return xfs_calc_buf_res(1, mp->m_sb.sb_inodesize);
 }
 
 /*
@@ -422,7 +476,7 @@ xfs_calc_swrite_reservation(
 STATIC uint
 xfs_calc_writeid_reservation(xfs_mount_t *mp)
 {
-	return mp->m_sb.sb_inodesize + 128;
+	return xfs_calc_buf_res(1, mp->m_sb.sb_inodesize);
 }
 
 /*
@@ -438,13 +492,13 @@ xfs_calc_addafork_reservation(
 	struct xfs_mount	*mp)
 {
 	return XFS_DQUOT_LOGRES(mp) +
-		mp->m_sb.sb_inodesize +
-		mp->m_sb.sb_sectsize * 2 +
-		mp->m_dirblksize +
-		XFS_FSB_TO_B(mp, XFS_DAENTER_BMAP1B(mp, XFS_DATA_FORK) + 1) +
-		XFS_ALLOCFREE_LOG_RES(mp, 1) +
-		128 * (4 + XFS_DAENTER_BMAP1B(mp, XFS_DATA_FORK) + 1 +
-		       XFS_ALLOCFREE_LOG_COUNT(mp, 1));
+		xfs_calc_buf_res(1, mp->m_sb.sb_inodesize) +
+		xfs_calc_buf_res(2, mp->m_sb.sb_sectsize) +
+		xfs_calc_buf_res(1, mp->m_dirblksize) +
+		xfs_calc_buf_res(XFS_DAENTER_BMAP1B(mp, XFS_DATA_FORK) + 1,
+				 XFS_FSB_TO_B(mp, 1)) +
+		xfs_calc_buf_res(XFS_ALLOCFREE_LOG_COUNT(mp, 1),
+				 XFS_FSB_TO_B(mp, 1));
 }
 
 /*
@@ -462,35 +516,51 @@ STATIC uint
 xfs_calc_attrinval_reservation(
 	struct xfs_mount	*mp)
 {
-	return MAX((mp->m_sb.sb_inodesize +
-		    XFS_FSB_TO_B(mp, XFS_BM_MAXLEVELS(mp, XFS_ATTR_FORK)) +
-		    128 * (1 + XFS_BM_MAXLEVELS(mp, XFS_ATTR_FORK))),
-		   (4 * mp->m_sb.sb_sectsize +
-		    4 * mp->m_sb.sb_sectsize +
-		    mp->m_sb.sb_sectsize +
-		    XFS_ALLOCFREE_LOG_RES(mp, 4) +
-		    128 * (9 + XFS_ALLOCFREE_LOG_COUNT(mp, 4))));
+	return MAX((xfs_calc_buf_res(1, mp->m_sb.sb_inodesize) +
+		    xfs_calc_buf_res(XFS_BM_MAXLEVELS(mp, XFS_ATTR_FORK),
+				     XFS_FSB_TO_B(mp, 1))),
+		   (xfs_calc_buf_res(9, mp->m_sb.sb_sectsize) +
+		    xfs_calc_buf_res(XFS_ALLOCFREE_LOG_COUNT(mp, 4),
+				     XFS_FSB_TO_B(mp, 1))));
 }
 
 /*
- * Setting an attribute.
+ * Setting an attribute at mount time.
  *	the inode getting the attribute
  *	the superblock for allocations
  *	the agfs extents are allocated from
  *	the attribute btree * max depth
  *	the inode allocation btree
  * Since attribute transaction space is dependent on the size of the attribute,
- * the calculation is done partially at mount time and partially at runtime.
+ * the calculation is done partially at mount time and partially at runtime(see
+ * below).
  */
 STATIC uint
-xfs_calc_attrset_reservation(
+xfs_calc_attrsetm_reservation(
 	struct xfs_mount	*mp)
 {
 	return XFS_DQUOT_LOGRES(mp) +
-		mp->m_sb.sb_inodesize +
-		mp->m_sb.sb_sectsize +
-		XFS_FSB_TO_B(mp, XFS_DA_NODE_MAXDEPTH) +
-		128 * (2 + XFS_DA_NODE_MAXDEPTH);
+		xfs_calc_buf_res(1, mp->m_sb.sb_inodesize) +
+		xfs_calc_buf_res(1, mp->m_sb.sb_sectsize) +
+		xfs_calc_buf_res(XFS_DA_NODE_MAXDEPTH, XFS_FSB_TO_B(mp, 1));
+}
+
+/*
+ * Setting an attribute at runtime, transaction space unit per block.
+ * 	the superblock for allocations: sector size
+ *	the inode bmap btree could join or split: max depth * block size
+ * Since the runtime attribute transaction space is dependent on the total
+ * blocks needed for the 1st bmap, here we calculate out the space unit for
+ * one block so that the caller could figure out the total space according
+ * to the attibute extent length in blocks by: ext * XFS_ATTRSETRT_LOG_RES(mp).
+ */
+STATIC uint
+xfs_calc_attrsetrt_reservation(
+	struct xfs_mount	*mp)
+{
+	return xfs_calc_buf_res(1, mp->m_sb.sb_sectsize) +
+		xfs_calc_buf_res(XFS_BM_MAXLEVELS(mp, XFS_ATTR_FORK),
+				 XFS_FSB_TO_B(mp, 1));
 }
 
 /*
@@ -509,16 +579,15 @@ xfs_calc_attrrm_reservation(
 	struct xfs_mount	*mp)
 {
 	return XFS_DQUOT_LOGRES(mp) +
-		MAX((mp->m_sb.sb_inodesize +
-		     XFS_FSB_TO_B(mp, XFS_DA_NODE_MAXDEPTH) +
-		     XFS_FSB_TO_B(mp, XFS_BM_MAXLEVELS(mp, XFS_ATTR_FORK)) +
-		     128 * (1 + XFS_DA_NODE_MAXDEPTH +
-			    XFS_BM_MAXLEVELS(mp, XFS_DATA_FORK))),
-		    (2 * mp->m_sb.sb_sectsize +
-		     2 * mp->m_sb.sb_sectsize +
-		     mp->m_sb.sb_sectsize +
-		     XFS_ALLOCFREE_LOG_RES(mp, 2) +
-		     128 * (5 + XFS_ALLOCFREE_LOG_COUNT(mp, 2))));
+		MAX((xfs_calc_buf_res(1, mp->m_sb.sb_inodesize) +
+		     xfs_calc_buf_res(XFS_DA_NODE_MAXDEPTH,
+				      XFS_FSB_TO_B(mp, 1)) +
+		     (uint)XFS_FSB_TO_B(mp,
+					XFS_BM_MAXLEVELS(mp, XFS_ATTR_FORK)) +
+		     xfs_calc_buf_res(XFS_BM_MAXLEVELS(mp, XFS_DATA_FORK), 0)),
+		    (xfs_calc_buf_res(5, mp->m_sb.sb_sectsize) +
+		     xfs_calc_buf_res(XFS_ALLOCFREE_LOG_COUNT(mp, 2),
+				      XFS_FSB_TO_B(mp, 1))));
 }
 
 /*
@@ -528,7 +597,78 @@ STATIC uint
 xfs_calc_clear_agi_bucket_reservation(
 	struct xfs_mount	*mp)
 {
-	return mp->m_sb.sb_sectsize + 128;
+	return xfs_calc_buf_res(1, mp->m_sb.sb_sectsize);
+}
+
+/*
+ * Clearing the quotaflags in the superblock.
+ *	the super block for changing quota flags: sector size
+ */
+STATIC uint
+xfs_calc_qm_sbchange_reservation(
+	struct xfs_mount	*mp)
+{
+	return xfs_calc_buf_res(1, mp->m_sb.sb_sectsize);
+}
+
+/*
+ * Adjusting quota limits.
+ *    the xfs_disk_dquot_t: sizeof(struct xfs_disk_dquot)
+ */
+STATIC uint
+xfs_calc_qm_setqlim_reservation(
+	struct xfs_mount	*mp)
+{
+	return xfs_calc_buf_res(1, sizeof(struct xfs_disk_dquot));
+}
+
+/*
+ * Allocating quota on disk if needed.
+ *	the write transaction log space: XFS_WRITE_LOG_RES(mp)
+ *	the unit of quota allocation: one system block size
+ */
+STATIC uint
+xfs_calc_qm_dqalloc_reservation(
+	struct xfs_mount	*mp)
+{
+	return XFS_WRITE_LOG_RES(mp) +
+		xfs_calc_buf_res(1,
+			XFS_FSB_TO_B(mp, XFS_DQUOT_CLUSTER_SIZE_FSB) - 1);
+}
+
+/*
+ * Turning off quotas.
+ *    the xfs_qoff_logitem_t: sizeof(struct xfs_qoff_logitem) * 2
+ *    the superblock for the quota flags: sector size
+ */
+STATIC uint
+xfs_calc_qm_quotaoff_reservation(
+	struct xfs_mount	*mp)
+{
+	return sizeof(struct xfs_qoff_logitem) * 2 +
+		xfs_calc_buf_res(1, mp->m_sb.sb_sectsize);
+}
+
+/*
+ * End of turning off quotas.
+ *    the xfs_qoff_logitem_t: sizeof(struct xfs_qoff_logitem) * 2
+ */
+STATIC uint
+xfs_calc_qm_quotaoff_end_reservation(
+	struct xfs_mount	*mp)
+{
+	return sizeof(struct xfs_qoff_logitem) * 2;
+}
+
+/*
+ * Syncing the incore super block changes to disk.
+ *     the super block to reflect the changes: sector size
+ */
+STATIC uint
+xfs_calc_sb_reservation(
+	struct xfs_mount	*mp)
+{
+	return xfs_calc_buf_res(1, mp->m_sb.sb_sectsize);
 }
 
 /*
@@ -556,12 +696,19 @@ xfs_trans_init(
 	resp->tr_writeid = xfs_calc_writeid_reservation(mp);
 	resp->tr_addafork = xfs_calc_addafork_reservation(mp);
 	resp->tr_attrinval = xfs_calc_attrinval_reservation(mp);
-	resp->tr_attrset = xfs_calc_attrset_reservation(mp);
+	resp->tr_attrsetm = xfs_calc_attrsetm_reservation(mp);
+	resp->tr_attrsetrt = xfs_calc_attrsetrt_reservation(mp);
 	resp->tr_attrrm = xfs_calc_attrrm_reservation(mp);
 	resp->tr_clearagi = xfs_calc_clear_agi_bucket_reservation(mp);
 	resp->tr_growrtalloc = xfs_calc_growrtalloc_reservation(mp);
 	resp->tr_growrtzero = xfs_calc_growrtzero_reservation(mp);
 	resp->tr_growrtfree = xfs_calc_growrtfree_reservation(mp);
+	resp->tr_qm_sbchange = xfs_calc_qm_sbchange_reservation(mp);
+	resp->tr_qm_setqlim = xfs_calc_qm_setqlim_reservation(mp);
+	resp->tr_qm_dqalloc = xfs_calc_qm_dqalloc_reservation(mp);
+	resp->tr_qm_quotaoff = xfs_calc_qm_quotaoff_reservation(mp);
+	resp->tr_qm_equotaoff = xfs_calc_qm_quotaoff_end_reservation(mp);
+	resp->tr_sb = xfs_calc_sb_reservation(mp);
 }
 
 /*
@@ -577,18 +724,23 @@ xfs_trans_alloc(
 	xfs_mount_t	*mp,
 	uint		type)
 {
-	xfs_wait_for_freeze(mp, SB_FREEZE_TRANS);
-	return _xfs_trans_alloc(mp, type, KM_SLEEP);
+	xfs_trans_t     *tp;
+
+	sb_start_intwrite(mp->m_super);
+	tp = _xfs_trans_alloc(mp, type, KM_SLEEP);
+	tp->t_flags |= XFS_TRANS_FREEZE_PROT;
+	return tp;
 }
 
 xfs_trans_t *
 _xfs_trans_alloc(
 	xfs_mount_t	*mp,
 	uint		type,
-	uint		memflags)
+	xfs_km_flags_t	memflags)
 {
 	xfs_trans_t	*tp;
 
+	WARN_ON(mp->m_super->s_writers.frozen == SB_FREEZE_COMPLETE);
 	atomic_inc(&mp->m_active_trans);
 
 	tp = kmem_zone_zalloc(xfs_trans_zone, memflags);
@@ -608,10 +760,12 @@ STATIC void
 xfs_trans_free(
 	struct xfs_trans	*tp)
 {
-	xfs_alloc_busy_sort(&tp->t_busy);
-	xfs_alloc_busy_clear(tp->t_mountp, &tp->t_busy, false);
+	xfs_extent_busy_sort(&tp->t_busy);
+	xfs_extent_busy_clear(tp->t_mountp, &tp->t_busy, false);
 
 	atomic_dec(&tp->t_mountp->m_active_trans);
+	if (tp->t_flags & XFS_TRANS_FREEZE_PROT)
+		sb_end_intwrite(tp->t_mountp->m_super);
 	xfs_trans_free_dqinfo(tp);
 	kmem_zone_free(xfs_trans_zone, tp);
 }
@@ -644,7 +798,11 @@ xfs_trans_dup(
 	ASSERT(tp->t_flags & XFS_TRANS_PERM_LOG_RES);
 	ASSERT(tp->t_ticket != NULL);
 
-	ntp->t_flags = XFS_TRANS_PERM_LOG_RES | (tp->t_flags & XFS_TRANS_RESERVE);
+	ntp->t_flags = XFS_TRANS_PERM_LOG_RES |
+		       (tp->t_flags & XFS_TRANS_RESERVE) |
+		       (tp->t_flags & XFS_TRANS_FREEZE_PROT);
+	/* We gave our writer reference to the new transaction */
+	tp->t_flags &= ~XFS_TRANS_FREEZE_PROT;
 	ntp->t_ticket = xfs_log_ticket_get(tp->t_ticket);
 	ntp->t_blk_res = tp->t_blk_res - tp->t_blk_res_used;
 	tp->t_blk_res = tp->t_blk_res_used;

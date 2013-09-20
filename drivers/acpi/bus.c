@@ -91,8 +91,7 @@ static struct dmi_system_id dsdt_dmi_table[] __initdata = {
 
 int acpi_bus_get_device(acpi_handle handle, struct acpi_device **device)
 {
-	acpi_status status = AE_OK;
-
+	acpi_status status;
 
 	if (!device)
 		return -EINVAL;
@@ -162,7 +161,7 @@ EXPORT_SYMBOL(acpi_bus_private_data_handler);
 
 int acpi_bus_get_private_data(acpi_handle handle, void **data)
 {
-	acpi_status status = AE_OK;
+	acpi_status status;
 
 	if (!*data)
 		return -EINVAL;
@@ -177,225 +176,6 @@ int acpi_bus_get_private_data(acpi_handle handle, void **data)
 	return 0;
 }
 EXPORT_SYMBOL(acpi_bus_get_private_data);
-
-/* --------------------------------------------------------------------------
-                                 Power Management
-   -------------------------------------------------------------------------- */
-
-static int __acpi_bus_get_power(struct acpi_device *device, int *state)
-{
-	int result = 0;
-	acpi_status status = 0;
-	unsigned long long psc = 0;
-
-	if (!device || !state)
-		return -EINVAL;
-
-	*state = ACPI_STATE_UNKNOWN;
-
-	if (device->flags.power_manageable) {
-		/*
-		 * Get the device's power state either directly (via _PSC) or
-		 * indirectly (via power resources).
-		 */
-		if (device->power.flags.power_resources) {
-			result = acpi_power_get_inferred_state(device, state);
-			if (result)
-				return result;
-		} else if (device->power.flags.explicit_get) {
-			status = acpi_evaluate_integer(device->handle, "_PSC",
-						       NULL, &psc);
-			if (ACPI_FAILURE(status))
-				return -ENODEV;
-			*state = (int)psc;
-		}
-	} else {
-		/* TBD: Non-recursive algorithm for walking up hierarchy. */
-		*state = device->parent ?
-			device->parent->power.state : ACPI_STATE_D0;
-	}
-
-	ACPI_DEBUG_PRINT((ACPI_DB_INFO, "Device [%s] power state is D%d\n",
-			  device->pnp.bus_id, *state));
-
-	return 0;
-}
-
-
-static int __acpi_bus_set_power(struct acpi_device *device, int state)
-{
-	int result = 0;
-	acpi_status status = AE_OK;
-	char object_name[5] = { '_', 'P', 'S', '0' + state, '\0' };
-
-	if (!device || (state < ACPI_STATE_D0) || (state > ACPI_STATE_D3_COLD))
-		return -EINVAL;
-
-	/* Make sure this is a valid target state */
-
-	if (state == device->power.state) {
-		ACPI_DEBUG_PRINT((ACPI_DB_INFO, "Device is already at D%d\n",
-				  state));
-		return 0;
-	}
-
-	if (!device->power.states[state].flags.valid) {
-		printk(KERN_WARNING PREFIX "Device does not support D%d\n", state);
-		return -ENODEV;
-	}
-	if (device->parent && (state < device->parent->power.state)) {
-		printk(KERN_WARNING PREFIX
-			      "Cannot set device to a higher-powered"
-			      " state than parent\n");
-		return -ENODEV;
-	}
-
-	/* For D3cold we should execute _PS3, not _PS4. */
-	if (state == ACPI_STATE_D3_COLD)
-		object_name[3] = '3';
-
-	/*
-	 * Transition Power
-	 * ----------------
-	 * On transitions to a high-powered state we first apply power (via
-	 * power resources) then evalute _PSx.  Conversly for transitions to
-	 * a lower-powered state.
-	 */
-	if (state < device->power.state) {
-		if (device->power.flags.power_resources) {
-			result = acpi_power_transition(device, state);
-			if (result)
-				goto end;
-		}
-		if (device->power.states[state].flags.explicit_set) {
-			status = acpi_evaluate_object(device->handle,
-						      object_name, NULL, NULL);
-			if (ACPI_FAILURE(status)) {
-				result = -ENODEV;
-				goto end;
-			}
-		}
-	} else {
-		if (device->power.states[state].flags.explicit_set) {
-			status = acpi_evaluate_object(device->handle,
-						      object_name, NULL, NULL);
-			if (ACPI_FAILURE(status)) {
-				result = -ENODEV;
-				goto end;
-			}
-		}
-		if (device->power.flags.power_resources) {
-			result = acpi_power_transition(device, state);
-			if (result)
-				goto end;
-		}
-	}
-
-      end:
-	if (result)
-		printk(KERN_WARNING PREFIX
-			      "Device [%s] failed to transition to D%d\n",
-			      device->pnp.bus_id, state);
-	else {
-		device->power.state = state;
-		ACPI_DEBUG_PRINT((ACPI_DB_INFO,
-				  "Device [%s] transitioned to D%d\n",
-				  device->pnp.bus_id, state));
-	}
-
-	return result;
-}
-
-
-int acpi_bus_set_power(acpi_handle handle, int state)
-{
-	struct acpi_device *device;
-	int result;
-
-	result = acpi_bus_get_device(handle, &device);
-	if (result)
-		return result;
-
-	if (!device->flags.power_manageable) {
-		ACPI_DEBUG_PRINT((ACPI_DB_INFO,
-				"Device [%s] is not power manageable\n",
-				dev_name(&device->dev)));
-		return -ENODEV;
-	}
-
-	return __acpi_bus_set_power(device, state);
-}
-EXPORT_SYMBOL(acpi_bus_set_power);
-
-
-int acpi_bus_init_power(struct acpi_device *device)
-{
-	int state;
-	int result;
-
-	if (!device)
-		return -EINVAL;
-
-	device->power.state = ACPI_STATE_UNKNOWN;
-
-	result = __acpi_bus_get_power(device, &state);
-	if (result)
-		return result;
-
-	if (device->power.flags.power_resources)
-		result = acpi_power_on_resources(device, state);
-
-	if (!result)
-		device->power.state = state;
-
-	return result;
-}
-
-
-int acpi_bus_update_power(acpi_handle handle, int *state_p)
-{
-	struct acpi_device *device;
-	int state;
-	int result;
-
-	result = acpi_bus_get_device(handle, &device);
-	if (result)
-		return result;
-
-	result = __acpi_bus_get_power(device, &state);
-	if (result)
-		return result;
-
-	result = __acpi_bus_set_power(device, state);
-	if (!result && state_p)
-		*state_p = state;
-
-	return result;
-}
-EXPORT_SYMBOL_GPL(acpi_bus_update_power);
-
-
-bool acpi_bus_power_manageable(acpi_handle handle)
-{
-	struct acpi_device *device;
-	int result;
-
-	result = acpi_bus_get_device(handle, &device);
-	return result ? false : device->flags.power_manageable;
-}
-
-EXPORT_SYMBOL(acpi_bus_power_manageable);
-
-bool acpi_bus_can_wakeup(acpi_handle handle)
-{
-	struct acpi_device *device;
-	int result;
-
-	result = acpi_bus_get_device(handle, &device);
-	return result ? false : device->wakeup.flags.valid;
-}
-
-EXPORT_SYMBOL(acpi_bus_can_wakeup);
 
 static void acpi_print_osc_error(acpi_handle handle,
 	struct acpi_osc_context *context, char *error)
@@ -507,13 +287,12 @@ acpi_status acpi_run_osc(acpi_handle handle, struct acpi_osc_context *context)
 	}
 out_success:
 	context->ret.length = out_obj->buffer.length;
-	context->ret.pointer = kmalloc(context->ret.length, GFP_KERNEL);
+	context->ret.pointer = kmemdup(out_obj->buffer.pointer,
+				       context->ret.length, GFP_KERNEL);
 	if (!context->ret.pointer) {
 		status =  AE_NO_MEMORY;
 		goto out_kfree;
 	}
-	memcpy(context->ret.pointer, out_obj->buffer.pointer,
-		context->ret.length);
 	status =  AE_OK;
 
 out_kfree:
@@ -548,6 +327,10 @@ static void acpi_bus_osc_support(void)
 	capbuf[OSC_SUPPORT_TYPE] |= OSC_SB_PPC_OST_SUPPORT;
 #endif
 
+#ifdef ACPI_HOTPLUG_OST
+	capbuf[OSC_SUPPORT_TYPE] |= OSC_SB_HOTPLUG_OST_SUPPORT;
+#endif
+
 	if (!ghes_disable)
 		capbuf[OSC_SUPPORT_TYPE] |= OSC_SB_APEI_SUPPORT;
 	if (ACPI_FAILURE(acpi_get_handle(NULL, "\\_SB", &handle)))
@@ -577,7 +360,7 @@ extern int event_is_open;
 int acpi_bus_generate_proc_event4(const char *device_class, const char *bus_id, u8 type, int data)
 {
 	struct acpi_bus_event *event;
-	unsigned long flags = 0;
+	unsigned long flags;
 
 	/* drop event on the floor if no one's listening */
 	if (!event_is_open)
@@ -616,7 +399,7 @@ EXPORT_SYMBOL(acpi_bus_generate_proc_event);
 
 int acpi_bus_receive_event(struct acpi_bus_event *event)
 {
-	unsigned long flags = 0;
+	unsigned long flags;
 	struct acpi_bus_event *entry = NULL;
 
 	DECLARE_WAITQUEUE(wait, current);
@@ -809,7 +592,7 @@ static void acpi_bus_notify(acpi_handle handle, u32 type, void *data)
 
 static int __init acpi_bus_init_irq(void)
 {
-	acpi_status status = AE_OK;
+	acpi_status status;
 	union acpi_object arg = { ACPI_TYPE_INTEGER };
 	struct acpi_object_list arg_list = { 1, &arg };
 	char *message = NULL;
@@ -856,7 +639,7 @@ u8 acpi_gbl_permanent_mmap;
 
 void __init acpi_early_init(void)
 {
-	acpi_status status = AE_OK;
+	acpi_status status;
 
 	if (acpi_disabled)
 		return;
@@ -930,8 +713,8 @@ void __init acpi_early_init(void)
 
 static int __init acpi_bus_init(void)
 {
-	int result = 0;
-	acpi_status status = AE_OK;
+	int result;
+	acpi_status status;
 	extern acpi_status acpi_os_initialize1(void);
 
 	acpi_os_initialize1();
@@ -954,13 +737,17 @@ static int __init acpi_bus_init(void)
 	status = acpi_ec_ecdt_probe();
 	/* Ignore result. Not having an ECDT is not fatal. */
 
-	acpi_bus_osc_support();
-
 	status = acpi_initialize_objects(ACPI_FULL_INITIALIZATION);
 	if (ACPI_FAILURE(status)) {
 		printk(KERN_ERR PREFIX "Unable to initialize ACPI objects\n");
 		goto error1;
 	}
+
+	/*
+	 * _OSC method may exist in module level code,
+	 * so it must be run after ACPI_FULL_INITIALIZATION
+	 */
+	acpi_bus_osc_support();
 
 	/*
 	 * _PDC control method may load dynamic SSDT tables,

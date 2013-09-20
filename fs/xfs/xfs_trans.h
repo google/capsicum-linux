@@ -48,6 +48,7 @@ typedef struct xfs_trans_header {
 #define	XFS_LI_BUF		0x123c	/* v2 bufs, variable sized inode bufs */
 #define	XFS_LI_DQUOT		0x123d
 #define	XFS_LI_QUOTAOFF		0x123e
+#define	XFS_LI_ICREATE		0x123f
 
 #define XFS_LI_TYPE_DESC \
 	{ XFS_LI_EFI,		"XFS_LI_EFI" }, \
@@ -107,7 +108,8 @@ typedef struct xfs_trans_header {
 #define	XFS_TRANS_SWAPEXT		40
 #define	XFS_TRANS_SB_COUNT		41
 #define	XFS_TRANS_CHECKPOINT		42
-#define	XFS_TRANS_TYPE_MAX		42
+#define	XFS_TRANS_ICREATE		43
+#define	XFS_TRANS_TYPE_MAX		43
 /* new transaction types need to be reflected in xfs_logprint(8) */
 
 #define XFS_TRANS_TYPES \
@@ -179,6 +181,8 @@ struct xfs_log_item_desc {
 #define	XFS_TRANS_SYNC		0x08	/* make commit synchronous */
 #define XFS_TRANS_DQ_DIRTY	0x10	/* at least one dquot in trx dirty */
 #define XFS_TRANS_RESERVE	0x20    /* OK to use reserved data blocks */
+#define XFS_TRANS_FREEZE_PROT	0x40	/* Transaction has elevated writer
+					   count in superblock */
 
 /*
  * Values for call flags parameter.
@@ -208,23 +212,18 @@ struct xfs_log_item_desc {
 /*
  * Per-extent log reservation for the allocation btree changes
  * involved in freeing or allocating an extent.
- * 2 trees * (2 blocks/level * max depth - 1) * block size
+ * 2 trees * (2 blocks/level * max depth - 1)
  */
-#define	XFS_ALLOCFREE_LOG_RES(mp,nx) \
-	((nx) * (2 * XFS_FSB_TO_B((mp), 2 * XFS_AG_MAXLEVELS(mp) - 1)))
 #define	XFS_ALLOCFREE_LOG_COUNT(mp,nx) \
 	((nx) * (2 * (2 * XFS_AG_MAXLEVELS(mp) - 1)))
 
 /*
  * Per-directory log reservation for any directory change.
- * dir blocks: (1 btree block per level + data block + free block) * dblock size
- * bmap btree: (levels + 2) * max depth * block size
+ * dir blocks: (1 btree block per level + data block + free block)
+ * bmap btree: (levels + 2) * max depth
  * v2 directory blocks can be fragmented below the dirblksize down to the fsb
  * size, so account for that in the DAENTER macros.
  */
-#define	XFS_DIROP_LOG_RES(mp)	\
-	(XFS_FSB_TO_B(mp, XFS_DAENTER_BLOCKS(mp, XFS_DATA_FORK)) + \
-	 (XFS_FSB_TO_B(mp, XFS_DAENTER_BMAPS(mp, XFS_DATA_FORK) + 1)))
 #define	XFS_DIROP_LOG_COUNT(mp)	\
 	(XFS_DAENTER_BLOCKS(mp, XFS_DATA_FORK) + \
 	 XFS_DAENTER_BMAPS(mp, XFS_DATA_FORK) + 1)
@@ -250,17 +249,19 @@ struct xfs_log_item_desc {
  * as long as SWRITE logs the entire inode core
  */
 #define XFS_FSYNC_TS_LOG_RES(mp)        ((mp)->m_reservations.tr_swrite)
-#define	XFS_WRITEID_LOG_RES(mp)	((mp)->m_reservations.tr_swrite)
+#define	XFS_WRITEID_LOG_RES(mp)		((mp)->m_reservations.tr_swrite)
 #define	XFS_ADDAFORK_LOG_RES(mp)	((mp)->m_reservations.tr_addafork)
 #define	XFS_ATTRINVAL_LOG_RES(mp)	((mp)->m_reservations.tr_attrinval)
-#define	XFS_ATTRSET_LOG_RES(mp, ext)	\
-	((mp)->m_reservations.tr_attrset + \
-	 (ext * (mp)->m_sb.sb_sectsize) + \
-	 (ext * XFS_FSB_TO_B((mp), XFS_BM_MAXLEVELS(mp, XFS_ATTR_FORK))) + \
-	 (128 * (ext + (ext * XFS_BM_MAXLEVELS(mp, XFS_ATTR_FORK)))))
-#define	XFS_ATTRRM_LOG_RES(mp)	((mp)->m_reservations.tr_attrrm)
+#define	XFS_ATTRSETM_LOG_RES(mp)	((mp)->m_reservations.tr_attrsetm)
+#define XFS_ATTRSETRT_LOG_RES(mp)	((mp)->m_reservations.tr_attrsetrt)
+#define	XFS_ATTRRM_LOG_RES(mp)		((mp)->m_reservations.tr_attrrm)
 #define	XFS_CLEAR_AGI_BUCKET_LOG_RES(mp)  ((mp)->m_reservations.tr_clearagi)
-
+#define XFS_QM_SBCHANGE_LOG_RES(mp)	((mp)->m_reservations.tr_qm_sbchange)
+#define XFS_QM_SETQLIM_LOG_RES(mp)	((mp)->m_reservations.tr_qm_setqlim)
+#define XFS_QM_DQALLOC_LOG_RES(mp)	((mp)->m_reservations.tr_qm_dqalloc)
+#define XFS_QM_QUOTAOFF_LOG_RES(mp)	((mp)->m_reservations.tr_qm_quotaoff)
+#define XFS_QM_QUOTAOFF_END_LOG_RES(mp)	((mp)->m_reservations.tr_qm_equotaoff)
+#define XFS_SB_LOG_RES(mp)		((mp)->m_reservations.tr_sb)
 
 /*
  * Various log count values.
@@ -345,11 +346,9 @@ struct xfs_item_ops {
 	void (*iop_format)(xfs_log_item_t *, struct xfs_log_iovec *);
 	void (*iop_pin)(xfs_log_item_t *);
 	void (*iop_unpin)(xfs_log_item_t *, int remove);
-	uint (*iop_trylock)(xfs_log_item_t *);
+	uint (*iop_push)(struct xfs_log_item *, struct list_head *);
 	void (*iop_unlock)(xfs_log_item_t *);
 	xfs_lsn_t (*iop_committed)(xfs_log_item_t *, xfs_lsn_t);
-	void (*iop_push)(xfs_log_item_t *);
-	bool (*iop_pushbuf)(xfs_log_item_t *);
 	void (*iop_committing)(xfs_log_item_t *, xfs_lsn_t);
 };
 
@@ -357,20 +356,18 @@ struct xfs_item_ops {
 #define IOP_FORMAT(ip,vp)	(*(ip)->li_ops->iop_format)(ip, vp)
 #define IOP_PIN(ip)		(*(ip)->li_ops->iop_pin)(ip)
 #define IOP_UNPIN(ip, remove)	(*(ip)->li_ops->iop_unpin)(ip, remove)
-#define IOP_TRYLOCK(ip)		(*(ip)->li_ops->iop_trylock)(ip)
+#define IOP_PUSH(ip, list)	(*(ip)->li_ops->iop_push)(ip, list)
 #define IOP_UNLOCK(ip)		(*(ip)->li_ops->iop_unlock)(ip)
 #define IOP_COMMITTED(ip, lsn)	(*(ip)->li_ops->iop_committed)(ip, lsn)
-#define IOP_PUSH(ip)		(*(ip)->li_ops->iop_push)(ip)
-#define IOP_PUSHBUF(ip)		(*(ip)->li_ops->iop_pushbuf)(ip)
 #define IOP_COMMITTING(ip, lsn) (*(ip)->li_ops->iop_committing)(ip, lsn)
 
 /*
- * Return values for the IOP_TRYLOCK() routines.
+ * Return values for the IOP_PUSH() routines.
  */
-#define	XFS_ITEM_SUCCESS	0
-#define	XFS_ITEM_PINNED		1
-#define	XFS_ITEM_LOCKED		2
-#define XFS_ITEM_PUSHBUF	3
+#define XFS_ITEM_SUCCESS	0
+#define XFS_ITEM_PINNED		1
+#define XFS_ITEM_LOCKED		2
+#define XFS_ITEM_FLUSHING	3
 
 /*
  * This is the type of function which can be given to xfs_trans_callback()
@@ -405,7 +402,7 @@ typedef struct xfs_trans {
 	int64_t			t_res_fdblocks_delta; /* on-disk only chg */
 	int64_t			t_frextents_delta;/* superblock freextents chg*/
 	int64_t			t_res_frextents_delta; /* on-disk only chg */
-#ifdef DEBUG
+#if defined(DEBUG) || defined(XFS_WARN)
 	int64_t			t_ag_freeblks_delta; /* debugging counter */
 	int64_t			t_ag_flist_delta; /* debugging counter */
 	int64_t			t_ag_btree_delta; /* debugging counter */
@@ -433,7 +430,7 @@ typedef struct xfs_trans {
 #define	xfs_trans_get_block_res(tp)	((tp)->t_blk_res)
 #define	xfs_trans_set_sync(tp)		((tp)->t_flags |= XFS_TRANS_SYNC)
 
-#ifdef DEBUG
+#if defined(DEBUG) || defined(XFS_WARN)
 #define	xfs_trans_agblocks_delta(tp, d)	((tp)->t_ag_freeblks_delta += (int64_t)d)
 #define	xfs_trans_agflist_delta(tp, d)	((tp)->t_ag_flist_delta += (int64_t)d)
 #define	xfs_trans_agbtree_delta(tp, d)	((tp)->t_ag_btree_delta += (int64_t)d)
@@ -447,16 +444,53 @@ typedef struct xfs_trans {
  * XFS transaction mechanism exported interfaces.
  */
 xfs_trans_t	*xfs_trans_alloc(struct xfs_mount *, uint);
-xfs_trans_t	*_xfs_trans_alloc(struct xfs_mount *, uint, uint);
+xfs_trans_t	*_xfs_trans_alloc(struct xfs_mount *, uint, xfs_km_flags_t);
 xfs_trans_t	*xfs_trans_dup(xfs_trans_t *);
 int		xfs_trans_reserve(xfs_trans_t *, uint, uint, uint,
 				  uint, uint);
 void		xfs_trans_mod_sb(xfs_trans_t *, uint, int64_t);
-struct xfs_buf	*xfs_trans_get_buf(xfs_trans_t *, struct xfs_buftarg *, xfs_daddr_t,
-				   int, uint);
-int		xfs_trans_read_buf(struct xfs_mount *, xfs_trans_t *,
-				   struct xfs_buftarg *, xfs_daddr_t, int, uint,
-				   struct xfs_buf **);
+
+struct xfs_buf	*xfs_trans_get_buf_map(struct xfs_trans *tp,
+				       struct xfs_buftarg *target,
+				       struct xfs_buf_map *map, int nmaps,
+				       uint flags);
+
+static inline struct xfs_buf *
+xfs_trans_get_buf(
+	struct xfs_trans	*tp,
+	struct xfs_buftarg	*target,
+	xfs_daddr_t		blkno,
+	int			numblks,
+	uint			flags)
+{
+	DEFINE_SINGLE_BUF_MAP(map, blkno, numblks);
+	return xfs_trans_get_buf_map(tp, target, &map, 1, flags);
+}
+
+int		xfs_trans_read_buf_map(struct xfs_mount *mp,
+				       struct xfs_trans *tp,
+				       struct xfs_buftarg *target,
+				       struct xfs_buf_map *map, int nmaps,
+				       xfs_buf_flags_t flags,
+				       struct xfs_buf **bpp,
+				       const struct xfs_buf_ops *ops);
+
+static inline int
+xfs_trans_read_buf(
+	struct xfs_mount	*mp,
+	struct xfs_trans	*tp,
+	struct xfs_buftarg	*target,
+	xfs_daddr_t		blkno,
+	int			numblks,
+	xfs_buf_flags_t		flags,
+	struct xfs_buf		**bpp,
+	const struct xfs_buf_ops *ops)
+{
+	DEFINE_SINGLE_BUF_MAP(map, blkno, numblks);
+	return xfs_trans_read_buf_map(mp, tp, target, &map, 1,
+				      flags, bpp, ops);
+}
+
 struct xfs_buf	*xfs_trans_getsb(xfs_trans_t *, struct xfs_mount *, int);
 
 void		xfs_trans_brelse(xfs_trans_t *, struct xfs_buf *);
@@ -466,6 +500,7 @@ void		xfs_trans_bhold_release(xfs_trans_t *, struct xfs_buf *);
 void		xfs_trans_binval(xfs_trans_t *, struct xfs_buf *);
 void		xfs_trans_inode_buf(xfs_trans_t *, struct xfs_buf *);
 void		xfs_trans_stale_inode_buf(xfs_trans_t *, struct xfs_buf *);
+void		xfs_trans_ordered_buf(xfs_trans_t *, struct xfs_buf *);
 void		xfs_trans_dquot_buf(xfs_trans_t *, struct xfs_buf *, uint);
 void		xfs_trans_inode_alloc_buf(xfs_trans_t *, struct xfs_buf *);
 void		xfs_trans_ichgtime(struct xfs_trans *, struct xfs_inode *, int);

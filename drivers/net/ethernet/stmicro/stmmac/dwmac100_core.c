@@ -43,17 +43,11 @@ static void dwmac100_core_init(void __iomem *ioaddr)
 #endif
 }
 
-static int dwmac100_rx_coe_supported(void __iomem *ioaddr)
-{
-	return 0;
-}
-
 static void dwmac100_dump_mac_regs(void __iomem *ioaddr)
 {
 	pr_info("\t----------------------------------------------\n"
 		"\t  DWMAC 100 CSR (base addr = 0x%p)\n"
-		"\t----------------------------------------------\n",
-		ioaddr);
+		"\t----------------------------------------------\n", ioaddr);
 	pr_info("\tcontrol reg (offset 0x%x): 0x%08x\n", MAC_CONTROL,
 		readl(ioaddr + MAC_CONTROL));
 	pr_info("\taddr HI (offset 0x%x): 0x%08x\n ", MAC_ADDR_HIGH,
@@ -72,9 +66,15 @@ static void dwmac100_dump_mac_regs(void __iomem *ioaddr)
 		readl(ioaddr + MAC_VLAN2));
 }
 
-static void dwmac100_irq_status(void __iomem *ioaddr)
+static int dwmac100_rx_ipc_enable(void __iomem *ioaddr)
 {
-	return;
+	return 0;
+}
+
+static int dwmac100_irq_status(void __iomem *ioaddr,
+			       struct stmmac_extra_stats *x)
+{
+	return 0;
 }
 
 static void dwmac100_set_umac_addr(void __iomem *ioaddr, unsigned char *addr,
@@ -89,9 +89,9 @@ static void dwmac100_get_umac_addr(void __iomem *ioaddr, unsigned char *addr,
 	stmmac_get_mac_addr(ioaddr, addr, MAC_ADDR_HIGH, MAC_ADDR_LOW);
 }
 
-static void dwmac100_set_filter(struct net_device *dev)
+static void dwmac100_set_filter(struct net_device *dev, int id)
 {
-	void __iomem *ioaddr = (void __iomem *) dev->base_addr;
+	void __iomem *ioaddr = (void __iomem *)dev->base_addr;
 	u32 value = readl(ioaddr + MAC_CONTROL);
 
 	if (dev->flags & IFF_PROMISC) {
@@ -112,7 +112,8 @@ static void dwmac100_set_filter(struct net_device *dev)
 		struct netdev_hw_addr *ha;
 
 		/* Perfect filter mode for physical address and Hash
-		   filter for multicast */
+		 * filter for multicast
+		 */
 		value |= MAC_CONTROL_HP;
 		value &= ~(MAC_CONTROL_PM | MAC_CONTROL_PR |
 			   MAC_CONTROL_IF | MAC_CONTROL_HO);
@@ -120,12 +121,13 @@ static void dwmac100_set_filter(struct net_device *dev)
 		memset(mc_filter, 0, sizeof(mc_filter));
 		netdev_for_each_mc_addr(ha, dev) {
 			/* The upper 6 bits of the calculated CRC are used to
-			 * index the contens of the hash table */
-			int bit_nr =
-			    ether_crc(ETH_ALEN, ha->addr) >> 26;
+			 * index the contens of the hash table
+			 */
+			int bit_nr = ether_crc(ETH_ALEN, ha->addr) >> 26;
 			/* The most significant bit determines the register to
 			 * use (H/L) while the other 5 bits determine the bit
-			 * within the register. */
+			 * within the register.
+			 */
 			mc_filter[bit_nr >> 5] |= 1 << (bit_nr & 31);
 		}
 		writel(mc_filter[0], ioaddr + MAC_HASH_LOW);
@@ -133,11 +135,6 @@ static void dwmac100_set_filter(struct net_device *dev)
 	}
 
 	writel(value, ioaddr + MAC_CONTROL);
-
-	CHIP_DBG(KERN_INFO "%s: CTRL reg: 0x%08x Hash regs: "
-	    "HI 0x%08x, LO 0x%08x\n",
-	    __func__, readl(ioaddr + MAC_CONTROL),
-	    readl(ioaddr + MAC_HASH_HIGH), readl(ioaddr + MAC_HASH_LOW));
 }
 
 static void dwmac100_flow_ctrl(void __iomem *ioaddr, unsigned int duplex,
@@ -150,9 +147,7 @@ static void dwmac100_flow_ctrl(void __iomem *ioaddr, unsigned int duplex,
 	writel(flow, ioaddr + MAC_FLOW_CTRL);
 }
 
-/* No PMT module supported for this Ethernet Controller.
- * Tested on ST platforms only.
- */
+/* No PMT module supported on ST boards with this Eth chip. */
 static void dwmac100_pmt(void __iomem *ioaddr, unsigned long mode)
 {
 	return;
@@ -160,7 +155,7 @@ static void dwmac100_pmt(void __iomem *ioaddr, unsigned long mode)
 
 static const struct stmmac_ops dwmac100_ops = {
 	.core_init = dwmac100_core_init,
-	.rx_coe = dwmac100_rx_coe_supported,
+	.rx_ipc = dwmac100_rx_ipc_enable,
 	.dump_regs = dwmac100_dump_mac_regs,
 	.host_irq_status = dwmac100_irq_status,
 	.set_filter = dwmac100_set_filter,

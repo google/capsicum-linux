@@ -506,8 +506,6 @@ static int sil24_scr_read(struct ata_link *link, unsigned sc_reg, u32 *val)
 	void __iomem *scr_addr = sil24_port_base(link->ap) + PORT_SCONTROL;
 
 	if (sc_reg < ARRAY_SIZE(sil24_scr_map)) {
-		void __iomem *addr;
-		addr = scr_addr + sil24_scr_map[sc_reg] * 4;
 		*val = readl(scr_addr + sil24_scr_map[sc_reg] * 4);
 		return 0;
 	}
@@ -519,8 +517,6 @@ static int sil24_scr_write(struct ata_link *link, unsigned sc_reg, u32 val)
 	void __iomem *scr_addr = sil24_port_base(link->ap) + PORT_SCONTROL;
 
 	if (sc_reg < ARRAY_SIZE(sil24_scr_map)) {
-		void __iomem *addr;
-		addr = scr_addr + sil24_scr_map[sc_reg] * 4;
 		writel(val, scr_addr + sil24_scr_map[sc_reg] * 4);
 		return 0;
 	}
@@ -1357,7 +1353,7 @@ static int sil24_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 #ifdef CONFIG_PM
 static int sil24_pci_device_resume(struct pci_dev *pdev)
 {
-	struct ata_host *host = dev_get_drvdata(&pdev->dev);
+	struct ata_host *host = pci_get_drvdata(pdev);
 	void __iomem *host_base = host->iomap[SIL24_HOST_BAR];
 	int rc;
 
@@ -1382,20 +1378,9 @@ static int sil24_port_resume(struct ata_port *ap)
 }
 #endif
 
-static int __init sil24_init(void)
-{
-	return pci_register_driver(&sil24_pci_driver);
-}
-
-static void __exit sil24_exit(void)
-{
-	pci_unregister_driver(&sil24_pci_driver);
-}
+module_pci_driver(sil24_pci_driver);
 
 MODULE_AUTHOR("Tejun Heo");
 MODULE_DESCRIPTION("Silicon Image 3124/3132 SATA low-level driver");
 MODULE_LICENSE("GPL");
 MODULE_DEVICE_TABLE(pci, sil24_pci_tbl);
-
-module_init(sil24_init);
-module_exit(sil24_exit);

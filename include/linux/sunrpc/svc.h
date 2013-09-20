@@ -50,6 +50,7 @@ struct svc_pool {
 	unsigned int		sp_nrthreads;	/* # of threads in pool */
 	struct list_head	sp_all_threads;	/* all server threads */
 	struct svc_pool_stats	sp_stats;	/* statistics on pool operation */
+	int			sp_task_pending;/* has pending task */
 } ____cacheline_aligned_in_smp;
 
 /*
@@ -232,7 +233,6 @@ struct svc_rqst {
 	struct svc_pool *	rq_pool;	/* thread pool */
 	struct svc_procedure *	rq_procinfo;	/* procedure info */
 	struct auth_ops *	rq_authop;	/* authentication flavour */
-	u32			rq_flavor;	/* pseudoflavor */
 	struct svc_cred		rq_cred;	/* auth info */
 	void *			rq_xprt_ctxt;	/* transport specific context ptr */
 	struct svc_deferred_req*rq_deferred;	/* deferred request we are replaying */
@@ -244,6 +244,7 @@ struct svc_rqst {
 	struct page *		rq_pages[RPCSVC_MAXPAGES];
 	struct page *		*rq_respages;	/* points into rq_pages */
 	int			rq_resused;	/* number of pages used for result */
+	struct page *		*rq_next_page; /* next reply page to use */
 
 	struct kvec		rq_vec[RPCSVC_MAXPAGES]; /* generally useful.. */
 
@@ -278,6 +279,8 @@ struct svc_rqst {
 	wait_queue_head_t	rq_wait;	/* synchronization */
 	struct task_struct	*rq_task;	/* service thread */
 };
+
+#define SVC_NET(svc_rqst)	(svc_rqst->rq_xprt->xpt_net)
 
 /*
  * Rigorous type checking on sockaddr type conversions
@@ -337,9 +340,8 @@ xdr_ressize_check(struct svc_rqst *rqstp, __be32 *p)
 
 static inline void svc_free_res_pages(struct svc_rqst *rqstp)
 {
-	while (rqstp->rq_resused) {
-		struct page **pp = (rqstp->rq_respages +
-				    --rqstp->rq_resused);
+	while (rqstp->rq_next_page != rqstp->rq_respages) {
+		struct page **pp = --rqstp->rq_next_page;
 		if (*pp) {
 			put_page(*pp);
 			*pp = NULL;
@@ -416,6 +418,7 @@ struct svc_procedure {
  */
 int svc_rpcb_setup(struct svc_serv *serv, struct net *net);
 void svc_rpcb_cleanup(struct svc_serv *serv, struct net *net);
+int svc_bind(struct svc_serv *serv, struct net *net);
 struct svc_serv *svc_create(struct svc_program *, unsigned int,
 			    void (*shutdown)(struct svc_serv *, struct net *net));
 struct svc_rqst *svc_prepare_thread(struct svc_serv *serv,

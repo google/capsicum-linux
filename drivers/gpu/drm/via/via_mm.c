@@ -25,8 +25,8 @@
  * Authors: Thomas Hellström <thomas-at-tungstengraphics-dot-com>
  */
 
-#include "drmP.h"
-#include "via_drm.h"
+#include <drm/drmP.h>
+#include <drm/via_drm.h>
 #include "via_drv.h"
 
 #define VIA_MM_ALIGN_SHIFT 4
@@ -148,17 +148,10 @@ int via_mem_alloc(struct drm_device *dev, void *data,
 	if (retval)
 		goto fail_alloc;
 
-again:
-	if (idr_pre_get(&dev_priv->object_idr, GFP_KERNEL) == 0) {
-		retval = -ENOMEM;
+	retval = idr_alloc(&dev_priv->object_idr, item, 1, 0, GFP_KERNEL);
+	if (retval < 0)
 		goto fail_idr;
-	}
-
-	retval = idr_get_new_above(&dev_priv->object_idr, item, 1, &user_key);
-	if (retval == -EAGAIN)
-		goto again;
-	if (retval)
-		goto fail_idr;
+	user_key = retval;
 
 	list_add(&item->owner_list, &file_priv->obj_list);
 	mutex_unlock(&dev->struct_mutex);
@@ -215,14 +208,20 @@ void via_reclaim_buffers_locked(struct drm_device *dev,
 	struct via_file_private *file_priv = file->driver_priv;
 	struct via_memblock *entry, *next;
 
+	if (!(file->minor->master && file->master->lock.hw_lock))
+		return;
+
+	drm_idlelock_take(&file->master->lock);
+
 	mutex_lock(&dev->struct_mutex);
 	if (list_empty(&file_priv->obj_list)) {
 		mutex_unlock(&dev->struct_mutex);
+		drm_idlelock_release(&file->master->lock);
+
 		return;
 	}
 
-	if (dev->driver->dma_quiescent)
-		dev->driver->dma_quiescent(dev);
+	via_driver_dma_quiescent(dev);
 
 	list_for_each_entry_safe(entry, next, &file_priv->obj_list,
 				 owner_list) {
@@ -231,5 +230,8 @@ void via_reclaim_buffers_locked(struct drm_device *dev,
 		kfree(entry);
 	}
 	mutex_unlock(&dev->struct_mutex);
+
+	drm_idlelock_release(&file->master->lock);
+
 	return;
 }

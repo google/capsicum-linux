@@ -1,8 +1,8 @@
 #ifndef _QIB_KERNEL_H
 #define _QIB_KERNEL_H
 /*
- * Copyright (c) 2006, 2007, 2008, 2009, 2010 QLogic Corporation.
- * All rights reserved.
+ * Copyright (c) 2012, 2013 Intel Corporation.  All rights reserved.
+ * Copyright (c) 2006 - 2012 QLogic Corporation. All rights reserved.
  * Copyright (c) 2003, 2004, 2005, 2006 PathScale, Inc. All rights reserved.
  *
  * This software is available to you under a choice of one of two
@@ -51,6 +51,7 @@
 #include <linux/completion.h>
 #include <linux/kref.h>
 #include <linux/sched.h>
+#include <linux/kthread.h>
 
 #include "qib_common.h"
 #include "qib_verbs.h"
@@ -87,7 +88,7 @@ struct qlogic_ib_stats {
 };
 
 extern struct qlogic_ib_stats qib_stats;
-extern struct pci_error_handlers qib_pci_err_handler;
+extern const struct pci_error_handlers qib_pci_err_handler;
 extern struct pci_driver qib_driver;
 
 #define QIB_CHIP_SWVERSION QIB_CHIP_VERS_MAJ
@@ -114,6 +115,11 @@ struct qib_eep_log_mask {
 /*
  * Below contains all data related to a single context (formerly called port).
  */
+
+#ifdef CONFIG_DEBUG_FS
+struct qib_opcode_stats_perctx;
+#endif
+
 struct qib_ctxtdata {
 	void **rcvegrbuf;
 	dma_addr_t *rcvegrbuf_phys;
@@ -154,6 +160,8 @@ struct qib_ctxtdata {
 	 */
 	/* instead of calculating it */
 	unsigned ctxt;
+	/* local node of context */
+	int node_id;
 	/* non-zero if ctxt is being shared. */
 	u16 subctxt_cnt;
 	/* non-zero if ctxt is being shared. */
@@ -222,12 +230,15 @@ struct qib_ctxtdata {
 	u8 redirect_seq_cnt;
 	/* ctxt rcvhdrq head offset */
 	u32 head;
-	u32 pkt_count;
 	/* lookaside fields */
 	struct qib_qp *lookaside_qp;
 	u32 lookaside_qpn;
 	/* QPs waiting for context processing */
 	struct list_head qp_wait_list;
+#ifdef CONFIG_DEBUG_FS
+	/* verbs stats per CTX */
+	struct qib_opcode_stats_perctx *opstats;
+#endif
 };
 
 struct qib_sge_state;
@@ -428,9 +439,19 @@ struct qib_verbs_txreq {
 #define ACTIVITY_TIMER 5
 
 #define MAX_NAME_SIZE 64
+
+#ifdef CONFIG_INFINIBAND_QIB_DCA
+struct qib_irq_notify;
+#endif
+
 struct qib_msix_entry {
 	struct msix_entry msix;
 	void *arg;
+#ifdef CONFIG_INFINIBAND_QIB_DCA
+	int dca;
+	int rcv;
+	struct qib_irq_notify *notifier;
+#endif
 	char name[MAX_NAME_SIZE];
 	cpumask_var_t mask;
 };
@@ -519,6 +540,7 @@ struct qib_pportdata {
 	struct qib_devdata *dd;
 	struct qib_chippport_specific *cpspec; /* chip-specific per-port */
 	struct kobject pport_kobj;
+	struct kobject pport_cc_kobj;
 	struct kobject sl2vl_kobj;
 	struct kobject diagc_kobj;
 
@@ -530,8 +552,6 @@ struct qib_pportdata {
 	/* qib_lflags driver is waiting for */
 	u32 state_wanted;
 	spinlock_t lflags_lock;
-	/* number of (port-specific) interrupts for this port -- saturates... */
-	u32 int_counter;
 
 	/* ref count for each pkey */
 	atomic_t pkeyrefs[4];
@@ -543,24 +563,27 @@ struct qib_pportdata {
 	u64 *statusp;
 
 	/* SendDMA related entries */
-	spinlock_t            sdma_lock;
-	struct qib_sdma_state sdma_state;
-	unsigned long         sdma_buf_jiffies;
-	struct qib_sdma_desc *sdma_descq;
-	u64                   sdma_descq_added;
-	u64                   sdma_descq_removed;
-	u16                   sdma_descq_cnt;
-	u16                   sdma_descq_tail;
-	u16                   sdma_descq_head;
-	u16                   sdma_next_intr;
-	u16                   sdma_reset_wait;
-	u8                    sdma_generation;
-	struct tasklet_struct sdma_sw_clean_up_task;
-	struct list_head      sdma_activelist;
 
+	/* read mostly */
+	struct qib_sdma_desc *sdma_descq;
+	struct workqueue_struct *qib_wq;
+	struct qib_sdma_state sdma_state;
 	dma_addr_t       sdma_descq_phys;
 	volatile __le64 *sdma_head_dma; /* DMA'ed by chip */
 	dma_addr_t       sdma_head_phys;
+	u16                   sdma_descq_cnt;
+
+	/* read/write using lock */
+	spinlock_t            sdma_lock ____cacheline_aligned_in_smp;
+	struct list_head      sdma_activelist;
+	u64                   sdma_descq_added;
+	u64                   sdma_descq_removed;
+	u16                   sdma_descq_tail;
+	u16                   sdma_descq_head;
+	u8                    sdma_generation;
+
+	struct tasklet_struct sdma_sw_clean_up_task
+		____cacheline_aligned_in_smp;
 
 	wait_queue_head_t state_wait; /* for state_wanted */
 
@@ -637,6 +660,39 @@ struct qib_pportdata {
 	struct timer_list led_override_timer;
 	struct xmit_wait cong_stats;
 	struct timer_list symerr_clear_timer;
+
+	/* Synchronize access between driver writes and sysfs reads */
+	spinlock_t cc_shadow_lock
+		____cacheline_aligned_in_smp;
+
+	/* Shadow copy of the congestion control table */
+	struct cc_table_shadow *ccti_entries_shadow;
+
+	/* Shadow copy of the congestion control entries */
+	struct ib_cc_congestion_setting_attr_shadow *congestion_entries_shadow;
+
+	/* List of congestion control table entries */
+	struct ib_cc_table_entry_shadow *ccti_entries;
+
+	/* 16 congestion entries with each entry corresponding to a SL */
+	struct ib_cc_congestion_entry_shadow *congestion_entries;
+
+	/* Maximum number of congestion control entries that the agent expects
+	 * the manager to send.
+	 */
+	u16 cc_supported_table_entries;
+
+	/* Total number of congestion control table entries */
+	u16 total_cct_entry;
+
+	/* Bit map identifying service level */
+	u16 cc_sl_control_map;
+
+	/* maximum congestion control table index */
+	u16 ccti_limit;
+
+	/* CA's max number of 64 entry units in the congestion control table */
+	u8 cc_max_table_entries;
 };
 
 /* Observers. Not to be taken lightly, possibly not to ship. */
@@ -793,6 +849,9 @@ struct qib_devdata {
 		struct qib_ctxtdata *);
 	void (*f_writescratch)(struct qib_devdata *, u32);
 	int (*f_tempsense_rd)(struct qib_devdata *, int regnum);
+#ifdef CONFIG_INFINIBAND_QIB_DCA
+	int (*f_notify_dca)(struct qib_devdata *, unsigned long event);
+#endif
 
 	char *boardname; /* human readable board info */
 
@@ -873,7 +932,14 @@ struct qib_devdata {
 	 * pio_writing.
 	 */
 	spinlock_t pioavail_lock;
-
+	/*
+	 * index of last buffer to optimize search for next
+	 */
+	u32 last_pio;
+	/*
+	 * min kernel pio buffer to optimize search
+	 */
+	u32 min_kernel_pio;
 	/*
 	 * Shadow copies of registers; size indicates read access size.
 	 * Most of them are readonly, but some are write-only register,
@@ -1033,6 +1099,10 @@ struct qib_devdata {
 	u16 psxmitwait_check_rate;
 	/* high volume overflow errors defered to tasklet */
 	struct tasklet_struct error_tasklet;
+	/* per device cq worker */
+	struct kthread_worker *worker;
+
+	int assigned_node_id; /* NUMA node closest to HCA */
 };
 
 /* hol_state values */
@@ -1070,6 +1140,7 @@ extern u32 qib_cpulist_count;
 extern unsigned long *qib_cpulist;
 
 extern unsigned qib_wc_pat;
+extern unsigned qib_cc_table_size;
 int qib_init(struct qib_devdata *, int);
 int init_chip_wc_pat(struct qib_devdata *dd, u32);
 int qib_enable_wc(struct qib_devdata *dd);
@@ -1111,7 +1182,7 @@ int qib_create_rcvhdrq(struct qib_devdata *, struct qib_ctxtdata *);
 int qib_setup_eagerbufs(struct qib_ctxtdata *);
 void qib_set_ctxtcnt(struct qib_devdata *);
 int qib_create_ctxts(struct qib_devdata *dd);
-struct qib_ctxtdata *qib_create_ctxtdata(struct qib_pportdata *, u32);
+struct qib_ctxtdata *qib_create_ctxtdata(struct qib_pportdata *, u32, int);
 void qib_init_pportdata(struct qib_pportdata *, struct qib_devdata *, u8, u8);
 void qib_free_ctxtdata(struct qib_devdata *, struct qib_ctxtdata *);
 
@@ -1260,6 +1331,11 @@ int qib_sdma_verbs_send(struct qib_pportdata *, struct qib_sge_state *,
 /* ppd->sdma_lock should be locked before calling this. */
 int qib_sdma_make_progress(struct qib_pportdata *dd);
 
+static inline int qib_sdma_empty(const struct qib_pportdata *ppd)
+{
+	return ppd->sdma_descq_added == ppd->sdma_descq_removed;
+}
+
 /* must be called under qib_sdma_lock */
 static inline u16 qib_sdma_descq_freecnt(const struct qib_pportdata *ppd)
 {
@@ -1272,7 +1348,7 @@ static inline int __qib_sdma_running(struct qib_pportdata *ppd)
 	return ppd->sdma_state.current_state == qib_sdma_state_s99_running;
 }
 int qib_sdma_running(struct qib_pportdata *);
-
+void dump_sdma_state(struct qib_pportdata *ppd);
 void __qib_sdma_process_event(struct qib_pportdata *, enum qib_sdma_events);
 void qib_sdma_process_event(struct qib_pportdata *, enum qib_sdma_events);
 
@@ -1397,6 +1473,7 @@ extern unsigned qib_n_krcv_queues;
 extern unsigned qib_sdma_fetch_arb;
 extern unsigned qib_compat_ddr_negotiate;
 extern int qib_special_trigger;
+extern unsigned qib_numa_aware;
 
 extern struct mutex qib_mutex;
 
@@ -1426,27 +1503,23 @@ extern struct mutex qib_mutex;
  * first to avoid possible serial port delays from printk.
  */
 #define qib_early_err(dev, fmt, ...) \
-	do { \
-		dev_err(dev, fmt, ##__VA_ARGS__); \
-	} while (0)
+	dev_err(dev, fmt, ##__VA_ARGS__)
 
 #define qib_dev_err(dd, fmt, ...) \
-	do { \
-		dev_err(&(dd)->pcidev->dev, "%s: " fmt, \
-			qib_get_unit_name((dd)->unit), ##__VA_ARGS__); \
-	} while (0)
+	dev_err(&(dd)->pcidev->dev, "%s: " fmt, \
+		qib_get_unit_name((dd)->unit), ##__VA_ARGS__)
+
+#define qib_dev_warn(dd, fmt, ...) \
+	dev_warn(&(dd)->pcidev->dev, "%s: " fmt, \
+		qib_get_unit_name((dd)->unit), ##__VA_ARGS__)
 
 #define qib_dev_porterr(dd, port, fmt, ...) \
-	do { \
-		dev_err(&(dd)->pcidev->dev, "%s: IB%u:%u " fmt, \
-			qib_get_unit_name((dd)->unit), (dd)->unit, (port), \
-			##__VA_ARGS__); \
-	} while (0)
+	dev_err(&(dd)->pcidev->dev, "%s: IB%u:%u " fmt, \
+		qib_get_unit_name((dd)->unit), (dd)->unit, (port), \
+		##__VA_ARGS__)
 
 #define qib_devinfo(pcidev, fmt, ...) \
-	do { \
-		dev_info(&(pcidev)->dev, fmt, ##__VA_ARGS__); \
-	} while (0)
+	dev_info(&(pcidev)->dev, fmt, ##__VA_ARGS__)
 
 /*
  * this is used for formatting hw error messages...

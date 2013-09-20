@@ -37,6 +37,9 @@ static const __initconst struct hypervisor_x86 * const hypervisors[] =
 #endif
 	&x86_hyper_vmware,
 	&x86_hyper_ms_hyperv,
+#ifdef CONFIG_KVM_GUEST
+	&x86_hyper_kvm,
+#endif
 };
 
 const struct hypervisor_x86 *x86_hyper;
@@ -57,7 +60,7 @@ detect_hypervisor_vendor(void)
 	}
 }
 
-void __cpuinit init_hypervisor(struct cpuinfo_x86 *c)
+void init_hypervisor(struct cpuinfo_x86 *c)
 {
 	if (x86_hyper && x86_hyper->set_cpu_features)
 		x86_hyper->set_cpu_features(c);
@@ -75,4 +78,11 @@ void __init init_hypervisor_platform(void)
 
 	if (x86_hyper->init_platform)
 		x86_hyper->init_platform();
+}
+
+bool __init hypervisor_x2apic_available(void)
+{
+	return x86_hyper                   &&
+	       x86_hyper->x2apic_available &&
+	       x86_hyper->x2apic_available();
 }

@@ -3,7 +3,7 @@
  * for access to MPT (Message Passing Technology) firmware.
  *
  * This code is based on drivers/scsi/mpt2sas/mpt2_base.c
- * Copyright (C) 2007-2010  LSI Corporation
+ * Copyright (C) 2007-2012  LSI Corporation
  *  (mailto:DL-MPTFusionLinux@lsi.com)
  *
  * This program is free software; you can redistribute it and/or
@@ -80,10 +80,6 @@ static int msix_disable = -1;
 module_param(msix_disable, int, 0);
 MODULE_PARM_DESC(msix_disable, " disable msix routed interrupts (default=0)");
 
-static int missing_delay[2] = {-1, -1};
-module_param_array(missing_delay, int, NULL, 0);
-MODULE_PARM_DESC(missing_delay, " device missing delay , io missing delay");
-
 static int mpt2sas_fwfault_debug;
 MODULE_PARM_DESC(mpt2sas_fwfault_debug, " enable detection of firmware fault "
 	"and halt firmware - (default=0)");
@@ -155,7 +151,7 @@ _base_fault_reset_work(struct work_struct *work)
 	struct task_struct *p;
 
 	spin_lock_irqsave(&ioc->ioc_reset_in_progress_lock, flags);
-	if (ioc->shost_recovery)
+	if (ioc->shost_recovery || ioc->pci_error_recovery)
 		goto rearm_timer;
 	spin_unlock_irqrestore(&ioc->ioc_reset_in_progress_lock, flags);
 
@@ -163,6 +159,20 @@ _base_fault_reset_work(struct work_struct *work)
 	if ((doorbell & MPI2_IOC_STATE_MASK) == MPI2_IOC_STATE_MASK) {
 		printk(MPT2SAS_INFO_FMT "%s : SAS host is non-operational !!!!\n",
 			ioc->name, __func__);
+
+		/* It may be possible that EEH recovery can resolve some of
+		 * pci bus failure issues rather removing the dead ioc function
+		 * by considering controller is in a non-operational state. So
+		 * here priority is given to the EEH recovery. If it doesn't
+		 * not resolve this issue, mpt2sas driver will consider this
+		 * controller to non-operational state and remove the dead ioc
+		 * function.
+		 */
+		if (ioc->non_operational_loop++ < 5) {
+			spin_lock_irqsave(&ioc->ioc_reset_in_progress_lock,
+							 flags);
+			goto rearm_timer;
+		}
 
 		/*
 		 * Call _scsih_flush_pending_cmds callback so that we flush all
@@ -192,6 +202,8 @@ _base_fault_reset_work(struct work_struct *work)
 
 		return; /* don't rearm timer */
 	}
+
+	ioc->non_operational_loop = 0;
 
 	if ((doorbell & MPI2_IOC_STATE_MASK) == MPI2_IOC_STATE_FAULT) {
 		rc = mpt2sas_base_hard_reset_handler(ioc, CAN_SLEEP,
@@ -699,6 +711,11 @@ _base_display_reply_info(struct MPT2SAS_ADAPTER *ioc, u16 smid, u8 msix_index,
 	u16 ioc_status;
 
 	mpi_reply = mpt2sas_base_get_reply_virt_addr(ioc, reply);
+	if (unlikely(!mpi_reply)) {
+		printk(MPT2SAS_ERR_FMT "mpi_reply not valid at %s:%d/%s()!\n",
+			ioc->name, __FILE__, __LINE__, __func__);
+		return;
+	}
 	ioc_status = le16_to_cpu(mpi_reply->IOCStatus);
 #ifdef CONFIG_SCSI_MPT2SAS_LOGGING
 	if ((ioc_status & MPI2_IOCSTATUS_MASK) &&
@@ -930,16 +947,18 @@ _base_interrupt(int irq, void *bus_id)
 		else if (request_desript_type ==
 		    MPI2_RPY_DESCRIPT_FLAGS_TARGETASSIST_SUCCESS)
 			goto next;
-		if (smid)
+		if (smid) {
 			cb_idx = _base_get_cb_idx(ioc, smid);
-		if (smid && cb_idx != 0xFF) {
-			rc = mpt_callbacks[cb_idx](ioc, smid, msix_index,
-			    reply);
+		if ((likely(cb_idx < MPT_MAX_CALLBACKS))
+			    && (likely(mpt_callbacks[cb_idx] != NULL))) {
+				rc = mpt_callbacks[cb_idx](ioc, smid,
+				    msix_index, reply);
 			if (reply)
-				_base_display_reply_info(ioc, smid, msix_index,
-				    reply);
+				_base_display_reply_info(ioc, smid,
+				    msix_index, reply);
 			if (rc)
 				mpt2sas_base_free_smid(ioc, smid);
+			}
 		}
 		if (!smid)
 			_base_async_event(ioc, msix_index, reply);
@@ -1201,6 +1220,13 @@ _base_check_enable_msix(struct MPT2SAS_ADAPTER *ioc)
 	int base;
 	u16 message_control;
 
+
+	/* Check whether controller SAS2008 B0 controller,
+	   if it is SAS2008 B0 controller use IO-APIC instead of MSIX */
+	if (ioc->pdev->device == MPI2_MFGPAGE_DEVID_SAS2008 &&
+	    ioc->pdev->revision == 0x01) {
+		return -EINVAL;
+	}
 
 	base = pci_find_capability(ioc->pdev, PCI_CAP_ID_MSIX);
 	if (!base) {
@@ -1785,7 +1811,7 @@ static inline void _base_writeq(__u64 b, volatile void __iomem *addr,
 static inline u8
 _base_get_msix_index(struct MPT2SAS_ADAPTER *ioc)
 {
-	return ioc->cpu_msix_table[smp_processor_id()];
+	return ioc->cpu_msix_table[raw_smp_processor_id()];
 }
 
 /**
@@ -1964,9 +1990,9 @@ _base_display_intel_branding(struct MPT2SAS_ADAPTER *ioc)
 			printk(MPT2SAS_INFO_FMT "%s\n", ioc->name,
 			    MPT2SAS_INTEL_RMS2LL040_BRANDING);
 			break;
-		case MPT2SAS_INTEL_RAMSDALE_SSDID:
+		case MPT2SAS_INTEL_SSD910_SSDID:
 			printk(MPT2SAS_INFO_FMT "%s\n", ioc->name,
-			    MPT2SAS_INTEL_RAMSDALE_BRANDING);
+			    MPT2SAS_INTEL_SSD910_BRANDING);
 			break;
 		default:
 			break;
@@ -1992,6 +2018,14 @@ _base_display_intel_branding(struct MPT2SAS_ADAPTER *ioc)
 		case MPT2SAS_INTEL_RMS25KB040_SSDID:
 			printk(MPT2SAS_INFO_FMT "%s\n", ioc->name,
 			    MPT2SAS_INTEL_RMS25KB040_BRANDING);
+			break;
+		case MPT2SAS_INTEL_RMS25LB040_SSDID:
+			printk(MPT2SAS_INFO_FMT "%s\n", ioc->name,
+			    MPT2SAS_INTEL_RMS25LB040_BRANDING);
+			break;
+		case MPT2SAS_INTEL_RMS25LB080_SSDID:
+			printk(MPT2SAS_INFO_FMT "%s\n", ioc->name,
+			    MPT2SAS_INTEL_RMS25LB080_BRANDING);
 			break;
 		default:
 			break;
@@ -2161,7 +2195,7 @@ _base_display_ioc_capabilities(struct MPT2SAS_ADAPTER *ioc)
 }
 
 /**
- * _base_update_missing_delay - change the missing delay timers
+ * mpt2sas_base_update_missing_delay - change the missing delay timers
  * @ioc: per adapter object
  * @device_missing_delay: amount of time till device is reported missing
  * @io_missing_delay: interval IO is returned when there is a missing device
@@ -2172,8 +2206,8 @@ _base_display_ioc_capabilities(struct MPT2SAS_ADAPTER *ioc)
  * delay, as well as the io missing delay. This should be called at driver
  * load time.
  */
-static void
-_base_update_missing_delay(struct MPT2SAS_ADAPTER *ioc,
+void
+mpt2sas_base_update_missing_delay(struct MPT2SAS_ADAPTER *ioc,
 	u16 device_missing_delay, u8 io_missing_delay)
 {
 	u16 dmd, dmd_new, dmd_orignal;
@@ -2417,10 +2451,13 @@ _base_allocate_memory_pools(struct MPT2SAS_ADAPTER *ioc,  int sleep_flag)
 	}
 
 	/* command line tunables  for max controller queue depth */
-	if (max_queue_depth != -1)
-		max_request_credit = (max_queue_depth < facts->RequestCredit)
-		    ? max_queue_depth : facts->RequestCredit;
-	else
+	if (max_queue_depth != -1 && max_queue_depth != 0) {
+		max_request_credit = min_t(u16, max_queue_depth +
+			ioc->hi_priority_depth + ioc->internal_depth,
+			facts->RequestCredit);
+		if (max_request_credit > MAX_HBA_QUEUE_DEPTH)
+			max_request_credit =  MAX_HBA_QUEUE_DEPTH;
+	} else
 		max_request_credit = min_t(u16, facts->RequestCredit,
 		    MAX_HBA_QUEUE_DEPTH);
 
@@ -2466,22 +2503,24 @@ _base_allocate_memory_pools(struct MPT2SAS_ADAPTER *ioc,  int sleep_flag)
 	/* reply free queue sizing - taking into account for 64 FW events */
 	ioc->reply_free_queue_depth = ioc->hba_queue_depth + 64;
 
+	/* calculate reply descriptor post queue depth */
+	ioc->reply_post_queue_depth = ioc->hba_queue_depth +
+					ioc->reply_free_queue_depth +  1;
 	/* align the reply post queue on the next 16 count boundary */
-	if (!ioc->reply_free_queue_depth % 16)
-		ioc->reply_post_queue_depth = ioc->reply_free_queue_depth + 16;
-	else
-		ioc->reply_post_queue_depth = ioc->reply_free_queue_depth +
-				32 - (ioc->reply_free_queue_depth % 16);
+	if (ioc->reply_post_queue_depth % 16)
+		ioc->reply_post_queue_depth += 16 -
+			(ioc->reply_post_queue_depth % 16);
+
+
 	if (ioc->reply_post_queue_depth >
 	    facts->MaxReplyDescriptorPostQueueDepth) {
-		ioc->reply_post_queue_depth = min_t(u16,
-		    (facts->MaxReplyDescriptorPostQueueDepth -
-		    (facts->MaxReplyDescriptorPostQueueDepth % 16)),
-		    (ioc->hba_queue_depth - (ioc->hba_queue_depth % 16)));
-		ioc->reply_free_queue_depth = ioc->reply_post_queue_depth - 16;
-		ioc->hba_queue_depth = ioc->reply_free_queue_depth - 64;
+		ioc->reply_post_queue_depth =
+			facts->MaxReplyDescriptorPostQueueDepth -
+		    (facts->MaxReplyDescriptorPostQueueDepth % 16);
+		ioc->hba_queue_depth =
+			((ioc->reply_post_queue_depth - 64) / 2) - 1;
+		ioc->reply_free_queue_depth = ioc->hba_queue_depth + 64;
 	}
-
 
 	dinitprintk(ioc, printk(MPT2SAS_INFO_FMT "scatter gather: "
 	    "sge_in_main_msg(%d), sge_per_chain(%d), sge_per_io(%d), "
@@ -2495,7 +2534,7 @@ _base_allocate_memory_pools(struct MPT2SAS_ADAPTER *ioc,  int sleep_flag)
 	/* set the scsi host can_queue depth
 	 * with some internal commands that could be outstanding
 	 */
-	ioc->shost->can_queue = ioc->scsiio_depth - (2);
+	ioc->shost->can_queue = ioc->scsiio_depth;
 	dinitprintk(ioc, printk(MPT2SAS_INFO_FMT "scsi host: "
 	    "can_queue depth (%d)\n", ioc->name, ioc->shost->can_queue));
 
@@ -3343,7 +3382,7 @@ _base_get_port_facts(struct MPT2SAS_ADAPTER *ioc, int port, int sleep_flag)
 	}
 
 	pfacts = &ioc->pfacts[port];
-	memset(pfacts, 0, sizeof(Mpi2PortFactsReply_t));
+	memset(pfacts, 0, sizeof(struct mpt2sas_port_facts));
 	pfacts->PortNumber = mpi_reply.PortNumber;
 	pfacts->VP_ID = mpi_reply.VP_ID;
 	pfacts->VF_ID = mpi_reply.VF_ID;
@@ -3385,7 +3424,7 @@ _base_get_ioc_facts(struct MPT2SAS_ADAPTER *ioc, int sleep_flag)
 	}
 
 	facts = &ioc->facts;
-	memset(facts, 0, sizeof(Mpi2IOCFactsReply_t));
+	memset(facts, 0, sizeof(struct mpt2sas_facts));
 	facts->MsgVersion = le16_to_cpu(mpi_reply.MsgVersion);
 	facts->HeaderVersion = le16_to_cpu(mpi_reply.HeaderVersion);
 	facts->VP_ID = mpi_reply.VP_ID;
@@ -3899,11 +3938,15 @@ _base_diag_reset(struct MPT2SAS_ADAPTER *ioc, int sleep_flag)
 	writel(host_diagnostic | MPI2_DIAG_RESET_ADAPTER,
 	     &ioc->chip->HostDiagnostic);
 
-	/* don't access any registers for 50 milliseconds */
-	msleep(50);
+	/* This delay allows the chip PCIe hardware time to finish reset tasks*/
+	if (sleep_flag == CAN_SLEEP)
+		msleep(MPI2_HARD_RESET_PCIE_FIRST_READ_DELAY_MICRO_SEC/1000);
+	else
+		mdelay(MPI2_HARD_RESET_PCIE_FIRST_READ_DELAY_MICRO_SEC/1000);
 
-	/* 300 second max wait */
-	for (count = 0; count < 3000000 ; count++) {
+	/* Approximately 300 second max wait */
+	for (count = 0; count < (300000000 /
+	    MPI2_HARD_RESET_PCIE_SECOND_READ_DELAY_MICRO_SEC); count++) {
 
 		host_diagnostic = readl(&ioc->chip->HostDiagnostic);
 
@@ -3912,11 +3955,13 @@ _base_diag_reset(struct MPT2SAS_ADAPTER *ioc, int sleep_flag)
 		if (!(host_diagnostic & MPI2_DIAG_RESET_ADAPTER))
 			break;
 
-		/* wait 100 msec */
+		/* Wait to pass the second read delay window */
 		if (sleep_flag == CAN_SLEEP)
-			msleep(1);
+			msleep(MPI2_HARD_RESET_PCIE_SECOND_READ_DELAY_MICRO_SEC
+			       /1000);
 		else
-			mdelay(1);
+			mdelay(MPI2_HARD_RESET_PCIE_SECOND_READ_DELAY_MICRO_SEC
+			       /1000);
 	}
 
 	if (host_diagnostic & MPI2_DIAG_HCB_MODE) {
@@ -4153,7 +4198,8 @@ _base_make_ioc_operational(struct MPT2SAS_ADAPTER *ioc, int sleep_flag)
 	if (ioc->is_driver_loading) {
 		if (ioc->is_warpdrive && ioc->manu_pg10.OEMIdentifier
 		    == 0x80) {
-			hide_flag = (u8) (ioc->manu_pg10.OEMSpecificFlags0 &
+			hide_flag = (u8) (
+			    le32_to_cpu(ioc->manu_pg10.OEMSpecificFlags0) &
 			    MFG_PAGE10_HIDE_SSDS_MASK);
 			if (hide_flag != MFG_PAGE10_HIDE_SSDS_MASK)
 				ioc->mfg_pg10_hide_flag = hide_flag;
@@ -4262,7 +4308,7 @@ mpt2sas_base_attach(struct MPT2SAS_ADAPTER *ioc)
 		goto out_free_resources;
 
 	ioc->pfacts = kcalloc(ioc->facts.NumberOfPorts,
-	    sizeof(Mpi2PortFactsReply_t), GFP_KERNEL);
+	    sizeof(struct mpt2sas_port_facts), GFP_KERNEL);
 	if (!ioc->pfacts) {
 		r = -ENOMEM;
 		goto out_free_resources;
@@ -4279,7 +4325,6 @@ mpt2sas_base_attach(struct MPT2SAS_ADAPTER *ioc)
 		goto out_free_resources;
 
 	init_waitqueue_head(&ioc->reset_wq);
-
 	/* allocate memory pd handle bitmask list */
 	ioc->pd_handles_sz = (ioc->facts.MaxDevHandle / 8);
 	if (ioc->facts.MaxDevHandle % 8)
@@ -4290,7 +4335,12 @@ mpt2sas_base_attach(struct MPT2SAS_ADAPTER *ioc)
 		r = -ENOMEM;
 		goto out_free_resources;
 	}
-
+	ioc->blocking_handles = kzalloc(ioc->pd_handles_sz,
+	    GFP_KERNEL);
+	if (!ioc->blocking_handles) {
+		r = -ENOMEM;
+		goto out_free_resources;
+	}
 	ioc->fwfault_debug = mpt2sas_fwfault_debug;
 
 	/* base internal command bits */
@@ -4361,9 +4411,7 @@ mpt2sas_base_attach(struct MPT2SAS_ADAPTER *ioc)
 	if (r)
 		goto out_free_resources;
 
-	if (missing_delay[0] != -1 && missing_delay[1] != -1)
-		_base_update_missing_delay(ioc, missing_delay[0],
-		    missing_delay[1]);
+	ioc->non_operational_loop = 0;
 
 	return 0;
 
@@ -4377,6 +4425,7 @@ mpt2sas_base_attach(struct MPT2SAS_ADAPTER *ioc)
 	if (ioc->is_warpdrive)
 		kfree(ioc->reply_post_host_index);
 	kfree(ioc->pd_handles);
+	kfree(ioc->blocking_handles);
 	kfree(ioc->tm_cmds.reply);
 	kfree(ioc->transport_cmds.reply);
 	kfree(ioc->scsih_cmds.reply);
@@ -4418,6 +4467,7 @@ mpt2sas_base_detach(struct MPT2SAS_ADAPTER *ioc)
 	if (ioc->is_warpdrive)
 		kfree(ioc->reply_post_host_index);
 	kfree(ioc->pd_handles);
+	kfree(ioc->blocking_handles);
 	kfree(ioc->pfacts);
 	kfree(ioc->ctl_cmds.reply);
 	kfree(ioc->ctl_cmds.sense);

@@ -32,21 +32,13 @@
 
 #include <mach/hardware.h>
 #include <mach/map.h>
-#include <mach/regs-clock.h>
 #include <mach/regs-gpio.h>
 
 #include <plat/cpu.h>
 #include <plat/gpio-core.h>
 #include <plat/gpio-cfg.h>
 #include <plat/gpio-cfg-helpers.h>
-#include <plat/gpio-fns.h>
 #include <plat/pm.h>
-
-#ifndef DEBUG_GPIO
-#define gpio_dbg(x...) do { } while (0)
-#else
-#define gpio_dbg(x...) printk(KERN_DEBUG x)
-#endif
 
 int samsung_gpio_setpull_updown(struct samsung_gpio_chip *chip,
 				unsigned int off, samsung_gpio_pull_t pull)
@@ -452,7 +444,7 @@ static struct samsung_gpio_cfg s3c24xx_gpiocfg_banka = {
 };
 #endif
 
-#if defined(CONFIG_ARCH_EXYNOS4) || defined(CONFIG_ARCH_EXYNOS5)
+#if defined(CONFIG_ARCH_EXYNOS4) || defined(CONFIG_SOC_EXYNOS5250)
 static struct samsung_gpio_cfg exynos_gpio_cfg = {
 	.set_pull	= exynos_gpio_setpull,
 	.get_pull	= exynos_gpio_getpull,
@@ -596,10 +588,13 @@ static int samsung_gpiolib_4bit_input(struct gpio_chip *chip,
 	unsigned long con;
 
 	con = __raw_readl(base + GPIOCON_OFF);
-	con &= ~(0xf << con_4bit_shift(offset));
+	if (ourchip->bitmap_gpio_int & BIT(offset))
+		con |= 0xf << con_4bit_shift(offset);
+	else
+		con &= ~(0xf << con_4bit_shift(offset));
 	__raw_writel(con, base + GPIOCON_OFF);
 
-	gpio_dbg("%s: %p: CON now %08lx\n", __func__, base, con);
+	pr_debug("%s: %p: CON now %08lx\n", __func__, base, con);
 
 	return 0;
 }
@@ -627,7 +622,7 @@ static int samsung_gpiolib_4bit_output(struct gpio_chip *chip,
 	__raw_writel(con, base + GPIOCON_OFF);
 	__raw_writel(dat, base + GPIODAT_OFF);
 
-	gpio_dbg("%s: %p: CON %08lx, DAT %08lx\n", __func__, base, con, dat);
+	pr_debug("%s: %p: CON %08lx, DAT %08lx\n", __func__, base, con, dat);
 
 	return 0;
 }
@@ -671,7 +666,7 @@ static int samsung_gpiolib_4bit2_input(struct gpio_chip *chip,
 	con &= ~(0xf << con_4bit_shift(offset));
 	__raw_writel(con, regcon);
 
-	gpio_dbg("%s: %p: CON %08lx\n", __func__, base, con);
+	pr_debug("%s: %p: CON %08lx\n", __func__, base, con);
 
 	return 0;
 }
@@ -706,7 +701,7 @@ static int samsung_gpiolib_4bit2_output(struct gpio_chip *chip,
 	__raw_writel(con, regcon);
 	__raw_writel(dat, base + GPIODAT_OFF);
 
-	gpio_dbg("%s: %p: CON %08lx, DAT %08lx\n", __func__, base, con, dat);
+	pr_debug("%s: %p: CON %08lx, DAT %08lx\n", __func__, base, con, dat);
 
 	return 0;
 }
@@ -926,10 +921,10 @@ static void __init samsung_gpiolib_add(struct samsung_gpio_chip *chip)
 #ifdef CONFIG_PM
 	if (chip->pm != NULL) {
 		if (!chip->pm->save || !chip->pm->resume)
-			printk(KERN_ERR "gpio: %s has missing PM functions\n",
+			pr_err("gpio: %s has missing PM functions\n",
 			       gc->label);
 	} else
-		printk(KERN_ERR "gpio: %s has no PM function\n", gc->label);
+		pr_err("gpio: %s has no PM function\n", gc->label);
 #endif
 
 	/* gpiochip_add() prints own failure message on error. */
@@ -1018,6 +1013,8 @@ static void __init samsung_gpiolib_add_4bit_chips(struct samsung_gpio_chip *chip
 		if ((base != NULL) && (chip->base == NULL))
 			chip->base = base + ((i) * 0x20);
 
+		chip->bitmap_gpio_int = 0;
+
 		samsung_gpiolib_add(chip);
 	}
 }
@@ -1062,8 +1059,12 @@ int samsung_gpiolib_to_irq(struct gpio_chip *chip, unsigned int offset)
 #ifdef CONFIG_PLAT_S3C24XX
 static int s3c24xx_gpiolib_fbank_to_irq(struct gpio_chip *chip, unsigned offset)
 {
-	if (offset < 4)
-		return IRQ_EINT0 + offset;
+	if (offset < 4) {
+		if (soc_is_s3c2412())
+			return IRQ_EINT0_2412 + offset;
+		else
+			return IRQ_EINT0 + offset;
+	}
 
 	if (offset < 8)
 		return IRQ_EINT4 + offset - 4;
@@ -2384,7 +2385,7 @@ static struct samsung_gpio_chip exynos4_gpios_3[] = {
 };
 #endif
 
-#ifdef CONFIG_ARCH_EXYNOS5
+#ifdef CONFIG_SOC_EXYNOS5250
 static struct samsung_gpio_chip exynos5_gpios_1[] = {
 	{
 		.chip	= {
@@ -2507,6 +2508,12 @@ static struct samsung_gpio_chip exynos5_gpios_1[] = {
 			.label	= "GPY6",
 		},
 	}, {
+		.chip	= {
+			.base	= EXYNOS5_GPC4(0),
+			.ngpio	= EXYNOS5_GPIO_C4_NR,
+			.label	= "GPC4",
+		},
+	}, {
 		.config	= &samsung_gpio_cfgs[9],
 		.irq_base = IRQ_EINT(0),
 		.chip	= {
@@ -2546,7 +2553,7 @@ static struct samsung_gpio_chip exynos5_gpios_1[] = {
 };
 #endif
 
-#ifdef CONFIG_ARCH_EXYNOS5
+#ifdef CONFIG_SOC_EXYNOS5250
 static struct samsung_gpio_chip exynos5_gpios_2[] = {
 	{
 		.chip	= {
@@ -2607,7 +2614,7 @@ static struct samsung_gpio_chip exynos5_gpios_2[] = {
 };
 #endif
 
-#ifdef CONFIG_ARCH_EXYNOS5
+#ifdef CONFIG_SOC_EXYNOS5250
 static struct samsung_gpio_chip exynos5_gpios_3[] = {
 	{
 		.chip	= {
@@ -2643,7 +2650,7 @@ static struct samsung_gpio_chip exynos5_gpios_3[] = {
 };
 #endif
 
-#ifdef CONFIG_ARCH_EXYNOS5
+#ifdef CONFIG_SOC_EXYNOS5250
 static struct samsung_gpio_chip exynos5_gpios_4[] = {
 	{
 		.chip	= {
@@ -2675,10 +2682,13 @@ static int exynos_gpio_xlate(struct gpio_chip *gc,
 
 	if (s3c_gpio_cfgpin(pin, S3C_GPIO_SFN(gpiospec->args[1])))
 		pr_warn("gpio_xlate: failed to set pin function\n");
-	if (s3c_gpio_setpull(pin, gpiospec->args[2]))
+	if (s3c_gpio_setpull(pin, gpiospec->args[2] & 0xffff))
 		pr_warn("gpio_xlate: failed to set pin pull up/down\n");
 	if (s5p_gpio_set_drvstr(pin, gpiospec->args[3]))
 		pr_warn("gpio_xlate: failed to set pin drive strength\n");
+
+	if (flags)
+		*flags = gpiospec->args[2] >> 16;
 
 	return gpiospec->args[0];
 }
@@ -2716,15 +2726,257 @@ static __init void exynos_gpiolib_attach_ofnode(struct samsung_gpio_chip *chip,
 }
 #endif /* defined(CONFIG_ARCH_EXYNOS) && defined(CONFIG_OF) */
 
+static __init void exynos4_gpiolib_init(void)
+{
+#ifdef CONFIG_CPU_EXYNOS4210
+	struct samsung_gpio_chip *chip;
+	int i, nr_chips;
+	void __iomem *gpio_base1, *gpio_base2, *gpio_base3;
+	int group = 0;
+	void __iomem *gpx_base;
+
+	/* gpio part1 */
+	gpio_base1 = ioremap(EXYNOS4_PA_GPIO1, SZ_4K);
+	if (gpio_base1 == NULL) {
+		pr_err("unable to ioremap for gpio_base1\n");
+		goto err_ioremap1;
+	}
+
+	chip = exynos4_gpios_1;
+	nr_chips = ARRAY_SIZE(exynos4_gpios_1);
+
+	for (i = 0; i < nr_chips; i++, chip++) {
+		if (!chip->config) {
+			chip->config = &exynos_gpio_cfg;
+			chip->group = group++;
+		}
+		exynos_gpiolib_attach_ofnode(chip,
+				EXYNOS4_PA_GPIO1, i * 0x20);
+	}
+	samsung_gpiolib_add_4bit_chips(exynos4_gpios_1,
+				       nr_chips, gpio_base1);
+
+	/* gpio part2 */
+	gpio_base2 = ioremap(EXYNOS4_PA_GPIO2, SZ_4K);
+	if (gpio_base2 == NULL) {
+		pr_err("unable to ioremap for gpio_base2\n");
+		goto err_ioremap2;
+	}
+
+	/* need to set base address for gpx */
+	chip = &exynos4_gpios_2[16];
+	gpx_base = gpio_base2 + 0xC00;
+	for (i = 0; i < 4; i++, chip++, gpx_base += 0x20)
+		chip->base = gpx_base;
+
+	chip = exynos4_gpios_2;
+	nr_chips = ARRAY_SIZE(exynos4_gpios_2);
+
+	for (i = 0; i < nr_chips; i++, chip++) {
+		if (!chip->config) {
+			chip->config = &exynos_gpio_cfg;
+			chip->group = group++;
+		}
+		exynos_gpiolib_attach_ofnode(chip,
+				EXYNOS4_PA_GPIO2, i * 0x20);
+	}
+	samsung_gpiolib_add_4bit_chips(exynos4_gpios_2,
+				       nr_chips, gpio_base2);
+
+	/* gpio part3 */
+	gpio_base3 = ioremap(EXYNOS4_PA_GPIO3, SZ_256);
+	if (gpio_base3 == NULL) {
+		pr_err("unable to ioremap for gpio_base3\n");
+		goto err_ioremap3;
+	}
+
+	chip = exynos4_gpios_3;
+	nr_chips = ARRAY_SIZE(exynos4_gpios_3);
+
+	for (i = 0; i < nr_chips; i++, chip++) {
+		if (!chip->config) {
+			chip->config = &exynos_gpio_cfg;
+			chip->group = group++;
+		}
+		exynos_gpiolib_attach_ofnode(chip,
+				EXYNOS4_PA_GPIO3, i * 0x20);
+	}
+	samsung_gpiolib_add_4bit_chips(exynos4_gpios_3,
+				       nr_chips, gpio_base3);
+
+#if defined(CONFIG_CPU_EXYNOS4210) && defined(CONFIG_S5P_GPIO_INT)
+	s5p_register_gpioint_bank(IRQ_GPIO_XA, 0, IRQ_GPIO1_NR_GROUPS);
+	s5p_register_gpioint_bank(IRQ_GPIO_XB, IRQ_GPIO1_NR_GROUPS, IRQ_GPIO2_NR_GROUPS);
+#endif
+
+	return;
+
+err_ioremap3:
+	iounmap(gpio_base2);
+err_ioremap2:
+	iounmap(gpio_base1);
+err_ioremap1:
+	return;
+#endif	/* CONFIG_CPU_EXYNOS4210 */
+}
+
+static __init void exynos5_gpiolib_init(void)
+{
+#ifdef CONFIG_SOC_EXYNOS5250
+	struct samsung_gpio_chip *chip;
+	int i, nr_chips;
+	void __iomem *gpio_base1, *gpio_base2, *gpio_base3, *gpio_base4;
+	int group = 0;
+	void __iomem *gpx_base;
+
+	/* gpio part1 */
+	gpio_base1 = ioremap(EXYNOS5_PA_GPIO1, SZ_4K);
+	if (gpio_base1 == NULL) {
+		pr_err("unable to ioremap for gpio_base1\n");
+		goto err_ioremap1;
+	}
+
+	/* need to set base address for gpc4 */
+	exynos5_gpios_1[20].base = gpio_base1 + 0x2E0;
+
+	/* need to set base address for gpx */
+	chip = &exynos5_gpios_1[21];
+	gpx_base = gpio_base1 + 0xC00;
+	for (i = 0; i < 4; i++, chip++, gpx_base += 0x20)
+		chip->base = gpx_base;
+
+	chip = exynos5_gpios_1;
+	nr_chips = ARRAY_SIZE(exynos5_gpios_1);
+
+	for (i = 0; i < nr_chips; i++, chip++) {
+		if (!chip->config) {
+			chip->config = &exynos_gpio_cfg;
+			chip->group = group++;
+		}
+		exynos_gpiolib_attach_ofnode(chip,
+				EXYNOS5_PA_GPIO1, i * 0x20);
+	}
+	samsung_gpiolib_add_4bit_chips(exynos5_gpios_1,
+				       nr_chips, gpio_base1);
+
+	/* gpio part2 */
+	gpio_base2 = ioremap(EXYNOS5_PA_GPIO2, SZ_4K);
+	if (gpio_base2 == NULL) {
+		pr_err("unable to ioremap for gpio_base2\n");
+		goto err_ioremap2;
+	}
+
+	chip = exynos5_gpios_2;
+	nr_chips = ARRAY_SIZE(exynos5_gpios_2);
+
+	for (i = 0; i < nr_chips; i++, chip++) {
+		if (!chip->config) {
+			chip->config = &exynos_gpio_cfg;
+			chip->group = group++;
+		}
+		exynos_gpiolib_attach_ofnode(chip,
+				EXYNOS5_PA_GPIO2, i * 0x20);
+	}
+	samsung_gpiolib_add_4bit_chips(exynos5_gpios_2,
+				       nr_chips, gpio_base2);
+
+	/* gpio part3 */
+	gpio_base3 = ioremap(EXYNOS5_PA_GPIO3, SZ_4K);
+	if (gpio_base3 == NULL) {
+		pr_err("unable to ioremap for gpio_base3\n");
+		goto err_ioremap3;
+	}
+
+	/* need to set base address for gpv */
+	exynos5_gpios_3[0].base = gpio_base3;
+	exynos5_gpios_3[1].base = gpio_base3 + 0x20;
+	exynos5_gpios_3[2].base = gpio_base3 + 0x60;
+	exynos5_gpios_3[3].base = gpio_base3 + 0x80;
+	exynos5_gpios_3[4].base = gpio_base3 + 0xC0;
+
+	chip = exynos5_gpios_3;
+	nr_chips = ARRAY_SIZE(exynos5_gpios_3);
+
+	for (i = 0; i < nr_chips; i++, chip++) {
+		if (!chip->config) {
+			chip->config = &exynos_gpio_cfg;
+			chip->group = group++;
+		}
+		exynos_gpiolib_attach_ofnode(chip,
+				EXYNOS5_PA_GPIO3, i * 0x20);
+	}
+	samsung_gpiolib_add_4bit_chips(exynos5_gpios_3,
+				       nr_chips, gpio_base3);
+
+	/* gpio part4 */
+	gpio_base4 = ioremap(EXYNOS5_PA_GPIO4, SZ_4K);
+	if (gpio_base4 == NULL) {
+		pr_err("unable to ioremap for gpio_base4\n");
+		goto err_ioremap4;
+	}
+
+	chip = exynos5_gpios_4;
+	nr_chips = ARRAY_SIZE(exynos5_gpios_4);
+
+	for (i = 0; i < nr_chips; i++, chip++) {
+		if (!chip->config) {
+			chip->config = &exynos_gpio_cfg;
+			chip->group = group++;
+		}
+		exynos_gpiolib_attach_ofnode(chip,
+				EXYNOS5_PA_GPIO4, i * 0x20);
+	}
+	samsung_gpiolib_add_4bit_chips(exynos5_gpios_4,
+				       nr_chips, gpio_base4);
+	return;
+
+err_ioremap4:
+	iounmap(gpio_base3);
+err_ioremap3:
+	iounmap(gpio_base2);
+err_ioremap2:
+	iounmap(gpio_base1);
+err_ioremap1:
+	return;
+
+#endif	/* CONFIG_SOC_EXYNOS5250 */
+}
+
 /* TODO: cleanup soc_is_* */
 static __init int samsung_gpiolib_init(void)
 {
 	struct samsung_gpio_chip *chip;
 	int i, nr_chips;
-#if defined(CONFIG_CPU_EXYNOS4210) || defined(CONFIG_SOC_EXYNOS5250)
-	void __iomem *gpio_base1, *gpio_base2, *gpio_base3, *gpio_base4;
-#endif
 	int group = 0;
+
+#if defined(CONFIG_PINCTRL_EXYNOS) || defined(CONFIG_PINCTRL_EXYNOS5440)
+	/*
+	* This gpio driver includes support for device tree support and there
+	* are platforms using it. In order to maintain compatibility with those
+	* platforms, and to allow non-dt Exynos4210 platforms to use this
+	* gpiolib support, a check is added to find out if there is a active
+	* pin-controller driver support available. If it is available, this
+	* gpiolib support is ignored and the gpiolib support available in
+	* pin-controller driver is used. This is a temporary check and will go
+	* away when all of the Exynos4210 platforms have switched to using
+	* device tree and the pin-ctrl driver.
+	*/
+	struct device_node *pctrl_np;
+	static const struct of_device_id exynos_pinctrl_ids[] = {
+		{ .compatible = "samsung,s3c2412-pinctrl", },
+		{ .compatible = "samsung,s3c2416-pinctrl", },
+		{ .compatible = "samsung,s3c2440-pinctrl", },
+		{ .compatible = "samsung,s3c2450-pinctrl", },
+		{ .compatible = "samsung,exynos4210-pinctrl", },
+		{ .compatible = "samsung,exynos4x12-pinctrl", },
+		{ .compatible = "samsung,exynos5250-pinctrl", },
+		{ .compatible = "samsung,exynos5440-pinctrl", },
+		{ }
+	};
+	for_each_matching_node(pctrl_np, exynos_pinctrl_ids)
+		if (pctrl_np && of_device_is_available(pctrl_np))
+			return -ENODEV;
+#endif
 
 	samsung_gpiolib_set_cfg(samsung_gpio_cfgs, ARRAY_SIZE(samsung_gpio_cfgs));
 
@@ -2789,202 +3041,15 @@ static __init int samsung_gpiolib_init(void)
 		s5p_register_gpioint_bank(IRQ_GPIOINT, 0, S5P_GPIOINT_GROUP_MAXNR);
 #endif
 	} else if (soc_is_exynos4210()) {
-#ifdef CONFIG_CPU_EXYNOS4210
-		void __iomem *gpx_base;
-
-		/* gpio part1 */
-		gpio_base1 = ioremap(EXYNOS4_PA_GPIO1, SZ_4K);
-		if (gpio_base1 == NULL) {
-			pr_err("unable to ioremap for gpio_base1\n");
-			goto err_ioremap1;
-		}
-
-		chip = exynos4_gpios_1;
-		nr_chips = ARRAY_SIZE(exynos4_gpios_1);
-
-		for (i = 0; i < nr_chips; i++, chip++) {
-			if (!chip->config) {
-				chip->config = &exynos_gpio_cfg;
-				chip->group = group++;
-			}
-			exynos_gpiolib_attach_ofnode(chip,
-					EXYNOS4_PA_GPIO1, i * 0x20);
-		}
-		samsung_gpiolib_add_4bit_chips(exynos4_gpios_1,
-					       nr_chips, gpio_base1);
-
-		/* gpio part2 */
-		gpio_base2 = ioremap(EXYNOS4_PA_GPIO2, SZ_4K);
-		if (gpio_base2 == NULL) {
-			pr_err("unable to ioremap for gpio_base2\n");
-			goto err_ioremap2;
-		}
-
-		/* need to set base address for gpx */
-		chip = &exynos4_gpios_2[16];
-		gpx_base = gpio_base2 + 0xC00;
-		for (i = 0; i < 4; i++, chip++, gpx_base += 0x20)
-			chip->base = gpx_base;
-
-		chip = exynos4_gpios_2;
-		nr_chips = ARRAY_SIZE(exynos4_gpios_2);
-
-		for (i = 0; i < nr_chips; i++, chip++) {
-			if (!chip->config) {
-				chip->config = &exynos_gpio_cfg;
-				chip->group = group++;
-			}
-			exynos_gpiolib_attach_ofnode(chip,
-					EXYNOS4_PA_GPIO2, i * 0x20);
-		}
-		samsung_gpiolib_add_4bit_chips(exynos4_gpios_2,
-					       nr_chips, gpio_base2);
-
-		/* gpio part3 */
-		gpio_base3 = ioremap(EXYNOS4_PA_GPIO3, SZ_256);
-		if (gpio_base3 == NULL) {
-			pr_err("unable to ioremap for gpio_base3\n");
-			goto err_ioremap3;
-		}
-
-		chip = exynos4_gpios_3;
-		nr_chips = ARRAY_SIZE(exynos4_gpios_3);
-
-		for (i = 0; i < nr_chips; i++, chip++) {
-			if (!chip->config) {
-				chip->config = &exynos_gpio_cfg;
-				chip->group = group++;
-			}
-			exynos_gpiolib_attach_ofnode(chip,
-					EXYNOS4_PA_GPIO3, i * 0x20);
-		}
-		samsung_gpiolib_add_4bit_chips(exynos4_gpios_3,
-					       nr_chips, gpio_base3);
-
-#if defined(CONFIG_CPU_EXYNOS4210) && defined(CONFIG_S5P_GPIO_INT)
-		s5p_register_gpioint_bank(IRQ_GPIO_XA, 0, IRQ_GPIO1_NR_GROUPS);
-		s5p_register_gpioint_bank(IRQ_GPIO_XB, IRQ_GPIO1_NR_GROUPS, IRQ_GPIO2_NR_GROUPS);
-#endif
-
-#endif	/* CONFIG_CPU_EXYNOS4210 */
+		exynos4_gpiolib_init();
 	} else if (soc_is_exynos5250()) {
-#ifdef CONFIG_SOC_EXYNOS5250
-		void __iomem *gpx_base;
-
-		/* gpio part1 */
-		gpio_base1 = ioremap(EXYNOS5_PA_GPIO1, SZ_4K);
-		if (gpio_base1 == NULL) {
-			pr_err("unable to ioremap for gpio_base1\n");
-			goto err_ioremap1;
-		}
-
-		/* need to set base address for gpx */
-		chip = &exynos5_gpios_1[20];
-		gpx_base = gpio_base1 + 0xC00;
-		for (i = 0; i < 4; i++, chip++, gpx_base += 0x20)
-			chip->base = gpx_base;
-
-		chip = exynos5_gpios_1;
-		nr_chips = ARRAY_SIZE(exynos5_gpios_1);
-
-		for (i = 0; i < nr_chips; i++, chip++) {
-			if (!chip->config) {
-				chip->config = &exynos_gpio_cfg;
-				chip->group = group++;
-			}
-			exynos_gpiolib_attach_ofnode(chip,
-					EXYNOS5_PA_GPIO1, i * 0x20);
-		}
-		samsung_gpiolib_add_4bit_chips(exynos5_gpios_1,
-					       nr_chips, gpio_base1);
-
-		/* gpio part2 */
-		gpio_base2 = ioremap(EXYNOS5_PA_GPIO2, SZ_4K);
-		if (gpio_base2 == NULL) {
-			pr_err("unable to ioremap for gpio_base2\n");
-			goto err_ioremap2;
-		}
-
-		chip = exynos5_gpios_2;
-		nr_chips = ARRAY_SIZE(exynos5_gpios_2);
-
-		for (i = 0; i < nr_chips; i++, chip++) {
-			if (!chip->config) {
-				chip->config = &exynos_gpio_cfg;
-				chip->group = group++;
-			}
-			exynos_gpiolib_attach_ofnode(chip,
-					EXYNOS5_PA_GPIO2, i * 0x20);
-		}
-		samsung_gpiolib_add_4bit_chips(exynos5_gpios_2,
-					       nr_chips, gpio_base2);
-
-		/* gpio part3 */
-		gpio_base3 = ioremap(EXYNOS5_PA_GPIO3, SZ_4K);
-		if (gpio_base3 == NULL) {
-			pr_err("unable to ioremap for gpio_base3\n");
-			goto err_ioremap3;
-		}
-
-		/* need to set base address for gpv */
-		exynos5_gpios_3[0].base = gpio_base3;
-		exynos5_gpios_3[1].base = gpio_base3 + 0x20;
-		exynos5_gpios_3[2].base = gpio_base3 + 0x60;
-		exynos5_gpios_3[3].base = gpio_base3 + 0x80;
-		exynos5_gpios_3[4].base = gpio_base3 + 0xC0;
-
-		chip = exynos5_gpios_3;
-		nr_chips = ARRAY_SIZE(exynos5_gpios_3);
-
-		for (i = 0; i < nr_chips; i++, chip++) {
-			if (!chip->config) {
-				chip->config = &exynos_gpio_cfg;
-				chip->group = group++;
-			}
-			exynos_gpiolib_attach_ofnode(chip,
-					EXYNOS5_PA_GPIO3, i * 0x20);
-		}
-		samsung_gpiolib_add_4bit_chips(exynos5_gpios_3,
-					       nr_chips, gpio_base3);
-
-		/* gpio part4 */
-		gpio_base4 = ioremap(EXYNOS5_PA_GPIO4, SZ_4K);
-		if (gpio_base4 == NULL) {
-			pr_err("unable to ioremap for gpio_base4\n");
-			goto err_ioremap4;
-		}
-
-		chip = exynos5_gpios_4;
-		nr_chips = ARRAY_SIZE(exynos5_gpios_4);
-
-		for (i = 0; i < nr_chips; i++, chip++) {
-			if (!chip->config) {
-				chip->config = &exynos_gpio_cfg;
-				chip->group = group++;
-			}
-			exynos_gpiolib_attach_ofnode(chip,
-					EXYNOS5_PA_GPIO4, i * 0x20);
-		}
-		samsung_gpiolib_add_4bit_chips(exynos5_gpios_4,
-					       nr_chips, gpio_base4);
-#endif	/* CONFIG_SOC_EXYNOS5250 */
+		exynos5_gpiolib_init();
 	} else {
 		WARN(1, "Unknown SoC in gpio-samsung, no GPIOs added\n");
 		return -ENODEV;
 	}
 
 	return 0;
-
-#if defined(CONFIG_CPU_EXYNOS4210) || defined(CONFIG_SOC_EXYNOS5250)
-err_ioremap4:
-	iounmap(gpio_base3);
-err_ioremap3:
-	iounmap(gpio_base2);
-err_ioremap2:
-	iounmap(gpio_base1);
-err_ioremap1:
-	return -ENOMEM;
-#endif
 }
 core_initcall(samsung_gpiolib_init);
 
@@ -3095,46 +3160,6 @@ samsung_gpio_pull_t s3c_gpio_getpull(unsigned int pin)
 	return (__force samsung_gpio_pull_t)pup;
 }
 EXPORT_SYMBOL(s3c_gpio_getpull);
-
-/* gpiolib wrappers until these are totally eliminated */
-
-void s3c2410_gpio_pullup(unsigned int pin, unsigned int to)
-{
-	int ret;
-
-	WARN_ON(to);	/* should be none of these left */
-
-	if (!to) {
-		/* if pull is enabled, try first with up, and if that
-		 * fails, try using down */
-
-		ret = s3c_gpio_setpull(pin, S3C_GPIO_PULL_UP);
-		if (ret)
-			s3c_gpio_setpull(pin, S3C_GPIO_PULL_DOWN);
-	} else {
-		s3c_gpio_setpull(pin, S3C_GPIO_PULL_NONE);
-	}
-}
-EXPORT_SYMBOL(s3c2410_gpio_pullup);
-
-void s3c2410_gpio_setpin(unsigned int pin, unsigned int to)
-{
-	/* do this via gpiolib until all users removed */
-
-	gpio_request(pin, "temporary");
-	gpio_set_value(pin, to);
-	gpio_free(pin);
-}
-EXPORT_SYMBOL(s3c2410_gpio_setpin);
-
-unsigned int s3c2410_gpio_getpin(unsigned int pin)
-{
-	struct samsung_gpio_chip *chip = samsung_gpiolib_getchip(pin);
-	unsigned long offs = pin - chip->chip.base;
-
-	return __raw_readl(chip->base + 0x04) & (1 << offs);
-}
-EXPORT_SYMBOL(s3c2410_gpio_getpin);
 
 #ifdef CONFIG_S5P_GPIO_DRVSTR
 s5p_gpio_drvstr_t s5p_gpio_get_drvstr(unsigned int pin)

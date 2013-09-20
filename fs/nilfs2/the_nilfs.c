@@ -76,6 +76,7 @@ struct the_nilfs *alloc_nilfs(struct block_device *bdev)
 	nilfs->ns_bdev = bdev;
 	atomic_set(&nilfs->ns_ndirtyblks, 0);
 	init_rwsem(&nilfs->ns_sem);
+	mutex_init(&nilfs->ns_snapshot_mount_mutex);
 	INIT_LIST_HEAD(&nilfs->ns_dirty_files);
 	INIT_LIST_HEAD(&nilfs->ns_gc_inodes);
 	spin_lock_init(&nilfs->ns_inode_lock);
@@ -763,8 +764,8 @@ nilfs_find_or_create_root(struct the_nilfs *nilfs, __u64 cno)
 	new->ifile = NULL;
 	new->nilfs = nilfs;
 	atomic_set(&new->count, 1);
-	atomic_set(&new->inodes_count, 0);
-	atomic_set(&new->blocks_count, 0);
+	atomic64_set(&new->inodes_count, 0);
+	atomic64_set(&new->blocks_count, 0);
 
 	rb_link_node(&new->rb_node, parent, p);
 	rb_insert_color(&new->rb_node, &nilfs->ns_cptree);

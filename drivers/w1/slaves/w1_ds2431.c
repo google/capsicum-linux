@@ -107,7 +107,7 @@ static ssize_t w1_f2d_read_bin(struct file *filp, struct kobject *kobj,
 	if (count == 0)
 		return 0;
 
-	mutex_lock(&sl->master->mutex);
+	mutex_lock(&sl->master->bus_mutex);
 
 	/* read directly from the EEPROM in chunks of W1_F2D_READ_MAXLEN */
 	while (todo > 0) {
@@ -126,7 +126,7 @@ static ssize_t w1_f2d_read_bin(struct file *filp, struct kobject *kobj,
 		off += W1_F2D_READ_MAXLEN;
 	}
 
-	mutex_unlock(&sl->master->mutex);
+	mutex_unlock(&sl->master->bus_mutex);
 
 	return count;
 }
@@ -214,7 +214,7 @@ static ssize_t w1_f2d_write_bin(struct file *filp, struct kobject *kobj,
 	if (count == 0)
 		return 0;
 
-	mutex_lock(&sl->master->mutex);
+	mutex_lock(&sl->master->bus_mutex);
 
 	/* Can only write data in blocks of the size of the scratchpad */
 	addr = off;
@@ -259,7 +259,7 @@ static ssize_t w1_f2d_write_bin(struct file *filp, struct kobject *kobj,
 	}
 
 out_up:
-	mutex_unlock(&sl->master->mutex);
+	mutex_unlock(&sl->master->bus_mutex);
 
 	return count;
 }
@@ -310,3 +310,4 @@ module_exit(w1_f2d_fini);
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Bernhard Weirich <bernhard.weirich@riedel.net>");
 MODULE_DESCRIPTION("w1 family 2d driver for DS2431, 1kb EEPROM");
+MODULE_ALIAS("w1-family-" __stringify(W1_EEPROM_DS2431));

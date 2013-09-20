@@ -16,13 +16,18 @@
 #include <linux/scatterlist.h>
 #include <linux/slab.h>
 #include <linux/module.h>
+#include <linux/clk.h>
 #include <crypto/internal/hash.h>
 #include <crypto/sha.h>
+#include <linux/of.h>
+#include <linux/of_platform.h>
+#include <linux/of_irq.h>
 
 #include "mv_cesa.h"
 
 #define MV_CESA	"MV-CESA:"
 #define MAX_HW_HASH_SIZE	0xFFFF
+#define MV_CESA_EXPIRE		500 /* msec */
 
 /*
  * STM:
@@ -79,12 +84,14 @@ struct crypto_priv {
 	void __iomem *reg;
 	void __iomem *sram;
 	int irq;
+	struct clk *clk;
 	struct task_struct *queue_th;
 
 	/* the lock protects queue and eng_st */
 	spinlock_t lock;
 	struct crypto_queue queue;
 	enum engine_status eng_st;
+	struct timer_list completion_timer;
 	struct crypto_async_request *cur_req;
 	struct req_progress p;
 	int max_req_size;
@@ -135,6 +142,29 @@ struct mv_req_hash_ctx {
 	enum hash_op op;
 	int count_add;
 };
+
+static void mv_completion_timer_callback(unsigned long unused)
+{
+	int active = readl(cpg->reg + SEC_ACCEL_CMD) & SEC_CMD_EN_SEC_ACCL0;
+
+	printk(KERN_ERR MV_CESA
+	       "completion timer expired (CESA %sactive), cleaning up.\n",
+	       active ? "" : "in");
+
+	del_timer(&cpg->completion_timer);
+	writel(SEC_CMD_DISABLE_SEC, cpg->reg + SEC_ACCEL_CMD);
+	while(readl(cpg->reg + SEC_ACCEL_CMD) & SEC_CMD_DISABLE_SEC)
+		printk(KERN_INFO MV_CESA "%s: waiting for engine finishing\n", __func__);
+	cpg->eng_st = ENGINE_W_DEQUEUE;
+	wake_up_process(cpg->queue_th);
+}
+
+static void mv_setup_timer(void)
+{
+	setup_timer(&cpg->completion_timer, &mv_completion_timer_callback, 0);
+	mod_timer(&cpg->completion_timer,
+			jiffies + msecs_to_jiffies(MV_CESA_EXPIRE));
+}
 
 static void compute_aes_dec_key(struct mv_ctx *ctx)
 {
@@ -271,12 +301,8 @@ static void mv_process_current_q(int first_block)
 			sizeof(struct sec_accel_config));
 
 	/* GO */
+	mv_setup_timer();
 	writel(SEC_CMD_EN_SEC_ACCL0, cpg->reg + SEC_ACCEL_CMD);
-
-	/*
-	 * XXX: add timer if the interrupt does not occur for some mystery
-	 * reason
-	 */
 }
 
 static void mv_crypto_algo_completion(void)
@@ -355,12 +381,8 @@ static void mv_process_hash_current(int first_block)
 	memcpy(cpg->sram + SRAM_CONFIG, &op, sizeof(struct sec_accel_config));
 
 	/* GO */
+	mv_setup_timer();
 	writel(SEC_CMD_EN_SEC_ACCL0, cpg->reg + SEC_ACCEL_CMD);
-
-	/*
-	* XXX: add timer if the interrupt does not occur for some mystery
-	* reason
-	*/
 }
 
 static inline int mv_hash_import_sha1_ctx(const struct mv_req_hash_ctx *ctx,
@@ -404,6 +426,15 @@ out:
 	return rc;
 }
 
+static void mv_save_digest_state(struct mv_req_hash_ctx *ctx)
+{
+	ctx->state[0] = readl(cpg->reg + DIGEST_INITIAL_VAL_A);
+	ctx->state[1] = readl(cpg->reg + DIGEST_INITIAL_VAL_B);
+	ctx->state[2] = readl(cpg->reg + DIGEST_INITIAL_VAL_C);
+	ctx->state[3] = readl(cpg->reg + DIGEST_INITIAL_VAL_D);
+	ctx->state[4] = readl(cpg->reg + DIGEST_INITIAL_VAL_E);
+}
+
 static void mv_hash_algo_completion(void)
 {
 	struct ahash_request *req = ahash_request_cast(cpg->cur_req);
@@ -418,14 +449,12 @@ static void mv_hash_algo_completion(void)
 			memcpy(req->result, cpg->sram + SRAM_DIGEST_BUF,
 			       crypto_ahash_digestsize(crypto_ahash_reqtfm
 						       (req)));
-		} else
+		} else {
+			mv_save_digest_state(ctx);
 			mv_hash_final_fallback(req);
+		}
 	} else {
-		ctx->state[0] = readl(cpg->reg + DIGEST_INITIAL_VAL_A);
-		ctx->state[1] = readl(cpg->reg + DIGEST_INITIAL_VAL_B);
-		ctx->state[2] = readl(cpg->reg + DIGEST_INITIAL_VAL_C);
-		ctx->state[3] = readl(cpg->reg + DIGEST_INITIAL_VAL_D);
-		ctx->state[4] = readl(cpg->reg + DIGEST_INITIAL_VAL_E);
+		mv_save_digest_state(ctx);
 	}
 }
 
@@ -886,6 +915,10 @@ irqreturn_t crypto_int(int irq, void *priv)
 	if (!(val & SEC_INT_ACCEL0_DONE))
 		return IRQ_NONE;
 
+	if (!del_timer(&cpg->completion_timer)) {
+		printk(KERN_WARNING MV_CESA
+		       "got an interrupt but no pending timer?\n");
+	}
 	val &= ~SEC_INT_ACCEL0_DONE;
 	writel(val, cpg->reg + FPGA_INT_STATUS);
 	writel(val, cpg->reg + SEC_ACCEL_INT_STATUS);
@@ -1032,7 +1065,10 @@ static int mv_probe(struct platform_device *pdev)
 		goto err_unmap_reg;
 	}
 
-	irq = platform_get_irq(pdev, 0);
+	if (pdev->dev.of_node)
+		irq = irq_of_parse_and_map(pdev->dev.of_node, 0);
+	else
+		irq = platform_get_irq(pdev, 0);
 	if (irq < 0 || irq == NO_IRQ) {
 		ret = irq;
 		goto err_unmap_sram;
@@ -1053,6 +1089,13 @@ static int mv_probe(struct platform_device *pdev)
 	if (ret)
 		goto err_thread;
 
+	/* Not all platforms can gate the clock, so it is not
+	   an error if the clock does not exists. */
+	cp->clk = clk_get(&pdev->dev, NULL);
+	if (!IS_ERR(cp->clk))
+		clk_prepare_enable(cp->clk);
+
+	writel(0, cpg->reg + SEC_ACCEL_INT_STATUS);
 	writel(SEC_INT_ACCEL0_DONE, cpg->reg + SEC_ACCEL_INT_MASK);
 	writel(SEC_CFG_STOP_DIG_ERR, cpg->reg + SEC_ACCEL_CFG);
 	writel(SRAM_CONFIG, cpg->reg + SEC_ACCEL_DESC_P0);
@@ -1090,6 +1133,10 @@ err_unreg_ecb:
 	crypto_unregister_alg(&mv_aes_alg_ecb);
 err_irq:
 	free_irq(irq, cp);
+	if (!IS_ERR(cp->clk)) {
+		clk_disable_unprepare(cp->clk);
+		clk_put(cp->clk);
+	}
 err_thread:
 	kthread_stop(cp->queue_th);
 err_unmap_sram:
@@ -1099,7 +1146,6 @@ err_unmap_reg:
 err:
 	kfree(cp);
 	cpg = NULL;
-	platform_set_drvdata(pdev, NULL);
 	return ret;
 }
 
@@ -1118,10 +1164,22 @@ static int mv_remove(struct platform_device *pdev)
 	memset(cp->sram, 0, cp->sram_size);
 	iounmap(cp->sram);
 	iounmap(cp->reg);
+
+	if (!IS_ERR(cp->clk)) {
+		clk_disable_unprepare(cp->clk);
+		clk_put(cp->clk);
+	}
+
 	kfree(cp);
 	cpg = NULL;
 	return 0;
 }
+
+static const struct of_device_id mv_cesa_of_match_table[] = {
+	{ .compatible = "marvell,orion-crypto", },
+	{}
+};
+MODULE_DEVICE_TABLE(of, mv_cesa_of_match_table);
 
 static struct platform_driver marvell_crypto = {
 	.probe		= mv_probe,
@@ -1129,6 +1187,7 @@ static struct platform_driver marvell_crypto = {
 	.driver		= {
 		.owner	= THIS_MODULE,
 		.name	= "mv_crypto",
+		.of_match_table = of_match_ptr(mv_cesa_of_match_table),
 	},
 };
 MODULE_ALIAS("platform:mv_crypto");

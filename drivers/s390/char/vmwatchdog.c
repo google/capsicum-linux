@@ -1,7 +1,7 @@
 /*
  * Watchdog implementation based on z/VM Watchdog Timer API
  *
- * Copyright IBM Corp. 2004,2009
+ * Copyright IBM Corp. 2004, 2009
  *
  * The user space watchdog daemon can use this driver as
  * /dev/vmwatchdog to have z/VM execute the specified CP
@@ -112,7 +112,8 @@ static int vmwdt_keepalive(void)
 
 static int vmwdt_disable(void)
 {
-	int ret = __diag288(wdt_cancel, 0, "", 0);
+	char cmd[] = {'\0'};
+	int ret = __diag288(wdt_cancel, 0, cmd, 0);
 	WARN_ON(ret != 0);
 	clear_bit(VMWDT_RUNNING, &vmwdt_is_open);
 	return ret;
@@ -124,7 +125,7 @@ static int __init vmwdt_probe(void)
 	 * so we try initializing it with a NOP command ("BEGIN")
 	 * that won't cause any harm even if the following disable
 	 * fails for some reason */
-	static char __initdata ebc_begin[] = {
+	char ebc_begin[] = {
 		194, 197, 199, 201, 213
 	};
 	if (__diag288(wdt_init, 15, ebc_begin, sizeof(ebc_begin)) != 0)

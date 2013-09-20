@@ -19,7 +19,6 @@
 #include <linux/of_gpio.h>
 #include <linux/spi/spi.h>
 #include <linux/spi/spi_bitbang.h>
-#include <linux/pinctrl/pinmux.h>
 
 #define DRIVER_NAME "sirfsoc_spi"
 
@@ -127,7 +126,6 @@ struct sirfsoc_spi {
 	void __iomem *base;
 	u32 ctrl_freq;  /* SPI controller clock speed */
 	struct clk *clk;
-	struct pinmux *pmx;
 
 	/* rx & tx bufs from the spi_transfer */
 	const void *tx;
@@ -141,9 +139,6 @@ struct sirfsoc_spi {
 	/* number of words left to be tranmitted/received */
 	unsigned int left_tx_cnt;
 	unsigned int left_rx_cnt;
-
-	/* tasklet to push tx msg into FIFO */
-	struct tasklet_struct tasklet_tx;
 
 	int chipselect[0];
 };
@@ -236,17 +231,6 @@ static void spi_sirfsoc_tx_word_u32(struct sirfsoc_spi *sspi)
 	sspi->left_tx_cnt--;
 }
 
-static void spi_sirfsoc_tasklet_tx(unsigned long arg)
-{
-	struct sirfsoc_spi *sspi = (struct sirfsoc_spi *)arg;
-
-	/* Fill Tx FIFO while there are left words to be transmitted */
-	while (!((readl(sspi->base + SIRFSOC_SPI_TXFIFO_STATUS) &
-			SIRFSOC_SPI_FIFO_FULL)) &&
-			sspi->left_tx_cnt)
-		sspi->tx_word(sspi);
-}
-
 static irqreturn_t spi_sirfsoc_irq(int irq, void *dev_id)
 {
 	struct sirfsoc_spi *sspi = dev_id;
@@ -261,25 +245,25 @@ static irqreturn_t spi_sirfsoc_irq(int irq, void *dev_id)
 		writel(0x0, sspi->base + SIRFSOC_SPI_INT_EN);
 	}
 
-	if (spi_stat & SIRFSOC_SPI_FRM_END) {
+	if (spi_stat & (SIRFSOC_SPI_FRM_END
+			| SIRFSOC_SPI_RXFIFO_THD_REACH))
 		while (!((readl(sspi->base + SIRFSOC_SPI_RXFIFO_STATUS)
 				& SIRFSOC_SPI_FIFO_EMPTY)) &&
 				sspi->left_rx_cnt)
 			sspi->rx_word(sspi);
 
-		/* Received all words */
-		if ((sspi->left_rx_cnt == 0) && (sspi->left_tx_cnt == 0)) {
-			complete(&sspi->done);
-			writel(0x0, sspi->base + SIRFSOC_SPI_INT_EN);
-		}
+	if (spi_stat & (SIRFSOC_SPI_FIFO_EMPTY
+			| SIRFSOC_SPI_TXFIFO_THD_REACH))
+		while (!((readl(sspi->base + SIRFSOC_SPI_TXFIFO_STATUS)
+				& SIRFSOC_SPI_FIFO_FULL)) &&
+				sspi->left_tx_cnt)
+			sspi->tx_word(sspi);
+
+	/* Received all words */
+	if ((sspi->left_rx_cnt == 0) && (sspi->left_tx_cnt == 0)) {
+		complete(&sspi->done);
+		writel(0x0, sspi->base + SIRFSOC_SPI_INT_EN);
 	}
-
-	if (spi_stat & SIRFSOC_SPI_RXFIFO_THD_REACH ||
-		spi_stat & SIRFSOC_SPI_TXFIFO_THD_REACH ||
-		spi_stat & SIRFSOC_SPI_RX_FIFO_FULL ||
-		spi_stat & SIRFSOC_SPI_TXFIFO_EMPTY)
-		tasklet_schedule(&sspi->tasklet_tx);
-
 	return IRQ_HANDLED;
 }
 
@@ -382,8 +366,7 @@ spi_sirfsoc_setup_transfer(struct spi_device *spi, struct spi_transfer *t)
 
 	sspi = spi_master_get_devdata(spi->master);
 
-	bits_per_word = t && t->bits_per_word ? t->bits_per_word :
-		spi->bits_per_word;
+	bits_per_word = (t) ? t->bits_per_word : spi->bits_per_word;
 	hz = t && t->speed_hz ? t->speed_hz : spi->max_speed_hz;
 
 	/* Enable IO mode for RX, TX */
@@ -427,9 +410,7 @@ spi_sirfsoc_setup_transfer(struct spi_device *spi, struct spi_transfer *t)
 					SIRFSOC_SPI_FIFO_WIDTH_DWORD;
 		break;
 	default:
-		dev_err(&spi->dev, "Bits per word %d not supported\n",
-		       bits_per_word);
-		return -EINVAL;
+		BUG();
 	}
 
 	if (!(spi->mode & SPI_CS_HIGH))
@@ -479,7 +460,7 @@ static int spi_sirfsoc_setup(struct spi_device *spi)
 	return spi_sirfsoc_setup_transfer(spi, NULL);
 }
 
-static int __devinit spi_sirfsoc_probe(struct platform_device *pdev)
+static int spi_sirfsoc_probe(struct platform_device *pdev)
 {
 	struct sirfsoc_spi *sspi;
 	struct spi_master *master;
@@ -535,10 +516,9 @@ static int __devinit spi_sirfsoc_probe(struct platform_device *pdev)
 		}
 	}
 
-	sspi->base = devm_request_and_ioremap(&pdev->dev, mem_res);
-	if (!sspi->base) {
-		dev_err(&pdev->dev, "IO remap failed!\n");
-		ret = -ENOMEM;
+	sspi->base = devm_ioremap_resource(&pdev->dev, mem_res);
+	if (IS_ERR(sspi->base)) {
+		ret = PTR_ERR(sspi->base);
 		goto free_master;
 	}
 
@@ -558,27 +538,19 @@ static int __devinit spi_sirfsoc_probe(struct platform_device *pdev)
 	sspi->bitbang.txrx_bufs = spi_sirfsoc_transfer;
 	sspi->bitbang.master->setup = spi_sirfsoc_setup;
 	master->bus_num = pdev->id;
+	master->bits_per_word_mask = SPI_BPW_MASK(8) | SPI_BPW_MASK(12) |
+					SPI_BPW_MASK(16) | SPI_BPW_MASK(32);
 	sspi->bitbang.master->dev.of_node = pdev->dev.of_node;
-
-	sspi->pmx = pinmux_get(&pdev->dev, NULL);
-	ret = IS_ERR(sspi->pmx);
-	if (ret)
-		goto free_master;
-
-	pinmux_enable(sspi->pmx);
 
 	sspi->clk = clk_get(&pdev->dev, NULL);
 	if (IS_ERR(sspi->clk)) {
 		ret = -EINVAL;
-		goto free_pmx;
+		goto free_master;
 	}
-	clk_enable(sspi->clk);
+	clk_prepare_enable(sspi->clk);
 	sspi->ctrl_freq = clk_get_rate(sspi->clk);
 
 	init_completion(&sspi->done);
-
-	tasklet_init(&sspi->tasklet_tx, spi_sirfsoc_tasklet_tx,
-		     (unsigned long)sspi);
 
 	writel(SIRFSOC_SPI_FIFO_RESET, sspi->base + SIRFSOC_SPI_RXFIFO_OP);
 	writel(SIRFSOC_SPI_FIFO_RESET, sspi->base + SIRFSOC_SPI_TXFIFO_OP);
@@ -596,18 +568,15 @@ static int __devinit spi_sirfsoc_probe(struct platform_device *pdev)
 	return 0;
 
 free_clk:
-	clk_disable(sspi->clk);
+	clk_disable_unprepare(sspi->clk);
 	clk_put(sspi->clk);
-free_pmx:
-	pinmux_disable(sspi->pmx);
-	pinmux_put(sspi->pmx);
 free_master:
 	spi_master_put(master);
 err_cs:
 	return ret;
 }
 
-static int  __devexit spi_sirfsoc_remove(struct platform_device *pdev)
+static int  spi_sirfsoc_remove(struct platform_device *pdev)
 {
 	struct spi_master *master;
 	struct sirfsoc_spi *sspi;
@@ -621,10 +590,8 @@ static int  __devexit spi_sirfsoc_remove(struct platform_device *pdev)
 		if (sspi->chipselect[i] > 0)
 			gpio_free(sspi->chipselect[i]);
 	}
-	clk_disable(sspi->clk);
+	clk_disable_unprepare(sspi->clk);
 	clk_put(sspi->clk);
-	pinmux_disable(sspi->pmx);
-	pinmux_put(sspi->pmx);
 	spi_master_put(master);
 	return 0;
 }
@@ -663,9 +630,10 @@ static const struct dev_pm_ops spi_sirfsoc_pm_ops = {
 
 static const struct of_device_id spi_sirfsoc_of_match[] = {
 	{ .compatible = "sirf,prima2-spi", },
+	{ .compatible = "sirf,marco-spi", },
 	{}
 };
-MODULE_DEVICE_TABLE(of, sirfsoc_spi_of_match);
+MODULE_DEVICE_TABLE(of, spi_sirfsoc_of_match);
 
 static struct platform_driver spi_sirfsoc_driver = {
 	.driver = {
@@ -677,7 +645,7 @@ static struct platform_driver spi_sirfsoc_driver = {
 		.of_match_table = spi_sirfsoc_of_match,
 	},
 	.probe = spi_sirfsoc_probe,
-	.remove = __devexit_p(spi_sirfsoc_remove),
+	.remove = spi_sirfsoc_remove,
 };
 module_platform_driver(spi_sirfsoc_driver);
 

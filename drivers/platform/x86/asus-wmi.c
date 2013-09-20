@@ -47,10 +47,11 @@
 #include <linux/thermal.h>
 #include <acpi/acpi_bus.h>
 #include <acpi/acpi_drivers.h>
+#include <acpi/video.h>
 
 #include "asus-wmi.h"
 
-MODULE_AUTHOR("Corentin Chary <corentincj@iksaif.net>, "
+MODULE_AUTHOR("Corentin Chary <corentin.chary@gmail.com>, "
 	      "Yong Wang <yong.y.wang@intel.com>");
 MODULE_DESCRIPTION("Asus Generic WMI Driver");
 MODULE_LICENSE("GPL");
@@ -98,6 +99,7 @@ MODULE_LICENSE("GPL");
 #define ASUS_WMI_DEVID_WIRELESS_LED	0x00010002
 #define ASUS_WMI_DEVID_CWAP		0x00010003
 #define ASUS_WMI_DEVID_WLAN		0x00010011
+#define ASUS_WMI_DEVID_WLAN_LED		0x00010012
 #define ASUS_WMI_DEVID_BLUETOOTH	0x00010013
 #define ASUS_WMI_DEVID_GPS		0x00010015
 #define ASUS_WMI_DEVID_WIMAX		0x00010017
@@ -135,6 +137,9 @@ MODULE_LICENSE("GPL");
 
 /* Power */
 #define ASUS_WMI_DEVID_PROCESSOR_STATE	0x00120012
+
+/* Deep S3 / Resume on LID open */
+#define ASUS_WMI_DEVID_LID_RESUME	0x00120031
 
 /* DSTS masks */
 #define ASUS_WMI_DSTS_STATUS_BIT	0x00000001
@@ -182,6 +187,8 @@ struct asus_wmi {
 	struct device *hwmon_device;
 	struct platform_device *platform_device;
 
+	struct led_classdev wlan_led;
+	int wlan_led_wk;
 	struct led_classdev tpd_led;
 	int tpd_led_wk;
 	struct led_classdev kbd_led;
@@ -189,6 +196,7 @@ struct asus_wmi {
 	struct workqueue_struct *led_workqueue;
 	struct work_struct tpd_led_work;
 	struct work_struct kbd_led_work;
+	struct work_struct wlan_led_work;
 
 	struct asus_rfkill wlan;
 	struct asus_rfkill bluetooth;
@@ -451,12 +459,65 @@ static enum led_brightness kbd_led_get(struct led_classdev *led_cdev)
 	return value;
 }
 
+static int wlan_led_unknown_state(struct asus_wmi *asus)
+{
+	u32 result;
+
+	asus_wmi_get_devstate(asus, ASUS_WMI_DEVID_WIRELESS_LED, &result);
+
+	return result & ASUS_WMI_DSTS_UNKNOWN_BIT;
+}
+
+static int wlan_led_presence(struct asus_wmi *asus)
+{
+	u32 result;
+
+	asus_wmi_get_devstate(asus, ASUS_WMI_DEVID_WIRELESS_LED, &result);
+
+	return result & ASUS_WMI_DSTS_PRESENCE_BIT;
+}
+
+static void wlan_led_update(struct work_struct *work)
+{
+	int ctrl_param;
+	struct asus_wmi *asus;
+
+	asus = container_of(work, struct asus_wmi, wlan_led_work);
+
+	ctrl_param = asus->wlan_led_wk;
+	asus_wmi_set_devstate(ASUS_WMI_DEVID_WIRELESS_LED, ctrl_param, NULL);
+}
+
+static void wlan_led_set(struct led_classdev *led_cdev,
+			 enum led_brightness value)
+{
+	struct asus_wmi *asus;
+
+	asus = container_of(led_cdev, struct asus_wmi, wlan_led);
+
+	asus->wlan_led_wk = !!value;
+	queue_work(asus->led_workqueue, &asus->wlan_led_work);
+}
+
+static enum led_brightness wlan_led_get(struct led_classdev *led_cdev)
+{
+	struct asus_wmi *asus;
+	u32 result;
+
+	asus = container_of(led_cdev, struct asus_wmi, wlan_led);
+	asus_wmi_get_devstate(asus, ASUS_WMI_DEVID_WIRELESS_LED, &result);
+
+	return result & ASUS_WMI_DSTS_BRIGHTNESS_MASK;
+}
+
 static void asus_wmi_led_exit(struct asus_wmi *asus)
 {
 	if (!IS_ERR_OR_NULL(asus->kbd_led.dev))
 		led_classdev_unregister(&asus->kbd_led);
 	if (!IS_ERR_OR_NULL(asus->tpd_led.dev))
 		led_classdev_unregister(&asus->tpd_led);
+	if (!IS_ERR_OR_NULL(asus->wlan_led.dev))
+		led_classdev_unregister(&asus->wlan_led);
 	if (asus->led_workqueue)
 		destroy_workqueue(asus->led_workqueue);
 }
@@ -493,6 +554,23 @@ static int asus_wmi_led_init(struct asus_wmi *asus)
 
 		rv = led_classdev_register(&asus->platform_device->dev,
 					   &asus->kbd_led);
+		if (rv)
+			goto error;
+	}
+
+	if (wlan_led_presence(asus) && (asus->driver->quirks->wapf == 4)) {
+		INIT_WORK(&asus->wlan_led_work, wlan_led_update);
+
+		asus->wlan_led.name = "asus::wlan";
+		asus->wlan_led.brightness_set = wlan_led_set;
+		if (!wlan_led_unknown_state(asus))
+			asus->wlan_led.brightness_get = wlan_led_get;
+		asus->wlan_led.flags = LED_CORE_SUSPENDRESUME;
+		asus->wlan_led.max_brightness = 1;
+		asus->wlan_led.default_trigger = "asus-wlan";
+
+		rv = led_classdev_register(&asus->platform_device->dev,
+					   &asus->wlan_led);
 	}
 
 error:
@@ -725,8 +803,21 @@ static int asus_rfkill_set(void *data, bool blocked)
 {
 	struct asus_rfkill *priv = data;
 	u32 ctrl_param = !blocked;
+	u32 dev_id = priv->dev_id;
 
-	return asus_wmi_set_devstate(priv->dev_id, ctrl_param, NULL);
+	/*
+	 * If the user bit is set, BIOS can't set and record the wlan status,
+	 * it will report the value read from id ASUS_WMI_DEVID_WLAN_LED
+	 * while we query the wlan status through WMI(ASUS_WMI_DEVID_WLAN).
+	 * So, we have to record wlan status in id ASUS_WMI_DEVID_WLAN_LED
+	 * while setting the wlan status through WMI.
+	 * This is also the behavior that windows app will do.
+	 */
+	if ((dev_id == ASUS_WMI_DEVID_WLAN) &&
+	     priv->asus->driver->wlan_ctrl_by_user)
+		dev_id = ASUS_WMI_DEVID_WLAN_LED;
+
+	return asus_wmi_set_devstate(dev_id, ctrl_param, NULL);
 }
 
 static void asus_rfkill_query(struct rfkill *rfkill, void *data)
@@ -794,6 +885,10 @@ static int asus_new_rfkill(struct asus_wmi *asus,
 
 	if (!*rfkill)
 		return -EINVAL;
+
+	if ((dev_id == ASUS_WMI_DEVID_WLAN) &&
+			(asus->driver->quirks->wapf == 4))
+		rfkill_set_led_trigger_name(*rfkill, "asus-wlan");
 
 	rfkill_init_sw_state(*rfkill, !result);
 	result = rfkill_register(*rfkill);
@@ -951,7 +1046,7 @@ static ssize_t asus_hwmon_pwm1(struct device *dev,
 	else if (value == 3)
 		value = 255;
 	else if (value != 0) {
-		pr_err("Unknown fan speed %#x", value);
+		pr_err("Unknown fan speed %#x\n", value);
 		value = -1;
 	}
 
@@ -1247,6 +1342,18 @@ static void asus_wmi_backlight_exit(struct asus_wmi *asus)
 	asus->backlight_device = NULL;
 }
 
+static int is_display_toggle(int code)
+{
+	/* display toggle keys */
+	if ((code >= 0x61 && code <= 0x67) ||
+	    (code >= 0x8c && code <= 0x93) ||
+	    (code >= 0xa0 && code <= 0xa7) ||
+	    (code >= 0xd0 && code <= 0xd5))
+		return 1;
+
+	return 0;
+}
+
 static void asus_wmi_notify(u32 value, void *context)
 {
 	struct asus_wmi *asus = context;
@@ -1280,16 +1387,24 @@ static void asus_wmi_notify(u32 value, void *context)
 	}
 
 	if (code >= NOTIFY_BRNUP_MIN && code <= NOTIFY_BRNUP_MAX)
-		code = NOTIFY_BRNUP_MIN;
+		code = ASUS_WMI_BRN_UP;
 	else if (code >= NOTIFY_BRNDOWN_MIN &&
 		 code <= NOTIFY_BRNDOWN_MAX)
-		code = NOTIFY_BRNDOWN_MIN;
+		code = ASUS_WMI_BRN_DOWN;
 
-	if (code == NOTIFY_BRNUP_MIN || code == NOTIFY_BRNDOWN_MIN) {
-		if (!acpi_video_backlight_support())
+	if (code == ASUS_WMI_BRN_DOWN || code == ASUS_WMI_BRN_UP) {
+		if (!acpi_video_backlight_support()) {
 			asus_wmi_backlight_notify(asus, orig_code);
-	} else if (!sparse_keymap_report_event(asus->inputdev, code,
-					       key_value, autorelease))
+			goto exit;
+		}
+	}
+
+	if (is_display_toggle(code) &&
+	    asus->driver->quirks->no_display_toggle)
+		goto exit;
+
+	if (!sparse_keymap_report_event(asus->inputdev, code,
+					key_value, autorelease))
 		pr_info("Unknown key %x pressed\n", code);
 
 exit:
@@ -1365,6 +1480,7 @@ static ssize_t show_sys_wmi(struct asus_wmi *asus, int devid, char *buf)
 ASUS_WMI_CREATE_DEVICE_ATTR(touchpad, 0644, ASUS_WMI_DEVID_TOUCHPAD);
 ASUS_WMI_CREATE_DEVICE_ATTR(camera, 0644, ASUS_WMI_DEVID_CAMERA);
 ASUS_WMI_CREATE_DEVICE_ATTR(cardr, 0644, ASUS_WMI_DEVID_CARDREADER);
+ASUS_WMI_CREATE_DEVICE_ATTR(lid_resume, 0644, ASUS_WMI_DEVID_LID_RESUME);
 
 static ssize_t store_cpufv(struct device *dev, struct device_attribute *attr,
 			   const char *buf, size_t count)
@@ -1390,6 +1506,7 @@ static struct attribute *platform_attributes[] = {
 	&dev_attr_camera.attr,
 	&dev_attr_cardr.attr,
 	&dev_attr_touchpad.attr,
+	&dev_attr_lid_resume.attr,
 	NULL
 };
 
@@ -1408,6 +1525,8 @@ static umode_t asus_sysfs_is_visible(struct kobject *kobj,
 		devid = ASUS_WMI_DEVID_CARDREADER;
 	else if (attr == &dev_attr_touchpad.attr)
 		devid = ASUS_WMI_DEVID_TOUCHPAD;
+	else if (attr == &dev_attr_lid_resume.attr)
+		devid = ASUS_WMI_DEVID_LID_RESUME;
 
 	if (devid != -1)
 		ok = !(asus_wmi_get_devstate_simple(asus, devid) < 0);
@@ -1439,11 +1558,11 @@ static int asus_wmi_platform_init(struct asus_wmi *asus)
 
 	/* INIT enable hotkeys on some models */
 	if (!asus_wmi_evaluate_method(ASUS_WMI_METHODID_INIT, 0, 0, &rv))
-		pr_info("Initialization: %#x", rv);
+		pr_info("Initialization: %#x\n", rv);
 
 	/* We don't know yet what to do with this version... */
 	if (!asus_wmi_evaluate_method(ASUS_WMI_METHODID_SPEC, 0, 0x9, &rv)) {
-		pr_info("BIOS WMI version: %d.%d", rv >> 16, rv & 0xFF);
+		pr_info("BIOS WMI version: %d.%d\n", rv >> 16, rv & 0xFF);
 		asus->spec = rv;
 	}
 
@@ -1454,7 +1573,7 @@ static int asus_wmi_platform_init(struct asus_wmi *asus)
 	 * The significance of others is yet to be found.
 	 */
 	if (!asus_wmi_evaluate_method(ASUS_WMI_METHODID_SFUN, 0, 0, &rv)) {
-		pr_info("SFUN value: %#x", rv);
+		pr_info("SFUN value: %#x\n", rv);
 		asus->sfun = rv;
 	}
 
@@ -1467,13 +1586,8 @@ static int asus_wmi_platform_init(struct asus_wmi *asus)
 	 */
 	if (!asus_wmi_evaluate_method(ASUS_WMI_METHODID_DSTS, 0, 0, NULL))
 		asus->dsts_id = ASUS_WMI_METHODID_DSTS;
-	else if (!asus_wmi_evaluate_method(ASUS_WMI_METHODID_DSTS2, 0, 0, NULL))
+	else
 		asus->dsts_id = ASUS_WMI_METHODID_DSTS2;
-
-	if (!asus->dsts_id) {
-		pr_err("Can't find DSTS");
-		return -ENODEV;
-	}
 
 	/* CWAP allow to define the behavior of the Fn+F2 key,
 	 * this method doesn't seems to be present on Eee PCs */
@@ -1599,7 +1713,7 @@ static int asus_wmi_debugfs_init(struct asus_wmi *asus)
 
 	asus->debug.root = debugfs_create_dir(asus->driver->name, NULL);
 	if (!asus->debug.root) {
-		pr_err("failed to create debugfs directory");
+		pr_err("failed to create debugfs directory\n");
 		goto error_debugfs;
 	}
 
@@ -1648,6 +1762,7 @@ static int asus_wmi_add(struct platform_device *pdev)
 	struct asus_wmi *asus;
 	acpi_status status;
 	int err;
+	u32 result;
 
 	asus = kzalloc(sizeof(struct asus_wmi), GFP_KERNEL);
 	if (!asus)
@@ -1681,7 +1796,11 @@ static int asus_wmi_add(struct platform_device *pdev)
 	if (err)
 		goto fail_rfkill;
 
+	if (asus->driver->quirks->wmi_backlight_power)
+		acpi_video_dmi_promote_vendor();
 	if (!acpi_video_backlight_support()) {
+		pr_info("Disabling ACPI video driver\n");
+		acpi_video_unregister();
 		err = asus_wmi_backlight_init(asus);
 		if (err && err != -ENODEV)
 			goto fail_backlight;
@@ -1699,6 +1818,10 @@ static int asus_wmi_add(struct platform_device *pdev)
 	err = asus_wmi_debugfs_init(asus);
 	if (err)
 		goto fail_debugfs;
+
+	asus_wmi_get_devstate(asus, ASUS_WMI_DEVID_WLAN, &result);
+	if (result & (ASUS_WMI_DSTS_PRESENCE_BIT | ASUS_WMI_DSTS_USER_BIT))
+		asus->driver->wlan_ctrl_by_user = 1;
 
 	return 0;
 
@@ -1863,17 +1986,17 @@ EXPORT_SYMBOL_GPL(asus_wmi_unregister_driver);
 static int __init asus_wmi_init(void)
 {
 	if (!wmi_has_guid(ASUS_WMI_MGMT_GUID)) {
-		pr_info("Asus Management GUID not found");
+		pr_info("Asus Management GUID not found\n");
 		return -ENODEV;
 	}
 
-	pr_info("ASUS WMI generic driver loaded");
+	pr_info("ASUS WMI generic driver loaded\n");
 	return 0;
 }
 
 static void __exit asus_wmi_exit(void)
 {
-	pr_info("ASUS WMI generic driver unloaded");
+	pr_info("ASUS WMI generic driver unloaded\n");
 }
 
 module_init(asus_wmi_init);

@@ -45,6 +45,7 @@
 #include <net/addrconf.h>
 #include <net/ip6_route.h>
 #include <rdma/ib_addr.h>
+#include <rdma/ib.h>
 
 MODULE_AUTHOR("Sean Hefty");
 MODULE_DESCRIPTION("IB Address Translation");
@@ -69,6 +70,21 @@ static DEFINE_MUTEX(lock);
 static LIST_HEAD(req_list);
 static DECLARE_DELAYED_WORK(work, process_req);
 static struct workqueue_struct *addr_wq;
+
+int rdma_addr_size(struct sockaddr *addr)
+{
+	switch (addr->sa_family) {
+	case AF_INET:
+		return sizeof(struct sockaddr_in);
+	case AF_INET6:
+		return sizeof(struct sockaddr_in6);
+	case AF_IB:
+		return sizeof(struct sockaddr_ib);
+	default:
+		return 0;
+	}
+}
+EXPORT_SYMBOL(rdma_addr_size);
 
 void rdma_addr_register_client(struct rdma_addr_client *client)
 {
@@ -129,7 +145,7 @@ int rdma_translate_ip(struct sockaddr *addr, struct rdma_dev_addr *dev_addr)
 		dev_put(dev);
 		break;
 
-#if defined(CONFIG_IPV6) || defined(CONFIG_IPV6_MODULE)
+#if IS_ENABLED(CONFIG_IPV6)
 	case AF_INET6:
 		rcu_read_lock();
 		for_each_netdev_rcu(&init_net, dev) {
@@ -152,13 +168,11 @@ static void set_timeout(unsigned long time)
 {
 	unsigned long delay;
 
-	cancel_delayed_work(&work);
-
 	delay = time - jiffies;
 	if ((long)delay <= 0)
 		delay = 1;
 
-	queue_delayed_work(addr_wq, &work, delay);
+	mod_delayed_work(addr_wq, &work, delay);
 }
 
 static void queue_req(struct addr_req *req)
@@ -243,7 +257,7 @@ out:
 	return ret;
 }
 
-#if defined(CONFIG_IPV6) || defined(CONFIG_IPV6_MODULE)
+#if IS_ENABLED(CONFIG_IPV6)
 static int addr6_resolve(struct sockaddr_in6 *src_in,
 			 struct sockaddr_in6 *dst_in,
 			 struct rdma_dev_addr *addr)
@@ -371,12 +385,12 @@ int rdma_resolve_ip(struct rdma_addr_client *client,
 			goto err;
 		}
 
-		memcpy(src_in, src_addr, ip_addr_size(src_addr));
+		memcpy(src_in, src_addr, rdma_addr_size(src_addr));
 	} else {
 		src_in->sa_family = dst_addr->sa_family;
 	}
 
-	memcpy(dst_in, dst_addr, ip_addr_size(dst_addr));
+	memcpy(dst_in, dst_addr, rdma_addr_size(dst_addr));
 	req->addr = addr;
 	req->callback = callback;
 	req->context = context;

@@ -22,6 +22,7 @@
 #include "meta_io.h"
 #include "quota.h"
 #include "rgrp.h"
+#include "log.h"
 #include "super.h"
 #include "trans.h"
 #include "dir.h"
@@ -93,7 +94,7 @@ static int gfs2_unstuffer_page(struct gfs2_inode *ip, struct buffer_head *dibh,
 	if (!gfs2_is_jdata(ip))
 		mark_buffer_dirty(bh);
 	if (!gfs2_is_writeback(ip))
-		gfs2_trans_add_bh(ip->i_gl, bh, 0);
+		gfs2_trans_add_data(ip->i_gl, bh);
 
 	if (release) {
 		unlock_page(page);
@@ -153,7 +154,7 @@ int gfs2_unstuff_dinode(struct gfs2_inode *ip, struct page *page)
 
 	/*  Set up the pointer to the new block  */
 
-	gfs2_trans_add_bh(ip->i_gl, dibh, 1);
+	gfs2_trans_add_meta(ip->i_gl, dibh);
 	di = (struct gfs2_dinode *)dibh->b_data;
 	gfs2_buffer_clear_tail(dibh, sizeof(struct gfs2_dinode));
 
@@ -324,7 +325,7 @@ static int lookup_metapath(struct gfs2_inode *ip, struct metapath *mp)
 		if (!dblock)
 			return x + 1;
 
-		ret = gfs2_meta_indirect_buffer(ip, x+1, dblock, 0, &mp->mp_bh[x+1]);
+		ret = gfs2_meta_indirect_buffer(ip, x+1, dblock, &mp->mp_bh[x+1]);
 		if (ret)
 			return ret;
 	}
@@ -405,7 +406,7 @@ static inline __be64 *gfs2_indirect_init(struct metapath *mp,
 	BUG_ON(i < 1);
 	BUG_ON(mp->mp_bh[i] != NULL);
 	mp->mp_bh[i] = gfs2_meta_new(gl, bn);
-	gfs2_trans_add_bh(gl, mp->mp_bh[i], 1);
+	gfs2_trans_add_meta(gl, mp->mp_bh[i]);
 	gfs2_metatype_set(mp->mp_bh[i], GFS2_METATYPE_IN, GFS2_FORMAT_IN);
 	gfs2_buffer_clear_tail(mp->mp_bh[i], sizeof(struct gfs2_meta_header));
 	ptr += offset;
@@ -468,7 +469,7 @@ static int gfs2_bmap_alloc(struct inode *inode, const sector_t lblock,
 	BUG_ON(sheight < 1);
 	BUG_ON(dibh == NULL);
 
-	gfs2_trans_add_bh(ip->i_gl, dibh, 1);
+	gfs2_trans_add_meta(ip->i_gl, dibh);
 
 	if (height == sheight) {
 		struct buffer_head *bh;
@@ -544,7 +545,7 @@ static int gfs2_bmap_alloc(struct inode *inode, const sector_t lblock,
 		/* Branching from existing tree */
 		case ALLOC_GROW_DEPTH:
 			if (i > 1 && i < height)
-				gfs2_trans_add_bh(ip->i_gl, mp->mp_bh[i-1], 1);
+				gfs2_trans_add_meta(ip->i_gl, mp->mp_bh[i-1]);
 			for (; i < height && n > 0; i++, n--)
 				gfs2_indirect_init(mp, ip->i_gl, i,
 						   mp->mp_list[i-1], bn++);
@@ -556,7 +557,7 @@ static int gfs2_bmap_alloc(struct inode *inode, const sector_t lblock,
 		case ALLOC_DATA:
 			BUG_ON(n > dblks);
 			BUG_ON(mp->mp_bh[end_of_metadata] == NULL);
-			gfs2_trans_add_bh(ip->i_gl, mp->mp_bh[end_of_metadata], 1);
+			gfs2_trans_add_meta(ip->i_gl, mp->mp_bh[end_of_metadata]);
 			dblks = n;
 			ptr = metapointer(end_of_metadata, mp);
 			dblock = bn;
@@ -785,6 +786,9 @@ static int do_strip(struct gfs2_inode *ip, struct buffer_head *dibh,
 	if (error)
 		goto out_rlist;
 
+	if (gfs2_rs_active(ip->i_res)) /* needs to be done with the rgrp glock held */
+		gfs2_rs_deltree(ip->i_res);
+
 	error = gfs2_trans_begin(sdp, rg_blocks + RES_DINODE +
 				 RES_INDIRECT + RES_STATFS + RES_QUOTA,
 				 revokes);
@@ -793,8 +797,8 @@ static int do_strip(struct gfs2_inode *ip, struct buffer_head *dibh,
 
 	down_write(&ip->i_rw_mutex);
 
-	gfs2_trans_add_bh(ip->i_gl, dibh, 1);
-	gfs2_trans_add_bh(ip->i_gl, bh, 1);
+	gfs2_trans_add_meta(ip->i_gl, dibh);
+	gfs2_trans_add_meta(ip->i_gl, bh);
 
 	bstart = 0;
 	blen = 0;
@@ -882,7 +886,7 @@ static int recursive_scan(struct gfs2_inode *ip, struct buffer_head *dibh,
 		top = (__be64 *)(bh->b_data + sizeof(struct gfs2_dinode)) + mp->mp_list[0];
 		bottom = (__be64 *)(bh->b_data + sizeof(struct gfs2_dinode)) + sdp->sd_diptrs;
 	} else {
-		error = gfs2_meta_indirect_buffer(ip, height, block, 0, &bh);
+		error = gfs2_meta_indirect_buffer(ip, height, block, &bh);
 		if (error)
 			return error;
 
@@ -978,7 +982,7 @@ static int gfs2_block_truncate_page(struct address_space *mapping, loff_t from)
 	}
 
 	if (!gfs2_is_writeback(ip))
-		gfs2_trans_add_bh(ip->i_gl, bh, 0);
+		gfs2_trans_add_data(ip->i_gl, bh);
 
 	zero_user(page, offset, length);
 	mark_buffer_dirty(bh);
@@ -986,6 +990,41 @@ unlock:
 	unlock_page(page);
 	page_cache_release(page);
 	return err;
+}
+
+/**
+ * gfs2_journaled_truncate - Wrapper for truncate_pagecache for jdata files
+ * @inode: The inode being truncated
+ * @oldsize: The original (larger) size
+ * @newsize: The new smaller size
+ *
+ * With jdata files, we have to journal a revoke for each block which is
+ * truncated. As a result, we need to split this into separate transactions
+ * if the number of pages being truncated gets too large.
+ */
+
+#define GFS2_JTRUNC_REVOKES 8192
+
+static int gfs2_journaled_truncate(struct inode *inode, u64 oldsize, u64 newsize)
+{
+	struct gfs2_sbd *sdp = GFS2_SB(inode);
+	u64 max_chunk = GFS2_JTRUNC_REVOKES * sdp->sd_vfs->s_blocksize;
+	u64 chunk;
+	int error;
+
+	while (oldsize != newsize) {
+		chunk = oldsize - newsize;
+		if (chunk > max_chunk)
+			chunk = max_chunk;
+		truncate_pagecache(inode, oldsize, oldsize - chunk);
+		oldsize -= chunk;
+		gfs2_trans_end(sdp);
+		error = gfs2_trans_begin(sdp, RES_DINODE, GFS2_JTRUNC_REVOKES);
+		if (error)
+			return error;
+	}
+
+	return 0;
 }
 
 static int trunc_start(struct inode *inode, u64 oldsize, u64 newsize)
@@ -997,8 +1036,10 @@ static int trunc_start(struct inode *inode, u64 oldsize, u64 newsize)
 	int journaled = gfs2_is_jdata(ip);
 	int error;
 
-	error = gfs2_trans_begin(sdp,
-				 RES_DINODE + (journaled ? RES_JDATA : 0), 0);
+	if (journaled)
+		error = gfs2_trans_begin(sdp, RES_DINODE + RES_JDATA, GFS2_JTRUNC_REVOKES);
+	else
+		error = gfs2_trans_begin(sdp, RES_DINODE, 0);
 	if (error)
 		return error;
 
@@ -1006,7 +1047,7 @@ static int trunc_start(struct inode *inode, u64 oldsize, u64 newsize)
 	if (error)
 		goto out;
 
-	gfs2_trans_add_bh(ip->i_gl, dibh, 1);
+	gfs2_trans_add_meta(ip->i_gl, dibh);
 
 	if (gfs2_is_stuffed(ip)) {
 		gfs2_buffer_clear_tail(dibh, sizeof(struct gfs2_dinode) + newsize);
@@ -1023,7 +1064,16 @@ static int trunc_start(struct inode *inode, u64 oldsize, u64 newsize)
 	ip->i_inode.i_mtime = ip->i_inode.i_ctime = CURRENT_TIME;
 	gfs2_dinode_out(ip, dibh->b_data);
 
-	truncate_pagecache(inode, oldsize, newsize);
+	if (journaled)
+		error = gfs2_journaled_truncate(inode, oldsize, newsize);
+	else
+		truncate_pagecache(inode, oldsize, newsize);
+
+	if (error) {
+		brelse(dibh);
+		return error;
+	}
+
 out_brelse:
 	brelse(dibh);
 out:
@@ -1045,12 +1095,13 @@ static int trunc_dealloc(struct gfs2_inode *ip, u64 size)
 		lblock = (size - 1) >> sdp->sd_sb.sb_bsize_shift;
 
 	find_metapath(sdp, lblock, &mp, ip->i_height);
-	if (!gfs2_qadata_get(ip))
-		return -ENOMEM;
-
-	error = gfs2_quota_hold(ip, NO_QUOTA_CHANGE, NO_QUOTA_CHANGE);
+	error = gfs2_rindex_update(sdp);
 	if (error)
-		goto out;
+		return error;
+
+	error = gfs2_quota_hold(ip, NO_UID_QUOTA_CHANGE, NO_GID_QUOTA_CHANGE);
+	if (error)
+		return error;
 
 	while (height--) {
 		struct strip_mine sm;
@@ -1064,8 +1115,6 @@ static int trunc_dealloc(struct gfs2_inode *ip, u64 size)
 
 	gfs2_quota_unhold(ip);
 
-out:
-	gfs2_qadata_put(ip);
 	return error;
 }
 
@@ -1089,11 +1138,12 @@ static int trunc_end(struct gfs2_inode *ip)
 		ip->i_height = 0;
 		ip->i_goal = ip->i_no_addr;
 		gfs2_buffer_clear_tail(dibh, sizeof(struct gfs2_dinode));
+		gfs2_ordered_del_inode(ip);
 	}
 	ip->i_inode.i_mtime = ip->i_inode.i_ctime = CURRENT_TIME;
 	ip->i_diskflags &= ~GFS2_DIF_TRUNC_IN_PROG;
 
-	gfs2_trans_add_bh(ip->i_gl, dibh, 1);
+	gfs2_trans_add_meta(ip->i_gl, dibh);
 	gfs2_dinode_out(ip, dibh->b_data);
 	brelse(dibh);
 
@@ -1167,29 +1217,28 @@ static int do_grow(struct inode *inode, u64 size)
 	struct gfs2_inode *ip = GFS2_I(inode);
 	struct gfs2_sbd *sdp = GFS2_SB(inode);
 	struct buffer_head *dibh;
-	struct gfs2_qadata *qa = NULL;
 	int error;
+	int unstuff = 0;
 
 	if (gfs2_is_stuffed(ip) &&
 	    (size > (sdp->sd_sb.sb_bsize - sizeof(struct gfs2_dinode)))) {
-		qa = gfs2_qadata_get(ip);
-		if (qa == NULL)
-			return -ENOMEM;
-
 		error = gfs2_quota_lock_check(ip);
 		if (error)
-			goto do_grow_alloc_put;
+			return error;
 
-		error = gfs2_inplace_reserve(ip, 1);
+		error = gfs2_inplace_reserve(ip, 1, 0);
 		if (error)
 			goto do_grow_qunlock;
+		unstuff = 1;
 	}
 
-	error = gfs2_trans_begin(sdp, RES_DINODE + RES_STATFS + RES_RG_BIT, 0);
+	error = gfs2_trans_begin(sdp, RES_DINODE + RES_STATFS + RES_RG_BIT +
+				 (sdp->sd_args.ar_quota == GFS2_QUOTA_OFF ?
+				  0 : RES_QUOTA), 0);
 	if (error)
 		goto do_grow_release;
 
-	if (qa) {
+	if (unstuff) {
 		error = gfs2_unstuff_dinode(ip, NULL);
 		if (error)
 			goto do_end_trans;
@@ -1201,19 +1250,17 @@ static int do_grow(struct inode *inode, u64 size)
 
 	i_size_write(inode, size);
 	ip->i_inode.i_mtime = ip->i_inode.i_ctime = CURRENT_TIME;
-	gfs2_trans_add_bh(ip->i_gl, dibh, 1);
+	gfs2_trans_add_meta(ip->i_gl, dibh);
 	gfs2_dinode_out(ip, dibh->b_data);
 	brelse(dibh);
 
 do_end_trans:
 	gfs2_trans_end(sdp);
 do_grow_release:
-	if (qa) {
+	if (unstuff) {
 		gfs2_inplace_release(ip);
 do_grow_qunlock:
 		gfs2_quota_unlock(ip);
-do_grow_alloc_put:
-		gfs2_qadata_put(ip);
 	}
 	return error;
 }
@@ -1241,13 +1288,26 @@ int gfs2_setattr_size(struct inode *inode, u64 newsize)
 	if (ret)
 		return ret;
 
+	ret = get_write_access(inode);
+	if (ret)
+		return ret;
+
 	inode_dio_wait(inode);
 
-	oldsize = inode->i_size;
-	if (newsize >= oldsize)
-		return do_grow(inode, newsize);
+	ret = gfs2_rs_alloc(GFS2_I(inode));
+	if (ret)
+		goto out;
 
-	return do_shrink(inode, oldsize, newsize);
+	oldsize = inode->i_size;
+	if (newsize >= oldsize) {
+		ret = do_grow(inode, newsize);
+		goto out;
+	}
+
+	ret = do_shrink(inode, oldsize, newsize);
+out:
+	put_write_access(inode);
+	return ret;
 }
 
 int gfs2_truncatei_resume(struct gfs2_inode *ip)

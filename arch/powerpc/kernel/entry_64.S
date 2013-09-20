@@ -33,6 +33,7 @@
 #include <asm/irqflags.h>
 #include <asm/ftrace.h>
 #include <asm/hw_irq.h>
+#include <asm/context_tracking.h>
 
 /*
  * System calls.
@@ -62,16 +63,11 @@ system_call_common:
 	std	r12,_MSR(r1)
 	std	r0,GPR0(r1)
 	std	r10,GPR1(r1)
+	beq	2f			/* if from kernel mode */
 	ACCOUNT_CPU_USER_ENTRY(r10, r11)
-	/*
-	 * This "crclr so" clears CR0.SO, which is the error indication on
-	 * return from this system call.  There must be no cmp instruction
-	 * between it and the "mfcr r9" below, otherwise if XER.SO is set,
-	 * CR0.SO will get set, causing all system calls to appear to fail.
-	 */
-	crclr	so
-	std	r2,GPR2(r1)
+2:	std	r2,GPR2(r1)
 	std	r3,GPR3(r1)
+	mfcr	r2
 	std	r4,GPR4(r1)
 	std	r5,GPR5(r1)
 	std	r6,GPR6(r1)
@@ -82,23 +78,25 @@ system_call_common:
 	std	r11,GPR10(r1)
 	std	r11,GPR11(r1)
 	std	r11,GPR12(r1)
+	std	r11,_XER(r1)
+	std	r11,_CTR(r1)
 	std	r9,GPR13(r1)
-	mfcr	r9
 	mflr	r10
+	/*
+	 * This clears CR0.SO (bit 28), which is the error indication on
+	 * return from this system call.
+	 */
+	rldimi	r2,r11,28,(63-28)
 	li	r11,0xc01
-	std	r9,_CCR(r1)
 	std	r10,_LINK(r1)
 	std	r11,_TRAP(r1)
-	mfxer	r9
-	mfctr	r10
-	std	r9,_XER(r1)
-	std	r10,_CTR(r1)
 	std	r3,ORIG_GPR3(r1)
+	std	r2,_CCR(r1)
 	ld	r2,PACATOC(r13)
 	addi	r9,r1,STACK_FRAME_OVERHEAD
 	ld	r11,exception_marker@toc(r2)
 	std	r11,-16(r9)		/* "regshere" marker */
-#if defined(CONFIG_VIRT_CPU_ACCOUNTING) && defined(CONFIG_PPC_SPLPAR)
+#if defined(CONFIG_VIRT_CPU_ACCOUNTING_NATIVE) && defined(CONFIG_PPC_SPLPAR)
 BEGIN_FW_FTR_SECTION
 	beq	33f
 	/* if from user, see if there are any DTL entries to process */
@@ -114,7 +112,7 @@ BEGIN_FW_FTR_SECTION
 	addi	r9,r1,STACK_FRAME_OVERHEAD
 33:
 END_FW_FTR_SECTION_IFSET(FW_FEATURE_SPLPAR)
-#endif /* CONFIG_VIRT_CPU_ACCOUNTING && CONFIG_PPC_SPLPAR */
+#endif /* CONFIG_VIRT_CPU_ACCOUNTING_NATIVE && CONFIG_PPC_SPLPAR */
 
 	/*
 	 * A syscall should always be called with interrupts enabled
@@ -150,11 +148,11 @@ END_FW_FTR_SECTION_IFSET(FW_FEATURE_SPLPAR)
 	REST_2GPRS(7,r1)
 	addi	r9,r1,STACK_FRAME_OVERHEAD
 #endif
-	clrrdi	r11,r1,THREAD_SHIFT
+	CURRENT_THREAD_INFO(r11, r1)
 	ld	r10,TI_FLAGS(r11)
 	andi.	r11,r10,_TIF_SYSCALL_T_OR_A
-	bne-	syscall_dotrace
-syscall_dotrace_cont:
+	bne	syscall_dotrace
+.Lsyscall_dotrace_cont:
 	cmpldi	0,r0,NR_syscalls
 	bge-	syscall_enosys
 
@@ -185,7 +183,7 @@ syscall_exit:
 	bl	.do_show_syscall_exit
 	ld	r3,RESULT(r1)
 #endif
-	clrrdi	r12,r1,THREAD_SHIFT
+	CURRENT_THREAD_INFO(r12, r1)
 
 	ld	r8,_MSR(r1)
 #ifdef CONFIG_PPC_BOOK3S
@@ -201,7 +199,16 @@ syscall_exit:
 	wrteei	0
 #else
 	ld	r10,PACAKMSR(r13)
-	mtmsrd	r10,1
+	/*
+	 * For performance reasons we clear RI the same time that we
+	 * clear EE. We only need to clear RI just before we restore r13
+	 * below, but batching it with EE saves us one expensive mtmsrd call.
+	 * We have to be careful to restore RI if we branch anywhere from
+	 * here (eg syscall_exit_work).
+	 */
+	li	r9,MSR_RI
+	andc	r11,r10,r9
+	mtmsrd	r11,1
 #endif /* CONFIG_PPC_BOOK3E */
 
 	ld	r9,TI_FLAGS(r12)
@@ -211,27 +218,17 @@ syscall_exit:
 	cmpld	r3,r11
 	ld	r5,_CCR(r1)
 	bge-	syscall_error
-syscall_error_cont:
+.Lsyscall_error_cont:
 	ld	r7,_NIP(r1)
 BEGIN_FTR_SECTION
 	stdcx.	r0,0,r1			/* to clear the reservation */
 END_FTR_SECTION_IFCLR(CPU_FTR_STCX_CHECKS_ADDRESS)
 	andi.	r6,r8,MSR_PR
 	ld	r4,_LINK(r1)
-	/*
-	 * Clear RI before restoring r13.  If we are returning to
-	 * userspace and we take an exception after restoring r13,
-	 * we end up corrupting the userspace r13 value.
-	 */
-#ifdef CONFIG_PPC_BOOK3S
-	/* No MSR:RI on BookE */
-	li	r12,MSR_RI
-	andc	r11,r10,r12
-	mtmsrd	r11,1			/* clear MSR.RI */
-#endif /* CONFIG_PPC_BOOK3S */
 
 	beq-	1f
 	ACCOUNT_CPU_USER_EXIT(r11, r12)
+	HMT_MEDIUM_LOW_HAS_PPR
 	ld	r13,GPR13(r1)	/* only restore r13 if returning to usermode */
 1:	ld	r2,GPR2(r1)
 	ld	r1,GPR1(r1)
@@ -246,7 +243,7 @@ syscall_error:
 	oris	r5,r5,0x1000	/* Set SO bit in CR */
 	neg	r3,r3
 	std	r5,_CCR(r1)
-	b	syscall_error_cont
+	b	.Lsyscall_error_cont
 	
 /* Traced system call support */
 syscall_dotrace:
@@ -266,15 +263,18 @@ syscall_dotrace:
 	ld	r7,GPR7(r1)
 	ld	r8,GPR8(r1)
 	addi	r9,r1,STACK_FRAME_OVERHEAD
-	clrrdi	r10,r1,THREAD_SHIFT
+	CURRENT_THREAD_INFO(r10, r1)
 	ld	r10,TI_FLAGS(r10)
-	b	syscall_dotrace_cont
+	b	.Lsyscall_dotrace_cont
 
 syscall_enosys:
 	li	r3,-ENOSYS
 	b	syscall_exit
 	
 syscall_exit_work:
+#ifdef CONFIG_PPC_BOOK3S
+	mtmsrd	r10,1		/* Restore RI */
+#endif
 	/* If TIF_RESTOREALL is set, don't scribble on either r3 or ccr.
 	 If TIF_NOERROR is set, just save r3 as it is. */
 
@@ -305,6 +305,7 @@ syscall_exit_work:
 	subi	r12,r12,TI_FLAGS
 
 4:	/* Anything else left to do? */
+	SET_DEFAULT_THREAD_PPR(r3, r10)		/* Set thread.ppr = 3 */
 	andi.	r0,r9,(_TIF_SYSCALL_T_OR_A|_TIF_SINGLESTEP)
 	beq	.ret_from_except_lite
 
@@ -373,6 +374,22 @@ _GLOBAL(ret_from_fork)
 	li	r3,0
 	b	syscall_exit
 
+_GLOBAL(ret_from_kernel_thread)
+	bl	.schedule_tail
+	REST_NVGPRS(r1)
+	ld	r14, 0(r14)
+	mtlr	r14
+	mr	r3,r15
+	blrl
+	li	r3,0
+	b	syscall_exit
+
+	.section	".toc","aw"
+DSCR_DEFAULT:
+	.tc dscr_default[TC],dscr_default
+
+	.section	".text"
+
 /*
  * This routine switches between two different tasks.  The process
  * state of one is saved on its kernel stack.  Then the state
@@ -430,6 +447,18 @@ END_FTR_SECTION_IFSET(CPU_FTR_DSCR)
 	std	r23,_CCR(r1)
 	std	r1,KSP(r3)	/* Set old stack pointer */
 
+#ifdef CONFIG_PPC_BOOK3S_64
+BEGIN_FTR_SECTION
+	/* Event based branch registers */
+	mfspr	r0, SPRN_BESCR
+	std	r0, THREAD_BESCR(r3)
+	mfspr	r0, SPRN_EBBHR
+	std	r0, THREAD_EBBHR(r3)
+	mfspr	r0, SPRN_EBBRR
+	std	r0, THREAD_EBBRR(r3)
+END_FTR_SECTION_IFSET(CPU_FTR_ARCH_207S)
+#endif
+
 #ifdef CONFIG_SMP
 	/* We need a sync somewhere here to make sure that if the
 	 * previous task gets rescheduled on another CPU, it sees all
@@ -448,6 +477,13 @@ END_FTR_SECTION_IFSET(CPU_FTR_DSCR)
 BEGIN_FTR_SECTION
 	ldarx	r6,0,r1
 END_FTR_SECTION_IFSET(CPU_FTR_STCX_CHECKS_ADDRESS)
+
+#ifdef CONFIG_PPC_BOOK3S
+/* Cancel all explict user streams as they will have no use after context
+ * switch and will stop the HW from creating streams itself
+ */
+	DCBT_STOP_ALL_STREAM_IDS(r6)
+#endif
 
 	addi	r6,r4,-THREAD	/* Convert THREAD to 'current' */
 	std	r6,PACACURRENT(r13)	/* Set new 'current' */
@@ -503,7 +539,7 @@ END_MMU_FTR_SECTION_IFSET(MMU_FTR_1T_SEGMENT)
 2:
 #endif /* !CONFIG_PPC_BOOK3S */
 
-	clrrdi	r7,r8,THREAD_SHIFT	/* base of new stack */
+	CURRENT_THREAD_INFO(r7, r8)  /* base of new stack */
 	/* Note: this uses SWITCH_FRAME_SIZE rather than INT_FRAME_SIZE
 	   because we don't need to leave the 288-byte ABI gap at the
 	   top of the kernel stack. */
@@ -512,8 +548,20 @@ END_MMU_FTR_SECTION_IFSET(MMU_FTR_1T_SEGMENT)
 	mr	r1,r8		/* start using new stack pointer */
 	std	r7,PACAKSAVE(r13)
 
-	ld	r6,_CCR(r1)
-	mtcrf	0xFF,r6
+#ifdef CONFIG_PPC_BOOK3S_64
+BEGIN_FTR_SECTION
+	/* Event based branch registers */
+	ld	r0, THREAD_BESCR(r4)
+	mtspr	SPRN_BESCR, r0
+	ld	r0, THREAD_EBBHR(r4)
+	mtspr	SPRN_EBBHR, r0
+	ld	r0, THREAD_EBBRR(r4)
+	mtspr	SPRN_EBBRR, r0
+
+	ld	r0,THREAD_TAR(r4)
+	mtspr	SPRN_TAR,r0
+END_FTR_SECTION_IFSET(CPU_FTR_ARCH_207S)
+#endif
 
 #ifdef CONFIG_ALTIVEC
 BEGIN_FTR_SECTION
@@ -523,13 +571,46 @@ END_FTR_SECTION_IFSET(CPU_FTR_ALTIVEC)
 #endif /* CONFIG_ALTIVEC */
 #ifdef CONFIG_PPC64
 BEGIN_FTR_SECTION
+	lwz	r6,THREAD_DSCR_INHERIT(r4)
+	ld	r7,DSCR_DEFAULT@toc(2)
 	ld	r0,THREAD_DSCR(r4)
-	cmpd	r0,r25
-	beq	1f
+	cmpwi	r6,0
+	li	r8, FSCR_DSCR
+	bne	1f
+	ld	r0,0(r7)
+	b	3f
+1:
+  BEGIN_FTR_SECTION_NESTED(70)
+	mfspr	r6, SPRN_FSCR
+	or	r6, r6, r8
+	mtspr	SPRN_FSCR, r6
+    BEGIN_FTR_SECTION_NESTED(69)
+	mfspr	r6, SPRN_HFSCR
+	or	r6, r6, r8
+	mtspr	SPRN_HFSCR, r6
+    END_FTR_SECTION_NESTED(CPU_FTR_HVMODE, CPU_FTR_HVMODE, 69)
+	b	4f
+  END_FTR_SECTION_NESTED(CPU_FTR_ARCH_207S, CPU_FTR_ARCH_207S, 70)
+3:
+  BEGIN_FTR_SECTION_NESTED(70)
+	mfspr	r6, SPRN_FSCR
+	andc	r6, r6, r8
+	mtspr	SPRN_FSCR, r6
+    BEGIN_FTR_SECTION_NESTED(69)
+	mfspr	r6, SPRN_HFSCR
+	andc	r6, r6, r8
+	mtspr	SPRN_HFSCR, r6
+    END_FTR_SECTION_NESTED(CPU_FTR_HVMODE, CPU_FTR_HVMODE, 69)
+  END_FTR_SECTION_NESTED(CPU_FTR_ARCH_207S, CPU_FTR_ARCH_207S, 70)
+4:	cmpd	r0,r25
+	beq	2f
 	mtspr	SPRN_DSCR,r0
-1:	
+2:
 END_FTR_SECTION_IFSET(CPU_FTR_DSCR)
 #endif
+
+	ld	r6,_CCR(r1)
+	mtcrf	0xFF,r6
 
 	/* r3-r13 are destroyed -- Cort */
 	REST_8GPRS(14, r1)
@@ -562,27 +643,124 @@ _GLOBAL(ret_from_except_lite)
 	mtmsrd	r10,1		  /* Update machine state */
 #endif /* CONFIG_PPC_BOOK3E */
 
-#ifdef CONFIG_PREEMPT
-	clrrdi	r9,r1,THREAD_SHIFT	/* current_thread_info() */
-	li	r0,_TIF_NEED_RESCHED	/* bits to check */
+	CURRENT_THREAD_INFO(r9, r1)
 	ld	r3,_MSR(r1)
+#ifdef CONFIG_PPC_BOOK3E
+	ld	r10,PACACURRENT(r13)
+#endif /* CONFIG_PPC_BOOK3E */
 	ld	r4,TI_FLAGS(r9)
-	/* Move MSR_PR bit in r3 to _TIF_SIGPENDING position in r0 */
-	rlwimi	r0,r3,32+TIF_SIGPENDING-MSR_PR_LG,_TIF_SIGPENDING
-	and.	r0,r4,r0	/* check NEED_RESCHED and maybe SIGPENDING */
-	bne	do_work
-
-#else /* !CONFIG_PREEMPT */
-	ld	r3,_MSR(r1)	/* Returning to user mode? */
 	andi.	r3,r3,MSR_PR
-	beq	restore		/* if not, just restore regs and return */
+	beq	resume_kernel
+#ifdef CONFIG_PPC_BOOK3E
+	lwz	r3,(THREAD+THREAD_DBCR0)(r10)
+#endif /* CONFIG_PPC_BOOK3E */
 
 	/* Check current_thread_info()->flags */
-	clrrdi	r9,r1,THREAD_SHIFT
-	ld	r4,TI_FLAGS(r9)
 	andi.	r0,r4,_TIF_USER_WORK_MASK
-	bne	do_work
-#endif /* !CONFIG_PREEMPT */
+#ifdef CONFIG_PPC_BOOK3E
+	bne	1f
+	/*
+	 * Check to see if the dbcr0 register is set up to debug.
+	 * Use the internal debug mode bit to do this.
+	 */
+	andis.	r0,r3,DBCR0_IDM@h
+	beq	restore
+	mfmsr	r0
+	rlwinm	r0,r0,0,~MSR_DE	/* Clear MSR.DE */
+	mtmsr	r0
+	mtspr	SPRN_DBCR0,r3
+	li	r10, -1
+	mtspr	SPRN_DBSR,r10
+	b	restore
+#else
+	beq	restore
+#endif
+1:	andi.	r0,r4,_TIF_NEED_RESCHED
+	beq	2f
+	bl	.restore_interrupts
+	SCHEDULE_USER
+	b	.ret_from_except_lite
+
+2:	bl	.save_nvgprs
+	bl	.restore_interrupts
+	addi	r3,r1,STACK_FRAME_OVERHEAD
+	bl	.do_notify_resume
+	b	.ret_from_except
+
+resume_kernel:
+	/* check current_thread_info, _TIF_EMULATE_STACK_STORE */
+	CURRENT_THREAD_INFO(r9, r1)
+	ld	r8,TI_FLAGS(r9)
+	andis.	r8,r8,_TIF_EMULATE_STACK_STORE@h
+	beq+	1f
+
+	addi	r8,r1,INT_FRAME_SIZE	/* Get the kprobed function entry */
+
+	lwz	r3,GPR1(r1)
+	subi	r3,r3,INT_FRAME_SIZE	/* dst: Allocate a trampoline exception frame */
+	mr	r4,r1			/* src:  current exception frame */
+	mr	r1,r3			/* Reroute the trampoline frame to r1 */
+
+	/* Copy from the original to the trampoline. */
+	li	r5,INT_FRAME_SIZE/8	/* size: INT_FRAME_SIZE */
+	li	r6,0			/* start offset: 0 */
+	mtctr	r5
+2:	ldx	r0,r6,r4
+	stdx	r0,r6,r3
+	addi	r6,r6,8
+	bdnz	2b
+
+	/* Do real store operation to complete stwu */
+	lwz	r5,GPR1(r1)
+	std	r8,0(r5)
+
+	/* Clear _TIF_EMULATE_STACK_STORE flag */
+	lis	r11,_TIF_EMULATE_STACK_STORE@h
+	addi	r5,r9,TI_FLAGS
+0:	ldarx	r4,0,r5
+	andc	r4,r4,r11
+	stdcx.	r4,0,r5
+	bne-	0b
+1:
+
+#ifdef CONFIG_PREEMPT
+	/* Check if we need to preempt */
+	andi.	r0,r4,_TIF_NEED_RESCHED
+	beq+	restore
+	/* Check that preempt_count() == 0 and interrupts are enabled */
+	lwz	r8,TI_PREEMPT(r9)
+	cmpwi	cr1,r8,0
+	ld	r0,SOFTE(r1)
+	cmpdi	r0,0
+	crandc	eq,cr1*4+eq,eq
+	bne	restore
+
+	/*
+	 * Here we are preempting the current task. We want to make
+	 * sure we are soft-disabled first
+	 */
+	SOFT_DISABLE_INTS(r3,r4)
+1:	bl	.preempt_schedule_irq
+
+	/* Re-test flags and eventually loop */
+	CURRENT_THREAD_INFO(r9, r1)
+	ld	r4,TI_FLAGS(r9)
+	andi.	r0,r4,_TIF_NEED_RESCHED
+	bne	1b
+
+	/*
+	 * arch_local_irq_restore() from preempt_schedule_irq above may
+	 * enable hard interrupt but we really should disable interrupts
+	 * when we return from the interrupt, and so that we don't get
+	 * interrupted after loading SRR0/1.
+	 */
+#ifdef CONFIG_PPC_BOOK3E
+	wrteei	0
+#else
+	ld	r10,PACAKMSR(r13) /* Get kernel MSR without EE */
+	mtmsrd	r10,1		  /* Update machine state */
+#endif /* CONFIG_PPC_BOOK3E */
+#endif /* CONFIG_PREEMPT */
 
 	.globl	fast_exc_return_irq
 fast_exc_return_irq:
@@ -667,6 +845,10 @@ fast_exception_return:
 	andc	r4,r4,r0	 /* r0 contains MSR_RI here */
 	mtmsrd	r4,1
 
+#ifdef CONFIG_PPC_TRANSACTIONAL_MEM
+	/* TM debug */
+	std	r3, PACATMSCRATCH(r13) /* Stash returned-to MSR */
+#endif
 	/*
 	 * r13 is our per cpu area, only restore it if we are returning to
 	 * userspace the value stored in the stack frame may belong to
@@ -675,6 +857,7 @@ fast_exception_return:
 	andi.	r0,r3,MSR_PR
 	beq	1f
 	ACCOUNT_CPU_USER_EXIT(r2, r4)
+	RESTORE_PPR(r2, r4)
 	REST_GPR(13, r1)
 1:
 	mtspr	SPRN_SRR1,r3
@@ -754,59 +937,24 @@ restore_check_irq_replay:
 	addi	r3,r1,STACK_FRAME_OVERHEAD;
 	bl	.timer_interrupt
 	b	.ret_from_except
+#ifdef CONFIG_PPC_DOORBELL
+1:
 #ifdef CONFIG_PPC_BOOK3E
-1:	cmpwi	cr0,r3,0x280
+	cmpwi	cr0,r3,0x280
+#else
+	BEGIN_FTR_SECTION
+		cmpwi	cr0,r3,0xe80
+	FTR_SECTION_ELSE
+		cmpwi	cr0,r3,0xa00
+	ALT_FTR_SECTION_END_IFSET(CPU_FTR_HVMODE)
+#endif /* CONFIG_PPC_BOOK3E */
 	bne	1f
 	addi	r3,r1,STACK_FRAME_OVERHEAD;
 	bl	.doorbell_exception
 	b	.ret_from_except
-#endif /* CONFIG_PPC_BOOK3E */
+#endif /* CONFIG_PPC_DOORBELL */
 1:	b	.ret_from_except /* What else to do here ? */
  
-
-
-3:
-do_work:
-#ifdef CONFIG_PREEMPT
-	andi.	r0,r3,MSR_PR	/* Returning to user mode? */
-	bne	user_work
-	/* Check that preempt_count() == 0 and interrupts are enabled */
-	lwz	r8,TI_PREEMPT(r9)
-	cmpwi	cr1,r8,0
-	ld	r0,SOFTE(r1)
-	cmpdi	r0,0
-	crandc	eq,cr1*4+eq,eq
-	bne	restore
-
-	/*
-	 * Here we are preempting the current task. We want to make
-	 * sure we are soft-disabled first
-	 */
-	SOFT_DISABLE_INTS(r3,r4)
-1:	bl	.preempt_schedule_irq
-
-	/* Re-test flags and eventually loop */
-	clrrdi	r9,r1,THREAD_SHIFT
-	ld	r4,TI_FLAGS(r9)
-	andi.	r0,r4,_TIF_NEED_RESCHED
-	bne	1b
-	b	restore
-
-user_work:
-#endif /* CONFIG_PREEMPT */
-
-	andi.	r0,r4,_TIF_NEED_RESCHED
-	beq	1f
-	bl	.restore_interrupts
-	bl	.schedule
-	b	.ret_from_except_lite
-
-1:	bl	.save_nvgprs
-	bl	.restore_interrupts
-	addi	r3,r1,STACK_FRAME_OVERHEAD
-	bl	.do_notify_resume
-	b	.ret_from_except
-
 unrecov_restore:
 	addi	r3,r1,STACK_FRAME_OVERHEAD
 	bl	.unrecoverable_exception

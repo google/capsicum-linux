@@ -931,14 +931,14 @@ static int erst_check_table(struct acpi_table_erst *erst_tab)
 
 static int erst_open_pstore(struct pstore_info *psi);
 static int erst_close_pstore(struct pstore_info *psi);
-static ssize_t erst_reader(u64 *id, enum pstore_type_id *type,
+static ssize_t erst_reader(u64 *id, enum pstore_type_id *type, int *count,
 			   struct timespec *time, char **buf,
 			   struct pstore_info *psi);
 static int erst_writer(enum pstore_type_id type, enum kmsg_dump_reason reason,
-		       u64 *id, unsigned int part,
+		       u64 *id, unsigned int part, int count, size_t hsize,
 		       size_t size, struct pstore_info *psi);
-static int erst_clearer(enum pstore_type_id type, u64 id,
-			struct pstore_info *psi);
+static int erst_clearer(enum pstore_type_id type, u64 id, int count,
+			struct timespec time, struct pstore_info *psi);
 
 static struct pstore_info erst_info = {
 	.owner		= THIS_MODULE,
@@ -987,7 +987,7 @@ static int erst_close_pstore(struct pstore_info *psi)
 	return 0;
 }
 
-static ssize_t erst_reader(u64 *id, enum pstore_type_id *type,
+static ssize_t erst_reader(u64 *id, enum pstore_type_id *type, int *count,
 			   struct timespec *time, char **buf,
 			   struct pstore_info *psi)
 {
@@ -1055,7 +1055,7 @@ out:
 }
 
 static int erst_writer(enum pstore_type_id type, enum kmsg_dump_reason reason,
-		       u64 *id, unsigned int part,
+		       u64 *id, unsigned int part, int count, size_t hsize,
 		       size_t size, struct pstore_info *psi)
 {
 	struct cper_pstore_record *rcd = (struct cper_pstore_record *)
@@ -1101,8 +1101,8 @@ static int erst_writer(enum pstore_type_id type, enum kmsg_dump_reason reason,
 	return ret;
 }
 
-static int erst_clearer(enum pstore_type_id type, u64 id,
-			struct pstore_info *psi)
+static int erst_clearer(enum pstore_type_id type, u64 id, int count,
+			struct timespec time, struct pstore_info *psi)
 {
 	return erst_clear(id);
 }
@@ -1180,20 +1180,28 @@ static int __init erst_init(void)
 	if (!erst_erange.vaddr)
 		goto err_release_erange;
 
+	pr_info(ERST_PFX
+	"Error Record Serialization Table (ERST) support is initialized.\n");
+
 	buf = kmalloc(erst_erange.size, GFP_KERNEL);
 	spin_lock_init(&erst_info.buf_lock);
 	if (buf) {
 		erst_info.buf = buf + sizeof(struct cper_pstore_record);
 		erst_info.bufsize = erst_erange.size -
 				    sizeof(struct cper_pstore_record);
-		if (pstore_register(&erst_info)) {
-			pr_info(ERST_PFX "Could not register with persistent store\n");
+		rc = pstore_register(&erst_info);
+		if (rc) {
+			if (rc != -EPERM)
+				pr_info(ERST_PFX
+				"Could not register with persistent store\n");
+			erst_info.buf = NULL;
+			erst_info.bufsize = 0;
 			kfree(buf);
 		}
-	}
-
-	pr_info(ERST_PFX
-	"Error Record Serialization Table (ERST) support is initialized.\n");
+	} else
+		pr_err(ERST_PFX
+		"Failed to allocate %lld bytes for persistent store error log\n",
+		erst_erange.size);
 
 	return 0;
 

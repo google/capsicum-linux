@@ -14,7 +14,7 @@
 
 /* Converts millisecs to jiffies.
  */
-#define oz_ms_to_jiffies(__x)	(((__x)*1000)/HZ)
+#define oz_ms_to_jiffies(__x)	msecs_to_jiffies(__x)
 
 /* Quantum milliseconds.
  */
@@ -29,6 +29,12 @@
 
 /* Maximun sizes of tx frames. */
 #define OZ_MAX_TX_SIZE		1514
+
+/* Maximum number of uncompleted isoc frames that can be pending in network. */
+#define OZ_MAX_SUBMITTED_ISOC	16
+
+/* Maximum number of uncompleted isoc frames that can be pending in Tx Queue. */
+#define OZ_MAX_TX_QUEUE_ISOC	32
 
 /* Application handler functions.
  */
@@ -56,7 +62,7 @@ int oz_protocol_init(char *devs);
 void oz_protocol_term(void);
 int oz_get_pd_list(struct oz_mac_addr *addr, int max_count);
 void oz_app_enable(int app_id, int enable);
-struct oz_pd *oz_pd_find(u8 *mac_addr);
+struct oz_pd *oz_pd_find(const u8 *mac_addr);
 void oz_binding_add(char *net_dev);
 void oz_binding_remove(char *net_dev);
 void oz_timer_add(struct oz_pd *pd, int type, unsigned long due_time,

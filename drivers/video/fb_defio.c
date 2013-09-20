@@ -23,7 +23,7 @@
 #include <linux/rmap.h>
 #include <linux/pagemap.h>
 
-struct page *fb_deferred_io_page(struct fb_info *info, unsigned long offs)
+static struct page *fb_deferred_io_page(struct fb_info *info, unsigned long offs)
 {
 	void *screen_base = (void __force *) info->screen_base;
 	struct page *page;
@@ -69,7 +69,7 @@ static int fb_deferred_io_fault(struct vm_area_struct *vma,
 int fb_deferred_io_fsync(struct file *file, loff_t start, loff_t end, int datasync)
 {
 	struct fb_info *info = file->private_data;
-	struct inode *inode = file->f_path.dentry->d_inode;
+	struct inode *inode = file_inode(file);
 	int err = filemap_write_and_wait_range(inode->i_mapping, start, end);
 	if (err)
 		return err;
@@ -104,8 +104,14 @@ static int fb_deferred_io_mkwrite(struct vm_area_struct *vma,
 	deferred framebuffer IO. then if userspace touches a page
 	again, we repeat the same scheme */
 
+	file_update_time(vma->vm_file);
+
 	/* protect against the workqueue changing the page list */
 	mutex_lock(&fbdefio->lock);
+
+	/* first write in this cycle, notify the driver */
+	if (fbdefio->first_io && list_empty(&fbdefio->pagelist))
+		fbdefio->first_io(info);
 
 	/*
 	 * We want the page to remain locked from ->page_mkwrite until
@@ -160,7 +166,7 @@ static const struct address_space_operations fb_deferred_io_aops = {
 static int fb_deferred_io_mmap(struct fb_info *info, struct vm_area_struct *vma)
 {
 	vma->vm_ops = &fb_deferred_io_vm_ops;
-	vma->vm_flags |= ( VM_RESERVED | VM_DONTEXPAND );
+	vma->vm_flags |= VM_DONTEXPAND | VM_DONTDUMP;
 	if (!(info->flags & FBINFO_VIRTFB))
 		vma->vm_flags |= VM_IO;
 	vma->vm_private_data = info;

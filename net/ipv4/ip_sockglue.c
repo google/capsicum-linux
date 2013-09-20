@@ -40,6 +40,7 @@
 #if IS_ENABLED(CONFIG_IPV6)
 #include <net/transp_v6.h>
 #endif
+#include <net/ip_fib.h>
 
 #include <linux/errqueue.h>
 #include <asm/uaccess.h>
@@ -90,7 +91,7 @@ static void ip_cmsg_recv_opts(struct msghdr *msg, struct sk_buff *skb)
 static void ip_cmsg_recv_retopts(struct msghdr *msg, struct sk_buff *skb)
 {
 	unsigned char optbuf[sizeof(struct ip_options) + 40];
-	struct ip_options * opt = (struct ip_options *)optbuf;
+	struct ip_options *opt = (struct ip_options *)optbuf;
 
 	if (IPCB(skb)->opt.optlen == 0)
 		return;
@@ -147,7 +148,7 @@ static void ip_cmsg_recv_dstaddr(struct msghdr *msg, struct sk_buff *skb)
 void ip_cmsg_recv(struct msghdr *msg, struct sk_buff *skb)
 {
 	struct inet_sock *inet = inet_sk(skb->sk);
-	unsigned flags = inet->cmsg_flags;
+	unsigned int flags = inet->cmsg_flags;
 
 	/* Ordered by supposed usage frequency */
 	if (flags & 1)
@@ -456,19 +457,28 @@ static int do_ip_setsockopt(struct sock *sk, int level,
 	struct inet_sock *inet = inet_sk(sk);
 	int val = 0, err;
 
-	if (((1<<optname) & ((1<<IP_PKTINFO) | (1<<IP_RECVTTL) |
-			     (1<<IP_RECVOPTS) | (1<<IP_RECVTOS) |
-			     (1<<IP_RETOPTS) | (1<<IP_TOS) |
-			     (1<<IP_TTL) | (1<<IP_HDRINCL) |
-			     (1<<IP_MTU_DISCOVER) | (1<<IP_RECVERR) |
-			     (1<<IP_ROUTER_ALERT) | (1<<IP_FREEBIND) |
-			     (1<<IP_PASSSEC) | (1<<IP_TRANSPARENT) |
-			     (1<<IP_MINTTL) | (1<<IP_NODEFRAG))) ||
-	    optname == IP_UNICAST_IF ||
-	    optname == IP_MULTICAST_TTL ||
-	    optname == IP_MULTICAST_ALL ||
-	    optname == IP_MULTICAST_LOOP ||
-	    optname == IP_RECVORIGDSTADDR) {
+	switch (optname) {
+	case IP_PKTINFO:
+	case IP_RECVTTL:
+	case IP_RECVOPTS:
+	case IP_RECVTOS:
+	case IP_RETOPTS:
+	case IP_TOS:
+	case IP_TTL:
+	case IP_HDRINCL:
+	case IP_MTU_DISCOVER:
+	case IP_RECVERR:
+	case IP_ROUTER_ALERT:
+	case IP_FREEBIND:
+	case IP_PASSSEC:
+	case IP_TRANSPARENT:
+	case IP_MINTTL:
+	case IP_NODEFRAG:
+	case IP_UNICAST_IF:
+	case IP_MULTICAST_TTL:
+	case IP_MULTICAST_ALL:
+	case IP_MULTICAST_LOOP:
+	case IP_RECVORIGDSTADDR:
 		if (optlen >= sizeof(int)) {
 			if (get_user(val, (int __user *) optval))
 				return -EFAULT;
@@ -580,7 +590,7 @@ static int do_ip_setsockopt(struct sock *sk, int level,
 	case IP_TTL:
 		if (optlen < 1)
 			goto e_inval;
-		if (val != -1 && (val < 0 || val > 255))
+		if (val != -1 && (val < 1 || val > 255))
 			goto e_inval;
 		inet->uc_ttl = val;
 		break;
@@ -673,10 +683,15 @@ static int do_ip_setsockopt(struct sock *sk, int level,
 				break;
 		} else {
 			memset(&mreq, 0, sizeof(mreq));
-			if (optlen >= sizeof(struct in_addr) &&
-			    copy_from_user(&mreq.imr_address, optval,
-					   sizeof(struct in_addr)))
-				break;
+			if (optlen >= sizeof(struct ip_mreq)) {
+				if (copy_from_user(&mreq, optval,
+						   sizeof(struct ip_mreq)))
+					break;
+			} else if (optlen >= sizeof(struct in_addr)) {
+				if (copy_from_user(&mreq.imr_address, optval,
+						   sizeof(struct in_addr)))
+					break;
+			}
 		}
 
 		if (!mreq.imr_ifindex) {
@@ -974,13 +989,14 @@ mc_msf_out:
 	case IP_IPSEC_POLICY:
 	case IP_XFRM_POLICY:
 		err = -EPERM;
-		if (!capable(CAP_NET_ADMIN))
+		if (!ns_capable(sock_net(sk)->user_ns, CAP_NET_ADMIN))
 			break;
 		err = xfrm_user_policy(sk, optname, optval, optlen);
 		break;
 
 	case IP_TRANSPARENT:
-		if (!!val && !capable(CAP_NET_RAW) && !capable(CAP_NET_ADMIN)) {
+		if (!!val && !ns_capable(sock_net(sk)->user_ns, CAP_NET_RAW) &&
+		    !ns_capable(sock_net(sk)->user_ns, CAP_NET_ADMIN)) {
 			err = -EPERM;
 			break;
 		}
@@ -1014,18 +1030,17 @@ e_inval:
  * @sk: socket
  * @skb: buffer
  *
- * To support IP_CMSG_PKTINFO option, we store rt_iif and rt_spec_dst
- * in skb->cb[] before dst drop.
+ * To support IP_CMSG_PKTINFO option, we store rt_iif and specific
+ * destination in skb->cb[] before dst drop.
  * This way, receiver doesnt make cache line misses to read rtable.
  */
 void ipv4_pktinfo_prepare(struct sk_buff *skb)
 {
 	struct in_pktinfo *pktinfo = PKTINFO_SKB_CB(skb);
-	const struct rtable *rt = skb_rtable(skb);
 
-	if (rt) {
-		pktinfo->ipi_ifindex = rt->rt_iif;
-		pktinfo->ipi_spec_dst.s_addr = rt->rt_spec_dst;
+	if (skb_rtable(skb)) {
+		pktinfo->ipi_ifindex = inet_iif(skb);
+		pktinfo->ipi_spec_dst.s_addr = fib_compute_spec_dst(skb);
 	} else {
 		pktinfo->ipi_ifindex = 0;
 		pktinfo->ipi_spec_dst.s_addr = 0;
@@ -1094,7 +1109,7 @@ EXPORT_SYMBOL(compat_ip_setsockopt);
  */
 
 static int do_ip_getsockopt(struct sock *sk, int level, int optname,
-			    char __user *optval, int __user *optlen, unsigned flags)
+			    char __user *optval, int __user *optlen, unsigned int flags)
 {
 	struct inet_sock *inet = inet_sk(sk);
 	int val;

@@ -14,21 +14,23 @@ extern struct sock *unix_get_socket(struct file *filp);
 extern struct sock *unix_peer_get(struct sock *);
 
 #define UNIX_HASH_SIZE	256
+#define UNIX_HASH_BITS	8
 
 extern unsigned int unix_tot_inflight;
 extern spinlock_t unix_table_lock;
-extern struct hlist_head unix_socket_table[UNIX_HASH_SIZE + 1];
+extern struct hlist_head unix_socket_table[2 * UNIX_HASH_SIZE];
 
 struct unix_address {
 	atomic_t	refcnt;
 	int		len;
-	unsigned	hash;
+	unsigned int	hash;
 	struct sockaddr_un name[0];
 };
 
 struct unix_skb_parms {
 	struct pid		*pid;		/* Skb credentials	*/
-	const struct cred	*cred;
+	kuid_t			uid;
+	kgid_t			gid;
 	struct scm_fp_list	*fp;		/* Passed files		*/
 #ifdef CONFIG_SECURITY_NETWORK
 	u32			secid;		/* Security ID		*/
@@ -52,13 +54,13 @@ struct unix_sock {
 	struct path		path;
 	struct mutex		readlock;
 	struct sock		*peer;
-	struct sock		*other;
 	struct list_head	link;
 	atomic_long_t		inflight;
 	spinlock_t		lock;
-	unsigned int		gc_candidate : 1;
-	unsigned int		gc_maybe_cycle : 1;
 	unsigned char		recursion_level;
+	unsigned long		gc_flags;
+#define UNIX_GC_CANDIDATE	0
+#define UNIX_GC_MAYBE_CYCLE	1
 	struct socket_wq	peer_wq;
 };
 #define unix_sk(__sk) ((struct unix_sock *)__sk)

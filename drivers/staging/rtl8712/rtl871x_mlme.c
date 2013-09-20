@@ -28,6 +28,8 @@
 
 #define _RTL871X_MLME_C_
 
+#include <linux/etherdevice.h>
+
 #include "osdep_service.h"
 #include "drv_types.h"
 #include "recv_osdep.h"
@@ -137,7 +139,7 @@ static void _free_network_nolock(struct mlme_priv *pmlmepriv,
 
 /*
 	return the wlan_network with the matching addr
-	Shall be calle under atomic context...
+	Shall be called under atomic context...
 	to avoid possible racing condition...
 */
 static struct wlan_network *_r8712_find_network(struct  __queue *scanned_queue,
@@ -146,9 +148,8 @@ static struct wlan_network *_r8712_find_network(struct  __queue *scanned_queue,
 	unsigned long irqL;
 	struct list_head *phead, *plist;
 	struct wlan_network *pnetwork = NULL;
-	u8 zero_addr[ETH_ALEN] = {0, 0, 0, 0, 0, 0};
 
-	if (!memcmp(zero_addr, addr, ETH_ALEN))
+	if (is_zero_ether_addr(addr))
 		return NULL;
 	spin_lock_irqsave(&scanned_queue->lock, irqL);
 	phead = get_list_head(scanned_queue);
@@ -255,7 +256,7 @@ void r8712_free_network_queue(struct _adapter *dev)
 /*
 	return the wlan_network with the matching addr
 
-	Shall be calle under atomic context...
+	Shall be called under atomic context...
 	to avoid possible racing condition...
 */
 static struct wlan_network *r8712_find_network(struct  __queue *scanned_queue,
@@ -603,9 +604,6 @@ void r8712_surveydone_event_callback(struct _adapter *adapter, u8 *pbuf)
 						 adapter->registrypriv.
 							dev_network.MacAddress;
 					pmlmepriv->fw_state ^= _FW_UNDER_SURVEY;
-					memset(&pdev_network->Ssid, 0,
-						sizeof(struct
-						       ndis_802_11_ssid));
 					memcpy(&pdev_network->Ssid,
 						&pmlmepriv->assoc_ssid,
 						sizeof(struct
@@ -1005,8 +1003,6 @@ void r8712_stadel_event_callback(struct _adapter *adapter, u8 *pbuf)
 			memcpy(pdev_network, &tgt_network->network,
 				r8712_get_ndis_wlan_bssid_ex_sz(&tgt_network->
 							network));
-			memset(&pdev_network->Ssid, 0,
-				sizeof(struct ndis_802_11_ssid));
 			memcpy(&pdev_network->Ssid,
 				&pmlmepriv->assoc_ssid,
 				sizeof(struct ndis_802_11_ssid));
@@ -1037,7 +1033,7 @@ void r8712_cpwm_event_callback(struct _adapter *adapter, u8 *pbuf)
  *	 and the WiFi client will drop the data with seq number 0.
  *	So, the 8712 firmware has to inform driver with receiving the
  *	 ADDBA-Req frame so that the driver can reset the
- *	sequence value of Rx reorder contorl.
+ *	sequence value of Rx reorder control.
  */
 void r8712_got_addbareq_event_callback(struct _adapter *adapter, u8 *pbuf)
 {
@@ -1047,8 +1043,8 @@ void r8712_got_addbareq_event_callback(struct _adapter *adapter, u8 *pbuf)
 	struct	sta_priv *pstapriv = &adapter->stapriv;
 	struct	recv_reorder_ctrl *precvreorder_ctrl = NULL;
 
-	printk(KERN_INFO "r8712u: [%s] mac = %pM, seq = %d, tid = %d\n",
-	     __func__, pAddbareq_pram->MacAddress,
+	netdev_info(adapter->pnetdev, "%s: mac = %pM, seq = %d, tid = %d\n",
+		    __func__, pAddbareq_pram->MacAddress,
 	    pAddbareq_pram->StartSeqNum, pAddbareq_pram->tid);
 	psta = r8712_get_stainfo(pstapriv, pAddbareq_pram->MacAddress);
 	if (psta) {
@@ -1775,7 +1771,7 @@ static void update_ht_cap(struct _adapter *padapter, u8 *pie, uint ie_len)
 		phtpriv->rx_ampdu_maxlen = max_ampdu_sz;
 	}
 	/* for A-MPDU Rx reordering buffer control for bmc_sta & sta_info
-	 * if A-MPDU Rx is enabled, reseting rx_ordering_ctrl
+	 * if A-MPDU Rx is enabled, resetting rx_ordering_ctrl
 	 * wstart_b(indicate_seq) to default value=0xffff
 	 * todo: check if AP can send A-MPDU packets
 	 */

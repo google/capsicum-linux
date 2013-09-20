@@ -199,7 +199,7 @@ static int platram_probe(struct platform_device *pdev)
 	 * supplied by the platform_data struct */
 
 	if (pdata->map_probes) {
-		const char **map_probes = pdata->map_probes;
+		const char * const *map_probes = pdata->map_probes;
 
 		for ( ; !info->mtd && *map_probes; map_probes++)
 			info->mtd = do_map_probe(*map_probes , &info->map);
@@ -219,7 +219,7 @@ static int platram_probe(struct platform_device *pdev)
 
 	platram_setrw(info, PLATRAM_RW);
 
-	/* check to see if there are any available partitions, or wether
+	/* check to see if there are any available partitions, or whether
 	 * to add this device whole */
 
 	err = mtd_device_parse_register(info->mtd, pdata->probes, NULL,

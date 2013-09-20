@@ -53,17 +53,17 @@ struct flat_binder_object {
 
 	/* 8 bytes of data. */
 	union {
-		void		*binder;	/* local object */
+		void __user	*binder;	/* local object */
 		signed long	handle;		/* remote object */
 	};
 
 	/* extra data associated with local object */
-	void			*cookie;
+	void __user		*cookie;
 };
 
 /*
  * On 64-bit platforms where user code may run in 32-bits the driver must
- * translate the buffer (and local binder) addresses apropriately.
+ * translate the buffer (and local binder) addresses appropriately.
  */
 
 struct binder_write_read {
@@ -85,11 +85,11 @@ struct binder_version {
 #define BINDER_CURRENT_PROTOCOL_VERSION 7
 
 #define BINDER_WRITE_READ		_IOWR('b', 1, struct binder_write_read)
-#define	BINDER_SET_IDLE_TIMEOUT		_IOW('b', 3, int64_t)
+#define	BINDER_SET_IDLE_TIMEOUT		_IOW('b', 3, __s64)
 #define	BINDER_SET_MAX_THREADS		_IOW('b', 5, size_t)
-#define	BINDER_SET_IDLE_PRIORITY	_IOW('b', 6, int)
-#define	BINDER_SET_CONTEXT_MGR		_IOW('b', 7, int)
-#define	BINDER_THREAD_EXIT		_IOW('b', 8, int)
+#define	BINDER_SET_IDLE_PRIORITY	_IOW('b', 6, __s32)
+#define	BINDER_SET_CONTEXT_MGR		_IOW('b', 7, __s32)
+#define	BINDER_THREAD_EXIT		_IOW('b', 8, __s32)
 #define BINDER_VERSION			_IOWR('b', 9, struct binder_version)
 
 /*
@@ -139,9 +139,9 @@ struct binder_transaction_data {
 	union {
 		struct {
 			/* transaction data */
-			const void	*buffer;
+			const void __user	*buffer;
 			/* offsets from buffer to flat_binder_object structs */
-			const void	*offsets;
+			const void __user	*offsets;
 		} ptr;
 		uint8_t	buf[8];
 	} data;
@@ -163,7 +163,7 @@ struct binder_pri_ptr_cookie {
 	void *cookie;
 };
 
-enum BinderDriverReturnProtocol {
+enum binder_driver_return_protocol {
 	BR_ERROR = _IOR('r', 0, int),
 	/*
 	 * int: error code
@@ -224,7 +224,7 @@ enum BinderDriverReturnProtocol {
 	BR_SPAWN_LOOPER = _IO('r', 13),
 	/*
 	 * No parameters.  The driver has determined that a process has no
-	 * threads waiting to service incomming transactions.  When a process
+	 * threads waiting to service incoming transactions.  When a process
 	 * receives this command, it must spawn a new service thread and
 	 * register it via bcENTER_LOOPER.
 	 */
@@ -251,7 +251,7 @@ enum BinderDriverReturnProtocol {
 	 */
 };
 
-enum BinderDriverCommandProtocol {
+enum binder_driver_command_protocol {
 	BC_TRANSACTION = _IOW('c', 0, struct binder_transaction_data),
 	BC_REPLY = _IOW('c', 1, struct binder_transaction_data),
 	/*

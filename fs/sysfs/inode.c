@@ -24,8 +24,6 @@
 #include <linux/security.h>
 #include "sysfs.h"
 
-extern struct super_block * sysfs_sb;
-
 static const struct address_space_operations sysfs_aops = {
 	.readpage	= simple_readpage,
 	.write_begin	= simple_write_begin,
@@ -62,8 +60,8 @@ static struct sysfs_inode_attrs *sysfs_init_inode_attrs(struct sysfs_dirent *sd)
 
 	/* assign default attributes */
 	iattrs->ia_mode = sd->s_mode;
-	iattrs->ia_uid = 0;
-	iattrs->ia_gid = 0;
+	iattrs->ia_uid = GLOBAL_ROOT_UID;
+	iattrs->ia_gid = GLOBAL_ROOT_GID;
 	iattrs->ia_atime = iattrs->ia_mtime = iattrs->ia_ctime = CURRENT_TIME;
 
 	return attrs;
@@ -310,7 +308,7 @@ void sysfs_evict_inode(struct inode *inode)
 	struct sysfs_dirent *sd  = inode->i_private;
 
 	truncate_inode_pages(&inode->i_data, 0);
-	end_writeback(inode);
+	clear_inode(inode);
 	sysfs_put(sd);
 }
 

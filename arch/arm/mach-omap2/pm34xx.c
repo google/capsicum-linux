@@ -28,27 +28,27 @@
 #include <linux/clk.h>
 #include <linux/delay.h>
 #include <linux/slab.h>
+#include <linux/omap-dma.h>
+#include <linux/platform_data/gpio-omap.h>
+
 #include <trace/events/power.h>
 
+#include <asm/fncpy.h>
 #include <asm/suspend.h>
 #include <asm/system_misc.h>
 
-#include <plat/sram.h>
 #include "clockdomain.h"
 #include "powerdomain.h"
-#include <plat/sdrc.h>
-#include <plat/prcm.h>
-#include <plat/gpmc.h>
-#include <plat/dma.h>
-
+#include "soc.h"
 #include "common.h"
-#include "cm2xxx_3xxx.h"
+#include "cm3xxx.h"
 #include "cm-regbits-34xx.h"
+#include "gpmc.h"
 #include "prm-regbits-34xx.h"
-
-#include "prm2xxx_3xxx.h"
+#include "prm3xxx.h"
 #include "pm.h"
 #include "sdrc.h"
+#include "sram.h"
 #include "control.h"
 
 /* pm34xx errata defined in pm.h */
@@ -70,34 +70,6 @@ void (*omap3_do_wfi_sram)(void);
 
 static struct powerdomain *mpu_pwrdm, *neon_pwrdm;
 static struct powerdomain *core_pwrdm, *per_pwrdm;
-static struct powerdomain *cam_pwrdm;
-
-static void omap3_enable_io_chain(void)
-{
-	int timeout = 0;
-
-	omap2_prm_set_mod_reg_bits(OMAP3430_EN_IO_CHAIN_MASK, WKUP_MOD,
-				   PM_WKEN);
-	/* Do a readback to assure write has been done */
-	omap2_prm_read_mod_reg(WKUP_MOD, PM_WKEN);
-
-	while (!(omap2_prm_read_mod_reg(WKUP_MOD, PM_WKEN) &
-		 OMAP3430_ST_IO_CHAIN_MASK)) {
-		timeout++;
-		if (timeout > 1000) {
-			pr_err("Wake up daisy chain activation failed.\n");
-			return;
-		}
-		omap2_prm_set_mod_reg_bits(OMAP3430_ST_IO_CHAIN_MASK,
-					   WKUP_MOD, PM_WKEN);
-	}
-}
-
-static void omap3_disable_io_chain(void)
-{
-	omap2_prm_clear_mod_reg_bits(OMAP3430_EN_IO_CHAIN_MASK, WKUP_MOD,
-				     PM_WKEN);
-}
 
 static void omap3_core_save_context(void)
 {
@@ -273,7 +245,7 @@ void omap_sram_idle(void)
 	int per_next_state = PWRDM_POWER_ON;
 	int core_next_state = PWRDM_POWER_ON;
 	int per_going_off;
-	int core_prev_state, per_prev_state;
+	int core_prev_state;
 	u32 sdrc_pwr = 0;
 
 	mpu_next_state = pwrdm_read_next_pwrst(mpu_pwrdm);
@@ -299,15 +271,8 @@ void omap_sram_idle(void)
 	/* Enable IO-PAD and IO-CHAIN wakeups */
 	per_next_state = pwrdm_read_next_pwrst(per_pwrdm);
 	core_next_state = pwrdm_read_next_pwrst(core_pwrdm);
-	if (omap3_has_io_wakeup() &&
-	    (per_next_state < PWRDM_POWER_ON ||
-	     core_next_state < PWRDM_POWER_ON)) {
-		omap2_prm_set_mod_reg_bits(OMAP3430_EN_IO_MASK, WKUP_MOD, PM_WKEN);
-		if (omap3_has_io_chain_ctrl())
-			omap3_enable_io_chain();
-	}
 
-	pwrdm_pre_transition();
+	pwrdm_pre_transition(NULL);
 
 	/* PER */
 	if (per_next_state < PWRDM_POWER_ON) {
@@ -372,44 +337,23 @@ void omap_sram_idle(void)
 	}
 	omap3_intc_resume_idle();
 
-	pwrdm_post_transition();
+	pwrdm_post_transition(NULL);
 
 	/* PER */
-	if (per_next_state < PWRDM_POWER_ON) {
-		per_prev_state = pwrdm_read_prev_pwrst(per_pwrdm);
+	if (per_next_state < PWRDM_POWER_ON)
 		omap2_gpio_resume_after_idle();
-	}
-
-	/* Disable IO-PAD and IO-CHAIN wakeup */
-	if (omap3_has_io_wakeup() &&
-	    (per_next_state < PWRDM_POWER_ON ||
-	     core_next_state < PWRDM_POWER_ON)) {
-		omap2_prm_clear_mod_reg_bits(OMAP3430_EN_IO_MASK, WKUP_MOD,
-					     PM_WKEN);
-		if (omap3_has_io_chain_ctrl())
-			omap3_disable_io_chain();
-	}
-
-	clkdm_allow_idle(mpu_pwrdm->pwrdm_clkdms[0]);
 }
 
 static void omap3_pm_idle(void)
 {
-	local_fiq_disable();
-
 	if (omap_irq_pending())
-		goto out;
+		return;
 
-	trace_power_start(POWER_CSTATE, 1, smp_processor_id());
 	trace_cpu_idle(1, smp_processor_id());
 
 	omap_sram_idle();
 
-	trace_power_end(smp_processor_id());
 	trace_cpu_idle(PWR_EVENT_EXIT, smp_processor_id());
-
-out:
-	local_fiq_enable();
 }
 
 #ifdef CONFIG_SUSPEND
@@ -438,9 +382,8 @@ restore:
 	list_for_each_entry(pwrst, &pwrst_list, node) {
 		state = pwrdm_read_prev_pwrst(pwrst->pwrdm);
 		if (state > pwrst->next_state) {
-			pr_info("Powerdomain (%s) didn't enter "
-				"target state %d\n",
-			       pwrst->pwrdm->name, pwrst->next_state);
+			pr_info("Powerdomain (%s) didn't enter target state %d\n",
+				pwrst->pwrdm->name, pwrst->next_state);
 			ret = -1;
 		}
 		omap_set_pwrdm_state(pwrst->pwrdm, pwrst->saved_state);
@@ -583,10 +526,13 @@ static void __init prcm_setup_regs(void)
 			  OMAP3430_PER_MOD, OMAP3430_PM_MPUGRPSEL);
 
 	/* Don't attach IVA interrupts */
-	omap2_prm_write_mod_reg(0, WKUP_MOD, OMAP3430_PM_IVAGRPSEL);
-	omap2_prm_write_mod_reg(0, CORE_MOD, OMAP3430_PM_IVAGRPSEL1);
-	omap2_prm_write_mod_reg(0, CORE_MOD, OMAP3430ES2_PM_IVAGRPSEL3);
-	omap2_prm_write_mod_reg(0, OMAP3430_PER_MOD, OMAP3430_PM_IVAGRPSEL);
+	if (omap3_has_iva()) {
+		omap2_prm_write_mod_reg(0, WKUP_MOD, OMAP3430_PM_IVAGRPSEL);
+		omap2_prm_write_mod_reg(0, CORE_MOD, OMAP3430_PM_IVAGRPSEL1);
+		omap2_prm_write_mod_reg(0, CORE_MOD, OMAP3430ES2_PM_IVAGRPSEL3);
+		omap2_prm_write_mod_reg(0, OMAP3430_PER_MOD,
+					OMAP3430_PM_IVAGRPSEL);
+	}
 
 	/* Clear any pending 'reset' flags */
 	omap2_prm_write_mod_reg(0xffffffff, MPU_MOD, OMAP2_RM_RSTST);
@@ -600,7 +546,11 @@ static void __init prcm_setup_regs(void)
 	/* Clear any pending PRCM interrupts */
 	omap2_prm_write_mod_reg(0, OCP_MOD, OMAP3_PRM_IRQSTATUS_MPU_OFFSET);
 
+	/*
+	 * We need to idle iva2_pwrdm even on am3703 with no iva2.
+	 */
 	omap3_iva_idle();
+
 	omap3_d2d_idle();
 }
 
@@ -695,18 +645,18 @@ static void __init pm_errata_configure(void)
 		/* Enable the l2 cache toggling in sleep logic */
 		enable_omap3630_toggle_l2_on_restore();
 		if (omap_rev() < OMAP3630_REV_ES1_2)
-			pm34xx_errata |= PM_SDRC_WAKEUP_ERRATUM_i583;
+			pm34xx_errata |= (PM_SDRC_WAKEUP_ERRATUM_i583 |
+					  PM_PER_MEMORIES_ERRATUM_i582);
+	} else if (cpu_is_omap34xx()) {
+		pm34xx_errata |= PM_PER_MEMORIES_ERRATUM_i582;
 	}
 }
 
-static int __init omap3_pm_init(void)
+int __init omap3_pm_init(void)
 {
 	struct power_state *pwrst, *tmp;
-	struct clockdomain *neon_clkdm, *per_clkdm, *mpu_clkdm, *core_clkdm;
+	struct clockdomain *neon_clkdm, *mpu_clkdm, *per_clkdm, *wkup_clkdm;
 	int ret;
-
-	if (!cpu_is_omap34xx())
-		return -ENODEV;
 
 	if (!omap3_has_io_chain_ctrl())
 		pr_warning("PM: no software I/O chain control; some wakeups may be lost\n");
@@ -729,6 +679,7 @@ static int __init omap3_pm_init(void)
 	ret = request_irq(omap_prcm_event_to_irq("io"),
 		_prcm_int_handle_io, IRQF_SHARED | IRQF_NO_SUSPEND, "pm_io",
 		omap3_pm_init);
+	enable_irq(omap_prcm_event_to_irq("io"));
 
 	if (ret) {
 		pr_err("pm: Failed to request pm_io irq\n");
@@ -753,12 +704,11 @@ static int __init omap3_pm_init(void)
 	neon_pwrdm = pwrdm_lookup("neon_pwrdm");
 	per_pwrdm = pwrdm_lookup("per_pwrdm");
 	core_pwrdm = pwrdm_lookup("core_pwrdm");
-	cam_pwrdm = pwrdm_lookup("cam_pwrdm");
 
 	neon_clkdm = clkdm_lookup("neon_clkdm");
 	mpu_clkdm = clkdm_lookup("mpu_clkdm");
 	per_clkdm = clkdm_lookup("per_clkdm");
-	core_clkdm = clkdm_lookup("core_clkdm");
+	wkup_clkdm = clkdm_lookup("wkup_clkdm");
 
 #ifdef CONFIG_SUSPEND
 	omap_pm_suspend = omap3_pm_suspend;
@@ -775,23 +725,41 @@ static int __init omap3_pm_init(void)
 	if (IS_PM34XX_ERRATUM(PM_RTA_ERRATUM_i608))
 		omap3630_ctrl_disable_rta();
 
+	/*
+	 * The UART3/4 FIFO and the sidetone memory in McBSP2/3 are
+	 * not correctly reset when the PER powerdomain comes back
+	 * from OFF or OSWR when the CORE powerdomain is kept active.
+	 * See OMAP36xx Erratum i582 "PER Domain reset issue after
+	 * Domain-OFF/OSWR Wakeup".  This wakeup dependency is not a
+	 * complete workaround.  The kernel must also prevent the PER
+	 * powerdomain from going to OSWR/OFF while the CORE
+	 * powerdomain is not going to OSWR/OFF.  And if PER last
+	 * power state was off while CORE last power state was ON, the
+	 * UART3/4 and McBSP2/3 SIDETONE devices need to run a
+	 * self-test using their loopback tests; if that fails, those
+	 * devices are unusable until the PER/CORE can complete a transition
+	 * from ON to OSWR/OFF and then back to ON.
+	 *
+	 * XXX Technically this workaround is only needed if off-mode
+	 * or OSWR is enabled.
+	 */
+	if (IS_PM34XX_ERRATUM(PM_PER_MEMORIES_ERRATUM_i582))
+		clkdm_add_wkdep(per_clkdm, wkup_clkdm);
+
 	clkdm_add_wkdep(neon_clkdm, mpu_clkdm);
 	if (omap_type() != OMAP2_DEVICE_TYPE_GP) {
 		omap3_secure_ram_storage =
 			kmalloc(0x803F, GFP_KERNEL);
 		if (!omap3_secure_ram_storage)
-			pr_err("Memory allocation failed when "
-			       "allocating for secure sram context\n");
+			pr_err("Memory allocation failed when allocating for secure sram context\n");
 
 		local_irq_disable();
-		local_fiq_disable();
 
 		omap_dma_global_context_save();
 		omap3_save_secure_ram_context();
 		omap_dma_global_context_restore();
 
 		local_irq_enable();
-		local_fiq_enable();
 	}
 
 	omap3_save_scratchpad_contents();
@@ -808,5 +776,3 @@ err2:
 err1:
 	return ret;
 }
-
-late_initcall(omap3_pm_init);

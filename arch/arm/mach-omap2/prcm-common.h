@@ -48,6 +48,17 @@
 #define OMAP3430_NEON_MOD				0xb00
 #define OMAP3430ES2_USBHOST_MOD				0xc00
 
+/*
+ * TI81XX PRM module offsets
+ */
+#define TI81XX_PRM_DEVICE_MOD			0x0000
+#define TI816X_PRM_ACTIVE_MOD			0x0a00
+#define TI81XX_PRM_DEFAULT_MOD			0x0b00
+#define TI816X_PRM_IVAHD0_MOD			0x0c00
+#define TI816X_PRM_IVAHD1_MOD			0x0d00
+#define TI816X_PRM_IVAHD2_MOD			0x0e00
+#define TI816X_PRM_SGX_MOD				0x0f00
+
 /* 24XX register bits shared between CM & PRM registers */
 
 /* CM_FCLKEN1_CORE, CM_ICLKEN1_CORE, PM_WKEN1_CORE shared bits */
@@ -109,6 +120,8 @@
 #define OMAP2430_EN_MDM_INTC_MASK			(1 << 11)
 #define OMAP2430_EN_USBHS_SHIFT				6
 #define OMAP2430_EN_USBHS_MASK				(1 << 6)
+#define OMAP24XX_EN_GPMC_SHIFT				1
+#define OMAP24XX_EN_GPMC_MASK				(1 << 1)
 
 /* CM_IDLEST1_CORE, PM_WKST1_CORE shared bits */
 #define OMAP2420_ST_MMC_SHIFT				26
@@ -177,6 +190,8 @@
 /* PM_WKST_WKUP, CM_IDLEST_WKUP shared bits */
 #define OMAP24XX_ST_GPIOS_SHIFT				2
 #define OMAP24XX_ST_GPIOS_MASK				(1 << 2)
+#define OMAP24XX_ST_32KSYNC_SHIFT			1
+#define OMAP24XX_ST_32KSYNC_MASK			(1 << 1)
 #define OMAP24XX_ST_GPT1_SHIFT				0
 #define OMAP24XX_ST_GPT1_MASK				(1 << 0)
 
@@ -201,8 +216,8 @@
 #define OMAP3430_EN_MMC2_SHIFT				25
 #define OMAP3430_EN_MMC1_MASK				(1 << 24)
 #define OMAP3430_EN_MMC1_SHIFT				24
-#define OMAP3430_EN_UART4_MASK				(1 << 23)
-#define OMAP3430_EN_UART4_SHIFT				23
+#define AM35XX_EN_UART4_MASK				(1 << 23)
+#define AM35XX_EN_UART4_SHIFT				23
 #define OMAP3430_EN_MCSPI4_MASK				(1 << 21)
 #define OMAP3430_EN_MCSPI4_SHIFT			21
 #define OMAP3430_EN_MCSPI3_MASK				(1 << 20)
@@ -307,6 +322,8 @@
 #define OMAP3430_ST_SR1_MASK				(1 << 6)
 #define OMAP3430_ST_GPIO1_SHIFT				3
 #define OMAP3430_ST_GPIO1_MASK				(1 << 3)
+#define OMAP3430_ST_32KSYNC_SHIFT			2
+#define OMAP3430_ST_32KSYNC_MASK			(1 << 2)
 #define OMAP3430_ST_GPT12_SHIFT				1
 #define OMAP3430_ST_GPT12_MASK				(1 << 1)
 #define OMAP3430_ST_GPT1_SHIFT				0
@@ -400,16 +417,15 @@
 #define OMAP3430_EN_CORE_MASK				(1 << 0)
 
 
-/*
- * MAX_MODULE_HARDRESET_WAIT: Maximum microseconds to wait for an OMAP
- * submodule to exit hardreset
- */
-#define MAX_MODULE_HARDRESET_WAIT		10000
 
+/*
+ * Maximum time(us) it takes to output the signal WUCLKOUT of the last
+ * pad of the I/O ring after asserting WUCLKIN high.  Tero measured
+ * the actual time at 7 to 8 microseconds on OMAP3 and 2 to 4
+ * microseconds on OMAP4, so this timeout may be too high.
+ */
+#define MAX_IOPAD_LATCH_TIME			100
 # ifndef __ASSEMBLER__
-extern void __iomem *prm_base;
-extern void __iomem *cm_base;
-extern void __iomem *cm2_base;
 
 /**
  * struct omap_prcm_irq - describes a PRCM interrupt bit

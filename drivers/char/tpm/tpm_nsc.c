@@ -227,6 +227,11 @@ static u8 tpm_nsc_status(struct tpm_chip *chip)
 	return inb(chip->vendor.base + NSC_STATUS);
 }
 
+static bool tpm_nsc_req_canceled(struct tpm_chip *chip, u8 status)
+{
+	return (status == NSC_STATUS_RDY);
+}
+
 static const struct file_operations nsc_ops = {
 	.owner = THIS_MODULE,
 	.llseek = no_llseek,
@@ -258,7 +263,7 @@ static const struct tpm_vendor_specific tpm_nsc = {
 	.status = tpm_nsc_status,
 	.req_complete_mask = NSC_STATUS_OBF,
 	.req_complete_val = NSC_STATUS_OBF,
-	.req_canceled = NSC_STATUS_RDY,
+	.req_canceled = tpm_nsc_req_canceled,
 	.attr_group = &nsc_attr_grp,
 	.miscdev = { .fops = &nsc_ops, },
 };
@@ -274,22 +279,13 @@ static void tpm_nsc_remove(struct device *dev)
 	}
 }
 
-static int tpm_nsc_suspend(struct platform_device *dev, pm_message_t msg)
-{
-	return tpm_pm_suspend(&dev->dev, msg);
-}
-
-static int tpm_nsc_resume(struct platform_device *dev)
-{
-	return tpm_pm_resume(&dev->dev);
-}
+static SIMPLE_DEV_PM_OPS(tpm_nsc_pm, tpm_pm_suspend, tpm_pm_resume);
 
 static struct platform_driver nsc_drv = {
-	.suspend         = tpm_nsc_suspend,
-	.resume          = tpm_nsc_resume,
 	.driver          = {
 		.name    = "tpm_nsc",
 		.owner   = THIS_MODULE,
+		.pm      = &tpm_nsc_pm,
 	},
 };
 

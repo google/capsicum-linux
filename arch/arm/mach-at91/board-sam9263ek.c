@@ -44,11 +44,12 @@
 #include <asm/mach/irq.h>
 
 #include <mach/hardware.h>
-#include <mach/board.h>
 #include <mach/at91sam9_smc.h>
-#include <mach/at91_shdwc.h>
 #include <mach/system_rev.h>
 
+#include "at91_aic.h"
+#include "at91_shdwc.h"
+#include "board.h"
 #include "sam9_smc.h"
 #include "generic.h"
 
@@ -57,15 +58,6 @@ static void __init ek_init_early(void)
 {
 	/* Initialize processor: 16.367 MHz crystal */
 	at91_initialize(16367660);
-
-	/* DBGU on ttyS0. (Rx & Tx only) */
-	at91_register_uart(0, 0, 0);
-
-	/* USART0 on ttyS1. (Rx, Tx, RTS, CTS) */
-	at91_register_uart(AT91SAM9263_ID_US0, 1, ATMEL_UART_CTS | ATMEL_UART_RTS);
-
-	/* set serial console to ttyS0 (ie, DBGU) */
-	at91_set_serial_console(0);
 }
 
 /*
@@ -140,7 +132,7 @@ static struct spi_board_info ek_spi_devices[] = {
 		.max_speed_hz	= 125000 * 26,	/* (max sample rate @ 3V) * (cmd + data + overhead) */
 		.bus_num	= 0,
 		.platform_data	= &ads_info,
-		.irq		= AT91SAM9263_ID_IRQ1,
+		.irq		= NR_IRQS_LEGACY + AT91SAM9263_ID_IRQ1,
 	},
 #endif
 };
@@ -149,11 +141,12 @@ static struct spi_board_info ek_spi_devices[] = {
 /*
  * MCI (SD/MMC)
  */
-static struct at91_mmc_data __initdata ek_mmc_data = {
-	.wire4		= 1,
-	.det_pin	= AT91_PIN_PE18,
-	.wp_pin		= AT91_PIN_PE19,
-	.vcc_pin	= -EINVAL,
+static struct mci_platform_data __initdata mci1_data = {
+	.slot[0] = {
+		.bus_width	= 4,
+		.detect_pin	= AT91_PIN_PE18,
+		.wp_pin		= AT91_PIN_PE19,
+	},
 };
 
 
@@ -412,6 +405,11 @@ static struct at91_can_data ek_can_data = {
 static void __init ek_board_init(void)
 {
 	/* Serial */
+	/* DBGU on ttyS0. (Rx & Tx only) */
+	at91_register_uart(0, 0, 0);
+
+	/* USART0 on ttyS1. (Rx, Tx, RTS, CTS) */
+	at91_register_uart(AT91SAM9263_ID_US0, 1, ATMEL_UART_CTS | ATMEL_UART_RTS);
 	at91_add_device_serial();
 	/* USB Host */
 	at91_add_device_usbh(&ek_usbh_data);
@@ -423,7 +421,7 @@ static void __init ek_board_init(void)
 	/* Touchscreen */
 	ek_add_device_ts();
 	/* MMC */
-	at91_add_device_mmc(1, &ek_mmc_data);
+	at91_add_device_mci(1, &mci1_data);
 	/* Ethernet */
 	at91_add_device_eth(&ek_macb_data);
 	/* NAND */
@@ -445,8 +443,9 @@ static void __init ek_board_init(void)
 
 MACHINE_START(AT91SAM9263EK, "Atmel AT91SAM9263-EK")
 	/* Maintainer: Atmel */
-	.timer		= &at91sam926x_timer,
+	.init_time	= at91sam926x_pit_init,
 	.map_io		= at91_map_io,
+	.handle_irq	= at91_aic_handle_irq,
 	.init_early	= ek_init_early,
 	.init_irq	= at91_init_irq_default,
 	.init_machine	= ek_board_init,

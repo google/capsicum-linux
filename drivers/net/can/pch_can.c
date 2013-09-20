@@ -184,7 +184,7 @@ struct pch_can_priv {
 	int use_msi;
 };
 
-static struct can_bittiming_const pch_can_bittiming_const = {
+static const struct can_bittiming_const pch_can_bittiming_const = {
 	.name = KBUILD_MODNAME,
 	.tseg1_min = 2,
 	.tseg1_max = 16,
@@ -560,7 +560,7 @@ static void pch_can_error(struct net_device *ndev, u32 status)
 		stats->rx_errors++;
 		break;
 	case PCH_CRC_ERR:
-		cf->data[2] |= CAN_ERR_PROT_LOC_CRC_SEQ |
+		cf->data[3] |= CAN_ERR_PROT_LOC_CRC_SEQ |
 			       CAN_ERR_PROT_LOC_CRC_DEL;
 		priv->can.can_stats.bus_error++;
 		stats->rx_errors++;
@@ -954,7 +954,7 @@ static const struct net_device_ops pch_can_netdev_ops = {
 	.ndo_start_xmit		= pch_xmit,
 };
 
-static void __devexit pch_can_remove(struct pci_dev *pdev)
+static void pch_can_remove(struct pci_dev *pdev)
 {
 	struct net_device *ndev = pci_get_drvdata(pdev);
 	struct pch_can_priv *priv = netdev_priv(ndev);
@@ -1178,7 +1178,7 @@ static int pch_can_get_berr_counter(const struct net_device *dev,
 	return 0;
 }
 
-static int __devinit pch_can_probe(struct pci_dev *pdev,
+static int pch_can_probe(struct pci_dev *pdev,
 				   const struct pci_device_id *id)
 {
 	struct net_device *ndev;
@@ -1269,22 +1269,12 @@ static struct pci_driver pch_can_pci_driver = {
 	.name = "pch_can",
 	.id_table = pch_pci_tbl,
 	.probe = pch_can_probe,
-	.remove = __devexit_p(pch_can_remove),
+	.remove = pch_can_remove,
 	.suspend = pch_can_suspend,
 	.resume = pch_can_resume,
 };
 
-static int __init pch_can_pci_init(void)
-{
-	return pci_register_driver(&pch_can_pci_driver);
-}
-module_init(pch_can_pci_init);
-
-static void __exit pch_can_pci_exit(void)
-{
-	pci_unregister_driver(&pch_can_pci_driver);
-}
-module_exit(pch_can_pci_exit);
+module_pci_driver(pch_can_pci_driver);
 
 MODULE_DESCRIPTION("Intel EG20T PCH CAN(Controller Area Network) Driver");
 MODULE_LICENSE("GPL v2");

@@ -19,6 +19,8 @@
 #include <linux/mount.h>
 #include <linux/gfs2_ondisk.h>
 #include <linux/quotaops.h>
+#include <linux/lockdep.h>
+#include <linux/module.h>
 
 #include "gfs2.h"
 #include "incore.h"
@@ -80,6 +82,7 @@ static struct gfs2_sbd *init_sbd(struct super_block *sb)
 	init_waitqueue_head(&sdp->sd_glock_wait);
 	atomic_set(&sdp->sd_glock_disposal, 0);
 	init_completion(&sdp->sd_locking_init);
+	init_completion(&sdp->sd_wdack);
 	spin_lock_init(&sdp->sd_statfs_spin);
 
 	spin_lock_init(&sdp->sd_rindex_spin);
@@ -99,9 +102,9 @@ static struct gfs2_sbd *init_sbd(struct super_block *sb)
 	atomic_set(&sdp->sd_log_pinned, 0);
 	INIT_LIST_HEAD(&sdp->sd_log_le_buf);
 	INIT_LIST_HEAD(&sdp->sd_log_le_revoke);
-	INIT_LIST_HEAD(&sdp->sd_log_le_rg);
 	INIT_LIST_HEAD(&sdp->sd_log_le_databuf);
 	INIT_LIST_HEAD(&sdp->sd_log_le_ordered);
+	spin_lock_init(&sdp->sd_ordered_lock);
 
 	init_waitqueue_head(&sdp->sd_log_waitq);
 	init_waitqueue_head(&sdp->sd_logd_waitq);
@@ -114,8 +117,6 @@ static struct gfs2_sbd *init_sbd(struct super_block *sb)
 	init_waitqueue_head(&sdp->sd_log_flush_wait);
 
 	INIT_LIST_HEAD(&sdp->sd_revoke_list);
-
-	mutex_init(&sdp->sd_freeze_lock);
 
 	return sdp;
 }
@@ -278,6 +279,9 @@ static int gfs2_read_sb(struct gfs2_sbd *sdp, int silent)
 	sdp->sd_qc_per_block = (sdp->sd_sb.sb_bsize -
 				sizeof(struct gfs2_meta_header)) /
 			        sizeof(struct gfs2_quota_change);
+	sdp->sd_blocks_per_bitmap = (sdp->sd_sb.sb_bsize -
+				     sizeof(struct gfs2_meta_header))
+		* GFS2_NBBY; /* not the rgrp bitmap, subsequent bitmaps only */
 
 	/* Compute maximum reservation required to add a entry to a directory */
 
@@ -767,6 +771,7 @@ fail:
 	return error;
 }
 
+static struct lock_class_key gfs2_quota_imutex_key;
 
 static int init_inodes(struct gfs2_sbd *sdp, int undo)
 {
@@ -804,6 +809,12 @@ static int init_inodes(struct gfs2_sbd *sdp, int undo)
 		fs_err(sdp, "can't get quota file inode: %d\n", error);
 		goto fail_rindex;
 	}
+	/*
+	 * i_mutex on quota files is special. Since this inode is hidden system
+	 * file, we are safe to define locking ourselves.
+	 */
+	lockdep_set_class(&sdp->sd_quota_inode->i_mutex,
+			  &gfs2_quota_imutex_key);
 
 	error = gfs2_rindex_update(sdp);
 	if (error)
@@ -905,16 +916,16 @@ static int init_threads(struct gfs2_sbd *sdp, int undo)
 		goto fail_quotad;
 
 	p = kthread_run(gfs2_logd, sdp, "gfs2_logd");
-	error = IS_ERR(p);
-	if (error) {
+	if (IS_ERR(p)) {
+		error = PTR_ERR(p);
 		fs_err(sdp, "can't start logd thread: %d\n", error);
 		return error;
 	}
 	sdp->sd_logd_process = p;
 
 	p = kthread_run(gfs2_quotad, sdp, "gfs2_quotad");
-	error = IS_ERR(p);
-	if (error) {
+	if (IS_ERR(p)) {
+		error = PTR_ERR(p);
 		fs_err(sdp, "can't start quotad thread: %d\n", error);
 		goto fail;
 	}
@@ -994,6 +1005,7 @@ static int gfs2_lm_mount(struct gfs2_sbd *sdp, int silent)
 				ls->ls_jid = option;
 			break;
 		case Opt_id:
+		case Opt_nodir:
 			/* Obsolete, but left for backward compat purposes */
 			break;
 		case Opt_first:
@@ -1001,12 +1013,6 @@ static int gfs2_lm_mount(struct gfs2_sbd *sdp, int silent)
 			if (ret || (option != 0 && option != 1))
 				goto hostdata_error;
 			ls->ls_first = option;
-			break;
-		case Opt_nodir:
-			ret = match_int(&tmp[0], &option);
-			if (ret || (option != 0 && option != 1))
-				goto hostdata_error;
-			ls->ls_nodir = option;
 			break;
 		case Opt_err:
 		default:
@@ -1124,20 +1130,33 @@ static int fill_super(struct super_block *sb, struct gfs2_args *args, int silent
 	}
 
 	error = init_names(sdp, silent);
-	if (error)
-		goto fail;
+	if (error) {
+		/* In this case, we haven't initialized sysfs, so we have to
+		   manually free the sdp. */
+		free_percpu(sdp->sd_lkstats);
+		kfree(sdp);
+		sb->s_fs_info = NULL;
+		return error;
+	}
 
 	snprintf(sdp->sd_fsname, GFS2_FSNAME_LEN, "%s", sdp->sd_table_name);
 
-	gfs2_create_debugfs_file(sdp);
-
 	error = gfs2_sys_fs_add(sdp);
+	/*
+	 * If we hit an error here, gfs2_sys_fs_add will have called function
+	 * kobject_put which causes the sysfs usage count to go to zero, which
+	 * causes sysfs to call function gfs2_sbd_release, which frees sdp.
+	 * Subsequent error paths here will call gfs2_sys_fs_del, which also
+	 * kobject_put to free sdp.
+	 */
 	if (error)
-		goto fail;
+		return error;
+
+	gfs2_create_debugfs_file(sdp);
 
 	error = gfs2_lm_mount(sdp, silent);
 	if (error)
-		goto fail_sys;
+		goto fail_debug;
 
 	error = init_locking(sdp, &mount_gh, DO);
 	if (error)
@@ -1221,12 +1240,12 @@ fail_locking:
 fail_lm:
 	gfs2_gl_hash_clear(sdp);
 	gfs2_lm_unmount(sdp);
-fail_sys:
-	gfs2_sys_fs_del(sdp);
-fail:
+fail_debug:
 	gfs2_delete_debugfs_file(sdp);
 	free_percpu(sdp->sd_lkstats);
-	kfree(sdp);
+	/* gfs2_sys_fs_del must be the last thing we do, since it causes
+	 * sysfs to call function gfs2_sbd_release, which frees sdp. */
+	gfs2_sys_fs_del(sdp);
 	sb->s_fs_info = NULL;
 	return error;
 }
@@ -1292,7 +1311,7 @@ static struct dentry *gfs2_mount(struct file_system_type *fs_type, int flags,
 		error = -EBUSY;
 		goto error_bdev;
 	}
-	s = sget(fs_type, test_gfs2_super, set_gfs2_super, bdev);
+	s = sget(fs_type, test_gfs2_super, set_gfs2_super, flags, bdev);
 	mutex_unlock(&bdev->bd_fsfreeze_mutex);
 	error = PTR_ERR(s);
 	if (IS_ERR(s))
@@ -1322,7 +1341,6 @@ static struct dentry *gfs2_mount(struct file_system_type *fs_type, int flags,
 	} else {
 		char b[BDEVNAME_SIZE];
 
-		s->s_flags = flags;
 		s->s_mode = mode;
 		strlcpy(s->s_id, bdevname(bdev, b), sizeof(s->s_id));
 		sb_set_blocksize(s, block_size(bdev));
@@ -1366,7 +1384,7 @@ static struct dentry *gfs2_mount_meta(struct file_system_type *fs_type,
 		       dev_name, error);
 		return ERR_PTR(error);
 	}
-	s = sget(&gfs2_fs_type, test_gfs2_super, set_meta_super,
+	s = sget(&gfs2_fs_type, test_gfs2_super, set_meta_super, flags,
 		 path.dentry->d_inode->i_sb->s_bdev);
 	path_put(&path);
 	if (IS_ERR(s)) {
@@ -1396,10 +1414,9 @@ static void gfs2_kill_sb(struct super_block *sb)
 	sdp->sd_root_dir = NULL;
 	sdp->sd_master_dir = NULL;
 	shrink_dcache_sb(sb);
-	kill_block_super(sb);
 	gfs2_delete_debugfs_file(sdp);
 	free_percpu(sdp->sd_lkstats);
-	kfree(sdp);
+	kill_block_super(sb);
 }
 
 struct file_system_type gfs2_fs_type = {
@@ -1409,6 +1426,7 @@ struct file_system_type gfs2_fs_type = {
 	.kill_sb = gfs2_kill_sb,
 	.owner = THIS_MODULE,
 };
+MODULE_ALIAS_FS("gfs2");
 
 struct file_system_type gfs2meta_fs_type = {
 	.name = "gfs2meta",
@@ -1416,4 +1434,4 @@ struct file_system_type gfs2meta_fs_type = {
 	.mount = gfs2_mount_meta,
 	.owner = THIS_MODULE,
 };
-
+MODULE_ALIAS_FS("gfs2meta");

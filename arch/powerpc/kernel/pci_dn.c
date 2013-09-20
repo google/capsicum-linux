@@ -32,11 +32,19 @@
 #include <asm/ppc-pci.h>
 #include <asm/firmware.h>
 
+struct pci_dn *pci_get_pdn(struct pci_dev *pdev)
+{
+	struct device_node *dn = pci_device_to_OF_node(pdev);
+	if (!dn)
+		return NULL;
+	return PCI_DN(dn);
+}
+
 /*
  * Traverse_func that inits the PCI fields of the device node.
  * NOTE: this *must* be done before read/write config to the device.
  */
-void * __devinit update_dn_pci_info(struct device_node *dn, void *data)
+void *update_dn_pci_info(struct device_node *dn, void *data)
 {
 	struct pci_controller *phb = data;
 	const int *type =
@@ -129,7 +137,7 @@ void *traverse_pci_devices(struct device_node *start, traverse_func pre,
  * subsystem is set up, before kmalloc is valid) and during the 
  * dynamic lpar operation of adding a PHB to a running system.
  */
-void __devinit pci_devs_phb_init_dynamic(struct pci_controller *phb)
+void pci_devs_phb_init_dynamic(struct pci_controller *phb)
 {
 	struct device_node *dn = phb->dn;
 	struct pci_dn *pdn;

@@ -98,7 +98,7 @@ struct mtd_oob_ops {
 };
 
 #define MTD_MAX_OOBFREE_ENTRIES_LARGE	32
-#define MTD_MAX_ECCPOS_ENTRIES_LARGE	448
+#define MTD_MAX_ECCPOS_ENTRIES_LARGE	640
 /*
  * Internal ECC layout control structure. For historical reasons, there is a
  * similar, smaller struct nand_ecclayout_user (in mtd-abi.h) that is retained
@@ -157,6 +157,15 @@ struct mtd_info {
 	unsigned int erasesize_mask;
 	unsigned int writesize_mask;
 
+	/*
+	 * read ops return -EUCLEAN if max number of bitflips corrected on any
+	 * one region comprising an ecc step equals or exceeds this value.
+	 * Settable by driver, else defaults to ecc_strength.  User can override
+	 * in sysfs.  N.B. The meaning of the -EUCLEAN return code has changed;
+	 * see Documentation/ABI/testing/sysfs-class-mtd for more detail.
+	 */
+	unsigned int bitflip_threshold;
+
 	// Kernel-only stuff starts here.
 	const char *name;
 	int index;
@@ -164,7 +173,7 @@ struct mtd_info {
 	/* ECC layout structure pointer - read only! */
 	struct nand_ecclayout *ecclayout;
 
-	/* max number of correctible bit errors per writesize */
+	/* max number of correctible bit errors per ecc step */
 	unsigned int ecc_strength;
 
 	/* Data for variable erase regions. If numeraseregions is zero,
@@ -256,14 +265,7 @@ int mtd_write(struct mtd_info *mtd, loff_t to, size_t len, size_t *retlen,
 int mtd_panic_write(struct mtd_info *mtd, loff_t to, size_t len, size_t *retlen,
 		    const u_char *buf);
 
-static inline int mtd_read_oob(struct mtd_info *mtd, loff_t from,
-			       struct mtd_oob_ops *ops)
-{
-	ops->retlen = ops->oobretlen = 0;
-	if (!mtd->_read_oob)
-		return -EOPNOTSUPP;
-	return mtd->_read_oob(mtd, from, ops);
-}
+int mtd_read_oob(struct mtd_info *mtd, loff_t from, struct mtd_oob_ops *ops);
 
 static inline int mtd_write_oob(struct mtd_info *mtd, loff_t to,
 				struct mtd_oob_ops *ops)
@@ -360,10 +362,10 @@ struct mtd_partition;
 struct mtd_part_parser_data;
 
 extern int mtd_device_parse_register(struct mtd_info *mtd,
-			      const char **part_probe_types,
-			      struct mtd_part_parser_data *parser_data,
-			      const struct mtd_partition *defparts,
-			      int defnr_parts);
+				     const char * const *part_probe_types,
+				     struct mtd_part_parser_data *parser_data,
+				     const struct mtd_partition *defparts,
+				     int defnr_parts);
 #define mtd_device_register(master, parts, nr_parts)	\
 	mtd_device_parse_register(master, NULL, NULL, parts, nr_parts)
 extern int mtd_device_unregister(struct mtd_info *master);

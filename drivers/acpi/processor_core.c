@@ -158,8 +158,7 @@ static int map_mat_entry(acpi_handle handle, int type, u32 acpi_id)
 	}
 
 exit:
-	if (buffer.pointer)
-		kfree(buffer.pointer);
+	kfree(buffer.pointer);
 	return apic_id;
 }
 
@@ -189,10 +188,12 @@ int acpi_get_cpuid(acpi_handle handle, int type, u32 acpi_id)
 		 *     Processor (CPU3, 0x03, 0x00000410, 0x06) {}
 		 * }
 		 *
-		 * Ignores apic_id and always return 0 for CPU0's handle.
+		 * Ignores apic_id and always returns 0 for the processor
+		 * handle with acpi id 0 if nr_cpu_ids is 1.
+		 * This should be the case if SMP tables are not found.
 		 * Return -1 for other CPU's handle.
 		 */
-		if (acpi_id == 0)
+		if (nr_cpu_ids <= 1 && acpi_id == 0)
 			return acpi_id;
 		else
 			return apic_id;
@@ -252,7 +253,7 @@ static bool __init processor_physically_present(acpi_handle handle)
 	return true;
 }
 
-static void __cpuinit acpi_set_pdc_bits(u32 *buf)
+static void acpi_set_pdc_bits(u32 *buf)
 {
 	buf[0] = ACPI_PDC_REVISION_ID;
 	buf[1] = 1;
@@ -264,7 +265,7 @@ static void __cpuinit acpi_set_pdc_bits(u32 *buf)
 	arch_acpi_set_pdc_bits(buf);
 }
 
-static struct acpi_object_list *__cpuinit acpi_processor_alloc_pdc(void)
+static struct acpi_object_list *acpi_processor_alloc_pdc(void)
 {
 	struct acpi_object_list *obj_list;
 	union acpi_object *obj;
@@ -307,7 +308,7 @@ static struct acpi_object_list *__cpuinit acpi_processor_alloc_pdc(void)
  * _PDC is required for a BIOS-OS handshake for most of the newer
  * ACPI processor features.
  */
-static int __cpuinit
+static int
 acpi_processor_eval_pdc(acpi_handle handle, struct acpi_object_list *pdc_in)
 {
 	acpi_status status = AE_OK;
@@ -335,7 +336,7 @@ acpi_processor_eval_pdc(acpi_handle handle, struct acpi_object_list *pdc_in)
 	return status;
 }
 
-void __cpuinit acpi_processor_set_pdc(acpi_handle handle)
+void acpi_processor_set_pdc(acpi_handle handle)
 {
 	struct acpi_object_list *obj_list;
 

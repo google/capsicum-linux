@@ -61,26 +61,18 @@ static const u8 bnad_bcast_addr[] =  {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
 /*
  * Local MACROS
  */
-#define BNAD_TX_UNMAPQ_DEPTH (bnad->txq_depth * 2)
-
-#define BNAD_RX_UNMAPQ_DEPTH (bnad->rxq_depth)
-
 #define BNAD_GET_MBOX_IRQ(_bnad)				\
 	(((_bnad)->cfg_flags & BNAD_CF_MSIX) ?			\
 	 ((_bnad)->msix_table[BNAD_MAILBOX_MSIX_INDEX].vector) : \
 	 ((_bnad)->pcidev->irq))
 
-#define BNAD_FILL_UNMAPQ_MEM_REQ(_res_info, _num, _depth)	\
+#define BNAD_FILL_UNMAPQ_MEM_REQ(_res_info, _num, _size)	\
 do {								\
 	(_res_info)->res_type = BNA_RES_T_MEM;			\
 	(_res_info)->res_u.mem_info.mem_type = BNA_MEM_T_KVA;	\
 	(_res_info)->res_u.mem_info.num = (_num);		\
-	(_res_info)->res_u.mem_info.len =			\
-	sizeof(struct bnad_unmap_q) +				\
-	(sizeof(struct bnad_skb_unmap) * ((_depth) - 1));	\
+	(_res_info)->res_u.mem_info.len = (_size);		\
 } while (0)
-
-#define BNAD_TXRX_SYNC_MDELAY	250	/* 250 msecs */
 
 static void
 bnad_add_to_list(struct bnad *bnad)
@@ -103,48 +95,59 @@ bnad_remove_from_list(struct bnad *bnad)
  * Reinitialize completions in CQ, once Rx is taken down
  */
 static void
-bnad_cq_cmpl_init(struct bnad *bnad, struct bna_ccb *ccb)
+bnad_cq_cleanup(struct bnad *bnad, struct bna_ccb *ccb)
 {
-	struct bna_cq_entry *cmpl, *next_cmpl;
-	unsigned int wi_range, wis = 0, ccb_prod = 0;
+	struct bna_cq_entry *cmpl;
 	int i;
 
-	BNA_CQ_QPGE_PTR_GET(ccb_prod, ccb->sw_qpt, cmpl,
-			    wi_range);
-
 	for (i = 0; i < ccb->q_depth; i++) {
-		wis++;
-		if (likely(--wi_range))
-			next_cmpl = cmpl + 1;
-		else {
-			BNA_QE_INDX_ADD(ccb_prod, wis, ccb->q_depth);
-			wis = 0;
-			BNA_CQ_QPGE_PTR_GET(ccb_prod, ccb->sw_qpt,
-						next_cmpl, wi_range);
-		}
+		cmpl = &((struct bna_cq_entry *)ccb->sw_q)[i];
 		cmpl->valid = 0;
-		cmpl = next_cmpl;
 	}
 }
 
+/* Tx Datapath functions */
+
+
+/* Caller should ensure that the entry at unmap_q[index] is valid */
 static u32
-bnad_pci_unmap_skb(struct device *pdev, struct bnad_skb_unmap *array,
-	u32 index, u32 depth, struct sk_buff *skb, u32 frag)
+bnad_tx_buff_unmap(struct bnad *bnad,
+			      struct bnad_tx_unmap *unmap_q,
+			      u32 q_depth, u32 index)
 {
-	int j;
-	array[index].skb = NULL;
+	struct bnad_tx_unmap *unmap;
+	struct sk_buff *skb;
+	int vector, nvecs;
 
-	dma_unmap_single(pdev, dma_unmap_addr(&array[index], dma_addr),
-			skb_headlen(skb), DMA_TO_DEVICE);
-	dma_unmap_addr_set(&array[index], dma_addr, 0);
-	BNA_QE_INDX_ADD(index, 1, depth);
+	unmap = &unmap_q[index];
+	nvecs = unmap->nvecs;
 
-	for (j = 0; j < frag; j++) {
-		dma_unmap_page(pdev, dma_unmap_addr(&array[index], dma_addr),
-			  skb_frag_size(&skb_shinfo(skb)->frags[j]), DMA_TO_DEVICE);
-		dma_unmap_addr_set(&array[index], dma_addr, 0);
-		BNA_QE_INDX_ADD(index, 1, depth);
+	skb = unmap->skb;
+	unmap->skb = NULL;
+	unmap->nvecs = 0;
+	dma_unmap_single(&bnad->pcidev->dev,
+		dma_unmap_addr(&unmap->vectors[0], dma_addr),
+		skb_headlen(skb), DMA_TO_DEVICE);
+	dma_unmap_addr_set(&unmap->vectors[0], dma_addr, 0);
+	nvecs--;
+
+	vector = 0;
+	while (nvecs) {
+		vector++;
+		if (vector == BFI_TX_MAX_VECTORS_PER_WI) {
+			vector = 0;
+			BNA_QE_INDX_INC(index, q_depth);
+			unmap = &unmap_q[index];
+		}
+
+		dma_unmap_page(&bnad->pcidev->dev,
+			dma_unmap_addr(&unmap->vectors[vector], dma_addr),
+			skb_shinfo(skb)->frags[nvecs].size, DMA_TO_DEVICE);
+		dma_unmap_addr_set(&unmap->vectors[vector], dma_addr, 0);
+		nvecs--;
 	}
+
+	BNA_QE_INDX_INC(index, q_depth);
 
 	return index;
 }
@@ -155,87 +158,64 @@ bnad_pci_unmap_skb(struct device *pdev, struct bnad_skb_unmap *array,
  * so DMA unmap & freeing is fine.
  */
 static void
-bnad_free_all_txbufs(struct bnad *bnad,
-		 struct bna_tcb *tcb)
+bnad_txq_cleanup(struct bnad *bnad, struct bna_tcb *tcb)
 {
-	u32		unmap_cons;
-	struct bnad_unmap_q *unmap_q = tcb->unmap_q;
-	struct bnad_skb_unmap *unmap_array;
-	struct sk_buff		*skb = NULL;
-	int			q;
+	struct bnad_tx_unmap *unmap_q = tcb->unmap_q;
+	struct sk_buff *skb;
+	int i;
 
-	unmap_array = unmap_q->unmap_array;
-
-	for (q = 0; q < unmap_q->q_depth; q++) {
-		skb = unmap_array[q].skb;
+	for (i = 0; i < tcb->q_depth; i++) {
+		skb = unmap_q[i].skb;
 		if (!skb)
 			continue;
-
-		unmap_cons = q;
-		unmap_cons = bnad_pci_unmap_skb(&bnad->pcidev->dev, unmap_array,
-				unmap_cons, unmap_q->q_depth, skb,
-				skb_shinfo(skb)->nr_frags);
+		bnad_tx_buff_unmap(bnad, unmap_q, tcb->q_depth, i);
 
 		dev_kfree_skb_any(skb);
 	}
 }
 
-/* Data Path Handlers */
-
 /*
- * bnad_free_txbufs : Frees the Tx bufs on Tx completion
+ * bnad_txcmpl_process : Frees the Tx bufs on Tx completion
  * Can be called in a) Interrupt context
  *		    b) Sending context
- *		    c) Tasklet context
  */
 static u32
-bnad_free_txbufs(struct bnad *bnad,
-		 struct bna_tcb *tcb)
+bnad_txcmpl_process(struct bnad *bnad, struct bna_tcb *tcb)
 {
-	u32		unmap_cons, sent_packets = 0, sent_bytes = 0;
-	u16		wis, updated_hw_cons;
-	struct bnad_unmap_q *unmap_q = tcb->unmap_q;
-	struct bnad_skb_unmap *unmap_array;
-	struct sk_buff		*skb;
+	u32 sent_packets = 0, sent_bytes = 0;
+	u32 wis, unmap_wis, hw_cons, cons, q_depth;
+	struct bnad_tx_unmap *unmap_q = tcb->unmap_q;
+	struct bnad_tx_unmap *unmap;
+	struct sk_buff *skb;
 
-	/*
-	 * Just return if TX is stopped. This check is useful
-	 * when bnad_free_txbufs() runs out of a tasklet scheduled
-	 * before bnad_cb_tx_cleanup() cleared BNAD_TXQ_TX_STARTED bit
-	 * but this routine runs actually after the cleanup has been
-	 * executed.
-	 */
+	/* Just return if TX is stopped */
 	if (!test_bit(BNAD_TXQ_TX_STARTED, &tcb->flags))
 		return 0;
 
-	updated_hw_cons = *(tcb->hw_consumer_index);
+	hw_cons = *(tcb->hw_consumer_index);
+	cons = tcb->consumer_index;
+	q_depth = tcb->q_depth;
 
-	wis = BNA_Q_INDEX_CHANGE(tcb->consumer_index,
-				  updated_hw_cons, tcb->q_depth);
-
+	wis = BNA_Q_INDEX_CHANGE(cons, hw_cons, q_depth);
 	BUG_ON(!(wis <= BNA_QE_IN_USE_CNT(tcb, tcb->q_depth)));
 
-	unmap_array = unmap_q->unmap_array;
-	unmap_cons = unmap_q->consumer_index;
-
-	prefetch(&unmap_array[unmap_cons + 1]);
 	while (wis) {
-		skb = unmap_array[unmap_cons].skb;
+		unmap = &unmap_q[cons];
+
+		skb = unmap->skb;
 
 		sent_packets++;
 		sent_bytes += skb->len;
-		wis -= BNA_TXQ_WI_NEEDED(1 + skb_shinfo(skb)->nr_frags);
 
-		unmap_cons = bnad_pci_unmap_skb(&bnad->pcidev->dev, unmap_array,
-				unmap_cons, unmap_q->q_depth, skb,
-				skb_shinfo(skb)->nr_frags);
+		unmap_wis = BNA_TXQ_WI_NEEDED(unmap->nvecs);
+		wis -= unmap_wis;
 
+		cons = bnad_tx_buff_unmap(bnad, unmap_q, q_depth, cons);
 		dev_kfree_skb_any(skb);
 	}
 
 	/* Update consumer pointers. */
-	tcb->consumer_index = updated_hw_cons;
-	unmap_q->consumer_index = unmap_cons;
+	tcb->consumer_index = hw_cons;
 
 	tcb->txq->tx_packets += sent_packets;
 	tcb->txq->tx_bytes += sent_bytes;
@@ -243,57 +223,8 @@ bnad_free_txbufs(struct bnad *bnad,
 	return sent_packets;
 }
 
-/* Tx Free Tasklet function */
-/* Frees for all the tcb's in all the Tx's */
-/*
- * Scheduled from sending context, so that
- * the fat Tx lock is not held for too long
- * in the sending context.
- */
-static void
-bnad_tx_free_tasklet(unsigned long bnad_ptr)
-{
-	struct bnad *bnad = (struct bnad *)bnad_ptr;
-	struct bna_tcb *tcb;
-	u32		acked = 0;
-	int			i, j;
-
-	for (i = 0; i < bnad->num_tx; i++) {
-		for (j = 0; j < bnad->num_txq_per_tx; j++) {
-			tcb = bnad->tx_info[i].tcb[j];
-			if (!tcb)
-				continue;
-			if (((u16) (*tcb->hw_consumer_index) !=
-				tcb->consumer_index) &&
-				(!test_and_set_bit(BNAD_TXQ_FREE_SENT,
-						  &tcb->flags))) {
-				acked = bnad_free_txbufs(bnad, tcb);
-				if (likely(test_bit(BNAD_TXQ_TX_STARTED,
-					&tcb->flags)))
-					bna_ib_ack(tcb->i_dbell, acked);
-				smp_mb__before_clear_bit();
-				clear_bit(BNAD_TXQ_FREE_SENT, &tcb->flags);
-			}
-			if (unlikely(!test_bit(BNAD_TXQ_TX_STARTED,
-						&tcb->flags)))
-				continue;
-			if (netif_queue_stopped(bnad->netdev)) {
-				if (acked && netif_carrier_ok(bnad->netdev) &&
-					BNA_QE_FREE_CNT(tcb, tcb->q_depth) >=
-						BNAD_NETIF_WAKE_THRESHOLD) {
-					netif_wake_queue(bnad->netdev);
-					/* TODO */
-					/* Counters for individual TxQs? */
-					BNAD_UPDATE_CTR(bnad,
-						netif_queue_wakeup);
-				}
-			}
-		}
-	}
-}
-
 static u32
-bnad_tx(struct bnad *bnad, struct bna_tcb *tcb)
+bnad_tx_complete(struct bnad *bnad, struct bna_tcb *tcb)
 {
 	struct net_device *netdev = bnad->netdev;
 	u32 sent = 0;
@@ -301,7 +232,7 @@ bnad_tx(struct bnad *bnad, struct bna_tcb *tcb)
 	if (test_and_set_bit(BNAD_TXQ_FREE_SENT, &tcb->flags))
 		return 0;
 
-	sent = bnad_free_txbufs(bnad, tcb);
+	sent = bnad_txcmpl_process(bnad, tcb);
 	if (sent) {
 		if (netif_queue_stopped(netdev) &&
 		    netif_carrier_ok(netdev) &&
@@ -330,142 +261,311 @@ bnad_msix_tx(int irq, void *data)
 	struct bna_tcb *tcb = (struct bna_tcb *)data;
 	struct bnad *bnad = tcb->bnad;
 
-	bnad_tx(bnad, tcb);
+	bnad_tx_complete(bnad, tcb);
 
 	return IRQ_HANDLED;
 }
 
-static void
-bnad_reset_rcb(struct bnad *bnad, struct bna_rcb *rcb)
+static inline void
+bnad_rxq_alloc_uninit(struct bnad *bnad, struct bna_rcb *rcb)
 {
-	struct bnad_unmap_q *unmap_q = rcb->unmap_q;
+	struct bnad_rx_unmap_q *unmap_q = rcb->unmap_q;
 
-	rcb->producer_index = 0;
-	rcb->consumer_index = 0;
-
-	unmap_q->producer_index = 0;
-	unmap_q->consumer_index = 0;
+	unmap_q->reuse_pi = -1;
+	unmap_q->alloc_order = -1;
+	unmap_q->map_size = 0;
+	unmap_q->type = BNAD_RXBUF_NONE;
 }
 
-static void
-bnad_free_all_rxbufs(struct bnad *bnad, struct bna_rcb *rcb)
+/* Default is page-based allocation. Multi-buffer support - TBD */
+static int
+bnad_rxq_alloc_init(struct bnad *bnad, struct bna_rcb *rcb)
 {
-	struct bnad_unmap_q *unmap_q;
-	struct bnad_skb_unmap *unmap_array;
-	struct sk_buff *skb;
-	int unmap_cons;
+	struct bnad_rx_unmap_q *unmap_q = rcb->unmap_q;
+	int mtu, order;
 
-	unmap_q = rcb->unmap_q;
-	unmap_array = unmap_q->unmap_array;
-	for (unmap_cons = 0; unmap_cons < unmap_q->q_depth; unmap_cons++) {
-		skb = unmap_array[unmap_cons].skb;
-		if (!skb)
-			continue;
-		unmap_array[unmap_cons].skb = NULL;
-		dma_unmap_single(&bnad->pcidev->dev,
-				 dma_unmap_addr(&unmap_array[unmap_cons],
-						dma_addr),
-				 rcb->rxq->buffer_size,
-				 DMA_FROM_DEVICE);
-		dev_kfree_skb(skb);
+	bnad_rxq_alloc_uninit(bnad, rcb);
+
+	mtu = bna_enet_mtu_get(&bnad->bna.enet);
+	order = get_order(mtu);
+
+	if (bna_is_small_rxq(rcb->id)) {
+		unmap_q->alloc_order = 0;
+		unmap_q->map_size = rcb->rxq->buffer_size;
+	} else {
+		unmap_q->alloc_order = order;
+		unmap_q->map_size =
+			(rcb->rxq->buffer_size > 2048) ?
+			PAGE_SIZE << order : 2048;
 	}
-	bnad_reset_rcb(bnad, rcb);
+
+	BUG_ON(((PAGE_SIZE << order) % unmap_q->map_size));
+
+	unmap_q->type = BNAD_RXBUF_PAGE;
+
+	return 0;
+}
+
+static inline void
+bnad_rxq_cleanup_page(struct bnad *bnad, struct bnad_rx_unmap *unmap)
+{
+	if (!unmap->page)
+		return;
+
+	dma_unmap_page(&bnad->pcidev->dev,
+			dma_unmap_addr(&unmap->vector, dma_addr),
+			unmap->vector.len, DMA_FROM_DEVICE);
+	put_page(unmap->page);
+	unmap->page = NULL;
+	dma_unmap_addr_set(&unmap->vector, dma_addr, 0);
+	unmap->vector.len = 0;
+}
+
+static inline void
+bnad_rxq_cleanup_skb(struct bnad *bnad, struct bnad_rx_unmap *unmap)
+{
+	if (!unmap->skb)
+		return;
+
+	dma_unmap_single(&bnad->pcidev->dev,
+			dma_unmap_addr(&unmap->vector, dma_addr),
+			unmap->vector.len, DMA_FROM_DEVICE);
+	dev_kfree_skb_any(unmap->skb);
+	unmap->skb = NULL;
+	dma_unmap_addr_set(&unmap->vector, dma_addr, 0);
+	unmap->vector.len = 0;
 }
 
 static void
-bnad_alloc_n_post_rxbufs(struct bnad *bnad, struct bna_rcb *rcb)
+bnad_rxq_cleanup(struct bnad *bnad, struct bna_rcb *rcb)
 {
-	u16 to_alloc, alloced, unmap_prod, wi_range;
-	struct bnad_unmap_q *unmap_q = rcb->unmap_q;
-	struct bnad_skb_unmap *unmap_array;
+	struct bnad_rx_unmap_q *unmap_q = rcb->unmap_q;
+	int i;
+
+	for (i = 0; i < rcb->q_depth; i++) {
+		struct bnad_rx_unmap *unmap = &unmap_q->unmap[i];
+
+		if (BNAD_RXBUF_IS_PAGE(unmap_q->type))
+			bnad_rxq_cleanup_page(bnad, unmap);
+		else
+			bnad_rxq_cleanup_skb(bnad, unmap);
+	}
+	bnad_rxq_alloc_uninit(bnad, rcb);
+}
+
+static u32
+bnad_rxq_refill_page(struct bnad *bnad, struct bna_rcb *rcb, u32 nalloc)
+{
+	u32 alloced, prod, q_depth;
+	struct bnad_rx_unmap_q *unmap_q = rcb->unmap_q;
+	struct bnad_rx_unmap *unmap, *prev;
 	struct bna_rxq_entry *rxent;
-	struct sk_buff *skb;
+	struct page *page;
+	u32 page_offset, alloc_size;
 	dma_addr_t dma_addr;
 
+	prod = rcb->producer_index;
+	q_depth = rcb->q_depth;
+
+	alloc_size = PAGE_SIZE << unmap_q->alloc_order;
 	alloced = 0;
-	to_alloc =
-		BNA_QE_FREE_CNT(unmap_q, unmap_q->q_depth);
 
-	unmap_array = unmap_q->unmap_array;
-	unmap_prod = unmap_q->producer_index;
+	while (nalloc--) {
+		unmap = &unmap_q->unmap[prod];
 
-	BNA_RXQ_QPGE_PTR_GET(unmap_prod, rcb->sw_qpt, rxent, wi_range);
+		if (unmap_q->reuse_pi < 0) {
+			page = alloc_pages(GFP_ATOMIC | __GFP_COMP,
+					unmap_q->alloc_order);
+			page_offset = 0;
+		} else {
+			prev = &unmap_q->unmap[unmap_q->reuse_pi];
+			page = prev->page;
+			page_offset = prev->page_offset + unmap_q->map_size;
+			get_page(page);
+		}
 
-	while (to_alloc--) {
-		if (!wi_range)
-			BNA_RXQ_QPGE_PTR_GET(unmap_prod, rcb->sw_qpt, rxent,
-					     wi_range);
-		skb = netdev_alloc_skb_ip_align(bnad->netdev,
-						rcb->rxq->buffer_size);
-		if (unlikely(!skb)) {
+		if (unlikely(!page)) {
 			BNAD_UPDATE_CTR(bnad, rxbuf_alloc_failed);
 			rcb->rxq->rxbuf_alloc_failed++;
 			goto finishing;
 		}
-		unmap_array[unmap_prod].skb = skb;
-		dma_addr = dma_map_single(&bnad->pcidev->dev, skb->data,
-					  rcb->rxq->buffer_size,
-					  DMA_FROM_DEVICE);
-		dma_unmap_addr_set(&unmap_array[unmap_prod], dma_addr,
-				   dma_addr);
-		BNA_SET_DMA_ADDR(dma_addr, &rxent->host_addr);
-		BNA_QE_INDX_ADD(unmap_prod, 1, unmap_q->q_depth);
 
-		rxent++;
-		wi_range--;
+		dma_addr = dma_map_page(&bnad->pcidev->dev, page, page_offset,
+				unmap_q->map_size, DMA_FROM_DEVICE);
+
+		unmap->page = page;
+		unmap->page_offset = page_offset;
+		dma_unmap_addr_set(&unmap->vector, dma_addr, dma_addr);
+		unmap->vector.len = unmap_q->map_size;
+		page_offset += unmap_q->map_size;
+
+		if (page_offset < alloc_size)
+			unmap_q->reuse_pi = prod;
+		else
+			unmap_q->reuse_pi = -1;
+
+		rxent = &((struct bna_rxq_entry *)rcb->sw_q)[prod];
+		BNA_SET_DMA_ADDR(dma_addr, &rxent->host_addr);
+		BNA_QE_INDX_INC(prod, q_depth);
 		alloced++;
 	}
 
 finishing:
 	if (likely(alloced)) {
-		unmap_q->producer_index = unmap_prod;
-		rcb->producer_index = unmap_prod;
+		rcb->producer_index = prod;
 		smp_mb();
 		if (likely(test_bit(BNAD_RXQ_POST_OK, &rcb->flags)))
 			bna_rxq_prod_indx_doorbell(rcb);
 	}
-}
 
-static inline void
-bnad_refill_rxq(struct bnad *bnad, struct bna_rcb *rcb)
-{
-	struct bnad_unmap_q *unmap_q = rcb->unmap_q;
-
-	if (!test_and_set_bit(BNAD_RXQ_REFILL, &rcb->flags)) {
-		if (BNA_QE_FREE_CNT(unmap_q, unmap_q->q_depth)
-			 >> BNAD_RXQ_REFILL_THRESHOLD_SHIFT)
-			bnad_alloc_n_post_rxbufs(bnad, rcb);
-		smp_mb__before_clear_bit();
-		clear_bit(BNAD_RXQ_REFILL, &rcb->flags);
-	}
+	return alloced;
 }
 
 static u32
-bnad_poll_cq(struct bnad *bnad, struct bna_ccb *ccb, int budget)
+bnad_rxq_refill_skb(struct bnad *bnad, struct bna_rcb *rcb, u32 nalloc)
 {
-	struct bna_cq_entry *cmpl, *next_cmpl;
-	struct bna_rcb *rcb = NULL;
-	unsigned int wi_range, packets = 0, wis = 0;
-	struct bnad_unmap_q *unmap_q;
-	struct bnad_skb_unmap *unmap_array;
+	u32 alloced, prod, q_depth, buff_sz;
+	struct bnad_rx_unmap_q *unmap_q = rcb->unmap_q;
+	struct bnad_rx_unmap *unmap;
+	struct bna_rxq_entry *rxent;
 	struct sk_buff *skb;
-	u32 flags, unmap_cons;
-	struct bna_pkt_rate *pkt_rt = &ccb->pkt_rate;
-	struct bnad_rx_ctrl *rx_ctrl = (struct bnad_rx_ctrl *)(ccb->ctrl);
+	dma_addr_t dma_addr;
 
-	set_bit(BNAD_FP_IN_RX_PATH, &rx_ctrl->flags);
+	buff_sz = rcb->rxq->buffer_size;
+	prod = rcb->producer_index;
+	q_depth = rcb->q_depth;
 
-	if (!test_bit(BNAD_RXQ_STARTED, &ccb->rcb[0]->flags)) {
-		clear_bit(BNAD_FP_IN_RX_PATH, &rx_ctrl->flags);
-		return 0;
+	alloced = 0;
+	while (nalloc--) {
+		unmap = &unmap_q->unmap[prod];
+
+		skb = netdev_alloc_skb_ip_align(bnad->netdev, buff_sz);
+
+		if (unlikely(!skb)) {
+			BNAD_UPDATE_CTR(bnad, rxbuf_alloc_failed);
+			rcb->rxq->rxbuf_alloc_failed++;
+			goto finishing;
+		}
+		dma_addr = dma_map_single(&bnad->pcidev->dev, skb->data,
+					  buff_sz, DMA_FROM_DEVICE);
+
+		unmap->skb = skb;
+		dma_unmap_addr_set(&unmap->vector, dma_addr, dma_addr);
+		unmap->vector.len = buff_sz;
+
+		rxent = &((struct bna_rxq_entry *)rcb->sw_q)[prod];
+		BNA_SET_DMA_ADDR(dma_addr, &rxent->host_addr);
+		BNA_QE_INDX_INC(prod, q_depth);
+		alloced++;
 	}
 
+finishing:
+	if (likely(alloced)) {
+		rcb->producer_index = prod;
+		smp_mb();
+		if (likely(test_bit(BNAD_RXQ_POST_OK, &rcb->flags)))
+			bna_rxq_prod_indx_doorbell(rcb);
+	}
+
+	return alloced;
+}
+
+static inline void
+bnad_rxq_post(struct bnad *bnad, struct bna_rcb *rcb)
+{
+	struct bnad_rx_unmap_q *unmap_q = rcb->unmap_q;
+	u32 to_alloc;
+
+	to_alloc = BNA_QE_FREE_CNT(rcb, rcb->q_depth);
+	if (!(to_alloc >> BNAD_RXQ_REFILL_THRESHOLD_SHIFT))
+		return;
+
+	if (BNAD_RXBUF_IS_PAGE(unmap_q->type))
+		bnad_rxq_refill_page(bnad, rcb, to_alloc);
+	else
+		bnad_rxq_refill_skb(bnad, rcb, to_alloc);
+}
+
+#define flags_cksum_prot_mask (BNA_CQ_EF_IPV4 | BNA_CQ_EF_L3_CKSUM_OK | \
+					BNA_CQ_EF_IPV6 | \
+					BNA_CQ_EF_TCP | BNA_CQ_EF_UDP | \
+					BNA_CQ_EF_L4_CKSUM_OK)
+
+#define flags_tcp4 (BNA_CQ_EF_IPV4 | BNA_CQ_EF_L3_CKSUM_OK | \
+				BNA_CQ_EF_TCP | BNA_CQ_EF_L4_CKSUM_OK)
+#define flags_tcp6 (BNA_CQ_EF_IPV6 | \
+				BNA_CQ_EF_TCP | BNA_CQ_EF_L4_CKSUM_OK)
+#define flags_udp4 (BNA_CQ_EF_IPV4 | BNA_CQ_EF_L3_CKSUM_OK | \
+				BNA_CQ_EF_UDP | BNA_CQ_EF_L4_CKSUM_OK)
+#define flags_udp6 (BNA_CQ_EF_IPV6 | \
+				BNA_CQ_EF_UDP | BNA_CQ_EF_L4_CKSUM_OK)
+
+static inline struct sk_buff *
+bnad_cq_prepare_skb(struct bnad_rx_ctrl *rx_ctrl,
+		struct bnad_rx_unmap_q *unmap_q,
+		struct bnad_rx_unmap *unmap,
+		u32 length, u32 flags)
+{
+	struct bnad *bnad = rx_ctrl->bnad;
+	struct sk_buff *skb;
+
+	if (BNAD_RXBUF_IS_PAGE(unmap_q->type)) {
+		skb = napi_get_frags(&rx_ctrl->napi);
+		if (unlikely(!skb))
+			return NULL;
+
+		dma_unmap_page(&bnad->pcidev->dev,
+				dma_unmap_addr(&unmap->vector, dma_addr),
+				unmap->vector.len, DMA_FROM_DEVICE);
+		skb_fill_page_desc(skb, skb_shinfo(skb)->nr_frags,
+				unmap->page, unmap->page_offset, length);
+		skb->len += length;
+		skb->data_len += length;
+		skb->truesize += length;
+
+		unmap->page = NULL;
+		unmap->vector.len = 0;
+
+		return skb;
+	}
+
+	skb = unmap->skb;
+	BUG_ON(!skb);
+
+	dma_unmap_single(&bnad->pcidev->dev,
+			dma_unmap_addr(&unmap->vector, dma_addr),
+			unmap->vector.len, DMA_FROM_DEVICE);
+
+	skb_put(skb, length);
+
+	skb->protocol = eth_type_trans(skb, bnad->netdev);
+
+	unmap->skb = NULL;
+	unmap->vector.len = 0;
+	return skb;
+}
+
+static u32
+bnad_cq_process(struct bnad *bnad, struct bna_ccb *ccb, int budget)
+{
+	struct bna_cq_entry *cq, *cmpl;
+	struct bna_rcb *rcb = NULL;
+	struct bnad_rx_unmap_q *unmap_q;
+	struct bnad_rx_unmap *unmap;
+	struct sk_buff *skb;
+	struct bna_pkt_rate *pkt_rt = &ccb->pkt_rate;
+	struct bnad_rx_ctrl *rx_ctrl = ccb->ctrl;
+	u32 packets = 0, length = 0, flags, masked_flags;
+
 	prefetch(bnad->netdev);
-	BNA_CQ_QPGE_PTR_GET(ccb->producer_index, ccb->sw_qpt, cmpl,
-			    wi_range);
-	BUG_ON(!(wi_range <= ccb->q_depth));
-	while (cmpl->valid && packets < budget) {
+
+	cq = ccb->sw_q;
+	cmpl = &cq[ccb->producer_index];
+
+	while (cmpl->valid && (packets < budget)) {
 		packets++;
+		flags = ntohl(cmpl->flags);
+		length = ntohs(cmpl->length);
 		BNA_UPDATE_PKT_CNT(pkt_rt, ntohs(cmpl->length));
 
 		if (bna_is_small_rxq(cmpl->rxq_id))
@@ -474,84 +574,63 @@ bnad_poll_cq(struct bnad *bnad, struct bna_ccb *ccb, int budget)
 			rcb = ccb->rcb[0];
 
 		unmap_q = rcb->unmap_q;
-		unmap_array = unmap_q->unmap_array;
-		unmap_cons = unmap_q->consumer_index;
+		unmap = &unmap_q->unmap[rcb->consumer_index];
 
-		skb = unmap_array[unmap_cons].skb;
-		BUG_ON(!(skb));
-		unmap_array[unmap_cons].skb = NULL;
-		dma_unmap_single(&bnad->pcidev->dev,
-				 dma_unmap_addr(&unmap_array[unmap_cons],
-						dma_addr),
-				 rcb->rxq->buffer_size,
-				 DMA_FROM_DEVICE);
-		BNA_QE_INDX_ADD(unmap_q->consumer_index, 1, unmap_q->q_depth);
+		if (unlikely(flags & (BNA_CQ_EF_MAC_ERROR |
+					BNA_CQ_EF_FCS_ERROR |
+					BNA_CQ_EF_TOO_LONG))) {
+			if (BNAD_RXBUF_IS_PAGE(unmap_q->type))
+				bnad_rxq_cleanup_page(bnad, unmap);
+			else
+				bnad_rxq_cleanup_skb(bnad, unmap);
 
-		/* Should be more efficient ? Performance ? */
-		BNA_QE_INDX_ADD(rcb->consumer_index, 1, rcb->q_depth);
-
-		wis++;
-		if (likely(--wi_range))
-			next_cmpl = cmpl + 1;
-		else {
-			BNA_QE_INDX_ADD(ccb->producer_index, wis, ccb->q_depth);
-			wis = 0;
-			BNA_CQ_QPGE_PTR_GET(ccb->producer_index, ccb->sw_qpt,
-						next_cmpl, wi_range);
-			BUG_ON(!(wi_range <= ccb->q_depth));
-		}
-		prefetch(next_cmpl);
-
-		flags = ntohl(cmpl->flags);
-		if (unlikely
-		    (flags &
-		     (BNA_CQ_EF_MAC_ERROR | BNA_CQ_EF_FCS_ERROR |
-		      BNA_CQ_EF_TOO_LONG))) {
-			dev_kfree_skb_any(skb);
 			rcb->rxq->rx_packets_with_error++;
 			goto next;
 		}
 
-		skb_put(skb, ntohs(cmpl->length));
+		skb = bnad_cq_prepare_skb(ccb->ctrl, unmap_q, unmap,
+				length, flags);
+
+		if (unlikely(!skb))
+			break;
+
+		masked_flags = flags & flags_cksum_prot_mask;
+
 		if (likely
 		    ((bnad->netdev->features & NETIF_F_RXCSUM) &&
-		     (((flags & BNA_CQ_EF_IPV4) &&
-		      (flags & BNA_CQ_EF_L3_CKSUM_OK)) ||
-		      (flags & BNA_CQ_EF_IPV6)) &&
-		      (flags & (BNA_CQ_EF_TCP | BNA_CQ_EF_UDP)) &&
-		      (flags & BNA_CQ_EF_L4_CKSUM_OK)))
+		     ((masked_flags == flags_tcp4) ||
+		      (masked_flags == flags_udp4) ||
+		      (masked_flags == flags_tcp6) ||
+		      (masked_flags == flags_udp6))))
 			skb->ip_summed = CHECKSUM_UNNECESSARY;
 		else
 			skb_checksum_none_assert(skb);
 
 		rcb->rxq->rx_packets++;
-		rcb->rxq->rx_bytes += skb->len;
-		skb->protocol = eth_type_trans(skb, bnad->netdev);
+		rcb->rxq->rx_bytes += length;
 
 		if (flags & BNA_CQ_EF_VLAN)
-			__vlan_hwaccel_put_tag(skb, ntohs(cmpl->vlan_tag));
+			__vlan_hwaccel_put_tag(skb, htons(ETH_P_8021Q), ntohs(cmpl->vlan_tag));
 
-		if (skb->ip_summed == CHECKSUM_UNNECESSARY)
-			napi_gro_receive(&rx_ctrl->napi, skb);
-		else {
+		if (BNAD_RXBUF_IS_PAGE(unmap_q->type))
+			napi_gro_frags(&rx_ctrl->napi);
+		else
 			netif_receive_skb(skb);
-		}
 
 next:
 		cmpl->valid = 0;
-		cmpl = next_cmpl;
+		BNA_QE_INDX_INC(rcb->consumer_index, rcb->q_depth);
+		BNA_QE_INDX_INC(ccb->producer_index, ccb->q_depth);
+		cmpl = &cq[ccb->producer_index];
 	}
 
-	BNA_QE_INDX_ADD(ccb->producer_index, wis, ccb->q_depth);
-
+	napi_gro_flush(&rx_ctrl->napi, false);
 	if (likely(test_bit(BNAD_RXQ_STARTED, &ccb->rcb[0]->flags)))
 		bna_ib_ack_disable_irq(ccb->i_dbell, packets);
 
-	bnad_refill_rxq(bnad, ccb->rcb[0]);
+	bnad_rxq_post(bnad, ccb->rcb[0]);
 	if (ccb->rcb[1])
-		bnad_refill_rxq(bnad, ccb->rcb[1]);
-
-	clear_bit(BNAD_FP_IN_RX_PATH, &rx_ctrl->flags);
+		bnad_rxq_post(bnad, ccb->rcb[1]);
 
 	return packets;
 }
@@ -646,7 +725,7 @@ bnad_isr(int irq, void *data)
 		for (j = 0; j < bnad->num_txq_per_tx; j++) {
 			tcb = bnad->tx_info[i].tcb[j];
 			if (tcb && test_bit(BNAD_TXQ_TX_STARTED, &tcb->flags))
-				bnad_tx(bnad, bnad->tx_info[i].tcb[j]);
+				bnad_tx_complete(bnad, bnad->tx_info[i].tcb[j]);
 		}
 	}
 	/* Rx processing */
@@ -826,12 +905,9 @@ bnad_cb_tcb_setup(struct bnad *bnad, struct bna_tcb *tcb)
 {
 	struct bnad_tx_info *tx_info =
 			(struct bnad_tx_info *)tcb->txq->tx->priv;
-	struct bnad_unmap_q *unmap_q = tcb->unmap_q;
 
+	tcb->priv = tcb;
 	tx_info->tcb[tcb->id] = tcb;
-	unmap_q->producer_index = 0;
-	unmap_q->consumer_index = 0;
-	unmap_q->q_depth = BNAD_TX_UNMAPQ_DEPTH;
 }
 
 static void
@@ -839,36 +915,9 @@ bnad_cb_tcb_destroy(struct bnad *bnad, struct bna_tcb *tcb)
 {
 	struct bnad_tx_info *tx_info =
 			(struct bnad_tx_info *)tcb->txq->tx->priv;
-	struct bnad_unmap_q *unmap_q = tcb->unmap_q;
-
-	while (test_and_set_bit(BNAD_TXQ_FREE_SENT, &tcb->flags))
-		cpu_relax();
-
-	bnad_free_all_txbufs(bnad, tcb);
-
-	unmap_q->producer_index = 0;
-	unmap_q->consumer_index = 0;
-
-	smp_mb__before_clear_bit();
-	clear_bit(BNAD_TXQ_FREE_SENT, &tcb->flags);
 
 	tx_info->tcb[tcb->id] = NULL;
-}
-
-static void
-bnad_cb_rcb_setup(struct bnad *bnad, struct bna_rcb *rcb)
-{
-	struct bnad_unmap_q *unmap_q = rcb->unmap_q;
-
-	unmap_q->producer_index = 0;
-	unmap_q->consumer_index = 0;
-	unmap_q->q_depth = BNAD_RX_UNMAPQ_DEPTH;
-}
-
-static void
-bnad_cb_rcb_destroy(struct bnad *bnad, struct bna_rcb *rcb)
-{
-	bnad_free_all_rxbufs(bnad, rcb);
+	tcb->priv = NULL;
 }
 
 static void
@@ -916,7 +965,6 @@ bnad_cb_tx_resume(struct bnad *bnad, struct bna_tx *tx)
 {
 	struct bnad_tx_info *tx_info = (struct bnad_tx_info *)tx->priv;
 	struct bna_tcb *tcb;
-	struct bnad_unmap_q *unmap_q;
 	u32 txq_id;
 	int i;
 
@@ -926,23 +974,9 @@ bnad_cb_tx_resume(struct bnad *bnad, struct bna_tx *tx)
 			continue;
 		txq_id = tcb->id;
 
-		unmap_q = tcb->unmap_q;
-
-		if (test_bit(BNAD_TXQ_TX_STARTED, &tcb->flags))
-			continue;
-
-		while (test_and_set_bit(BNAD_TXQ_FREE_SENT, &tcb->flags))
-			cpu_relax();
-
-		bnad_free_all_txbufs(bnad, tcb);
-
-		unmap_q->producer_index = 0;
-		unmap_q->consumer_index = 0;
-
-		smp_mb__before_clear_bit();
-		clear_bit(BNAD_TXQ_FREE_SENT, &tcb->flags);
-
+		BUG_ON(test_bit(BNAD_TXQ_TX_STARTED, &tcb->flags));
 		set_bit(BNAD_TXQ_TX_STARTED, &tcb->flags);
+		BUG_ON(*(tcb->hw_consumer_index) != 0);
 
 		if (netif_carrier_ok(bnad->netdev)) {
 			printk(KERN_INFO "bna: %s %d TXQ_STARTED\n",
@@ -963,6 +997,48 @@ bnad_cb_tx_resume(struct bnad *bnad, struct bna_tx *tx)
 	}
 }
 
+/*
+ * Free all TxQs buffers and then notify TX_E_CLEANUP_DONE to Tx fsm.
+ */
+static void
+bnad_tx_cleanup(struct delayed_work *work)
+{
+	struct bnad_tx_info *tx_info =
+		container_of(work, struct bnad_tx_info, tx_cleanup_work);
+	struct bnad *bnad = NULL;
+	struct bna_tcb *tcb;
+	unsigned long flags;
+	u32 i, pending = 0;
+
+	for (i = 0; i < BNAD_MAX_TXQ_PER_TX; i++) {
+		tcb = tx_info->tcb[i];
+		if (!tcb)
+			continue;
+
+		bnad = tcb->bnad;
+
+		if (test_and_set_bit(BNAD_TXQ_FREE_SENT, &tcb->flags)) {
+			pending++;
+			continue;
+		}
+
+		bnad_txq_cleanup(bnad, tcb);
+
+		smp_mb__before_clear_bit();
+		clear_bit(BNAD_TXQ_FREE_SENT, &tcb->flags);
+	}
+
+	if (pending) {
+		queue_delayed_work(bnad->work_q, &tx_info->tx_cleanup_work,
+			msecs_to_jiffies(1));
+		return;
+	}
+
+	spin_lock_irqsave(&bnad->bna_lock, flags);
+	bna_tx_cleanup_complete(tx_info->tx);
+	spin_unlock_irqrestore(&bnad->bna_lock, flags);
+}
+
 static void
 bnad_cb_tx_cleanup(struct bnad *bnad, struct bna_tx *tx)
 {
@@ -976,8 +1052,7 @@ bnad_cb_tx_cleanup(struct bnad *bnad, struct bna_tx *tx)
 			continue;
 	}
 
-	mdelay(BNAD_TXRX_SYNC_MDELAY);
-	bna_tx_cleanup_complete(tx);
+	queue_delayed_work(bnad->work_q, &tx_info->tx_cleanup_work, 0);
 }
 
 static void
@@ -1001,6 +1076,44 @@ bnad_cb_rx_stall(struct bnad *bnad, struct bna_rx *rx)
 	}
 }
 
+/*
+ * Free all RxQs buffers and then notify RX_E_CLEANUP_DONE to Rx fsm.
+ */
+static void
+bnad_rx_cleanup(void *work)
+{
+	struct bnad_rx_info *rx_info =
+		container_of(work, struct bnad_rx_info, rx_cleanup_work);
+	struct bnad_rx_ctrl *rx_ctrl;
+	struct bnad *bnad = NULL;
+	unsigned long flags;
+	u32 i;
+
+	for (i = 0; i < BNAD_MAX_RXP_PER_RX; i++) {
+		rx_ctrl = &rx_info->rx_ctrl[i];
+
+		if (!rx_ctrl->ccb)
+			continue;
+
+		bnad = rx_ctrl->ccb->bnad;
+
+		/*
+		 * Wait till the poll handler has exited
+		 * and nothing can be scheduled anymore
+		 */
+		napi_disable(&rx_ctrl->napi);
+
+		bnad_cq_cleanup(bnad, rx_ctrl->ccb);
+		bnad_rxq_cleanup(bnad, rx_ctrl->ccb->rcb[0]);
+		if (rx_ctrl->ccb->rcb[1])
+			bnad_rxq_cleanup(bnad, rx_ctrl->ccb->rcb[1]);
+	}
+
+	spin_lock_irqsave(&bnad->bna_lock, flags);
+	bna_rx_cleanup_complete(rx_info->rx);
+	spin_unlock_irqrestore(&bnad->bna_lock, flags);
+}
+
 static void
 bnad_cb_rx_cleanup(struct bnad *bnad, struct bna_rx *rx)
 {
@@ -1008,8 +1121,6 @@ bnad_cb_rx_cleanup(struct bnad *bnad, struct bna_rx *rx)
 	struct bna_ccb *ccb;
 	struct bnad_rx_ctrl *rx_ctrl;
 	int i;
-
-	mdelay(BNAD_TXRX_SYNC_MDELAY);
 
 	for (i = 0; i < BNAD_MAX_RXP_PER_RX; i++) {
 		rx_ctrl = &rx_info->rx_ctrl[i];
@@ -1021,12 +1132,9 @@ bnad_cb_rx_cleanup(struct bnad *bnad, struct bna_rx *rx)
 
 		if (ccb->rcb[1])
 			clear_bit(BNAD_RXQ_STARTED, &ccb->rcb[1]->flags);
-
-		while (test_bit(BNAD_FP_IN_RX_PATH, &rx_ctrl->flags))
-			cpu_relax();
 	}
 
-	bna_rx_cleanup_complete(rx);
+	queue_work(bnad->work_q, &rx_info->rx_cleanup_work);
 }
 
 static void
@@ -1036,9 +1144,7 @@ bnad_cb_rx_post(struct bnad *bnad, struct bna_rx *rx)
 	struct bna_ccb *ccb;
 	struct bna_rcb *rcb;
 	struct bnad_rx_ctrl *rx_ctrl;
-	struct bnad_unmap_q *unmap_q;
-	int i;
-	int j;
+	int i, j;
 
 	for (i = 0; i < BNAD_MAX_RXP_PER_RX; i++) {
 		rx_ctrl = &rx_info->rx_ctrl[i];
@@ -1046,27 +1152,17 @@ bnad_cb_rx_post(struct bnad *bnad, struct bna_rx *rx)
 		if (!ccb)
 			continue;
 
-		bnad_cq_cmpl_init(bnad, ccb);
+		napi_enable(&rx_ctrl->napi);
 
 		for (j = 0; j < BNAD_MAX_RXQ_PER_RXP; j++) {
 			rcb = ccb->rcb[j];
 			if (!rcb)
 				continue;
-			bnad_free_all_rxbufs(bnad, rcb);
 
+			bnad_rxq_alloc_init(bnad, rcb);
 			set_bit(BNAD_RXQ_STARTED, &rcb->flags);
 			set_bit(BNAD_RXQ_POST_OK, &rcb->flags);
-			unmap_q = rcb->unmap_q;
-
-			/* Now allocate & post buffers for this RCB */
-			/* !!Allocation in callback context */
-			if (!test_and_set_bit(BNAD_RXQ_REFILL, &rcb->flags)) {
-				if (BNA_QE_FREE_CNT(unmap_q, unmap_q->q_depth)
-					>> BNAD_RXQ_REFILL_THRESHOLD_SHIFT)
-					bnad_alloc_n_post_rxbufs(bnad, rcb);
-					smp_mb__before_clear_bit();
-				clear_bit(BNAD_RXQ_REFILL, &rcb->flags);
-			}
+			bnad_rxq_post(bnad, rcb);
 		}
 	}
 }
@@ -1168,9 +1264,8 @@ bnad_mem_alloc(struct bnad *bnad,
 			mem_info->mdl[i].len = mem_info->len;
 			mem_info->mdl[i].kva =
 				dma_alloc_coherent(&bnad->pcidev->dev,
-						mem_info->len, &dma_pa,
-						GFP_KERNEL);
-
+						   mem_info->len, &dma_pa,
+						   GFP_KERNEL);
 			if (mem_info->mdl[i].kva == NULL)
 				goto err_return;
 
@@ -1317,8 +1412,7 @@ bnad_txrx_irq_alloc(struct bnad *bnad, enum bnad_intr_source src,
 	return 0;
 }
 
-/**
- * NOTE: Should be called for MSIX only
+/* NOTE: Should be called for MSIX only
  * Unregisters Tx MSIX vector(s) from the kernel
  */
 static void
@@ -1337,8 +1431,7 @@ bnad_tx_msix_unregister(struct bnad *bnad, struct bnad_tx_info *tx_info,
 	}
 }
 
-/**
- * NOTE: Should be called for MSIX only
+/* NOTE: Should be called for MSIX only
  * Registers Tx MSIX vector(s) and ISR(s), cookie with the kernel
  */
 static int
@@ -1369,8 +1462,7 @@ err_return:
 	return -1;
 }
 
-/**
- * NOTE: Should be called for MSIX only
+/* NOTE: Should be called for MSIX only
  * Unregisters Rx MSIX vector(s) from the kernel
  */
 static void
@@ -1390,8 +1482,7 @@ bnad_rx_msix_unregister(struct bnad *bnad, struct bnad_rx_info *rx_info,
 	}
 }
 
-/**
- * NOTE: Should be called for MSIX only
+/* NOTE: Should be called for MSIX only
  * Registers Tx MSIX vector(s) and ISR(s), cookie with the kernel
  */
 static int
@@ -1687,7 +1778,7 @@ bnad_napi_poll_rx(struct napi_struct *napi, int budget)
 	if (!netif_carrier_ok(bnad->netdev))
 		goto poll_exit;
 
-	rcvd = bnad_poll_cq(bnad, rx_ctrl->ccb, budget);
+	rcvd = bnad_cq_process(bnad, rx_ctrl->ccb, budget);
 	if (rcvd >= budget)
 		return rcvd;
 
@@ -1704,7 +1795,7 @@ poll_exit:
 
 #define BNAD_NAPI_POLL_QUOTA		64
 static void
-bnad_napi_init(struct bnad *bnad, u32 rx_id)
+bnad_napi_add(struct bnad *bnad, u32 rx_id)
 {
 	struct bnad_rx_ctrl *rx_ctrl;
 	int i;
@@ -1718,34 +1809,18 @@ bnad_napi_init(struct bnad *bnad, u32 rx_id)
 }
 
 static void
-bnad_napi_enable(struct bnad *bnad, u32 rx_id)
-{
-	struct bnad_rx_ctrl *rx_ctrl;
-	int i;
-
-	/* Initialize & enable NAPI */
-	for (i = 0; i <	bnad->num_rxp_per_rx; i++) {
-		rx_ctrl = &bnad->rx_info[rx_id].rx_ctrl[i];
-
-		napi_enable(&rx_ctrl->napi);
-	}
-}
-
-static void
-bnad_napi_disable(struct bnad *bnad, u32 rx_id)
+bnad_napi_delete(struct bnad *bnad, u32 rx_id)
 {
 	int i;
 
 	/* First disable and then clean up */
-	for (i = 0; i < bnad->num_rxp_per_rx; i++) {
-		napi_disable(&bnad->rx_info[rx_id].rx_ctrl[i].napi);
+	for (i = 0; i < bnad->num_rxp_per_rx; i++)
 		netif_napi_del(&bnad->rx_info[rx_id].rx_ctrl[i].napi);
-	}
 }
 
 /* Should be held with conf_lock held */
 void
-bnad_cleanup_tx(struct bnad *bnad, u32 tx_id)
+bnad_destroy_tx(struct bnad *bnad, u32 tx_id)
 {
 	struct bnad_tx_info *tx_info = &bnad->tx_info[tx_id];
 	struct bna_res_info *res_info = &bnad->tx_res_info[tx_id].res_info[0];
@@ -1763,9 +1838,6 @@ bnad_cleanup_tx(struct bnad *bnad, u32 tx_id)
 	if (tx_info->tcb[0]->intr_type == BNA_INTR_T_MSIX)
 		bnad_tx_msix_unregister(bnad, tx_info,
 			bnad->num_txq_per_tx);
-
-	if (0 == tx_id)
-		tasklet_kill(&bnad->tx_free_tasklet);
 
 	spin_lock_irqsave(&bnad->bna_lock, flags);
 	bna_tx_destroy(tx_info->tx);
@@ -1813,10 +1885,9 @@ bnad_setup_tx(struct bnad *bnad, u32 tx_id)
 	spin_unlock_irqrestore(&bnad->bna_lock, flags);
 
 	/* Fill Unmap Q memory requirements */
-	BNAD_FILL_UNMAPQ_MEM_REQ(
-			&res_info[BNA_TX_RES_MEM_T_UNMAPQ],
-			bnad->num_txq_per_tx,
-			BNAD_TX_UNMAPQ_DEPTH);
+	BNAD_FILL_UNMAPQ_MEM_REQ(&res_info[BNA_TX_RES_MEM_T_UNMAPQ],
+			bnad->num_txq_per_tx, (sizeof(struct bnad_tx_unmap) *
+			bnad->txq_depth));
 
 	/* Allocate resources */
 	err = bnad_tx_res_alloc(bnad, res_info, tx_id);
@@ -1831,6 +1902,9 @@ bnad_setup_tx(struct bnad *bnad, u32 tx_id)
 	if (!tx)
 		goto err_return;
 	tx_info->tx = tx;
+
+	INIT_DELAYED_WORK(&tx_info->tx_cleanup_work,
+			(work_func_t)bnad_tx_cleanup);
 
 	/* Register ISR for the Tx object */
 	if (intr_info->intr_type == BNA_INTR_T_MSIX) {
@@ -1896,7 +1970,7 @@ bnad_rx_ctrl_init(struct bnad *bnad, u32 rx_id)
 
 /* Called with mutex_lock(&bnad->conf_mutex) held */
 void
-bnad_cleanup_rx(struct bnad *bnad, u32 rx_id)
+bnad_destroy_rx(struct bnad *bnad, u32 rx_id)
 {
 	struct bnad_rx_info *rx_info = &bnad->rx_info[rx_id];
 	struct bna_rx_config *rx_config = &bnad->rx_config[rx_id];
@@ -1928,7 +2002,7 @@ bnad_cleanup_rx(struct bnad *bnad, u32 rx_id)
 	if (rx_info->rx_ctrl[0].ccb->intr_type == BNA_INTR_T_MSIX)
 		bnad_rx_msix_unregister(bnad, rx_info, rx_config->num_paths);
 
-	bnad_napi_disable(bnad, rx_id);
+	bnad_napi_delete(bnad, rx_id);
 
 	spin_lock_irqsave(&bnad->bna_lock, flags);
 	bna_rx_destroy(rx_info->rx);
@@ -1951,8 +2025,8 @@ bnad_setup_rx(struct bnad *bnad, u32 rx_id)
 			&res_info[BNA_RX_RES_T_INTR].res_u.intr_info;
 	struct bna_rx_config *rx_config = &bnad->rx_config[rx_id];
 	static const struct bna_rx_event_cbfn rx_cbfn = {
-		.rcb_setup_cbfn = bnad_cb_rcb_setup,
-		.rcb_destroy_cbfn = bnad_cb_rcb_destroy,
+		.rcb_setup_cbfn = NULL,
+		.rcb_destroy_cbfn = NULL,
 		.ccb_setup_cbfn = bnad_cb_ccb_setup,
 		.ccb_destroy_cbfn = bnad_cb_ccb_destroy,
 		.rx_stall_cbfn = bnad_cb_rx_stall,
@@ -1973,11 +2047,12 @@ bnad_setup_rx(struct bnad *bnad, u32 rx_id)
 	spin_unlock_irqrestore(&bnad->bna_lock, flags);
 
 	/* Fill Unmap Q memory requirements */
-	BNAD_FILL_UNMAPQ_MEM_REQ(
-			&res_info[BNA_RX_RES_MEM_T_UNMAPQ],
+	BNAD_FILL_UNMAPQ_MEM_REQ(&res_info[BNA_RX_RES_MEM_T_UNMAPQ],
 			rx_config->num_paths +
-			((rx_config->rxp_type == BNA_RXP_SINGLE) ? 0 :
-				rx_config->num_paths), BNAD_RX_UNMAPQ_DEPTH);
+			((rx_config->rxp_type == BNA_RXP_SINGLE) ?
+			 0 : rx_config->num_paths),
+			((bnad->rxq_depth * sizeof(struct bnad_rx_unmap)) +
+			 sizeof(struct bnad_rx_unmap_q)));
 
 	/* Allocate resource */
 	err = bnad_rx_res_alloc(bnad, res_info, rx_id);
@@ -1998,11 +2073,14 @@ bnad_setup_rx(struct bnad *bnad, u32 rx_id)
 	rx_info->rx = rx;
 	spin_unlock_irqrestore(&bnad->bna_lock, flags);
 
+	INIT_WORK(&rx_info->rx_cleanup_work,
+			(work_func_t)(bnad_rx_cleanup));
+
 	/*
 	 * Init NAPI, so that state is set to NAPI_STATE_SCHED,
 	 * so that IRQ handler cannot schedule NAPI at this point.
 	 */
-	bnad_napi_init(bnad, rx_id);
+	bnad_napi_add(bnad, rx_id);
 
 	/* Register ISR for the Rx object */
 	if (intr_info->intr_type == BNA_INTR_T_MSIX) {
@@ -2028,13 +2106,10 @@ bnad_setup_rx(struct bnad *bnad, u32 rx_id)
 	bna_rx_enable(rx);
 	spin_unlock_irqrestore(&bnad->bna_lock, flags);
 
-	/* Enable scheduling of NAPI */
-	bnad_napi_enable(bnad, rx_id);
-
 	return 0;
 
 err_return:
-	bnad_cleanup_rx(bnad, rx_id);
+	bnad_destroy_rx(bnad, rx_id);
 	return err;
 }
 
@@ -2519,7 +2594,7 @@ bnad_open(struct net_device *netdev)
 	return 0;
 
 cleanup_tx:
-	bnad_cleanup_tx(bnad, 0);
+	bnad_destroy_tx(bnad, 0);
 
 err_return:
 	mutex_unlock(&bnad->conf_mutex);
@@ -2546,8 +2621,11 @@ bnad_stop(struct net_device *netdev)
 
 	wait_for_completion(&bnad->bnad_completions.enet_comp);
 
-	bnad_cleanup_tx(bnad, 0);
-	bnad_cleanup_rx(bnad, 0);
+	bnad_destroy_tx(bnad, 0);
+	bnad_destroy_rx(bnad, 0);
+
+	/* These config flags are cleared in the hardware */
+	bnad->cfg_flags &= ~(BNAD_CF_ALLMULTI | BNAD_CF_PROMISC);
 
 	/* Synchronize mailbox IRQ */
 	bnad_mbox_irq_sync(bnad);
@@ -2558,6 +2636,116 @@ bnad_stop(struct net_device *netdev)
 }
 
 /* TX */
+/* Returns 0 for success */
+static int
+bnad_txq_wi_prepare(struct bnad *bnad, struct bna_tcb *tcb,
+		    struct sk_buff *skb, struct bna_txq_entry *txqent)
+{
+	u16 flags = 0;
+	u32 gso_size;
+	u16 vlan_tag = 0;
+
+	if (vlan_tx_tag_present(skb)) {
+		vlan_tag = (u16)vlan_tx_tag_get(skb);
+		flags |= (BNA_TXQ_WI_CF_INS_PRIO | BNA_TXQ_WI_CF_INS_VLAN);
+	}
+	if (test_bit(BNAD_RF_CEE_RUNNING, &bnad->run_flags)) {
+		vlan_tag = ((tcb->priority & 0x7) << VLAN_PRIO_SHIFT)
+				| (vlan_tag & 0x1fff);
+		flags |= (BNA_TXQ_WI_CF_INS_PRIO | BNA_TXQ_WI_CF_INS_VLAN);
+	}
+	txqent->hdr.wi.vlan_tag = htons(vlan_tag);
+
+	if (skb_is_gso(skb)) {
+		gso_size = skb_shinfo(skb)->gso_size;
+		if (unlikely(gso_size > bnad->netdev->mtu)) {
+			BNAD_UPDATE_CTR(bnad, tx_skb_mss_too_long);
+			return -EINVAL;
+		}
+		if (unlikely((gso_size + skb_transport_offset(skb) +
+			      tcp_hdrlen(skb)) >= skb->len)) {
+			txqent->hdr.wi.opcode =
+				__constant_htons(BNA_TXQ_WI_SEND);
+			txqent->hdr.wi.lso_mss = 0;
+			BNAD_UPDATE_CTR(bnad, tx_skb_tso_too_short);
+		} else {
+			txqent->hdr.wi.opcode =
+				__constant_htons(BNA_TXQ_WI_SEND_LSO);
+			txqent->hdr.wi.lso_mss = htons(gso_size);
+		}
+
+		if (bnad_tso_prepare(bnad, skb)) {
+			BNAD_UPDATE_CTR(bnad, tx_skb_tso_prepare);
+			return -EINVAL;
+		}
+
+		flags |= (BNA_TXQ_WI_CF_IP_CKSUM | BNA_TXQ_WI_CF_TCP_CKSUM);
+		txqent->hdr.wi.l4_hdr_size_n_offset =
+			htons(BNA_TXQ_WI_L4_HDR_N_OFFSET(
+			tcp_hdrlen(skb) >> 2, skb_transport_offset(skb)));
+	} else  {
+		txqent->hdr.wi.opcode =	__constant_htons(BNA_TXQ_WI_SEND);
+		txqent->hdr.wi.lso_mss = 0;
+
+		if (unlikely(skb->len > (bnad->netdev->mtu + ETH_HLEN))) {
+			BNAD_UPDATE_CTR(bnad, tx_skb_non_tso_too_long);
+			return -EINVAL;
+		}
+
+		if (skb->ip_summed == CHECKSUM_PARTIAL) {
+			u8 proto = 0;
+
+			if (skb->protocol == __constant_htons(ETH_P_IP))
+				proto = ip_hdr(skb)->protocol;
+#ifdef NETIF_F_IPV6_CSUM
+			else if (skb->protocol ==
+				 __constant_htons(ETH_P_IPV6)) {
+				/* nexthdr may not be TCP immediately. */
+				proto = ipv6_hdr(skb)->nexthdr;
+			}
+#endif
+			if (proto == IPPROTO_TCP) {
+				flags |= BNA_TXQ_WI_CF_TCP_CKSUM;
+				txqent->hdr.wi.l4_hdr_size_n_offset =
+					htons(BNA_TXQ_WI_L4_HDR_N_OFFSET
+					      (0, skb_transport_offset(skb)));
+
+				BNAD_UPDATE_CTR(bnad, tcpcsum_offload);
+
+				if (unlikely(skb_headlen(skb) <
+					    skb_transport_offset(skb) +
+				    tcp_hdrlen(skb))) {
+					BNAD_UPDATE_CTR(bnad, tx_skb_tcp_hdr);
+					return -EINVAL;
+				}
+			} else if (proto == IPPROTO_UDP) {
+				flags |= BNA_TXQ_WI_CF_UDP_CKSUM;
+				txqent->hdr.wi.l4_hdr_size_n_offset =
+					htons(BNA_TXQ_WI_L4_HDR_N_OFFSET
+					      (0, skb_transport_offset(skb)));
+
+				BNAD_UPDATE_CTR(bnad, udpcsum_offload);
+				if (unlikely(skb_headlen(skb) <
+					    skb_transport_offset(skb) +
+				    sizeof(struct udphdr))) {
+					BNAD_UPDATE_CTR(bnad, tx_skb_udp_hdr);
+					return -EINVAL;
+				}
+			} else {
+
+				BNAD_UPDATE_CTR(bnad, tx_skb_csum_err);
+				return -EINVAL;
+			}
+		} else
+			txqent->hdr.wi.l4_hdr_size_n_offset = 0;
+	}
+
+	txqent->hdr.wi.flags = htons(flags);
+	txqent->hdr.wi.frame_length = htonl(skb->len);
+
+	return 0;
+}
+
 /*
  * bnad_start_xmit : Netdev entry point for Transmit
  *		     Called under lock held by net_device
@@ -2567,35 +2755,39 @@ bnad_start_xmit(struct sk_buff *skb, struct net_device *netdev)
 {
 	struct bnad *bnad = netdev_priv(netdev);
 	u32 txq_id = 0;
-	struct bna_tcb *tcb = bnad->tx_info[0].tcb[txq_id];
-
-	u16		txq_prod, vlan_tag = 0;
-	u32		unmap_prod, wis, wis_used, wi_range;
-	u32		vectors, vect_id, i, acked;
-	int			err;
-	unsigned int		len;
-	u32				gso_size;
-
-	struct bnad_unmap_q *unmap_q = tcb->unmap_q;
+	struct bna_tcb *tcb = NULL;
+	struct bnad_tx_unmap *unmap_q, *unmap, *head_unmap;
+	u32		prod, q_depth, vect_id;
+	u32		wis, vectors, len;
+	int		i;
 	dma_addr_t		dma_addr;
 	struct bna_txq_entry *txqent;
-	u16	flags;
+
+	len = skb_headlen(skb);
+
+	/* Sanity checks for the skb */
 
 	if (unlikely(skb->len <= ETH_HLEN)) {
 		dev_kfree_skb(skb);
 		BNAD_UPDATE_CTR(bnad, tx_skb_too_short);
 		return NETDEV_TX_OK;
 	}
-	if (unlikely(skb_headlen(skb) > BFI_TX_MAX_DATA_PER_VECTOR)) {
-		dev_kfree_skb(skb);
-		BNAD_UPDATE_CTR(bnad, tx_skb_headlen_too_long);
-		return NETDEV_TX_OK;
-	}
-	if (unlikely(skb_headlen(skb) == 0)) {
+	if (unlikely(len > BFI_TX_MAX_DATA_PER_VECTOR)) {
 		dev_kfree_skb(skb);
 		BNAD_UPDATE_CTR(bnad, tx_skb_headlen_zero);
 		return NETDEV_TX_OK;
 	}
+	if (unlikely(len == 0)) {
+		dev_kfree_skb(skb);
+		BNAD_UPDATE_CTR(bnad, tx_skb_headlen_zero);
+		return NETDEV_TX_OK;
+	}
+
+	tcb = bnad->tx_info[0].tcb[txq_id];
+	q_depth = tcb->q_depth;
+	prod = tcb->producer_index;
+
+	unmap_q = tcb->unmap_q;
 
 	/*
 	 * Takes care of the Tx that is scheduled between clearing the flag
@@ -2608,21 +2800,22 @@ bnad_start_xmit(struct sk_buff *skb, struct net_device *netdev)
 	}
 
 	vectors = 1 + skb_shinfo(skb)->nr_frags;
+	wis = BNA_TXQ_WI_NEEDED(vectors);	/* 4 vectors per work item */
+
 	if (unlikely(vectors > BFI_TX_MAX_VECTORS_PER_PKT)) {
 		dev_kfree_skb(skb);
 		BNAD_UPDATE_CTR(bnad, tx_skb_max_vectors);
 		return NETDEV_TX_OK;
 	}
-	wis = BNA_TXQ_WI_NEEDED(vectors);	/* 4 vectors per work item */
-	acked = 0;
-	if (unlikely(wis > BNA_QE_FREE_CNT(tcb, tcb->q_depth) ||
-			vectors > BNA_QE_FREE_CNT(unmap_q, unmap_q->q_depth))) {
-		if ((u16) (*tcb->hw_consumer_index) !=
-		    tcb->consumer_index &&
+
+	/* Check for available TxQ resources */
+	if (unlikely(wis > BNA_QE_FREE_CNT(tcb, q_depth))) {
+		if ((*tcb->hw_consumer_index != tcb->consumer_index) &&
 		    !test_and_set_bit(BNAD_TXQ_FREE_SENT, &tcb->flags)) {
-			acked = bnad_free_txbufs(bnad, tcb);
+			u32 sent;
+			sent = bnad_txcmpl_process(bnad, tcb);
 			if (likely(test_bit(BNAD_TXQ_TX_STARTED, &tcb->flags)))
-				bna_ib_ack(tcb->i_dbell, acked);
+				bna_ib_ack(tcb->i_dbell, sent);
 			smp_mb__before_clear_bit();
 			clear_bit(BNAD_TXQ_FREE_SENT, &tcb->flags);
 		} else {
@@ -2636,9 +2829,7 @@ bnad_start_xmit(struct sk_buff *skb, struct net_device *netdev)
 		 * netif_stop_queue here, and netif_wake_queue in
 		 * interrupt handler which is not inside netif tx lock.
 		 */
-		if (likely
-		    (wis > BNA_QE_FREE_CNT(tcb, tcb->q_depth) ||
-		     vectors > BNA_QE_FREE_CNT(unmap_q, unmap_q->q_depth))) {
+		if (likely(wis > BNA_QE_FREE_CNT(tcb, q_depth))) {
 			BNAD_UPDATE_CTR(bnad, netif_queue_stop);
 			return NETDEV_TX_BUSY;
 		} else {
@@ -2647,145 +2838,37 @@ bnad_start_xmit(struct sk_buff *skb, struct net_device *netdev)
 		}
 	}
 
-	unmap_prod = unmap_q->producer_index;
-	flags = 0;
+	txqent = &((struct bna_txq_entry *)tcb->sw_q)[prod];
+	head_unmap = &unmap_q[prod];
 
-	txq_prod = tcb->producer_index;
-	BNA_TXQ_QPGE_PTR_GET(txq_prod, tcb->sw_qpt, txqent, wi_range);
+	/* Program the opcode, flags, frame_len, num_vectors in WI */
+	if (bnad_txq_wi_prepare(bnad, tcb, skb, txqent)) {
+		dev_kfree_skb(skb);
+		return NETDEV_TX_OK;
+	}
 	txqent->hdr.wi.reserved = 0;
 	txqent->hdr.wi.num_vectors = vectors;
 
-	if (vlan_tx_tag_present(skb)) {
-		vlan_tag = (u16) vlan_tx_tag_get(skb);
-		flags |= (BNA_TXQ_WI_CF_INS_PRIO | BNA_TXQ_WI_CF_INS_VLAN);
-	}
-	if (test_bit(BNAD_RF_CEE_RUNNING, &bnad->run_flags)) {
-		vlan_tag =
-			(tcb->priority & 0x7) << 13 | (vlan_tag & 0x1fff);
-		flags |= (BNA_TXQ_WI_CF_INS_PRIO | BNA_TXQ_WI_CF_INS_VLAN);
-	}
+	head_unmap->skb = skb;
+	head_unmap->nvecs = 0;
 
-	txqent->hdr.wi.vlan_tag = htons(vlan_tag);
-
-	if (skb_is_gso(skb)) {
-		gso_size = skb_shinfo(skb)->gso_size;
-
-		if (unlikely(gso_size > netdev->mtu)) {
-			dev_kfree_skb(skb);
-			BNAD_UPDATE_CTR(bnad, tx_skb_mss_too_long);
-			return NETDEV_TX_OK;
-		}
-		if (unlikely((gso_size + skb_transport_offset(skb) +
-			tcp_hdrlen(skb)) >= skb->len)) {
-			txqent->hdr.wi.opcode =
-				__constant_htons(BNA_TXQ_WI_SEND);
-			txqent->hdr.wi.lso_mss = 0;
-			BNAD_UPDATE_CTR(bnad, tx_skb_tso_too_short);
-		} else {
-			txqent->hdr.wi.opcode =
-				__constant_htons(BNA_TXQ_WI_SEND_LSO);
-			txqent->hdr.wi.lso_mss = htons(gso_size);
-		}
-
-		err = bnad_tso_prepare(bnad, skb);
-		if (unlikely(err)) {
-			dev_kfree_skb(skb);
-			BNAD_UPDATE_CTR(bnad, tx_skb_tso_prepare);
-			return NETDEV_TX_OK;
-		}
-		flags |= (BNA_TXQ_WI_CF_IP_CKSUM | BNA_TXQ_WI_CF_TCP_CKSUM);
-		txqent->hdr.wi.l4_hdr_size_n_offset =
-			htons(BNA_TXQ_WI_L4_HDR_N_OFFSET
-			      (tcp_hdrlen(skb) >> 2,
-			       skb_transport_offset(skb)));
-	} else {
-		txqent->hdr.wi.opcode =	__constant_htons(BNA_TXQ_WI_SEND);
-		txqent->hdr.wi.lso_mss = 0;
-
-		if (unlikely(skb->len > (netdev->mtu + ETH_HLEN))) {
-			dev_kfree_skb(skb);
-			BNAD_UPDATE_CTR(bnad, tx_skb_non_tso_too_long);
-			return NETDEV_TX_OK;
-		}
-
-		if (skb->ip_summed == CHECKSUM_PARTIAL) {
-			u8 proto = 0;
-
-			if (skb->protocol == __constant_htons(ETH_P_IP))
-				proto = ip_hdr(skb)->protocol;
-			else if (skb->protocol ==
-				 __constant_htons(ETH_P_IPV6)) {
-				/* nexthdr may not be TCP immediately. */
-				proto = ipv6_hdr(skb)->nexthdr;
-			}
-			if (proto == IPPROTO_TCP) {
-				flags |= BNA_TXQ_WI_CF_TCP_CKSUM;
-				txqent->hdr.wi.l4_hdr_size_n_offset =
-					htons(BNA_TXQ_WI_L4_HDR_N_OFFSET
-					      (0, skb_transport_offset(skb)));
-
-				BNAD_UPDATE_CTR(bnad, tcpcsum_offload);
-
-				if (unlikely(skb_headlen(skb) <
-				skb_transport_offset(skb) + tcp_hdrlen(skb))) {
-					dev_kfree_skb(skb);
-					BNAD_UPDATE_CTR(bnad, tx_skb_tcp_hdr);
-					return NETDEV_TX_OK;
-				}
-
-			} else if (proto == IPPROTO_UDP) {
-				flags |= BNA_TXQ_WI_CF_UDP_CKSUM;
-				txqent->hdr.wi.l4_hdr_size_n_offset =
-					htons(BNA_TXQ_WI_L4_HDR_N_OFFSET
-					      (0, skb_transport_offset(skb)));
-
-				BNAD_UPDATE_CTR(bnad, udpcsum_offload);
-				if (unlikely(skb_headlen(skb) <
-				    skb_transport_offset(skb) +
-				    sizeof(struct udphdr))) {
-					dev_kfree_skb(skb);
-					BNAD_UPDATE_CTR(bnad, tx_skb_udp_hdr);
-					return NETDEV_TX_OK;
-				}
-			} else {
-				dev_kfree_skb(skb);
-				BNAD_UPDATE_CTR(bnad, tx_skb_csum_err);
-				return NETDEV_TX_OK;
-			}
-		} else {
-			txqent->hdr.wi.l4_hdr_size_n_offset = 0;
-		}
-	}
-
-	txqent->hdr.wi.flags = htons(flags);
-
-	txqent->hdr.wi.frame_length = htonl(skb->len);
-
-	unmap_q->unmap_array[unmap_prod].skb = skb;
-	len = skb_headlen(skb);
-	txqent->vector[0].length = htons(len);
+	/* Program the vectors */
+	unmap = head_unmap;
 	dma_addr = dma_map_single(&bnad->pcidev->dev, skb->data,
-				  skb_headlen(skb), DMA_TO_DEVICE);
-	dma_unmap_addr_set(&unmap_q->unmap_array[unmap_prod], dma_addr,
-			   dma_addr);
-
+				  len, DMA_TO_DEVICE);
 	BNA_SET_DMA_ADDR(dma_addr, &txqent->vector[0].host_addr);
-	BNA_QE_INDX_ADD(unmap_prod, 1, unmap_q->q_depth);
+	txqent->vector[0].length = htons(len);
+	dma_unmap_addr_set(&unmap->vectors[0], dma_addr, dma_addr);
+	head_unmap->nvecs++;
 
-	vect_id = 0;
-	wis_used = 1;
-
-	for (i = 0; i < skb_shinfo(skb)->nr_frags; i++) {
+	for (i = 0, vect_id = 0; i < vectors - 1; i++) {
 		const struct skb_frag_struct *frag = &skb_shinfo(skb)->frags[i];
 		u16		size = skb_frag_size(frag);
 
 		if (unlikely(size == 0)) {
-			unmap_prod = unmap_q->producer_index;
-
-			unmap_prod = bnad_pci_unmap_skb(&bnad->pcidev->dev,
-					   unmap_q->unmap_array,
-					   unmap_prod, unmap_q->q_depth, skb,
-					   i);
+			/* Undo the changes starting at tcb->producer_index */
+			bnad_tx_buff_unmap(bnad, unmap_q, q_depth,
+				tcb->producer_index);
 			dev_kfree_skb(skb);
 			BNAD_UPDATE_CTR(bnad, tx_skb_frag_zero);
 			return NETDEV_TX_OK;
@@ -2793,47 +2876,35 @@ bnad_start_xmit(struct sk_buff *skb, struct net_device *netdev)
 
 		len += size;
 
-		if (++vect_id == BFI_TX_MAX_VECTORS_PER_WI) {
+		vect_id++;
+		if (vect_id == BFI_TX_MAX_VECTORS_PER_WI) {
 			vect_id = 0;
-			if (--wi_range)
-				txqent++;
-			else {
-				BNA_QE_INDX_ADD(txq_prod, wis_used,
-						tcb->q_depth);
-				wis_used = 0;
-				BNA_TXQ_QPGE_PTR_GET(txq_prod, tcb->sw_qpt,
-						     txqent, wi_range);
-			}
-			wis_used++;
+			BNA_QE_INDX_INC(prod, q_depth);
+			txqent = &((struct bna_txq_entry *)tcb->sw_q)[prod];
 			txqent->hdr.wi_ext.opcode =
 				__constant_htons(BNA_TXQ_WI_EXTENSION);
+			unmap = &unmap_q[prod];
 		}
 
-		BUG_ON(!(size <= BFI_TX_MAX_DATA_PER_VECTOR));
-		txqent->vector[vect_id].length = htons(size);
 		dma_addr = skb_frag_dma_map(&bnad->pcidev->dev, frag,
 					    0, size, DMA_TO_DEVICE);
-		dma_unmap_addr_set(&unmap_q->unmap_array[unmap_prod], dma_addr,
-				   dma_addr);
 		BNA_SET_DMA_ADDR(dma_addr, &txqent->vector[vect_id].host_addr);
-		BNA_QE_INDX_ADD(unmap_prod, 1, unmap_q->q_depth);
+		txqent->vector[vect_id].length = htons(size);
+		dma_unmap_addr_set(&unmap->vectors[vect_id], dma_addr,
+						dma_addr);
+		head_unmap->nvecs++;
 	}
 
 	if (unlikely(len != skb->len)) {
-		unmap_prod = unmap_q->producer_index;
-
-		unmap_prod = bnad_pci_unmap_skb(&bnad->pcidev->dev,
-				unmap_q->unmap_array, unmap_prod,
-				unmap_q->q_depth, skb,
-				skb_shinfo(skb)->nr_frags);
+		/* Undo the changes starting at tcb->producer_index */
+		bnad_tx_buff_unmap(bnad, unmap_q, q_depth, tcb->producer_index);
 		dev_kfree_skb(skb);
 		BNAD_UPDATE_CTR(bnad, tx_skb_len_mismatch);
 		return NETDEV_TX_OK;
 	}
 
-	unmap_q->producer_index = unmap_prod;
-	BNA_QE_INDX_ADD(txq_prod, wis_used, tcb->q_depth);
-	tcb->producer_index = txq_prod;
+	BNA_QE_INDX_INC(prod, q_depth);
+	tcb->producer_index = prod;
 
 	smp_mb();
 
@@ -2842,9 +2913,6 @@ bnad_start_xmit(struct sk_buff *skb, struct net_device *netdev)
 
 	bna_txq_prod_indx_doorbell(tcb);
 	smp_mb();
-
-	if ((u16) (*tcb->hw_consumer_index) != tcb->consumer_index)
-		tasklet_schedule(&bnad->tx_free_tasklet);
 
 	return NETDEV_TX_OK;
 }
@@ -3003,8 +3071,7 @@ bnad_change_mtu(struct net_device *netdev, int new_mtu)
 }
 
 static int
-bnad_vlan_rx_add_vid(struct net_device *netdev,
-				 unsigned short vid)
+bnad_vlan_rx_add_vid(struct net_device *netdev, __be16 proto, u16 vid)
 {
 	struct bnad *bnad = netdev_priv(netdev);
 	unsigned long flags;
@@ -3025,8 +3092,7 @@ bnad_vlan_rx_add_vid(struct net_device *netdev,
 }
 
 static int
-bnad_vlan_rx_kill_vid(struct net_device *netdev,
-				  unsigned short vid)
+bnad_vlan_rx_kill_vid(struct net_device *netdev, __be16 proto, u16 vid)
 {
 	struct bnad *bnad = netdev_priv(netdev);
 	unsigned long flags;
@@ -3105,14 +3171,14 @@ bnad_netdev_init(struct bnad *bnad, bool using_dac)
 
 	netdev->hw_features = NETIF_F_SG | NETIF_F_RXCSUM |
 		NETIF_F_IP_CSUM | NETIF_F_IPV6_CSUM |
-		NETIF_F_TSO | NETIF_F_TSO6 | NETIF_F_HW_VLAN_TX;
+		NETIF_F_TSO | NETIF_F_TSO6 | NETIF_F_HW_VLAN_CTAG_TX;
 
 	netdev->vlan_features = NETIF_F_SG | NETIF_F_HIGHDMA |
 		NETIF_F_IP_CSUM | NETIF_F_IPV6_CSUM |
 		NETIF_F_TSO | NETIF_F_TSO6;
 
 	netdev->features |= netdev->hw_features |
-		NETIF_F_HW_VLAN_RX | NETIF_F_HW_VLAN_FILTER;
+		NETIF_F_HW_VLAN_CTAG_RX | NETIF_F_HW_VLAN_CTAG_FILTER;
 
 	if (using_dac)
 		netdev->features |= NETIF_F_HIGHDMA;
@@ -3127,8 +3193,8 @@ bnad_netdev_init(struct bnad *bnad, bool using_dac)
 /*
  * 1. Initialize the bnad structure
  * 2. Setup netdev pointer in pci_dev
- * 3. Initialze Tx free tasklet
- * 4. Initialize no. of TxQ & CQs & MSIX vectors
+ * 3. Initialize no. of TxQ & CQs & MSIX vectors
+ * 4. Initialize work queue.
  */
 static int
 bnad_init(struct bnad *bnad,
@@ -3171,8 +3237,12 @@ bnad_init(struct bnad *bnad,
 	bnad->tx_coalescing_timeo = BFI_TX_COALESCING_TIMEO;
 	bnad->rx_coalescing_timeo = BFI_RX_COALESCING_TIMEO;
 
-	tasklet_init(&bnad->tx_free_tasklet, bnad_tx_free_tasklet,
-		     (unsigned long)bnad);
+	sprintf(bnad->wq_name, "%s_wq_%d", BNAD_NAME, bnad->id);
+	bnad->work_q = create_singlethread_workqueue(bnad->wq_name);
+	if (!bnad->work_q) {
+		iounmap(bnad->bar0);
+		return -ENOMEM;
+	}
 
 	return 0;
 }
@@ -3185,6 +3255,12 @@ bnad_init(struct bnad *bnad,
 static void
 bnad_uninit(struct bnad *bnad)
 {
+	if (bnad->work_q) {
+		flush_workqueue(bnad->work_q);
+		destroy_workqueue(bnad->work_q);
+		bnad->work_q = NULL;
+	}
+
 	if (bnad->bar0)
 		iounmap(bnad->bar0);
 	pci_set_drvdata(bnad->pcidev, NULL);
@@ -3255,7 +3331,7 @@ bnad_pci_uninit(struct pci_dev *pdev)
 	pci_disable_device(pdev);
 }
 
-static int __devinit
+static int
 bnad_pci_probe(struct pci_dev *pdev,
 		const struct pci_device_id *pcidev_id)
 {
@@ -3297,6 +3373,7 @@ bnad_pci_probe(struct pci_dev *pdev,
 	 *	Output : using_dac = 1 for 64 bit DMA
 	 *			   = 0 for 32 bit DMA
 	 */
+	using_dac = false;
 	err = bnad_pci_init(bnad, pdev, &using_dac);
 	if (err)
 		goto unlock_mutex;
@@ -3304,7 +3381,6 @@ bnad_pci_probe(struct pci_dev *pdev,
 	/*
 	 * Initialize bnad structure
 	 * Setup relation between pci_dev & netdev
-	 * Init Tx free tasklet
 	 */
 	err = bnad_init(bnad, pdev, netdev);
 	if (err)
@@ -3348,7 +3424,6 @@ bnad_pci_probe(struct pci_dev *pdev,
 	err = bnad_mbox_irq_alloc(bnad);
 	if (err)
 		goto res_free;
-
 
 	/* Set up timers */
 	setup_timer(&bnad->bna.ioceth.ioc.ioc_timer, bnad_ioc_timeout,
@@ -3455,7 +3530,7 @@ unlock_mutex:
 	return err;
 }
 
-static void __devexit
+static void
 bnad_pci_remove(struct pci_dev *pdev)
 {
 	struct net_device *netdev = pci_get_drvdata(pdev);
@@ -3519,7 +3594,7 @@ static struct pci_driver bnad_pci_driver = {
 	.name = BNAD_NAME,
 	.id_table = bnad_pci_id_table,
 	.probe = bnad_pci_probe,
-	.remove = __devexit_p(bnad_pci_remove),
+	.remove = bnad_pci_remove,
 };
 
 static int __init
@@ -3546,9 +3621,7 @@ static void __exit
 bnad_module_exit(void)
 {
 	pci_unregister_driver(&bnad_pci_driver);
-
-	if (bfi_fw)
-		release_firmware(bfi_fw);
+	release_firmware(bfi_fw);
 }
 
 module_init(bnad_module_init);

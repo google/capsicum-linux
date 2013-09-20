@@ -1,3 +1,5 @@
+#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
+
 #include <linux/module.h>
 #include <linux/reboot.h>
 #include <linux/init.h>
@@ -20,13 +22,12 @@
 #include <asm/virtext.h>
 #include <asm/cpu.h>
 #include <asm/nmi.h>
+#include <asm/smp.h>
 
-#ifdef CONFIG_X86_32
-# include <linux/ctype.h>
-# include <linux/mc146818rtc.h>
-#else
-# include <asm/x86_init.h>
-#endif
+#include <linux/ctype.h>
+#include <linux/mc146818rtc.h>
+#include <asm/realmode.h>
+#include <asm/x86_init.h>
 
 /*
  * Power off function, if any
@@ -35,23 +36,9 @@ void (*pm_power_off)(void);
 EXPORT_SYMBOL(pm_power_off);
 
 static const struct desc_ptr no_idt = {};
-static int reboot_mode;
-enum reboot_type reboot_type = BOOT_ACPI;
-int reboot_force;
 
-/* This variable is used privately to keep track of whether or not
- * reboot_type is still set to its default value (i.e., reboot= hasn't
- * been set on the command line).  This is needed so that we can
- * suppress DMI scanning for reboot quirks.  Without it, it's
- * impossible to override a faulty reboot quirk without recompiling.
- */
-static int reboot_default = 1;
-
-#if defined(CONFIG_X86_32) && defined(CONFIG_SMP)
-static int reboot_cpu = -1;
-#endif
-
-/* This is set if we need to go through the 'emergency' path.
+/*
+ * This is set if we need to go through the 'emergency' path.
  * When machine_emergency_restart() is called, we may be on
  * an inconsistent state and won't be able to do a clean cleanup
  */
@@ -60,78 +47,6 @@ static int reboot_emergency;
 /* This is set by the PCI code if either type 1 or type 2 PCI is detected */
 bool port_cf9_safe = false;
 
-/* reboot=b[ios] | s[mp] | t[riple] | k[bd] | e[fi] [, [w]arm | [c]old] | p[ci]
-   warm   Don't set the cold reboot flag
-   cold   Set the cold reboot flag
-   bios   Reboot by jumping through the BIOS (only for X86_32)
-   smp    Reboot by executing reset on BSP or other CPU (only for X86_32)
-   triple Force a triple fault (init)
-   kbd    Use the keyboard controller. cold reset (default)
-   acpi   Use the RESET_REG in the FADT
-   efi    Use efi reset_system runtime service
-   pci    Use the so-called "PCI reset register", CF9
-   force  Avoid anything that could hang.
- */
-static int __init reboot_setup(char *str)
-{
-	for (;;) {
-		/* Having anything passed on the command line via
-		 * reboot= will cause us to disable DMI checking
-		 * below.
-		 */
-		reboot_default = 0;
-
-		switch (*str) {
-		case 'w':
-			reboot_mode = 0x1234;
-			break;
-
-		case 'c':
-			reboot_mode = 0;
-			break;
-
-#ifdef CONFIG_X86_32
-#ifdef CONFIG_SMP
-		case 's':
-			if (isdigit(*(str+1))) {
-				reboot_cpu = (int) (*(str+1) - '0');
-				if (isdigit(*(str+2)))
-					reboot_cpu = reboot_cpu*10 + (int)(*(str+2) - '0');
-			}
-				/* we will leave sorting out the final value
-				   when we are ready to reboot, since we might not
-				   have detected BSP APIC ID or smp_num_cpu */
-			break;
-#endif /* CONFIG_SMP */
-
-		case 'b':
-#endif
-		case 'a':
-		case 'k':
-		case 't':
-		case 'e':
-		case 'p':
-			reboot_type = *str;
-			break;
-
-		case 'f':
-			reboot_force = 1;
-			break;
-		}
-
-		str = strchr(str, ',');
-		if (str)
-			str++;
-		else
-			break;
-	}
-	return 1;
-}
-
-__setup("reboot=", reboot_setup);
-
-
-#ifdef CONFIG_X86_32
 /*
  * Reboot options and system auto-detection code provided by
  * Dell Inc. so their systems "just work". :-)
@@ -145,7 +60,64 @@ static int __init set_bios_reboot(const struct dmi_system_id *d)
 {
 	if (reboot_type != BOOT_BIOS) {
 		reboot_type = BOOT_BIOS;
-		printk(KERN_INFO "%s series board detected. Selecting BIOS-method for reboots.\n", d->ident);
+		pr_info("%s series board detected. Selecting %s-method for reboots.\n",
+			"BIOS", d->ident);
+	}
+	return 0;
+}
+
+void __noreturn machine_real_restart(unsigned int type)
+{
+	local_irq_disable();
+
+	/*
+	 * Write zero to CMOS register number 0x0f, which the BIOS POST
+	 * routine will recognize as telling it to do a proper reboot.  (Well
+	 * that's what this book in front of me says -- it may only apply to
+	 * the Phoenix BIOS though, it's not clear).  At the same time,
+	 * disable NMIs by setting the top bit in the CMOS address register,
+	 * as we're about to do peculiar things to the CPU.  I'm not sure if
+	 * `outb_p' is needed instead of just `outb'.  Use it to be on the
+	 * safe side.  (Yes, CMOS_WRITE does outb_p's. -  Paul G.)
+	 */
+	spin_lock(&rtc_lock);
+	CMOS_WRITE(0x00, 0x8f);
+	spin_unlock(&rtc_lock);
+
+	/*
+	 * Switch back to the initial page table.
+	 */
+#ifdef CONFIG_X86_32
+	load_cr3(initial_page_table);
+#else
+	write_cr3(real_mode_header->trampoline_pgd);
+#endif
+
+	/* Jump to the identity-mapped low memory code */
+#ifdef CONFIG_X86_32
+	asm volatile("jmpl *%0" : :
+		     "rm" (real_mode_header->machine_real_restart_asm),
+		     "a" (type));
+#else
+	asm volatile("ljmpl *%0" : :
+		     "m" (real_mode_header->machine_real_restart_asm),
+		     "D" (type));
+#endif
+	unreachable();
+}
+#ifdef CONFIG_APM_MODULE
+EXPORT_SYMBOL(machine_real_restart);
+#endif
+
+/*
+ * Some Apple MacBook and MacBookPro's needs reboot=p to be able to reboot
+ */
+static int __init set_pci_reboot(const struct dmi_system_id *d)
+{
+	if (reboot_type != BOOT_CF9) {
+		reboot_type = BOOT_CF9;
+		pr_info("%s series board detected. Selecting %s-method for reboots.\n",
+			"PCI", d->ident);
 	}
 	return 0;
 }
@@ -154,11 +126,15 @@ static int __init set_kbd_reboot(const struct dmi_system_id *d)
 {
 	if (reboot_type != BOOT_KBD) {
 		reboot_type = BOOT_KBD;
-		printk(KERN_INFO "%s series board detected. Selecting KBD-method for reboot.\n", d->ident);
+		pr_info("%s series board detected. Selecting %s-method for reboot.\n",
+			"KBD", d->ident);
 	}
 	return 0;
 }
 
+/*
+ * This is a single dmi_table handling all reboot quirks.
+ */
 static struct dmi_system_id __initdata reboot_dmi_table[] = {
 	{	/* Handle problems with rebooting on Dell E520's */
 		.callback = set_bios_reboot,
@@ -184,7 +160,7 @@ static struct dmi_system_id __initdata reboot_dmi_table[] = {
 			DMI_MATCH(DMI_PRODUCT_NAME, "PowerEdge 300/"),
 		},
 	},
-	{       /* Handle problems with rebooting on Dell Optiplex 745's SFF*/
+	{	/* Handle problems with rebooting on Dell Optiplex 745's SFF */
 		.callback = set_bios_reboot,
 		.ident = "Dell OptiPlex 745",
 		.matches = {
@@ -192,7 +168,7 @@ static struct dmi_system_id __initdata reboot_dmi_table[] = {
 			DMI_MATCH(DMI_PRODUCT_NAME, "OptiPlex 745"),
 		},
 	},
-	{       /* Handle problems with rebooting on Dell Optiplex 745's DFF*/
+	{	/* Handle problems with rebooting on Dell Optiplex 745's DFF */
 		.callback = set_bios_reboot,
 		.ident = "Dell OptiPlex 745",
 		.matches = {
@@ -201,7 +177,7 @@ static struct dmi_system_id __initdata reboot_dmi_table[] = {
 			DMI_MATCH(DMI_BOARD_NAME, "0MM599"),
 		},
 	},
-	{       /* Handle problems with rebooting on Dell Optiplex 745 with 0KW626 */
+	{	/* Handle problems with rebooting on Dell Optiplex 745 with 0KW626 */
 		.callback = set_bios_reboot,
 		.ident = "Dell OptiPlex 745",
 		.matches = {
@@ -210,7 +186,7 @@ static struct dmi_system_id __initdata reboot_dmi_table[] = {
 			DMI_MATCH(DMI_BOARD_NAME, "0KW626"),
 		},
 	},
-	{   /* Handle problems with rebooting on Dell Optiplex 330 with 0KP561 */
+	{	/* Handle problems with rebooting on Dell Optiplex 330 with 0KP561 */
 		.callback = set_bios_reboot,
 		.ident = "Dell OptiPlex 330",
 		.matches = {
@@ -219,7 +195,7 @@ static struct dmi_system_id __initdata reboot_dmi_table[] = {
 			DMI_MATCH(DMI_BOARD_NAME, "0KP561"),
 		},
 	},
-	{   /* Handle problems with rebooting on Dell Optiplex 360 with 0T656F */
+	{	/* Handle problems with rebooting on Dell Optiplex 360 with 0T656F */
 		.callback = set_bios_reboot,
 		.ident = "Dell OptiPlex 360",
 		.matches = {
@@ -228,7 +204,7 @@ static struct dmi_system_id __initdata reboot_dmi_table[] = {
 			DMI_MATCH(DMI_BOARD_NAME, "0T656F"),
 		},
 	},
-	{	/* Handle problems with rebooting on Dell OptiPlex 760 with 0G919G*/
+	{	/* Handle problems with rebooting on Dell OptiPlex 760 with 0G919G */
 		.callback = set_bios_reboot,
 		.ident = "Dell OptiPlex 760",
 		.matches = {
@@ -293,15 +269,7 @@ static struct dmi_system_id __initdata reboot_dmi_table[] = {
 			DMI_MATCH(DMI_PRODUCT_NAME, "VGN-Z540N"),
 		},
 	},
-	{	/* Handle problems with rebooting on CompuLab SBC-FITPC2 */
-		.callback = set_bios_reboot,
-		.ident = "CompuLab SBC-FITPC2",
-		.matches = {
-			DMI_MATCH(DMI_SYS_VENDOR, "CompuLab"),
-			DMI_MATCH(DMI_PRODUCT_NAME, "SBC-FITPC2"),
-		},
-	},
-	{       /* Handle problems with rebooting on ASUS P4S800 */
+	{	/* Handle problems with rebooting on ASUS P4S800 */
 		.callback = set_bios_reboot,
 		.ident = "ASUS P4S800",
 		.matches = {
@@ -309,7 +277,8 @@ static struct dmi_system_id __initdata reboot_dmi_table[] = {
 			DMI_MATCH(DMI_BOARD_NAME, "P4S800"),
 		},
 	},
-	{ /* Handle reboot issue on Acer Aspire one */
+
+	{	/* Handle reboot issue on Acer Aspire one */
 		.callback = set_kbd_reboot,
 		.ident = "Acer Aspire One A110",
 		.matches = {
@@ -317,96 +286,6 @@ static struct dmi_system_id __initdata reboot_dmi_table[] = {
 			DMI_MATCH(DMI_PRODUCT_NAME, "AOA110"),
 		},
 	},
-	{ }
-};
-
-static int __init reboot_init(void)
-{
-	/* Only do the DMI check if reboot_type hasn't been overridden
-	 * on the command line
-	 */
-	if (reboot_default) {
-		dmi_check_system(reboot_dmi_table);
-	}
-	return 0;
-}
-core_initcall(reboot_init);
-
-extern const unsigned char machine_real_restart_asm[];
-extern const u64 machine_real_restart_gdt[3];
-
-void machine_real_restart(unsigned int type)
-{
-	void *restart_va;
-	unsigned long restart_pa;
-	void (*restart_lowmem)(unsigned int);
-	u64 *lowmem_gdt;
-
-	local_irq_disable();
-
-	/* Write zero to CMOS register number 0x0f, which the BIOS POST
-	   routine will recognize as telling it to do a proper reboot.  (Well
-	   that's what this book in front of me says -- it may only apply to
-	   the Phoenix BIOS though, it's not clear).  At the same time,
-	   disable NMIs by setting the top bit in the CMOS address register,
-	   as we're about to do peculiar things to the CPU.  I'm not sure if
-	   `outb_p' is needed instead of just `outb'.  Use it to be on the
-	   safe side.  (Yes, CMOS_WRITE does outb_p's. -  Paul G.)
-	 */
-	spin_lock(&rtc_lock);
-	CMOS_WRITE(0x00, 0x8f);
-	spin_unlock(&rtc_lock);
-
-	/*
-	 * Switch back to the initial page table.
-	 */
-	load_cr3(initial_page_table);
-
-	/* Write 0x1234 to absolute memory location 0x472.  The BIOS reads
-	   this on booting to tell it to "Bypass memory test (also warm
-	   boot)".  This seems like a fairly standard thing that gets set by
-	   REBOOT.COM programs, and the previous reset routine did this
-	   too. */
-	*((unsigned short *)0x472) = reboot_mode;
-
-	/* Patch the GDT in the low memory trampoline */
-	lowmem_gdt = TRAMPOLINE_SYM(machine_real_restart_gdt);
-
-	restart_va = TRAMPOLINE_SYM(machine_real_restart_asm);
-	restart_pa = virt_to_phys(restart_va);
-	restart_lowmem = (void (*)(unsigned int))restart_pa;
-
-	/* GDT[0]: GDT self-pointer */
-	lowmem_gdt[0] =
-		(u64)(sizeof(machine_real_restart_gdt) - 1) +
-		((u64)virt_to_phys(lowmem_gdt) << 16);
-	/* GDT[1]: 64K real mode code segment */
-	lowmem_gdt[1] =
-		GDT_ENTRY(0x009b, restart_pa, 0xffff);
-
-	/* Jump to the identity-mapped low memory code */
-	restart_lowmem(type);
-}
-#ifdef CONFIG_APM_MODULE
-EXPORT_SYMBOL(machine_real_restart);
-#endif
-
-#endif /* CONFIG_X86_32 */
-
-/*
- * Some Apple MacBook and MacBookPro's needs reboot=p to be able to reboot
- */
-static int __init set_pci_reboot(const struct dmi_system_id *d)
-{
-	if (reboot_type != BOOT_CF9) {
-		reboot_type = BOOT_CF9;
-		printk(KERN_INFO "%s series board detected. "
-		       "Selecting PCI-method for reboots.\n", d->ident);
-	}
-	return 0;
-}
-
-static struct dmi_system_id __initdata pci_reboot_dmi_table[] = {
 	{	/* Handle problems with rebooting on Apple MacBook5 */
 		.callback = set_pci_reboot,
 		.ident = "Apple MacBook5",
@@ -471,20 +350,28 @@ static struct dmi_system_id __initdata pci_reboot_dmi_table[] = {
 			DMI_MATCH(DMI_PRODUCT_NAME, "OptiPlex 990"),
 		},
 	},
+	{	/* Handle problems with rebooting on the Precision M6600. */
+		.callback = set_pci_reboot,
+		.ident = "Dell OptiPlex 990",
+		.matches = {
+			DMI_MATCH(DMI_SYS_VENDOR, "Dell Inc."),
+			DMI_MATCH(DMI_PRODUCT_NAME, "Precision M6600"),
+		},
+	},
 	{ }
 };
 
-static int __init pci_reboot_init(void)
+static int __init reboot_init(void)
 {
-	/* Only do the DMI check if reboot_type hasn't been overridden
+	/*
+	 * Only do the DMI check if reboot_type hasn't been overridden
 	 * on the command line
 	 */
-	if (reboot_default) {
-		dmi_check_system(pci_reboot_dmi_table);
-	}
+	if (reboot_default)
+		dmi_check_system(reboot_dmi_table);
 	return 0;
 }
-core_initcall(pci_reboot_init);
+core_initcall(reboot_init);
 
 static inline void kb_wait(void)
 {
@@ -502,14 +389,14 @@ static void vmxoff_nmi(int cpu, struct pt_regs *regs)
 	cpu_emergency_vmxoff();
 }
 
-/* Use NMIs as IPIs to tell all CPUs to disable virtualization
- */
+/* Use NMIs as IPIs to tell all CPUs to disable virtualization */
 static void emergency_vmx_disable_all(void)
 {
 	/* Just make sure we won't change CPUs while doing this */
 	local_irq_disable();
 
-	/* We need to disable VMX on all CPUs before rebooting, otherwise
+	/*
+	 * We need to disable VMX on all CPUs before rebooting, otherwise
 	 * we risk hanging up the machine, because the CPU ignore INIT
 	 * signals when VMX is enabled.
 	 *
@@ -528,8 +415,7 @@ static void emergency_vmx_disable_all(void)
 	 * is still enabling VMX.
 	 */
 	if (cpu_has_vmx() && cpu_vmx_enabled()) {
-		/* Disable VMX on this CPU.
-		 */
+		/* Disable VMX on this CPU. */
 		cpu_vmxoff();
 
 		/* Halt and disable VMX on the other CPUs */
@@ -561,6 +447,7 @@ static void native_machine_emergency_restart(void)
 	int i;
 	int attempt = 0;
 	int orig_reboot_type = reboot_type;
+	unsigned short mode;
 
 	if (reboot_emergency)
 		emergency_vmx_disable_all();
@@ -568,18 +455,19 @@ static void native_machine_emergency_restart(void)
 	tboot_shutdown(TB_SHUTDOWN_REBOOT);
 
 	/* Tell the BIOS if we want cold or warm reboot */
-	*((unsigned short *)__va(0x472)) = reboot_mode;
+	mode = reboot_mode == REBOOT_WARM ? 0x1234 : 0;
+	*((unsigned short *)__va(0x472)) = mode;
 
 	for (;;) {
 		/* Could also try the reset bit in the Hammer NB */
 		switch (reboot_type) {
 		case BOOT_KBD:
-			mach_reboot_fixups(); /* for board specific fixups */
+			mach_reboot_fixups(); /* For board specific fixups */
 
 			for (i = 0; i < 10; i++) {
 				kb_wait();
 				udelay(50);
-				outb(0xfe, 0x64); /* pulse reset low */
+				outb(0xfe, 0x64); /* Pulse reset low */
 				udelay(50);
 			}
 			if (attempt == 0 && orig_reboot_type == BOOT_ACPI) {
@@ -597,13 +485,11 @@ static void native_machine_emergency_restart(void)
 			reboot_type = BOOT_KBD;
 			break;
 
-#ifdef CONFIG_X86_32
 		case BOOT_BIOS:
 			machine_real_restart(MRR_BIOS);
 
 			reboot_type = BOOT_KBD;
 			break;
-#endif
 
 		case BOOT_ACPI:
 			acpi_reboot();
@@ -611,8 +497,8 @@ static void native_machine_emergency_restart(void)
 			break;
 
 		case BOOT_EFI:
-			if (efi_enabled)
-				efi.reset_system(reboot_mode ?
+			if (efi_enabled(EFI_RUNTIME_SERVICES))
+				efi.reset_system(reboot_mode == REBOOT_WARM ?
 						 EFI_RESET_WARM :
 						 EFI_RESET_COLD,
 						 EFI_SUCCESS, 0, NULL);
@@ -621,7 +507,7 @@ static void native_machine_emergency_restart(void)
 
 		case BOOT_CF9:
 			port_cf9_safe = true;
-			/* fall through */
+			/* Fall through */
 
 		case BOOT_CF9_COND:
 			if (port_cf9_safe) {
@@ -641,27 +527,12 @@ void native_machine_shutdown(void)
 {
 	/* Stop the cpus and apics */
 #ifdef CONFIG_SMP
-
-	/* The boot cpu is always logical cpu 0 */
-	int reboot_cpu_id = 0;
-
-#ifdef CONFIG_X86_32
-	/* See if there has been given a command line override */
-	if ((reboot_cpu != -1) && (reboot_cpu < nr_cpu_ids) &&
-		cpu_online(reboot_cpu))
-		reboot_cpu_id = reboot_cpu;
-#endif
-
-	/* Make certain the cpu I'm about to reboot on is online */
-	if (!cpu_online(reboot_cpu_id))
-		reboot_cpu_id = smp_processor_id();
-
-	/* Make certain I only run on the appropriate processor */
-	set_cpus_allowed_ptr(current, cpumask_of(reboot_cpu_id));
-
-	/* O.K Now that I'm on the appropriate processor,
-	 * stop all of the others.
+	/*
+	 * Stop all of the others. Also disable the local irq to
+	 * not receive the per-cpu timer interrupt which may trigger
+	 * scheduler's load balance.
 	 */
+	local_irq_disable();
 	stop_other_cpus();
 #endif
 
@@ -688,7 +559,7 @@ static void __machine_emergency_restart(int emergency)
 
 static void native_machine_restart(char *__unused)
 {
-	printk("machine restart\n");
+	pr_notice("machine restart\n");
 
 	if (!reboot_force)
 		machine_shutdown();
@@ -697,12 +568,11 @@ static void native_machine_restart(char *__unused)
 
 static void native_machine_halt(void)
 {
-	/* stop other cpus and apics */
+	/* Stop other cpus and apics */
 	machine_shutdown();
 
 	tboot_shutdown(TB_SHUTDOWN_HALT);
 
-	/* stop this cpu */
 	stop_this_cpu(NULL);
 }
 
@@ -713,7 +583,7 @@ static void native_machine_power_off(void)
 			machine_shutdown();
 		pm_power_off();
 	}
-	/* a fallback in case there is no PM info available */
+	/* A fallback in case there is no PM info available */
 	tboot_shutdown(TB_SHUTDOWN_HALT);
 }
 
@@ -775,7 +645,8 @@ static int crash_nmi_callback(unsigned int val, struct pt_regs *regs)
 
 	cpu = raw_smp_processor_id();
 
-	/* Don't do anything if this handler is invoked on crashing cpu.
+	/*
+	 * Don't do anything if this handler is invoked on crashing cpu.
 	 * Otherwise, system will completely hang. Crashing cpu can get
 	 * an NMI if system was initially booted with nmi_watchdog parameter.
 	 */
@@ -799,7 +670,8 @@ static void smp_send_nmi_allbutself(void)
 	apic->send_IPI_allbutself(NMI_VECTOR);
 }
 
-/* Halt all other CPUs, calling the specified function on each of them
+/*
+ * Halt all other CPUs, calling the specified function on each of them
  *
  * This function can be used to halt all other CPUs on crash
  * or emergency reboot time. The function passed as parameter
@@ -810,7 +682,7 @@ void nmi_shootdown_cpus(nmi_shootdown_cb callback)
 	unsigned long msecs;
 	local_irq_disable();
 
-	/* Make a note of crashing cpu. Will be used in NMI callback.*/
+	/* Make a note of crashing cpu. Will be used in NMI callback. */
 	crashing_cpu = safe_smp_processor_id();
 
 	shootdown_callback = callback;
@@ -819,8 +691,9 @@ void nmi_shootdown_cpus(nmi_shootdown_cb callback)
 	/* Would it be better to replace the trap vector here? */
 	if (register_nmi_handler(NMI_LOCAL, crash_nmi_callback,
 				 NMI_FLAG_FIRST, "crash"))
-		return;		/* return what? */
-	/* Ensure the new callback function is set before sending
+		return;		/* Return what? */
+	/*
+	 * Ensure the new callback function is set before sending
 	 * out the NMI
 	 */
 	wmb();

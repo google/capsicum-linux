@@ -162,13 +162,13 @@ adm1031_write_value(struct i2c_client *client, u8 reg, unsigned int value)
 static int FAN_TO_REG(int reg, int div)
 {
 	int tmp;
-	tmp = FAN_FROM_REG(SENSORS_LIMIT(reg, 0, 65535), div);
+	tmp = FAN_FROM_REG(clamp_val(reg, 0, 65535), div);
 	return tmp > 255 ? 255 : tmp;
 }
 
 #define FAN_DIV_FROM_REG(reg)		(1<<(((reg)&0xc0)>>6))
 
-#define PWM_TO_REG(val)			(SENSORS_LIMIT((val), 0, 255) >> 4)
+#define PWM_TO_REG(val)			(clamp_val((val), 0, 255) >> 4)
 #define PWM_FROM_REG(val)		((val) << 4)
 
 #define FAN_CHAN_FROM_REG(reg)		(((reg) >> 5) & 7)
@@ -675,7 +675,7 @@ static ssize_t set_temp_offset(struct device *dev,
 	if (ret)
 		return ret;
 
-	val = SENSORS_LIMIT(val, -15000, 15000);
+	val = clamp_val(val, -15000, 15000);
 	mutex_lock(&data->update_lock);
 	data->temp_offset[nr] = TEMP_OFFSET_TO_REG(val);
 	adm1031_write_value(client, ADM1031_REG_TEMP_OFFSET(nr),
@@ -696,7 +696,7 @@ static ssize_t set_temp_min(struct device *dev, struct device_attribute *attr,
 	if (ret)
 		return ret;
 
-	val = SENSORS_LIMIT(val, -55000, nr == 0 ? 127750 : 127875);
+	val = clamp_val(val, -55000, nr == 0 ? 127750 : 127875);
 	mutex_lock(&data->update_lock);
 	data->temp_min[nr] = TEMP_TO_REG(val);
 	adm1031_write_value(client, ADM1031_REG_TEMP_MIN(nr),
@@ -717,7 +717,7 @@ static ssize_t set_temp_max(struct device *dev, struct device_attribute *attr,
 	if (ret)
 		return ret;
 
-	val = SENSORS_LIMIT(val, -55000, nr == 0 ? 127750 : 127875);
+	val = clamp_val(val, -55000, nr == 0 ? 127750 : 127875);
 	mutex_lock(&data->update_lock);
 	data->temp_max[nr] = TEMP_TO_REG(val);
 	adm1031_write_value(client, ADM1031_REG_TEMP_MAX(nr),
@@ -738,7 +738,7 @@ static ssize_t set_temp_crit(struct device *dev, struct device_attribute *attr,
 	if (ret)
 		return ret;
 
-	val = SENSORS_LIMIT(val, -55000, nr == 0 ? 127750 : 127875);
+	val = clamp_val(val, -55000, nr == 0 ? 127750 : 127875);
 	mutex_lock(&data->update_lock);
 	data->temp_crit[nr] = TEMP_TO_REG(val);
 	adm1031_write_value(client, ADM1031_REG_TEMP_CRIT(nr),
@@ -954,11 +954,10 @@ static int adm1031_probe(struct i2c_client *client,
 	struct adm1031_data *data;
 	int err;
 
-	data = kzalloc(sizeof(struct adm1031_data), GFP_KERNEL);
-	if (!data) {
-		err = -ENOMEM;
-		goto exit;
-	}
+	data = devm_kzalloc(&client->dev, sizeof(struct adm1031_data),
+			    GFP_KERNEL);
+	if (!data)
+		return -ENOMEM;
 
 	i2c_set_clientdata(client, data);
 	data->chip_type = id->driver_data;
@@ -975,7 +974,7 @@ static int adm1031_probe(struct i2c_client *client,
 	/* Register sysfs hooks */
 	err = sysfs_create_group(&client->dev.kobj, &adm1031_group);
 	if (err)
-		goto exit_free;
+		return err;
 
 	if (data->chip_type == adm1031) {
 		err = sysfs_create_group(&client->dev.kobj, &adm1031_group_opt);
@@ -994,9 +993,6 @@ static int adm1031_probe(struct i2c_client *client,
 exit_remove:
 	sysfs_remove_group(&client->dev.kobj, &adm1031_group);
 	sysfs_remove_group(&client->dev.kobj, &adm1031_group_opt);
-exit_free:
-	kfree(data);
-exit:
 	return err;
 }
 
@@ -1007,7 +1003,6 @@ static int adm1031_remove(struct i2c_client *client)
 	hwmon_device_unregister(data->hwmon_dev);
 	sysfs_remove_group(&client->dev.kobj, &adm1031_group);
 	sysfs_remove_group(&client->dev.kobj, &adm1031_group_opt);
-	kfree(data);
 	return 0;
 }
 

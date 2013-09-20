@@ -13,12 +13,6 @@ config RWSEM_GENERIC_SPINLOCK
 config RWSEM_XCHGADD_ALGORITHM
 	bool
 
-config GENERIC_CMOS_UPDATE
-	def_bool y
-
-config ARCH_USES_GETTIMEOFFSET
-	def_bool n
-
 config ARCH_HAS_ILOG2_U32
 	bool
 	default n
@@ -46,9 +40,19 @@ config CRIS
 	bool
 	default y
 	select HAVE_IDE
+	select GENERIC_ATOMIC64
 	select HAVE_GENERIC_HARDIRQS
+	select HAVE_UID16
+	select VIRT_TO_BUS
+	select ARCH_WANT_IPC_PARSE_VERSION
 	select GENERIC_IRQ_SHOW
 	select GENERIC_IOMAP
+	select GENERIC_SMP_IDLE_THREAD if ETRAX_ARCH_V32
+	select GENERIC_CMOS_UPDATE
+	select MODULES_USE_ELF_RELA
+	select CLONE_BACKWARDS2
+	select OLD_SIGSUSPEND
+	select OLD_SIGACTION
 
 config HZ
 	int
@@ -130,20 +134,17 @@ config SVINTO_SIM
 
 config ETRAXFS
 	bool "ETRAX-FS-V32"
+	select CPU_FREQ_TABLE if CPU_FREQ
 	help
 	  Support CRIS V32.
 
 config CRIS_MACH_ARTPEC3
         bool "ARTPEC-3"
+	select CPU_FREQ_TABLE if CPU_FREQ
         help
           Support Axis ARTPEC-3.
 
 endchoice
-
-config ETRAX_VCS_SIM
-	bool "VCS Simulator"
-	help
-	  Setup hardware to be run in the VCS simulator.
 
 config ETRAX_ARCH_V10
        bool
@@ -265,7 +266,6 @@ config ETRAX_AXISFLASHMAP
 	select MTD_CFI
 	select MTD_CFI_AMDSTD
 	select MTD_JEDECPROBE if ETRAX_ARCH_V32
-	select MTD_CHAR
 	select MTD_BLOCK
 	select MTD_COMPLEX_MAPPINGS
 	help
@@ -639,39 +639,9 @@ endchoice
 
 endmenu
 
-source "drivers/base/Kconfig"
-
-# standard linux drivers
-source "drivers/mtd/Kconfig"
-
-source "drivers/parport/Kconfig"
-
-source "drivers/pnp/Kconfig"
-
-source "drivers/block/Kconfig"
-
-source "drivers/ide/Kconfig"
-
-source "drivers/net/Kconfig"
-
-source "drivers/i2c/Kconfig"
-
-source "drivers/rtc/Kconfig"
-
-#
-# input before char - char/joystick depends on it. As does USB.
-#
-source "drivers/input/Kconfig"
-
-source "drivers/char/Kconfig"
+source "drivers/Kconfig"
 
 source "fs/Kconfig"
-
-source "drivers/usb/Kconfig"
-
-source "drivers/uwb/Kconfig"
-
-source "drivers/staging/Kconfig"
 
 source "arch/cris/Kconfig.debug"
 

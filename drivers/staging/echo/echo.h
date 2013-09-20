@@ -36,7 +36,6 @@ What does it do?
 This module aims to provide G.168-2002 compliant echo cancellation, to remove
 electrical echoes (e.g. from 2-4 wire hybrids) from voice calls.
 
-
 How does it work?
 
 The heart of the echo cancellor is FIR filter. This is adapted to match the
@@ -128,7 +127,8 @@ a minor burden.
     echo canceller.
 */
 struct oslec_state {
-	int16_t tx, rx;
+	int16_t tx;
+	int16_t rx;
 	int16_t clean;
 	int16_t clean_nlp;
 
@@ -139,17 +139,24 @@ struct oslec_state {
 	int adaption_mode;
 
 	int cond_met;
-	int32_t Pstates;
+	int32_t pstates;
 	int16_t adapt;
 	int32_t factor;
 	int16_t shift;
 
 	/* Average levels and averaging filter states */
-	int Ltxacc, Lrxacc, Lcleanacc, Lclean_bgacc;
-	int Ltx, Lrx;
-	int Lclean;
-	int Lclean_bg;
-	int Lbgn, Lbgn_acc, Lbgn_upper, Lbgn_upper_acc;
+	int ltxacc;
+	int lrxacc;
+	int lcleanacc;
+	int lclean_bgacc;
+	int ltx;
+	int lrx;
+	int lclean;
+	int lclean_bg;
+	int lbgn;
+	int lbgn_acc;
+	int lbgn_upper;
+	int lbgn_upper_acc;
 
 	/* foreground and background filter states */
 	struct fir16_state_t fir_state;
@@ -157,11 +164,16 @@ struct oslec_state {
 	int16_t *fir_taps16[2];
 
 	/* DC blocking filter states */
-	int tx_1, tx_2, rx_1, rx_2;
+	int tx_1;
+	int tx_2;
+	int rx_1;
+	int rx_2;
 
 	/* optional High Pass Filter states */
-	int32_t xvtx[5], yvtx[5];
-	int32_t xvrx[5], yvrx[5];
+	int32_t xvtx[5];
+	int32_t yvtx[5];
+	int32_t xvrx[5];
+	int32_t yvrx[5];
 
 	/* Parameters for the optional Hoth noise generator */
 	int cng_level;

@@ -14,6 +14,8 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
+
 #include <linux/kernel.h>
 #include <linux/export.h>
 #include <net/cfg80211.h>
@@ -40,11 +42,11 @@ static int __ath_regd_init(struct ath_regulatory *reg);
 				NL80211_RRF_PASSIVE_SCAN | NL80211_RRF_NO_OFDM)
 
 /* We allow IBSS on these on a case by case basis by regulatory domain */
-#define ATH9K_5GHZ_5150_5350	REG_RULE(5150-10, 5350+10, 40, 0, 30,\
+#define ATH9K_5GHZ_5150_5350	REG_RULE(5150-10, 5350+10, 80, 0, 30,\
 				NL80211_RRF_PASSIVE_SCAN | NL80211_RRF_NO_IBSS)
-#define ATH9K_5GHZ_5470_5850	REG_RULE(5470-10, 5850+10, 40, 0, 30,\
+#define ATH9K_5GHZ_5470_5850	REG_RULE(5470-10, 5850+10, 80, 0, 30,\
 				NL80211_RRF_PASSIVE_SCAN | NL80211_RRF_NO_IBSS)
-#define ATH9K_5GHZ_5725_5850	REG_RULE(5725-10, 5850+10, 40, 0, 30,\
+#define ATH9K_5GHZ_5725_5850	REG_RULE(5725-10, 5850+10, 80, 0, 30,\
 				NL80211_RRF_PASSIVE_SCAN | NL80211_RRF_NO_IBSS)
 
 #define ATH9K_2GHZ_ALL		ATH9K_2GHZ_CH01_11, \
@@ -193,8 +195,6 @@ ath_reg_apply_beaconing_flags(struct wiphy *wiphy,
 	const struct ieee80211_reg_rule *reg_rule;
 	struct ieee80211_channel *ch;
 	unsigned int i;
-	u32 bandwidth = 0;
-	int r;
 
 	for (band = 0; band < IEEE80211_NUM_BANDS; band++) {
 
@@ -212,11 +212,8 @@ ath_reg_apply_beaconing_flags(struct wiphy *wiphy,
 				continue;
 
 			if (initiator == NL80211_REGDOM_SET_BY_COUNTRY_IE) {
-				r = freq_reg_info(wiphy,
-						  ch->center_freq,
-						  bandwidth,
-						  &reg_rule);
-				if (r)
+				reg_rule = freq_reg_info(wiphy, ch->center_freq);
+				if (IS_ERR(reg_rule))
 					continue;
 				/*
 				 * If 11d had a rule for this channel ensure
@@ -252,8 +249,6 @@ ath_reg_apply_active_scan_flags(struct wiphy *wiphy,
 	struct ieee80211_supported_band *sband;
 	struct ieee80211_channel *ch;
 	const struct ieee80211_reg_rule *reg_rule;
-	u32 bandwidth = 0;
-	int r;
 
 	sband = wiphy->bands[IEEE80211_BAND_2GHZ];
 	if (!sband)
@@ -281,16 +276,16 @@ ath_reg_apply_active_scan_flags(struct wiphy *wiphy,
 	 */
 
 	ch = &sband->channels[11]; /* CH 12 */
-	r = freq_reg_info(wiphy, ch->center_freq, bandwidth, &reg_rule);
-	if (!r) {
+	reg_rule = freq_reg_info(wiphy, ch->center_freq);
+	if (!IS_ERR(reg_rule)) {
 		if (!(reg_rule->flags & NL80211_RRF_PASSIVE_SCAN))
 			if (ch->flags & IEEE80211_CHAN_PASSIVE_SCAN)
 				ch->flags &= ~IEEE80211_CHAN_PASSIVE_SCAN;
 	}
 
 	ch = &sband->channels[12]; /* CH 13 */
-	r = freq_reg_info(wiphy, ch->center_freq, bandwidth, &reg_rule);
-	if (!r) {
+	reg_rule = freq_reg_info(wiphy, ch->center_freq);
+	if (!IS_ERR(reg_rule)) {
 		if (!(reg_rule->flags & NL80211_RRF_PASSIVE_SCAN))
 			if (ch->flags & IEEE80211_CHAN_PASSIVE_SCAN)
 				ch->flags &= ~IEEE80211_CHAN_PASSIVE_SCAN;
@@ -361,9 +356,9 @@ static u16 ath_regd_find_country_by_name(char *alpha2)
 	return -1;
 }
 
-int ath_reg_notifier_apply(struct wiphy *wiphy,
-			   struct regulatory_request *request,
-			   struct ath_regulatory *reg)
+void ath_reg_notifier_apply(struct wiphy *wiphy,
+			    struct regulatory_request *request,
+			    struct ath_regulatory *reg)
 {
 	struct ath_common *common = container_of(reg, struct ath_common,
 						 regulatory);
@@ -378,7 +373,7 @@ int ath_reg_notifier_apply(struct wiphy *wiphy,
 	 * any pending requests in the queue.
 	 */
 	if (!request)
-		return 0;
+		return;
 
 	switch (request->initiator) {
 	case NL80211_REGDOM_SET_BY_CORE:
@@ -414,8 +409,6 @@ int ath_reg_notifier_apply(struct wiphy *wiphy,
 
 		break;
 	}
-
-	return 0;
 }
 EXPORT_SYMBOL(ath_reg_notifier_apply);
 
@@ -505,8 +498,8 @@ ath_get_regpair(int regdmn)
 static int
 ath_regd_init_wiphy(struct ath_regulatory *reg,
 		    struct wiphy *wiphy,
-		    int (*reg_notifier)(struct wiphy *wiphy,
-					struct regulatory_request *request))
+		    void (*reg_notifier)(struct wiphy *wiphy,
+					 struct regulatory_request *request))
 {
 	const struct ieee80211_regdomain *regd;
 
@@ -562,7 +555,7 @@ static int __ath_regd_init(struct ath_regulatory *reg)
 	printk(KERN_DEBUG "ath: EEPROM regdomain: 0x%0x\n", reg->current_rd);
 
 	if (!ath_regd_is_eeprom_valid(reg)) {
-		printk(KERN_ERR "ath: Invalid EEPROM contents\n");
+		pr_err("Invalid EEPROM contents\n");
 		return -EINVAL;
 	}
 
@@ -626,8 +619,8 @@ static int __ath_regd_init(struct ath_regulatory *reg)
 int
 ath_regd_init(struct ath_regulatory *reg,
 	      struct wiphy *wiphy,
-	      int (*reg_notifier)(struct wiphy *wiphy,
-				  struct regulatory_request *request))
+	      void (*reg_notifier)(struct wiphy *wiphy,
+				   struct regulatory_request *request))
 {
 	struct ath_common *common = container_of(reg, struct ath_common,
 						 regulatory);

@@ -353,7 +353,6 @@ struct rt_stats {
 	unsigned long rxrdu;
 	unsigned long rxok;
 	unsigned long rxframgment;
-	unsigned long rxcmdpkt[8];
 	unsigned long rxurberr;
 	unsigned long rxstaterr;
 	unsigned long rxdatacrcerr;
@@ -944,7 +943,7 @@ struct r8192_priv {
 	bool		bfsync_processing;
 	u32		rate_record;
 	u32		rateCountDiffRecord;
-	u32		ContiuneDiffCount;
+	u32		ContinueDiffCount;
 	bool		bswitch_fsync;
 	u8		framesync;
 	u32		framesyncC34;
@@ -1085,11 +1084,5 @@ bool MgntActSet_RF_State(struct net_device *dev,
 void ActUpdateChannelAccessSetting(struct net_device *dev,
 			   enum wireless_mode WirelessMode,
 			   struct channel_access_setting *ChnlAccessSetting);
-
-/* proc stuff from rtl_debug.c */
-void rtl8192_proc_init_one(struct net_device *dev);
-void rtl8192_proc_remove_one(struct net_device *dev);
-void rtl8192_proc_module_init(void);
-void rtl8192_proc_module_remove(void);
 
 #endif

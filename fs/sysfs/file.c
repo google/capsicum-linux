@@ -449,10 +449,12 @@ void sysfs_notify_dirent(struct sysfs_dirent *sd)
 
 	spin_lock_irqsave(&sysfs_open_dirent_lock, flags);
 
-	od = sd->s_attr.open;
-	if (od) {
-		atomic_inc(&od->event);
-		wake_up_interruptible(&od->poll);
+	if (!WARN_ON(sysfs_type(sd) != SYSFS_KOBJ_ATTR)) {
+		od = sd->s_attr.open;
+		if (od) {
+			atomic_inc(&od->event);
+			wake_up_interruptible(&od->poll);
+		}
 	}
 
 	spin_unlock_irqrestore(&sysfs_open_dirent_lock, flags);
@@ -485,8 +487,8 @@ const struct file_operations sysfs_file_operations = {
 	.poll		= sysfs_poll,
 };
 
-int sysfs_attr_ns(struct kobject *kobj, const struct attribute *attr,
-		  const void **pns)
+static int sysfs_attr_ns(struct kobject *kobj, const struct attribute *attr,
+			 const void **pns)
 {
 	struct sysfs_dirent *dir_sd = kobj->sd;
 	const struct sysfs_ops *ops;

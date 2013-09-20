@@ -15,13 +15,20 @@ config MICROBLAZE
 	select TRACING_SUPPORT
 	select OF
 	select OF_EARLY_FLATTREE
+	select ARCH_WANT_IPC_PARSE_VERSION
+	select HAVE_DEBUG_KMEMLEAK
 	select IRQ_DOMAIN
 	select HAVE_GENERIC_HARDIRQS
+	select VIRT_TO_BUS
 	select GENERIC_IRQ_PROBE
 	select GENERIC_IRQ_SHOW
 	select GENERIC_PCI_IOMAP
 	select GENERIC_CPU_DEVICES
 	select GENERIC_ATOMIC64
+	select GENERIC_CLOCKEVENTS
+	select GENERIC_IDLE_POLL_SETUP
+	select MODULES_USE_ELF_RELA
+	select CLONE_BACKWARDS3
 
 config SWAP
 	def_bool n
@@ -30,9 +37,6 @@ config RWSEM_GENERIC_SPINLOCK
 	def_bool y
 
 config ZONE_DMA
-	def_bool y
-
-config ARCH_POPULATES_NODE_MAP
 	def_bool y
 
 config RWSEM_XCHGADD_ALGORITHM
@@ -48,15 +52,6 @@ config GENERIC_HWEIGHT
 	def_bool y
 
 config GENERIC_CALIBRATE_DELAY
-	def_bool y
-
-config GENERIC_TIME_VSYSCALL
-	def_bool n
-
-config GENERIC_CLOCKEVENTS
-	def_bool y
-
-config GENERIC_GPIO
 	def_bool y
 
 config GENERIC_CSUM
@@ -78,8 +73,6 @@ source "kernel/Kconfig.freezer"
 source "arch/microblaze/platform/Kconfig.platform"
 
 menu "Processor type and features"
-
-source "kernel/time/Kconfig"
 
 source "kernel/Kconfig.preempt"
 
@@ -249,14 +242,11 @@ choice
 config MICROBLAZE_4K_PAGES
 	bool "4k page size"
 
-config MICROBLAZE_8K_PAGES
-	bool "8k page size"
-
 config MICROBLAZE_16K_PAGES
 	bool "16k page size"
 
-config MICROBLAZE_32K_PAGES
-	bool "32k page size"
+config MICROBLAZE_64K_PAGES
+	bool "64k page size"
 
 endchoice
 

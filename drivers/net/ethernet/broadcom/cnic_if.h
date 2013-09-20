@@ -12,8 +12,10 @@
 #ifndef CNIC_IF_H
 #define CNIC_IF_H
 
-#define CNIC_MODULE_VERSION	"2.5.10"
-#define CNIC_MODULE_RELDATE	"March 21, 2012"
+#include "bnx2x/bnx2x_mfw_req.h"
+
+#define CNIC_MODULE_VERSION	"2.5.16"
+#define CNIC_MODULE_RELDATE	"Dec 05, 2012"
 
 #define CNIC_ULP_RDMA		0
 #define CNIC_ULP_ISCSI		1
@@ -131,6 +133,11 @@ struct drv_ctl_l2_ring {
 	u32		cid;
 };
 
+struct drv_ctl_register_data {
+	int ulp_type;
+	struct fcoe_capabilities fcoe_features;
+};
+
 struct drv_ctl_info {
 	int	cmd;
 	union {
@@ -138,6 +145,7 @@ struct drv_ctl_info {
 		struct drv_ctl_io io;
 		struct drv_ctl_l2_ring ring;
 		int ulp_type;
+		struct drv_ctl_register_data register_data;
 		char bytes[MAX_DRV_CTL_DATA];
 	} data;
 };
@@ -171,6 +179,7 @@ struct cnic_eth_dev {
 #define CNIC_DRV_STATE_NO_ISCSI_OOO	0x00000004
 #define CNIC_DRV_STATE_NO_ISCSI		0x00000008
 #define CNIC_DRV_STATE_NO_FCOE		0x00000010
+#define CNIC_DRV_STATE_HANDLES_IRQ	0x00000020
 	u32		chip_id;
 	u32		max_kwqe_pending;
 	struct pci_dev	*pdev;
@@ -186,6 +195,7 @@ struct cnic_eth_dev {
 	u32		max_fcoe_conn;
 	u32		max_rdma_conn;
 	u32		fcoe_init_cid;
+	u32		max_fcoe_exchanges;
 	u32		fcoe_wwn_port_name_hi;
 	u32		fcoe_wwn_port_name_lo;
 	u32		fcoe_wwn_node_name_hi;
@@ -304,7 +314,10 @@ struct cnic_dev {
 	int		max_fcoe_conn;
 	int		max_rdma_conn;
 
+	int		max_fcoe_exchanges;
+
 	union drv_info_to_mcp	*stats_addr;
+	struct fcoe_capabilities	*fcoe_cap;
 
 	void		*cnic_priv;
 };
@@ -343,8 +356,5 @@ struct cnic_ulp_ops {
 extern int cnic_register_driver(int ulp_type, struct cnic_ulp_ops *ulp_ops);
 
 extern int cnic_unregister_driver(int ulp_type);
-
-extern struct cnic_eth_dev *bnx2_cnic_probe(struct net_device *dev);
-extern struct cnic_eth_dev *bnx2x_cnic_probe(struct net_device *dev);
 
 #endif

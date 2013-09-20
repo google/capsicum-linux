@@ -21,6 +21,9 @@
 
 #define AR_PHY_CCA_FILTERWINDOW_LENGTH          5
 
+/* Internal noise floor can vary by about 6db depending on the frequency */
+#define ATH9K_NF_CAL_NOISE_THRESH		6
+
 #define NUM_NF_READINGS       6
 #define ATH9K_NF_CAL_HIST_MAX 5
 
@@ -30,10 +33,16 @@ struct ar5416IniArray {
 	u32 ia_columns;
 };
 
-#define INIT_INI_ARRAY(iniarray, array, rows, columns) do {	\
+#define STATIC_INI_ARRAY(array) {			\
+		.ia_array = (u32 *)(array),		\
+		.ia_rows = ARRAY_SIZE(array),		\
+		.ia_columns = ARRAY_SIZE(array[0]),	\
+	}
+
+#define INIT_INI_ARRAY(iniarray, array) do {	\
 		(iniarray)->ia_array = (u32 *)(array);		\
-		(iniarray)->ia_rows = (rows);			\
-		(iniarray)->ia_columns = (columns);		\
+		(iniarray)->ia_rows = ARRAY_SIZE(array);	\
+		(iniarray)->ia_columns = ARRAY_SIZE(array[0]);	\
 	} while (0)
 
 #define INI_RA(iniarray, row, column) \

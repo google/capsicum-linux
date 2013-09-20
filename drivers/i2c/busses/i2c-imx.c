@@ -51,10 +51,7 @@
 #include <linux/of.h>
 #include <linux/of_device.h>
 #include <linux/of_i2c.h>
-
-#include <mach/irqs.h>
-#include <mach/hardware.h>
-#include <mach/i2c.h>
+#include <linux/platform_data/i2c-imx.h>
 
 /** Defines ********************************************************************
 *******************************************************************************/
@@ -115,23 +112,47 @@ static u16 __initdata i2c_clk_div[50][2] = {
 	{ 3072,	0x1E }, { 3840,	0x1F }
 };
 
+enum imx_i2c_type {
+	IMX1_I2C,
+	IMX21_I2C,
+};
+
 struct imx_i2c_struct {
 	struct i2c_adapter	adapter;
-	struct resource		*res;
 	struct clk		*clk;
 	void __iomem		*base;
-	int			irq;
 	wait_queue_head_t	queue;
 	unsigned long		i2csr;
 	unsigned int 		disable_delay;
 	int			stopped;
 	unsigned int		ifdr; /* IMX_I2C_IFDR */
+	enum imx_i2c_type	devtype;
 };
 
+static struct platform_device_id imx_i2c_devtype[] = {
+	{
+		.name = "imx1-i2c",
+		.driver_data = IMX1_I2C,
+	}, {
+		.name = "imx21-i2c",
+		.driver_data = IMX21_I2C,
+	}, {
+		/* sentinel */
+	}
+};
+MODULE_DEVICE_TABLE(platform, imx_i2c_devtype);
+
 static const struct of_device_id i2c_imx_dt_ids[] = {
-	{ .compatible = "fsl,imx1-i2c", },
+	{ .compatible = "fsl,imx1-i2c", .data = &imx_i2c_devtype[IMX1_I2C], },
+	{ .compatible = "fsl,imx21-i2c", .data = &imx_i2c_devtype[IMX21_I2C], },
 	{ /* sentinel */ }
 };
+MODULE_DEVICE_TABLE(of, i2c_imx_dt_ids);
+
+static inline int is_imx1_i2c(struct imx_i2c_struct *i2c_imx)
+{
+	return i2c_imx->devtype == IMX1_I2C;
+}
 
 /** Functions for IMX I2C adapter driver ***************************************
 *******************************************************************************/
@@ -225,7 +246,7 @@ static void i2c_imx_stop(struct imx_i2c_struct *i2c_imx)
 		temp &= ~(I2CR_MSTA | I2CR_MTX);
 		writeb(temp, i2c_imx->base + IMX_I2C_I2CR);
 	}
-	if (cpu_is_mx1()) {
+	if (is_imx1_i2c(i2c_imx)) {
 		/*
 		 * This delay caused by an i.MXL hardware bug.
 		 * If no (or too short) delay, no "STOP" bit will be generated.
@@ -274,9 +295,9 @@ static void __init i2c_imx_set_clk(struct imx_i2c_struct *i2c_imx,
 
 	/* dev_dbg() can't be used, because adapter is not yet registered */
 #ifdef CONFIG_I2C_DEBUG_BUS
-	printk(KERN_DEBUG "I2C: <%s> I2C_CLK=%d, REQ DIV=%d\n",
+	dev_dbg(&i2c_imx->adapter.dev, "<%s> I2C_CLK=%d, REQ DIV=%d\n",
 		__func__, i2c_clk_rate, div);
-	printk(KERN_DEBUG "I2C: <%s> IFDR[IC]=0x%x, REAL DIV=%d\n",
+	dev_dbg(&i2c_imx->adapter.dev, "<%s> IFDR[IC]=0x%x, REAL DIV=%d\n",
 		__func__, i2c_clk_div[i][1], i2c_clk_div[i][0]);
 #endif
 }
@@ -467,72 +488,61 @@ static struct i2c_algorithm i2c_imx_algo = {
 
 static int __init i2c_imx_probe(struct platform_device *pdev)
 {
+	const struct of_device_id *of_id = of_match_device(i2c_imx_dt_ids,
+							   &pdev->dev);
 	struct imx_i2c_struct *i2c_imx;
 	struct resource *res;
 	struct imxi2c_platform_data *pdata = pdev->dev.platform_data;
 	void __iomem *base;
-	resource_size_t res_size;
-	int irq, bitrate;
-	int ret;
+	int irq, ret;
+	u32 bitrate;
 
 	dev_dbg(&pdev->dev, "<%s>\n", __func__);
 
-	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
-	if (!res) {
-		dev_err(&pdev->dev, "can't get device resources\n");
-		return -ENOENT;
-	}
 	irq = platform_get_irq(pdev, 0);
 	if (irq < 0) {
 		dev_err(&pdev->dev, "can't get irq number\n");
 		return -ENOENT;
 	}
 
-	res_size = resource_size(res);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	base = devm_ioremap_resource(&pdev->dev, res);
+	if (IS_ERR(base))
+		return PTR_ERR(base);
 
-	if (!request_mem_region(res->start, res_size, DRIVER_NAME)) {
-		dev_err(&pdev->dev, "request_mem_region failed\n");
-		return -EBUSY;
-	}
-
-	base = ioremap(res->start, res_size);
-	if (!base) {
-		dev_err(&pdev->dev, "ioremap failed\n");
-		ret = -EIO;
-		goto fail1;
-	}
-
-	i2c_imx = kzalloc(sizeof(struct imx_i2c_struct), GFP_KERNEL);
+	i2c_imx = devm_kzalloc(&pdev->dev, sizeof(struct imx_i2c_struct),
+				GFP_KERNEL);
 	if (!i2c_imx) {
 		dev_err(&pdev->dev, "can't allocate interface\n");
-		ret = -ENOMEM;
-		goto fail2;
+		return -ENOMEM;
 	}
 
+	if (of_id)
+		pdev->id_entry = of_id->data;
+	i2c_imx->devtype = pdev->id_entry->driver_data;
+
 	/* Setup i2c_imx driver structure */
-	strcpy(i2c_imx->adapter.name, pdev->name);
+	strlcpy(i2c_imx->adapter.name, pdev->name, sizeof(i2c_imx->adapter.name));
 	i2c_imx->adapter.owner		= THIS_MODULE;
 	i2c_imx->adapter.algo		= &i2c_imx_algo;
 	i2c_imx->adapter.dev.parent	= &pdev->dev;
 	i2c_imx->adapter.nr 		= pdev->id;
 	i2c_imx->adapter.dev.of_node	= pdev->dev.of_node;
-	i2c_imx->irq			= irq;
 	i2c_imx->base			= base;
-	i2c_imx->res			= res;
 
 	/* Get I2C clock */
-	i2c_imx->clk = clk_get(&pdev->dev, "i2c_clk");
+	i2c_imx->clk = devm_clk_get(&pdev->dev, NULL);
 	if (IS_ERR(i2c_imx->clk)) {
-		ret = PTR_ERR(i2c_imx->clk);
 		dev_err(&pdev->dev, "can't get I2C clock\n");
-		goto fail3;
+		return PTR_ERR(i2c_imx->clk);
 	}
 
 	/* Request IRQ */
-	ret = request_irq(i2c_imx->irq, i2c_imx_isr, 0, pdev->name, i2c_imx);
+	ret = devm_request_irq(&pdev->dev, irq, i2c_imx_isr, 0,
+				pdev->name, i2c_imx);
 	if (ret) {
-		dev_err(&pdev->dev, "can't claim irq %d\n", i2c_imx->irq);
-		goto fail4;
+		dev_err(&pdev->dev, "can't claim irq %d\n", irq);
+		return ret;
 	}
 
 	/* Init queue */
@@ -557,7 +567,7 @@ static int __init i2c_imx_probe(struct platform_device *pdev)
 	ret = i2c_add_numbered_adapter(&i2c_imx->adapter);
 	if (ret < 0) {
 		dev_err(&pdev->dev, "registration failed\n");
-		goto fail5;
+		return ret;
 	}
 
 	of_i2c_register_devices(&i2c_imx->adapter);
@@ -565,28 +575,16 @@ static int __init i2c_imx_probe(struct platform_device *pdev)
 	/* Set up platform driver data */
 	platform_set_drvdata(pdev, i2c_imx);
 
-	dev_dbg(&i2c_imx->adapter.dev, "claimed irq %d\n", i2c_imx->irq);
+	dev_dbg(&i2c_imx->adapter.dev, "claimed irq %d\n", irq);
 	dev_dbg(&i2c_imx->adapter.dev, "device resources from 0x%x to 0x%x\n",
-		i2c_imx->res->start, i2c_imx->res->end);
-	dev_dbg(&i2c_imx->adapter.dev, "allocated %d bytes at 0x%x \n",
-		res_size, i2c_imx->res->start);
+		res->start, res->end);
+	dev_dbg(&i2c_imx->adapter.dev, "allocated %d bytes at 0x%x\n",
+		resource_size(res), res->start);
 	dev_dbg(&i2c_imx->adapter.dev, "adapter name: \"%s\"\n",
 		i2c_imx->adapter.name);
-	dev_dbg(&i2c_imx->adapter.dev, "IMX I2C adapter registered\n");
+	dev_info(&i2c_imx->adapter.dev, "IMX I2C adapter registered\n");
 
 	return 0;   /* Return OK */
-
-fail5:
-	free_irq(i2c_imx->irq, i2c_imx);
-fail4:
-	clk_put(i2c_imx->clk);
-fail3:
-	kfree(i2c_imx);
-fail2:
-	iounmap(base);
-fail1:
-	release_mem_region(res->start, resource_size(res));
-	return ret; /* Return error number */
 }
 
 static int __exit i2c_imx_remove(struct platform_device *pdev)
@@ -596,10 +594,6 @@ static int __exit i2c_imx_remove(struct platform_device *pdev)
 	/* remove adapter */
 	dev_dbg(&i2c_imx->adapter.dev, "adapter removed\n");
 	i2c_del_adapter(&i2c_imx->adapter);
-	platform_set_drvdata(pdev, NULL);
-
-	/* free interrupt */
-	free_irq(i2c_imx->irq, i2c_imx);
 
 	/* setup chip registers to defaults */
 	writeb(0, i2c_imx->base + IMX_I2C_IADR);
@@ -607,11 +601,6 @@ static int __exit i2c_imx_remove(struct platform_device *pdev)
 	writeb(0, i2c_imx->base + IMX_I2C_I2CR);
 	writeb(0, i2c_imx->base + IMX_I2C_I2SR);
 
-	clk_put(i2c_imx->clk);
-
-	iounmap(i2c_imx->base);
-	release_mem_region(i2c_imx->res->start, resource_size(i2c_imx->res));
-	kfree(i2c_imx);
 	return 0;
 }
 
@@ -621,7 +610,8 @@ static struct platform_driver i2c_imx_driver = {
 		.name	= DRIVER_NAME,
 		.owner	= THIS_MODULE,
 		.of_match_table = i2c_imx_dt_ids,
-	}
+	},
+	.id_table	= imx_i2c_devtype,
 };
 
 static int __init i2c_adap_imx_init(void)

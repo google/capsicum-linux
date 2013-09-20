@@ -37,7 +37,7 @@
  *
  **************************************************************************/
 
-#define EFX_DRIVER_VERSION	"3.1"
+#define EFX_DRIVER_VERSION	"3.2"
 
 #ifdef DEBUG
 #define EFX_BUG_ON_PARANOID(x) BUG_ON(x)
@@ -56,7 +56,8 @@
 #define EFX_MAX_CHANNELS 32U
 #define EFX_MAX_RX_QUEUES EFX_MAX_CHANNELS
 #define EFX_EXTRA_CHANNEL_IOV	0
-#define EFX_MAX_EXTRA_CHANNELS	1U
+#define EFX_EXTRA_CHANNEL_PTP	1
+#define EFX_MAX_EXTRA_CHANNELS	2U
 
 /* Checksum generation is a per-queue option in hardware, so each
  * queue visible to the networking core is backed by two hardware TX
@@ -67,6 +68,29 @@
 #define EFX_TXQ_TYPE_HIGHPRI	2	/* flag */
 #define EFX_TXQ_TYPES		4
 #define EFX_MAX_TX_QUEUES	(EFX_TXQ_TYPES * EFX_MAX_CHANNELS)
+
+/* Maximum possible MTU the driver supports */
+#define EFX_MAX_MTU (9 * 1024)
+
+/* Size of an RX scatter buffer.  Small enough to pack 2 into a 4K page,
+ * and should be a multiple of the cache line size.
+ */
+#define EFX_RX_USR_BUF_SIZE	(2048 - 256)
+
+/* If possible, we should ensure cache line alignment at start and end
+ * of every buffer.  Otherwise, we just need to ensure 4-byte
+ * alignment of the network header.
+ */
+#if NET_IP_ALIGN == 0
+#define EFX_RX_BUF_ALIGNMENT	L1_CACHE_BYTES
+#else
+#define EFX_RX_BUF_ALIGNMENT	4
+#endif
+
+/* Forward declare Precision Time Protocol (PTP) support structure. */
+struct efx_ptp_data;
+
+struct efx_self_tests;
 
 /**
  * struct efx_special_buffer - An Efx special buffer
@@ -89,29 +113,31 @@ struct efx_special_buffer {
 };
 
 /**
- * struct efx_tx_buffer - An Efx TX buffer
- * @skb: The associated socket buffer.
- *	Set only on the final fragment of a packet; %NULL for all other
- *	fragments.  When this fragment completes, then we can free this
- *	skb.
- * @tsoh: The associated TSO header structure, or %NULL if this
- *	buffer is not a TSO header.
+ * struct efx_tx_buffer - buffer state for a TX descriptor
+ * @skb: When @flags & %EFX_TX_BUF_SKB, the associated socket buffer to be
+ *	freed when descriptor completes
+ * @heap_buf: When @flags & %EFX_TX_BUF_HEAP, the associated heap buffer to be
+ *	freed when descriptor completes.
  * @dma_addr: DMA address of the fragment.
+ * @flags: Flags for allocation and DMA mapping type
  * @len: Length of this fragment.
  *	This field is zero when the queue slot is empty.
- * @continuation: True if this fragment is not the end of a packet.
- * @unmap_single: True if pci_unmap_single should be used.
  * @unmap_len: Length of this fragment to unmap
  */
 struct efx_tx_buffer {
-	const struct sk_buff *skb;
-	struct efx_tso_header *tsoh;
+	union {
+		const struct sk_buff *skb;
+		void *heap_buf;
+	};
 	dma_addr_t dma_addr;
+	unsigned short flags;
 	unsigned short len;
-	bool continuation;
-	bool unmap_single;
 	unsigned short unmap_len;
 };
+#define EFX_TX_BUF_CONT		1	/* not last descriptor of packet */
+#define EFX_TX_BUF_SKB		2	/* buffer is last part of skb */
+#define EFX_TX_BUF_HEAP		4	/* buffer was allocated with kmalloc() */
+#define EFX_TX_BUF_MAP_SINGLE	8	/* buffer was mapped with dma_map_single() */
 
 /**
  * struct efx_tx_queue - An Efx TX queue
@@ -131,6 +157,7 @@ struct efx_tx_buffer {
  * @channel: The associated channel
  * @core_txq: The networking core TX queue structure
  * @buffer: The software buffer ring
+ * @tsoh_page: Array of pages of TSO header buffers
  * @txd: The hardware descriptor ring
  * @ptr_mask: The size of the ring minus 1.
  * @initialised: Has hardware queue been initialised?
@@ -154,9 +181,6 @@ struct efx_tx_buffer {
  *	variable indicates that the queue is full.  This is to
  *	avoid cache-line ping-pong between the xmit path and the
  *	completion path.
- * @tso_headers_free: A list of TSO headers allocated for this TX queue
- *	that are not in use, and so available for new TSO sends. The list
- *	is protected by the TX queue lock.
  * @tso_bursts: Number of times TSO xmit invoked by kernel
  * @tso_long_headers: Number of packets with headers too long for standard
  *	blocks
@@ -173,6 +197,7 @@ struct efx_tx_queue {
 	struct efx_channel *channel;
 	struct netdev_queue *core_txq;
 	struct efx_tx_buffer *buffer;
+	struct efx_buffer *tsoh_page;
 	struct efx_special_buffer txd;
 	unsigned int ptr_mask;
 	bool initialised;
@@ -185,7 +210,6 @@ struct efx_tx_queue {
 	unsigned int insert_count ____cacheline_aligned_in_smp;
 	unsigned int write_count;
 	unsigned int old_read_count;
-	struct efx_tso_header *tso_headers_free;
 	unsigned int tso_bursts;
 	unsigned int tso_long_headers;
 	unsigned int tso_packets;
@@ -194,30 +218,32 @@ struct efx_tx_queue {
 	/* Members shared between paths and sometimes updated */
 	unsigned int empty_read_count ____cacheline_aligned_in_smp;
 #define EFX_EMPTY_COUNT_VALID 0x80000000
+	atomic_t flush_outstanding;
 };
 
 /**
  * struct efx_rx_buffer - An Efx RX data buffer
  * @dma_addr: DMA base address of the buffer
- * @skb: The associated socket buffer. Valid iff !(@flags & %EFX_RX_BUF_PAGE).
+ * @page: The associated page buffer.
  *	Will be %NULL if the buffer slot is currently free.
- * @page: The associated page buffer. Valif iff @flags & %EFX_RX_BUF_PAGE.
- *	Will be %NULL if the buffer slot is currently free.
- * @len: Buffer length, in bytes.
- * @flags: Flags for buffer and packet state.
+ * @page_offset: If pending: offset in @page of DMA base address.
+ *	If completed: offset in @page of Ethernet header.
+ * @len: If pending: length for DMA descriptor.
+ *	If completed: received length, excluding hash prefix.
+ * @flags: Flags for buffer and packet state.  These are only set on the
+ *	first buffer of a scattered packet.
  */
 struct efx_rx_buffer {
 	dma_addr_t dma_addr;
-	union {
-		struct sk_buff *skb;
-		struct page *page;
-	} u;
-	unsigned int len;
+	struct page *page;
+	u16 page_offset;
+	u16 len;
 	u16 flags;
 };
-#define EFX_RX_BUF_PAGE		0x0001
+#define EFX_RX_BUF_LAST_IN_PAGE	0x0001
 #define EFX_RX_PKT_CSUMMED	0x0002
 #define EFX_RX_PKT_DISCARD	0x0004
+#define EFX_RX_PKT_TCP		0x0040
 
 /**
  * struct efx_rx_page_state - Page-based rx buffer state
@@ -240,6 +266,8 @@ struct efx_rx_page_state {
 /**
  * struct efx_rx_queue - An Efx RX queue
  * @efx: The associated Efx NIC
+ * @core_index:  Index of network core RX queue.  Will be >= 0 iff this
+ *	is associated with a real RX queue.
  * @buffer: The software buffer ring
  * @rxd: The hardware descriptor ring
  * @ptr_mask: The size of the ring minus 1.
@@ -249,36 +277,50 @@ struct efx_rx_page_state {
  * @added_count: Number of buffers added to the receive queue.
  * @notified_count: Number of buffers given to NIC (<= @added_count).
  * @removed_count: Number of buffers removed from the receive queue.
+ * @scatter_n: Number of buffers used by current packet
+ * @page_ring: The ring to store DMA mapped pages for reuse.
+ * @page_add: Counter to calculate the write pointer for the recycle ring.
+ * @page_remove: Counter to calculate the read pointer for the recycle ring.
+ * @page_recycle_count: The number of pages that have been recycled.
+ * @page_recycle_failed: The number of pages that couldn't be recycled because
+ *      the kernel still held a reference to them.
+ * @page_recycle_full: The number of pages that were released because the
+ *      recycle ring was full.
+ * @page_ptr_mask: The number of pages in the RX recycle ring minus 1.
  * @max_fill: RX descriptor maximum fill level (<= ring size)
  * @fast_fill_trigger: RX descriptor fill level that will trigger a fast fill
  *	(<= @max_fill)
- * @fast_fill_limit: The level to which a fast fill will fill
- *	(@fast_fill_trigger <= @fast_fill_limit <= @max_fill)
  * @min_fill: RX descriptor minimum non-zero fill level.
  *	This records the minimum fill level observed when a ring
  *	refill was triggered.
- * @alloc_page_count: RX allocation strategy counter.
- * @alloc_skb_count: RX allocation strategy counter.
+ * @recycle_count: RX buffer recycle counter.
  * @slow_fill: Timer used to defer efx_nic_generate_fill_event().
  */
 struct efx_rx_queue {
 	struct efx_nic *efx;
+	int core_index;
 	struct efx_rx_buffer *buffer;
 	struct efx_special_buffer rxd;
 	unsigned int ptr_mask;
 	bool enabled;
 	bool flush_pending;
 
-	int added_count;
-	int notified_count;
-	int removed_count;
+	unsigned int added_count;
+	unsigned int notified_count;
+	unsigned int removed_count;
+	unsigned int scatter_n;
+	struct page **page_ring;
+	unsigned int page_add;
+	unsigned int page_remove;
+	unsigned int page_recycle_count;
+	unsigned int page_recycle_failed;
+	unsigned int page_recycle_full;
+	unsigned int page_ptr_mask;
 	unsigned int max_fill;
 	unsigned int fast_fill_trigger;
-	unsigned int fast_fill_limit;
 	unsigned int min_fill;
 	unsigned int min_overfill;
-	unsigned int alloc_page_count;
-	unsigned int alloc_skb_count;
+	unsigned int recycle_count;
 	struct timer_list slow_fill;
 	unsigned int slow_fill_count;
 };
@@ -327,10 +369,6 @@ enum efx_rx_alloc_method {
  * @event_test_cpu: Last CPU to handle interrupt or test event for this channel
  * @irq_count: Number of IRQs since last adaptive moderation decision
  * @irq_mod_score: IRQ moderation score
- * @rx_alloc_level: Watermark based heuristic counter for pushing descriptors
- *	and diagnostic counters
- * @rx_alloc_push_pages: RX allocation method currently in use for pushing
- *	descriptors
  * @n_rx_tobe_disc: Count of RX_TOBE_DISC errors
  * @n_rx_ip_hdr_chksum_err: Count of RX IP header checksum errors
  * @n_rx_tcp_udp_chksum_err: Count of RX TCP and UDP checksum errors
@@ -338,6 +376,12 @@ enum efx_rx_alloc_method {
  * @n_rx_frm_trunc: Count of RX_FRM_TRUNC errors
  * @n_rx_overlength: Count of RX_OVERLENGTH errors
  * @n_skbuff_leaks: Count of skbuffs leaked due to RX overrun
+ * @n_rx_nodesc_trunc: Number of RX packets truncated and then dropped due to
+ *	lack of descriptors
+ * @rx_pkt_n_frags: Number of fragments in next packet to be delivered by
+ *	__efx_rx_packet(), or zero if there is none
+ * @rx_pkt_index: Ring index of first buffer for next packet to be delivered
+ *	by __efx_rx_packet(), if @rx_pkt_n_frags != 0
  * @rx_queue: RX queue for this channel
  * @tx_queue: TX queues for this channel
  */
@@ -362,9 +406,6 @@ struct efx_channel {
 	unsigned int rfs_filters_added;
 #endif
 
-	int rx_alloc_level;
-	int rx_alloc_push_pages;
-
 	unsigned n_rx_tobe_disc;
 	unsigned n_rx_ip_hdr_chksum_err;
 	unsigned n_rx_tcp_udp_chksum_err;
@@ -372,11 +413,10 @@ struct efx_channel {
 	unsigned n_rx_frm_trunc;
 	unsigned n_rx_overlength;
 	unsigned n_skbuff_leaks;
+	unsigned int n_rx_nodesc_trunc;
 
-	/* Used to pipeline received packets in order to optimise memory
-	 * access with prefetches.
-	 */
-	struct efx_rx_buffer *rx_pkt;
+	unsigned int rx_pkt_n_frags;
+	unsigned int rx_pkt_index;
 
 	struct efx_rx_queue rx_queue;
 	struct efx_tx_queue tx_queue[EFX_TXQ_TYPES];
@@ -391,14 +431,17 @@ struct efx_channel {
  * @get_name: Generate the channel's name (used for its IRQ handler)
  * @copy: Copy the channel state prior to reallocation.  May be %NULL if
  *	reallocation is not supported.
+ * @receive_skb: Handle an skb ready to be passed to netif_receive_skb()
  * @keep_eventq: Flag for whether event queue should be kept initialised
  *	while the device is stopped
  */
 struct efx_channel_type {
 	void (*handle_no_channel)(struct efx_nic *);
 	int (*pre_probe)(struct efx_channel *);
+	void (*post_remove)(struct efx_channel *);
 	void (*get_name)(struct efx_channel *, char *buf, size_t len);
 	struct efx_channel *(*copy)(const struct efx_channel *);
+	bool (*receive_skb)(struct efx_channel *, struct sk_buff *);
 	bool keep_eventq;
 };
 
@@ -431,32 +474,18 @@ enum efx_int_mode {
 #define EFX_INT_MODE_USE_MSI(x) (((x)->interrupt_mode) <= EFX_INT_MODE_MSI)
 
 enum nic_state {
-	STATE_INIT = 0,
-	STATE_RUNNING = 1,
-	STATE_FINI = 2,
-	STATE_DISABLED = 3,
-	STATE_MAX,
+	STATE_UNINIT = 0,	/* device being probed/removed or is frozen */
+	STATE_READY = 1,	/* hardware ready and netdev registered */
+	STATE_DISABLED = 2,	/* device disabled due to hardware errors */
+	STATE_RECOVERY = 3,	/* device recovering from PCI error */
 };
-
-/*
- * Alignment of page-allocated RX buffers
- *
- * Controls the number of bytes inserted at the start of an RX buffer.
- * This is the equivalent of NET_IP_ALIGN [which controls the alignment
- * of the skb->head for hardware DMA].
- */
-#ifdef CONFIG_HAVE_EFFICIENT_UNALIGNED_ACCESS
-#define EFX_PAGE_IP_ALIGN 0
-#else
-#define EFX_PAGE_IP_ALIGN NET_IP_ALIGN
-#endif
 
 /*
  * Alignment of the skb->head which wraps a page-allocated RX buffer
  *
  * The skb allocated to wrap an rx_buffer can have this alignment. Since
  * the data is memcpy'd from the rx_buf, it does not need to be equal to
- * EFX_PAGE_IP_ALIGN.
+ * NET_IP_ALIGN.
  */
 #define EFX_PAGE_SKB_ALIGN 2
 
@@ -522,10 +551,15 @@ struct efx_phy_operations {
 	int (*test_alive) (struct efx_nic *efx);
 	const char *(*test_name) (struct efx_nic *efx, unsigned int index);
 	int (*run_tests) (struct efx_nic *efx, int *results, unsigned flags);
+	int (*get_module_eeprom) (struct efx_nic *efx,
+			       struct ethtool_eeprom *ee,
+			       u8 *data);
+	int (*get_module_info) (struct efx_nic *efx,
+				struct ethtool_modinfo *modinfo);
 };
 
 /**
- * @enum efx_phy_mode - PHY operating mode flags
+ * enum efx_phy_mode - PHY operating mode flags
  * @PHY_MODE_NORMAL: on and should pass traffic
  * @PHY_MODE_TX_DISABLED: on with TX disabled
  * @PHY_MODE_LOW_POWER: set to low power through MDIO
@@ -650,7 +684,7 @@ struct vfdi_status;
  * @irq_rx_adaptive: Adaptive IRQ moderation enabled for RX event queues
  * @irq_rx_moderation: IRQ moderation time for RX event queues
  * @msg_enable: Log message enable flags
- * @state: Device state flag. Serialised by the rtnl_lock.
+ * @state: Device state number (%STATE_*). Serialised by the rtnl_lock.
  * @reset_pending: Bitmask for pending resets
  * @tx_queue: TX DMA queues
  * @rx_queue: RX DMA queues
@@ -660,6 +694,8 @@ struct vfdi_status;
  *	should be allocated for this NIC
  * @rxq_entries: Size of receive queues requested by user.
  * @txq_entries: Size of transmit queues requested by user.
+ * @txq_stop_thresh: TX queue fill level at or above which we stop it.
+ * @txq_wake_thresh: TX queue fill level at or below which we wake it.
  * @tx_dc_base: Base qword address in SRAM of TX queue descriptor caches
  * @rx_dc_base: Base qword address in SRAM of RX queue descriptor caches
  * @sram_lim_qw: Qword address limit of SRAM
@@ -667,10 +703,13 @@ struct vfdi_status;
  * @n_channels: Number of channels in use
  * @n_rx_channels: Number of channels used for RX (= number of RX queues)
  * @n_tx_channels: Number of channels used for TX
- * @rx_buffer_len: RX buffer length
+ * @rx_dma_len: Current maximum RX DMA length
  * @rx_buffer_order: Order (log2) of number of pages for each RX buffer
+ * @rx_buffer_truesize: Amortised allocation size of an RX buffer,
+ *	for use in sk_buff::truesize
  * @rx_hash_key: Toeplitz hash key for RSS
  * @rx_indir_table: Indirection table for RSS
+ * @rx_scatter: Scatter mode enabled for receives
  * @int_error_count: Number of internal errors seen recently
  * @int_error_expire: Time at which error count will be expired
  * @irq_status: Interrupt status buffer
@@ -726,6 +765,7 @@ struct vfdi_status;
  *	%local_addr_list. Protected by %local_lock.
  * @local_lock: Mutex protecting %local_addr_list and %local_page_list.
  * @peer_work: Work item to broadcast peer addresses to VMs.
+ * @ptp_data: PTP state data
  * @monitor_work: Hardware monitor workitem
  * @biu_lock: BIU (bus interface unit) lock
  * @last_irq_cpu: Last CPU to handle a possible test interrupt.  This
@@ -745,9 +785,11 @@ struct efx_nic {
 
 	char name[IFNAMSIZ];
 	struct pci_dev *pci_dev;
+	unsigned int port_num;
 	const struct efx_nic_type *type;
 	int legacy_irq;
 	bool legacy_irq_enabled;
+	bool eeh_disabled_legacy_irq;
 	struct workqueue_struct *workqueue;
 	char workqueue_name[16];
 	struct work_struct reset_work;
@@ -770,6 +812,9 @@ struct efx_nic {
 
 	unsigned rxq_entries;
 	unsigned txq_entries;
+	unsigned int txq_stop_thresh;
+	unsigned int txq_wake_thresh;
+
 	unsigned tx_dc_base;
 	unsigned rx_dc_base;
 	unsigned sram_lim_qw;
@@ -779,10 +824,15 @@ struct efx_nic {
 	unsigned rss_spread;
 	unsigned tx_channel_offset;
 	unsigned n_tx_channels;
-	unsigned int rx_buffer_len;
+	unsigned int rx_dma_len;
 	unsigned int rx_buffer_order;
+	unsigned int rx_buffer_truesize;
+	unsigned int rx_page_buf_step;
+	unsigned int rx_bufs_per_page;
+	unsigned int rx_pages_per_batch;
 	u8 rx_hash_key[40];
 	u32 rx_indir_table[128];
+	bool rx_scatter;
 
 	unsigned int_error_count;
 	unsigned long int_error_expire;
@@ -850,6 +900,8 @@ struct efx_nic {
 	struct work_struct peer_work;
 #endif
 
+	struct efx_ptp_data *ptp_data;
+
 	/* The following fields may be written more often */
 
 	struct delayed_work monitor_work ____cacheline_aligned_in_smp;
@@ -867,7 +919,7 @@ static inline int efx_dev_registered(struct efx_nic *efx)
 
 static inline unsigned int efx_port_num(struct efx_nic *efx)
 {
-	return efx->net_dev->dev_id;
+	return efx->port_num;
 }
 
 /**
@@ -887,6 +939,7 @@ static inline unsigned int efx_port_num(struct efx_nic *efx)
  * @remove_port: Free resources allocated by probe_port()
  * @handle_global_event: Handle a "global" event (may be %NULL)
  * @prepare_flush: Prepare the hardware for flushing the DMA queues
+ * @finish_flush: Clean up after flushing the DMA queues
  * @update_stats: Update statistics not provided by event handling
  * @start_stats: Start the regular fetching of statistics
  * @stop_stats: Stop the regular fetching of statistics
@@ -899,7 +952,8 @@ static inline unsigned int efx_port_num(struct efx_nic *efx)
  * @get_wol: Get WoL configuration from driver state
  * @set_wol: Push WoL configuration to the NIC
  * @resume_wol: Synchronise WoL state between driver and MC (e.g. after resume)
- * @test_registers: Test read/write functionality of control registers
+ * @test_chip: Test registers.  Should use efx_nic_test_registers(), and is
+ *	expected to reset the NIC.
  * @test_nvram: Test validity of NVRAM contents
  * @revision: Hardware architecture revision
  * @mem_map_size: Memory BAR mapped size
@@ -909,8 +963,9 @@ static inline unsigned int efx_port_num(struct efx_nic *efx)
  * @evq_ptr_tbl_base: Event queue pointer table base address
  * @evq_rptr_tbl_base: Event queue read-pointer table base address
  * @max_dma_mask: Maximum possible DMA mask
- * @rx_buffer_hash_size: Size of hash at start of RX buffer
- * @rx_buffer_padding: Size of padding at end of RX buffer
+ * @rx_buffer_hash_size: Size of hash at start of RX packet
+ * @rx_buffer_padding: Size of padding at end of RX packet
+ * @can_rx_scatter: NIC is able to scatter packet to multiple buffers
  * @max_interrupt_mode: Highest capability interrupt mode supported
  *	from &enum efx_init_mode.
  * @phys_addr_channels: Number of channels with physically addressed
@@ -933,6 +988,7 @@ struct efx_nic_type {
 	void (*remove_port)(struct efx_nic *efx);
 	bool (*handle_global_event)(struct efx_channel *channel, efx_qword_t *);
 	void (*prepare_flush)(struct efx_nic *efx);
+	void (*finish_flush)(struct efx_nic *efx);
 	void (*update_stats)(struct efx_nic *efx);
 	void (*start_stats)(struct efx_nic *efx);
 	void (*stop_stats)(struct efx_nic *efx);
@@ -944,7 +1000,7 @@ struct efx_nic_type {
 	void (*get_wol)(struct efx_nic *efx, struct ethtool_wolinfo *wol);
 	int (*set_wol)(struct efx_nic *efx, u32 type);
 	void (*resume_wol)(struct efx_nic *efx);
-	int (*test_registers)(struct efx_nic *efx);
+	int (*test_chip)(struct efx_nic *efx, struct efx_self_tests *tests);
 	int (*test_nvram)(struct efx_nic *efx);
 
 	int revision;
@@ -957,6 +1013,7 @@ struct efx_nic_type {
 	u64 max_dma_mask;
 	unsigned int rx_buffer_hash_size;
 	unsigned int rx_buffer_padding;
+	bool can_rx_scatter;
 	unsigned int max_interrupt_mode;
 	unsigned int phys_addr_channels;
 	unsigned int timer_period_max;
@@ -1039,7 +1096,7 @@ static inline bool efx_tx_queue_used(struct efx_tx_queue *tx_queue)
 
 static inline bool efx_channel_has_rx_queue(struct efx_channel *channel)
 {
-	return channel->channel < channel->efx->n_rx_channels;
+	return channel->rx_queue.core_index >= 0;
 }
 
 static inline struct efx_rx_queue *
@@ -1078,18 +1135,6 @@ static inline struct efx_rx_buffer *efx_rx_buffer(struct efx_rx_queue *rx_queue,
 	return &rx_queue->buffer[index];
 }
 
-/* Set bit in a little-endian bitfield */
-static inline void set_bit_le(unsigned nr, unsigned char *addr)
-{
-	addr[nr / 8] |= (1 << (nr % 8));
-}
-
-/* Clear bit in a little-endian bitfield */
-static inline void clear_bit_le(unsigned nr, unsigned char *addr)
-{
-	addr[nr / 8] &= ~(1 << (nr % 8));
-}
-
 
 /**
  * EFX_MAX_FRAME_LEN - calculate maximum frame length
@@ -1111,5 +1156,13 @@ static inline void clear_bit_le(unsigned nr, unsigned char *addr)
 #define EFX_MAX_FRAME_LEN(mtu) \
 	((((mtu) + ETH_HLEN + VLAN_HLEN + 4/* FCS */ + 7) & ~7) + 16)
 
+static inline bool efx_xmit_with_hwtstamp(struct sk_buff *skb)
+{
+	return skb_shinfo(skb)->tx_flags & SKBTX_HW_TSTAMP;
+}
+static inline void efx_xmit_hwtstamp_pending(struct sk_buff *skb)
+{
+	skb_shinfo(skb)->tx_flags |= SKBTX_IN_PROGRESS;
+}
 
 #endif /* EFX_NET_DRIVER_H */

@@ -59,7 +59,8 @@
 /* 1st Level Abstractions.  */
 
 /* Initialize a new transport from provided memory.  */
-static struct sctp_transport *sctp_transport_init(struct sctp_transport *peer,
+static struct sctp_transport *sctp_transport_init(struct net *net,
+						  struct sctp_transport *peer,
 						  const union sctp_addr *addr,
 						  gfp_t gfp)
 {
@@ -68,13 +69,15 @@ static struct sctp_transport *sctp_transport_init(struct sctp_transport *peer,
 	peer->af_specific = sctp_get_af_specific(addr->sa.sa_family);
 	memset(&peer->saddr, 0, sizeof(union sctp_addr));
 
+	peer->sack_generation = 0;
+
 	/* From 6.3.1 RTO Calculation:
 	 *
 	 * C1) Until an RTT measurement has been made for a packet sent to the
 	 * given destination transport address, set RTO to the protocol
 	 * parameter 'RTO.Initial'.
 	 */
-	peer->rto = msecs_to_jiffies(sctp_rto_initial);
+	peer->rto = msecs_to_jiffies(net->sctp.rto_initial);
 
 	peer->last_time_heard = jiffies;
 	peer->last_time_ecne_reduced = jiffies;
@@ -84,7 +87,8 @@ static struct sctp_transport *sctp_transport_init(struct sctp_transport *peer,
 			    SPP_SACKDELAY_ENABLE;
 
 	/* Initialize the default path max_retrans.  */
-	peer->pathmaxrxt  = sctp_max_retrans_path;
+	peer->pathmaxrxt  = net->sctp.max_retrans_path;
+	peer->pf_retrans  = net->sctp.pf_retrans;
 
 	INIT_LIST_HEAD(&peer->transmitted);
 	INIT_LIST_HEAD(&peer->send_ready);
@@ -106,19 +110,19 @@ static struct sctp_transport *sctp_transport_init(struct sctp_transport *peer,
 }
 
 /* Allocate and initialize a new transport.  */
-struct sctp_transport *sctp_transport_new(const union sctp_addr *addr,
+struct sctp_transport *sctp_transport_new(struct net *net,
+					  const union sctp_addr *addr,
 					  gfp_t gfp)
 {
 	struct sctp_transport *transport;
 
-	transport = t_new(struct sctp_transport, gfp);
+	transport = kzalloc(sizeof(*transport), gfp);
 	if (!transport)
 		goto fail;
 
-	if (!sctp_transport_init(transport, addr, gfp))
+	if (!sctp_transport_init(net, transport, addr, gfp))
 		goto fail_init;
 
-	transport->malloced = 1;
 	SCTP_DBG_OBJCNT_INC(transport);
 
 	return transport;
@@ -146,16 +150,25 @@ void sctp_transport_free(struct sctp_transport *transport)
 	 * structure hang around in memory since we know
 	 * the tranport is going away.
 	 */
-	if (timer_pending(&transport->T3_rtx_timer) &&
-	    del_timer(&transport->T3_rtx_timer))
+	if (del_timer(&transport->T3_rtx_timer))
 		sctp_transport_put(transport);
 
 	/* Delete the ICMP proto unreachable timer if it's active. */
-	if (timer_pending(&transport->proto_unreach_timer) &&
-	    del_timer(&transport->proto_unreach_timer))
+	if (del_timer(&transport->proto_unreach_timer))
 		sctp_association_put(transport->asoc);
 
 	sctp_transport_put(transport);
+}
+
+static void sctp_transport_destroy_rcu(struct rcu_head *head)
+{
+	struct sctp_transport *transport;
+
+	transport = container_of(head, struct sctp_transport, rcu);
+
+	dst_release(transport->dst);
+	kfree(transport);
+	SCTP_DBG_OBJCNT_DEC(transport);
 }
 
 /* Destroy the transport data structure.
@@ -163,16 +176,17 @@ void sctp_transport_free(struct sctp_transport *transport)
  */
 static void sctp_transport_destroy(struct sctp_transport *transport)
 {
-	SCTP_ASSERT(transport->dead, "Transport is not dead", return);
+	if (unlikely(!transport->dead)) {
+		WARN(1, "Attempt to destroy undead transport %p!\n", transport);
+		return;
+	}
+
+	sctp_packet_free(&transport->packet);
 
 	if (transport->asoc)
 		sctp_association_put(transport->asoc);
 
-	sctp_packet_free(&transport->packet);
-
-	dst_release(transport->dst);
-	kfree(transport);
-	SCTP_DBG_OBJCNT_DEC(transport);
+	call_rcu(&transport->rcu, sctp_transport_destroy_rcu);
 }
 
 /* Start T3_rtx timer if it is not already running and update the heartbeat
@@ -214,7 +228,7 @@ void sctp_transport_set_owner(struct sctp_transport *transport,
 void sctp_transport_pmtu(struct sctp_transport *transport, struct sock *sk)
 {
 	/* If we don't have a fresh route, look one up */
-	if (!transport->dst || transport->dst->obsolete > 1) {
+	if (!transport->dst || transport->dst->obsolete) {
 		dst_release(transport->dst);
 		transport->af_specific->get_dst(transport, &transport->saddr,
 						&transport->fl, sk);
@@ -226,7 +240,7 @@ void sctp_transport_pmtu(struct sctp_transport *transport, struct sock *sk)
 		transport->pathmtu = SCTP_DEFAULT_MAXSEGMENT;
 }
 
-void sctp_transport_update_pmtu(struct sctp_transport *t, u32 pmtu)
+void sctp_transport_update_pmtu(struct sock *sk, struct sctp_transport *t, u32 pmtu)
 {
 	struct dst_entry *dst;
 
@@ -243,8 +257,16 @@ void sctp_transport_update_pmtu(struct sctp_transport *t, u32 pmtu)
 	}
 
 	dst = sctp_transport_dst_check(t);
-	if (dst)
-		dst->ops->update_pmtu(dst, pmtu);
+	if (!dst)
+		t->af_specific->get_dst(t, &t->saddr, &t->fl, sk);
+
+	if (dst) {
+		dst->ops->update_pmtu(dst, sk, NULL, pmtu);
+
+		dst = sctp_transport_dst_check(t);
+		if (!dst)
+			t->af_specific->get_dst(t, &t->saddr, &t->fl, sk);
+	}
 }
 
 /* Caches the dst entry and source address for a transport's destination
@@ -298,13 +320,12 @@ void sctp_transport_put(struct sctp_transport *transport)
 /* Update transport's RTO based on the newly calculated RTT. */
 void sctp_transport_update_rto(struct sctp_transport *tp, __u32 rtt)
 {
-	/* Check for valid transport.  */
-	SCTP_ASSERT(tp, "NULL transport", return);
-
-	/* We should not be doing any RTO updates unless rto_pending is set.  */
-	SCTP_ASSERT(tp->rto_pending, "rto_pending not set", return);
+	if (unlikely(!tp->rto_pending))
+		/* We should not be doing any RTO updates unless rto_pending is set.  */
+		pr_debug("%s: rto_pending not set on transport %p!\n", __func__, tp);
 
 	if (tp->rttvar || tp->srtt) {
+		struct net *net = sock_net(tp->asoc->base.sk);
 		/* 6.3.1 C3) When a new RTT measurement R' is made, set
 		 * RTTVAR <- (1 - RTO.Beta) * RTTVAR + RTO.Beta * |SRTT - R'|
 		 * SRTT <- (1 - RTO.Alpha) * SRTT + RTO.Alpha * R'
@@ -316,10 +337,10 @@ void sctp_transport_update_rto(struct sctp_transport *tp, __u32 rtt)
 		 * For example, assuming the default value of RTO.Alpha of
 		 * 1/8, rto_alpha would be expressed as 3.
 		 */
-		tp->rttvar = tp->rttvar - (tp->rttvar >> sctp_rto_beta)
-			+ ((abs(tp->srtt - rtt)) >> sctp_rto_beta);
-		tp->srtt = tp->srtt - (tp->srtt >> sctp_rto_alpha)
-			+ (rtt >> sctp_rto_alpha);
+		tp->rttvar = tp->rttvar - (tp->rttvar >> net->sctp.rto_beta)
+			+ (((__u32)abs64((__s64)tp->srtt - (__s64)rtt)) >> net->sctp.rto_beta);
+		tp->srtt = tp->srtt - (tp->srtt >> net->sctp.rto_alpha)
+			+ (rtt >> net->sctp.rto_alpha);
 	} else {
 		/* 6.3.1 C2) When the first RTT measurement R is made, set
 		 * SRTT <- R, RTTVAR <- R/2.
@@ -349,6 +370,7 @@ void sctp_transport_update_rto(struct sctp_transport *tp, __u32 rtt)
 	if (tp->rto > tp->asoc->rto_max)
 		tp->rto = tp->asoc->rto_max;
 
+	sctp_max_rto(tp->asoc, tp);
 	tp->rtt = rtt;
 
 	/* Reset rto_pending so that a new RTT measurement is started when a
@@ -356,9 +378,8 @@ void sctp_transport_update_rto(struct sctp_transport *tp, __u32 rtt)
 	 */
 	tp->rto_pending = 0;
 
-	SCTP_DEBUG_PRINTK("%s: transport: %p, rtt: %d, srtt: %d "
-			  "rttvar: %d, rto: %ld\n", __func__,
-			  tp, rtt, tp->srtt, tp->rttvar, tp->rto);
+	pr_debug("%s: transport:%p, rtt:%d, srtt:%d rttvar:%d, rto:%ld\n",
+		 __func__, tp, rtt, tp->srtt, tp->rttvar, tp->rto);
 }
 
 /* This routine updates the transport's cwnd and partial_bytes_acked
@@ -412,12 +433,11 @@ void sctp_transport_raise_cwnd(struct sctp_transport *transport,
 			cwnd += pmtu;
 		else
 			cwnd += bytes_acked;
-		SCTP_DEBUG_PRINTK("%s: SLOW START: transport: %p, "
-				  "bytes_acked: %d, cwnd: %d, ssthresh: %d, "
-				  "flight_size: %d, pba: %d\n",
-				  __func__,
-				  transport, bytes_acked, cwnd,
-				  ssthresh, flight_size, pba);
+
+		pr_debug("%s: slow start: transport:%p, bytes_acked:%d, "
+			 "cwnd:%d, ssthresh:%d, flight_size:%d, pba:%d\n",
+			 __func__, transport, bytes_acked, cwnd, ssthresh,
+			 flight_size, pba);
 	} else {
 		/* RFC 2960 7.2.2 Whenever cwnd is greater than ssthresh,
 		 * upon each SACK arrival that advances the Cumulative TSN Ack
@@ -438,12 +458,12 @@ void sctp_transport_raise_cwnd(struct sctp_transport *transport,
 			cwnd += pmtu;
 			pba = ((cwnd < pba) ? (pba - cwnd) : 0);
 		}
-		SCTP_DEBUG_PRINTK("%s: CONGESTION AVOIDANCE: "
-				  "transport: %p, bytes_acked: %d, cwnd: %d, "
-				  "ssthresh: %d, flight_size: %d, pba: %d\n",
-				  __func__,
-				  transport, bytes_acked, cwnd,
-				  ssthresh, flight_size, pba);
+
+		pr_debug("%s: congestion avoidance: transport:%p, "
+			 "bytes_acked:%d, cwnd:%d, ssthresh:%d, "
+			 "flight_size:%d, pba:%d\n", __func__,
+			 transport, bytes_acked, cwnd, ssthresh,
+			 flight_size, pba);
 	}
 
 	transport->cwnd = cwnd;
@@ -537,10 +557,10 @@ void sctp_transport_lower_cwnd(struct sctp_transport *transport,
 	}
 
 	transport->partial_bytes_acked = 0;
-	SCTP_DEBUG_PRINTK("%s: transport: %p reason: %d cwnd: "
-			  "%d ssthresh: %d\n", __func__,
-			  transport, reason,
-			  transport->cwnd, transport->ssthresh);
+
+	pr_debug("%s: transport:%p, reason:%d, cwnd:%d, ssthresh:%d\n",
+		 __func__, transport, reason, transport->cwnd,
+		 transport->ssthresh);
 }
 
 /* Apply Max.Burst limit to the congestion window:
@@ -585,7 +605,8 @@ unsigned long sctp_transport_timeout(struct sctp_transport *t)
 {
 	unsigned long timeout;
 	timeout = t->rto + sctp_jitter(t->rto);
-	if (t->state != SCTP_UNCONFIRMED)
+	if ((t->state != SCTP_UNCONFIRMED) &&
+	    (t->state != SCTP_PF))
 		timeout += t->hbinterval;
 	timeout += jiffies;
 	return timeout;
@@ -605,6 +626,7 @@ void sctp_transport_reset(struct sctp_transport *t)
 	t->burst_limited = 0;
 	t->ssthresh = asoc->peer.i.a_rwnd;
 	t->rto = asoc->rto_initial;
+	sctp_max_rto(asoc, t);
 	t->rtt = 0;
 	t->srtt = 0;
 	t->rttvar = 0;
@@ -629,10 +651,9 @@ void sctp_transport_reset(struct sctp_transport *t)
 void sctp_transport_immediate_rtx(struct sctp_transport *t)
 {
 	/* Stop pending T3_rtx_timer */
-	if (timer_pending(&t->T3_rtx_timer)) {
-		(void)del_timer(&t->T3_rtx_timer);
+	if (del_timer(&t->T3_rtx_timer))
 		sctp_transport_put(t);
-	}
+
 	sctp_retransmit(&t->asoc->outqueue, t, SCTP_RTXR_T3_RTX);
 	if (!timer_pending(&t->T3_rtx_timer)) {
 		if (!mod_timer(&t->T3_rtx_timer, jiffies + t->rto))

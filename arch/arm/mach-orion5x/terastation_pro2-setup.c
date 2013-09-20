@@ -122,7 +122,6 @@ static int __init tsp2_pci_map_irq(const struct pci_dev *dev, u8 slot, u8 pin)
 static struct hw_pci tsp2_pci __initdata = {
 	.nr_controllers = 2,
 	.preinit        = tsp2_pci_preinit,
-	.swizzle        = pci_std_swizzle,
 	.setup          = orion5x_pci_sys_setup,
 	.scan           = orion5x_pci_sys_scan_bus,
 	.map_irq        = tsp2_pci_map_irq,
@@ -330,8 +329,8 @@ static void __init tsp2_init(void)
 	/*
 	 * Configure peripherals.
 	 */
-	orion5x_setup_dev_boot_win(TSP2_NOR_BOOT_BASE,
-				   TSP2_NOR_BOOT_SIZE);
+	mvebu_mbus_add_window("devbus-boot", TSP2_NOR_BOOT_BASE,
+			      TSP2_NOR_BOOT_SIZE);
 	platform_device_register(&tsp2_nor_flash);
 
 	orion5x_ehci0_init();
@@ -362,7 +361,7 @@ MACHINE_START(TERASTATION_PRO2, "Buffalo Terastation Pro II/Live")
 	.map_io		= orion5x_map_io,
 	.init_early	= orion5x_init_early,
 	.init_irq	= orion5x_init_irq,
-	.timer		= &orion5x_timer,
+	.init_time	= orion5x_timer_init,
 	.fixup		= tag_fixup_mem32,
 	.restart	= orion5x_restart,
 MACHINE_END

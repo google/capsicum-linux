@@ -7,10 +7,12 @@ config UML
 	bool
 	default y
 	select HAVE_GENERIC_HARDIRQS
+	select HAVE_UID16
 	select GENERIC_IRQ_SHOW
 	select GENERIC_CPU_DEVICES
 	select GENERIC_IO
-	select HAVE_ARCH_SECCOMP_FILTER
+	select GENERIC_CLOCKEVENTS
+	select TTY # Needed for line.c
 
 config MMU
 	bool
@@ -53,15 +55,6 @@ config GENERIC_BUG
 	default y
 	depends on BUG
 
-config GENERIC_CLOCKEVENTS
-	bool
-	default y
-
-# Used in kernel/irq/manage.c and include/linux/irq.h
-config IRQ_RELEASE_METHOD
-	bool
-	default y
-
 config HZ
 	int
 	default 100
@@ -69,20 +62,3 @@ config HZ
 config SUBARCH
 	string
 	option env="SUBARCH"
-
-config SECCOMP
-	def_bool y
-	prompt "Enable seccomp to safely compute untrusted bytecode"
-	---help---
-	  This kernel feature is useful for number crunching applications
-	  that may need to compute untrusted bytecode during their
-	  execution. By using pipes or other transports made available to
-	  the process as file descriptors supporting the read/write
-	  syscalls, it's possible to isolate those applications in
-	  their own address space using seccomp. Once seccomp is
-	  enabled via prctl(PR_SET_SECCOMP), it cannot be disabled
-	  and the task is only allowed to execute a few safe syscalls
-	  defined by each seccomp mode.
-
-	  If unsure, say Y. Only embedded should say N here.
-

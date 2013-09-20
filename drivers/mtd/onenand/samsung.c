@@ -23,11 +23,11 @@
 #include <linux/mtd/partitions.h>
 #include <linux/dma-mapping.h>
 #include <linux/interrupt.h>
+#include <linux/io.h>
 
 #include <asm/mach/flash.h>
-#include <plat/regs-onenand.h>
 
-#include <linux/io.h>
+#include "samsung.h"
 
 enum soc_type {
 	TYPE_S3C6400,
@@ -1053,7 +1053,7 @@ onenand_fail:
 	return err;
 }
 
-static int __devexit s3c_onenand_remove(struct platform_device *pdev)
+static int s3c_onenand_remove(struct platform_device *pdev)
 {
 	struct mtd_info *mtd = platform_get_drvdata(pdev);
 
@@ -1130,7 +1130,7 @@ static struct platform_driver s3c_onenand_driver = {
 	},
 	.id_table	= s3c_onenand_driver_ids,
 	.probe          = s3c_onenand_probe,
-	.remove         = __devexit_p(s3c_onenand_remove),
+	.remove         = s3c_onenand_remove,
 };
 
 module_platform_driver(s3c_onenand_driver);

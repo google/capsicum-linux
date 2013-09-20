@@ -30,7 +30,6 @@
 
 #include "osdep_service.h"
 #include "drv_types.h"
-#include "rtl871x_byteorder.h"
 #include "wifi.h"
 #include "osdep_intf.h"
 #include "usb_ops.h"
@@ -377,7 +376,7 @@ u8 r8712_dump_aggr_xframe(struct xmit_buf *pxmitbuf,
 {
 	struct _adapter *padapter = pxmitframe->padapter;
 	struct dvobj_priv *pdvobj = (struct dvobj_priv *) &padapter->dvobjpriv;
-	struct tx_desc * ptxdesc = (struct tx_desc *)pxmitbuf->pbuf;
+	struct tx_desc *ptxdesc = (struct tx_desc *)pxmitbuf->pbuf;
 	struct cmd_hdr *pcmd_hdr = (struct cmd_hdr *)
 		(pxmitbuf->pbuf + TXDESC_SIZE);
 	u16 total_length = (u16) (ptxdesc->txdw0 & 0xffff);

@@ -10,7 +10,9 @@
 #include <linux/pid_namespace.h>
 #include <linux/user_namespace.h>
 #include <linux/securebits.h>
+#include <linux/seqlock.h>
 #include <net/net_namespace.h>
+#include <linux/sched/rt.h>
 
 #ifdef CONFIG_SMP
 # define INIT_PUSHABLE_TASKS(tsk)					\
@@ -92,7 +94,7 @@ extern struct group_info init_groups;
 
 #ifdef CONFIG_AUDITSYSCALL
 #define INIT_IDS \
-	.loginuid = -1, \
+	.loginuid = INVALID_UID, \
 	.sessionid = -1,
 #else
 #define INIT_IDS
@@ -123,13 +125,31 @@ extern struct group_info init_groups;
 
 extern struct cred init_cred;
 
+extern struct task_group root_task_group;
+
+#ifdef CONFIG_CGROUP_SCHED
+# define INIT_CGROUP_SCHED(tsk)						\
+	.sched_task_group = &root_task_group,
+#else
+# define INIT_CGROUP_SCHED(tsk)
+#endif
+
 #ifdef CONFIG_PERF_EVENTS
-# define INIT_PERF_EVENTS(tsk)					\
+# define INIT_PERF_EVENTS(tsk)						\
 	.perf_event_mutex = 						\
 		 __MUTEX_INITIALIZER(tsk.perf_event_mutex),		\
 	.perf_event_list = LIST_HEAD_INIT(tsk.perf_event_list),
 #else
 # define INIT_PERF_EVENTS(tsk)
+#endif
+
+#ifdef CONFIG_VIRT_CPU_ACCOUNTING_GEN
+# define INIT_VTIME(tsk)						\
+	.vtime_seqlock = __SEQLOCK_UNLOCKED(tsk.vtime_seqlock),	\
+	.vtime_snap = 0,				\
+	.vtime_snap_whence = VTIME_SYS,
+#else
+# define INIT_VTIME(tsk)
 #endif
 
 #define INIT_TASK_COMM "swapper"
@@ -149,6 +169,7 @@ extern struct cred init_cred;
 	.normal_prio	= MAX_PRIO-20,					\
 	.policy		= SCHED_NORMAL,					\
 	.cpus_allowed	= CPU_MASK_ALL,					\
+	.nr_cpus_allowed= NR_CPUS,					\
 	.mm		= NULL,						\
 	.active_mm	= &init_mm,					\
 	.se		= {						\
@@ -157,11 +178,11 @@ extern struct cred init_cred;
 	.rt		= {						\
 		.run_list	= LIST_HEAD_INIT(tsk.rt.run_list),	\
 		.time_slice	= RR_TIMESLICE,				\
-		.nr_cpus_allowed = NR_CPUS,				\
 	},								\
 	.tasks		= LIST_HEAD_INIT(tsk.tasks),			\
 	.wait_exit	= __WAIT_QUEUE_HEAD_INITIALIZER(tsk.wait_exit), \
 	INIT_PUSHABLE_TASKS(tsk)					\
+	INIT_CGROUP_SCHED(tsk)						\
 	.ptraced	= LIST_HEAD_INIT(tsk.ptraced),			\
 	.ptrace_entry	= LIST_HEAD_INIT(tsk.ptrace_entry),		\
 	.real_parent	= &tsk,						\
@@ -169,8 +190,8 @@ extern struct cred init_cred;
 	.children	= LIST_HEAD_INIT(tsk.children),			\
 	.sibling	= LIST_HEAD_INIT(tsk.sibling),			\
 	.group_leader	= &tsk,						\
-	RCU_INIT_POINTER(.real_cred, &init_cred),			\
-	RCU_INIT_POINTER(.cred, &init_cred),				\
+	RCU_POINTER_INITIALIZER(real_cred, &init_cred),			\
+	RCU_POINTER_INITIALIZER(cred, &init_cred),			\
 	.comm		= INIT_TASK_COMM,				\
 	.thread		= INIT_THREAD,					\
 	.fs		= &init_fs,					\
@@ -201,6 +222,7 @@ extern struct cred init_cred;
 	INIT_TRACE_RECURSION						\
 	INIT_TASK_RCU_PREEMPT(tsk)					\
 	INIT_CPUSET_SEQ							\
+	INIT_VTIME(tsk)							\
 }
 
 

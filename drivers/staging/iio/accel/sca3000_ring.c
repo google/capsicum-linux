@@ -5,7 +5,7 @@
  * under the terms of the GNU General Public License version 2 as published by
  * the Free Software Foundation.
  *
- * Copyright (c) 2009 Jonathan Cameron <jic23@cam.ac.uk>
+ * Copyright (c) 2009 Jonathan Cameron <jic23@kernel.org>
  *
  */
 
@@ -18,9 +18,9 @@
 #include <linux/sched.h>
 #include <linux/poll.h>
 
-#include "../iio.h"
-#include "../sysfs.h"
-#include "../buffer.h"
+#include <linux/iio/iio.h>
+#include <linux/iio/sysfs.h>
+#include <linux/iio/buffer.h>
 #include "../ring_hw.h"
 #include "sca3000.h"
 
@@ -39,7 +39,6 @@ static int sca3000_read_data(struct sca3000_state *st,
 			    int len)
 {
 	int ret;
-	struct spi_message msg;
 	struct spi_transfer xfer[2] = {
 		{
 			.len = 1,
@@ -55,10 +54,7 @@ static int sca3000_read_data(struct sca3000_state *st,
 	}
 	xfer[1].rx_buf = *rx_p;
 	st->tx[0] = SCA3000_READ_REG(reg_address_high);
-	spi_message_init(&msg);
-	spi_message_add_tail(&xfer[0], &msg);
-	spi_message_add_tail(&xfer[1], &msg);
-	ret = spi_sync(st->us, &msg);
+	ret = spi_sync_transfer(st->us, xfer, ARRAY_SIZE(xfer));
 	if (ret) {
 		dev_err(get_device(&st->us->dev), "problem reading register");
 		goto error_free_rx;
@@ -157,7 +153,7 @@ static ssize_t sca3000_query_ring_int(struct device *dev,
 {
 	struct iio_dev_attr *this_attr = to_iio_dev_attr(attr);
 	int ret, val;
-	struct iio_dev *indio_dev = dev_get_drvdata(dev);
+	struct iio_dev *indio_dev = dev_to_iio_dev(dev);
 	struct sca3000_state *st = iio_priv(indio_dev);
 
 	mutex_lock(&st->lock);
@@ -178,7 +174,7 @@ static ssize_t sca3000_set_ring_int(struct device *dev,
 				      const char *buf,
 				      size_t len)
 {
-	struct iio_dev *indio_dev = dev_get_drvdata(dev);
+	struct iio_dev *indio_dev = dev_to_iio_dev(dev);
 	struct sca3000_state *st = iio_priv(indio_dev);
 	struct iio_dev_attr *this_attr = to_iio_dev_attr(attr);
 	long val;
@@ -219,7 +215,7 @@ static ssize_t sca3000_show_buffer_scale(struct device *dev,
 					 struct device_attribute *attr,
 					 char *buf)
 {
-	struct iio_dev *indio_dev = dev_get_drvdata(dev);
+	struct iio_dev *indio_dev = dev_to_iio_dev(dev);
 	struct sca3000_state *st = iio_priv(indio_dev);
 
 	return sprintf(buf, "0.%06d\n", 4*st->info->scale);

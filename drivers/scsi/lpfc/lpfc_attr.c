@@ -1,7 +1,7 @@
 /*******************************************************************
  * This file is part of the Emulex Linux Device Driver for         *
  * Fibre Channel Host Bus Adapters.                                *
- * Copyright (C) 2004-2012 Emulex.  All rights reserved.           *
+ * Copyright (C) 2004-2013 Emulex.  All rights reserved.           *
  * EMULEX and SLI are trademarks of Emulex.                        *
  * www.emulex.com                                                  *
  * Portions Copyright (C) 2004-2005 Christoph Hellwig              *
@@ -674,6 +674,9 @@ lpfc_do_offline(struct lpfc_hba *phba, uint32_t type)
 	int i;
 	int rc;
 
+	if (phba->pport->fc_flag & FC_OFFLINE_MODE)
+		return 0;
+
 	init_completion(&online_compl);
 	rc = lpfc_workq_post_event(phba, &status, &online_compl,
 			      LPFC_EVT_OFFLINE_PREP);
@@ -692,7 +695,7 @@ lpfc_do_offline(struct lpfc_hba *phba, uint32_t type)
 	 */
 	for (i = 0; i < psli->num_rings; i++) {
 		pring = &psli->ring[i];
-		while (pring->txcmplq_cnt) {
+		while (!list_empty(&pring->txcmplq)) {
 			msleep(10);
 			if (cnt++ > 500) {  /* 5 secs */
 				lpfc_printf_log(phba,
@@ -741,7 +744,8 @@ lpfc_selective_reset(struct lpfc_hba *phba)
 	int status = 0;
 	int rc;
 
-	if (!phba->cfg_enable_hba_reset)
+	if ((!phba->cfg_enable_hba_reset) ||
+	    (phba->pport->fc_flag & FC_OFFLINE_MODE))
 		return -EACCES;
 
 	status = lpfc_do_offline(phba, LPFC_EVT_OFFLINE);
@@ -895,6 +899,7 @@ lpfc_sli4_pdev_reg_request(struct lpfc_hba *phba, uint32_t opcode)
 		pci_disable_sriov(pdev);
 		phba->cfg_sriov_nr_virtfn = 0;
 	}
+
 	status = lpfc_do_offline(phba, LPFC_EVT_OFFLINE);
 
 	if (status != 0)
@@ -2302,11 +2307,17 @@ static DEVICE_ATTR(lpfc_enable_npiv, S_IRUGO, lpfc_enable_npiv_show, NULL);
 LPFC_ATTR_R(fcf_failover_policy, 1, 1, 2,
 	"FCF Fast failover=1 Priority failover=2");
 
-int lpfc_enable_rrq;
+int lpfc_enable_rrq = 2;
 module_param(lpfc_enable_rrq, int, S_IRUGO);
 MODULE_PARM_DESC(lpfc_enable_rrq, "Enable RRQ functionality");
 lpfc_param_show(enable_rrq);
-lpfc_param_init(enable_rrq, 0, 0, 1);
+/*
+# lpfc_enable_rrq: Track XRI/OXID reuse after IO failures
+#	0x0 = disabled, XRI/OXID use not tracked.
+#	0x1 = XRI/OXID reuse is timed with ratov, RRQ sent.
+#	0x2 = XRI/OXID reuse is timed with ratov, No RRQ sent.
+*/
+lpfc_param_init(enable_rrq, 2, 0, 2);
 static DEVICE_ATTR(lpfc_enable_rrq, S_IRUGO, lpfc_enable_rrq_show, NULL);
 
 /*
@@ -2795,6 +2806,8 @@ lpfc_topology_store(struct device *dev, struct device_attribute *attr,
 		lpfc_printf_vlog(vport, KERN_ERR, LOG_INIT,
 			"3054 lpfc_topology changed from %d to %d\n",
 			prev_val, val);
+		if (prev_val != val && phba->sli_rev == LPFC_SLI_REV4)
+			phba->fc_topology_changed = 1;
 		err = lpfc_issue_lip(lpfc_shost_from_vport(phba->pport));
 		if (err) {
 			phba->cfg_topology = prev_val;
@@ -3617,6 +3630,310 @@ lpfc_sriov_nr_virtfn_init(struct lpfc_hba *phba, int val)
 static DEVICE_ATTR(lpfc_sriov_nr_virtfn, S_IRUGO | S_IWUSR,
 		   lpfc_sriov_nr_virtfn_show, lpfc_sriov_nr_virtfn_store);
 
+/**
+ * lpfc_request_firmware_store - Request for Linux generic firmware upgrade
+ *
+ * @dev: class device that is converted into a Scsi_host.
+ * @attr: device attribute, not used.
+ * @buf: containing the string the number of vfs to be enabled.
+ * @count: unused variable.
+ *
+ * Description:
+ *
+ * Returns:
+ * length of the buf on success if val is in range the intended mode
+ * is supported.
+ * -EINVAL if val out of range or intended mode is not supported.
+ **/
+static ssize_t
+lpfc_request_firmware_upgrade_store(struct device *dev,
+				    struct device_attribute *attr,
+				    const char *buf, size_t count)
+{
+	struct Scsi_Host *shost = class_to_shost(dev);
+	struct lpfc_vport *vport = (struct lpfc_vport *)shost->hostdata;
+	struct lpfc_hba *phba = vport->phba;
+	int val = 0, rc = -EINVAL;
+
+	/* Sanity check on user data */
+	if (!isdigit(buf[0]))
+		return -EINVAL;
+	if (sscanf(buf, "%i", &val) != 1)
+		return -EINVAL;
+	if (val != 1)
+		return -EINVAL;
+
+	rc = lpfc_sli4_request_firmware_update(phba, RUN_FW_UPGRADE);
+	if (rc)
+		rc = -EPERM;
+	else
+		rc = strlen(buf);
+	return rc;
+}
+
+static int lpfc_req_fw_upgrade;
+module_param(lpfc_req_fw_upgrade, int, S_IRUGO|S_IWUSR);
+MODULE_PARM_DESC(lpfc_req_fw_upgrade, "Enable Linux generic firmware upgrade");
+lpfc_param_show(request_firmware_upgrade)
+
+/**
+ * lpfc_request_firmware_upgrade_init - Enable initial linux generic fw upgrade
+ * @phba: lpfc_hba pointer.
+ * @val: 0 or 1.
+ *
+ * Description:
+ * Set the initial Linux generic firmware upgrade enable or disable flag.
+ *
+ * Returns:
+ * zero if val saved.
+ * -EINVAL val out of range
+ **/
+static int
+lpfc_request_firmware_upgrade_init(struct lpfc_hba *phba, int val)
+{
+	if (val >= 0 && val <= 1) {
+		phba->cfg_request_firmware_upgrade = val;
+		return 0;
+	}
+	return -EINVAL;
+}
+static DEVICE_ATTR(lpfc_req_fw_upgrade, S_IRUGO | S_IWUSR,
+		   lpfc_request_firmware_upgrade_show,
+		   lpfc_request_firmware_upgrade_store);
+
+/**
+ * lpfc_fcp_imax_store
+ *
+ * @dev: class device that is converted into a Scsi_host.
+ * @attr: device attribute, not used.
+ * @buf: string with the number of fast-path FCP interrupts per second.
+ * @count: unused variable.
+ *
+ * Description:
+ * If val is in a valid range [636,651042], then set the adapter's
+ * maximum number of fast-path FCP interrupts per second.
+ *
+ * Returns:
+ * length of the buf on success if val is in range the intended mode
+ * is supported.
+ * -EINVAL if val out of range or intended mode is not supported.
+ **/
+static ssize_t
+lpfc_fcp_imax_store(struct device *dev, struct device_attribute *attr,
+			 const char *buf, size_t count)
+{
+	struct Scsi_Host *shost = class_to_shost(dev);
+	struct lpfc_vport *vport = (struct lpfc_vport *)shost->hostdata;
+	struct lpfc_hba *phba = vport->phba;
+	int val = 0, i;
+
+	/* fcp_imax is only valid for SLI4 */
+	if (phba->sli_rev != LPFC_SLI_REV4)
+		return -EINVAL;
+
+	/* Sanity check on user data */
+	if (!isdigit(buf[0]))
+		return -EINVAL;
+	if (sscanf(buf, "%i", &val) != 1)
+		return -EINVAL;
+
+	/*
+	 * Value range for the HBA is [5000,5000000]
+	 * The value for each EQ depends on how many EQs are configured.
+	 */
+	if (val < LPFC_MIN_IMAX || val > LPFC_MAX_IMAX)
+		return -EINVAL;
+
+	phba->cfg_fcp_imax = (uint32_t)val;
+	for (i = 0; i < phba->cfg_fcp_io_channel; i += LPFC_MAX_EQ_DELAY)
+		lpfc_modify_fcp_eq_delay(phba, i);
+
+	return strlen(buf);
+}
+
+/*
+# lpfc_fcp_imax: The maximum number of fast-path FCP interrupts per second
+# for the HBA.
+#
+# Value range is [5,000 to 5,000,000]. Default value is 50,000.
+*/
+static int lpfc_fcp_imax = LPFC_DEF_IMAX;
+module_param(lpfc_fcp_imax, int, S_IRUGO|S_IWUSR);
+MODULE_PARM_DESC(lpfc_fcp_imax,
+	    "Set the maximum number of FCP interrupts per second per HBA");
+lpfc_param_show(fcp_imax)
+
+/**
+ * lpfc_fcp_imax_init - Set the initial sr-iov virtual function enable
+ * @phba: lpfc_hba pointer.
+ * @val: link speed value.
+ *
+ * Description:
+ * If val is in a valid range [636,651042], then initialize the adapter's
+ * maximum number of fast-path FCP interrupts per second.
+ *
+ * Returns:
+ * zero if val saved.
+ * -EINVAL val out of range
+ **/
+static int
+lpfc_fcp_imax_init(struct lpfc_hba *phba, int val)
+{
+	if (phba->sli_rev != LPFC_SLI_REV4) {
+		phba->cfg_fcp_imax = 0;
+		return 0;
+	}
+
+	if (val >= LPFC_MIN_IMAX && val <= LPFC_MAX_IMAX) {
+		phba->cfg_fcp_imax = val;
+		return 0;
+	}
+
+	lpfc_printf_log(phba, KERN_ERR, LOG_INIT,
+			"3016 fcp_imax: %d out of range, using default\n", val);
+	phba->cfg_fcp_imax = LPFC_DEF_IMAX;
+
+	return 0;
+}
+
+static DEVICE_ATTR(lpfc_fcp_imax, S_IRUGO | S_IWUSR,
+		   lpfc_fcp_imax_show, lpfc_fcp_imax_store);
+
+/**
+ * lpfc_state_show - Display current driver CPU affinity
+ * @dev: class converted to a Scsi_host structure.
+ * @attr: device attribute, not used.
+ * @buf: on return contains text describing the state of the link.
+ *
+ * Returns: size of formatted string.
+ **/
+static ssize_t
+lpfc_fcp_cpu_map_show(struct device *dev, struct device_attribute *attr,
+		      char *buf)
+{
+	struct Scsi_Host  *shost = class_to_shost(dev);
+	struct lpfc_vport *vport = (struct lpfc_vport *)shost->hostdata;
+	struct lpfc_hba   *phba = vport->phba;
+	struct lpfc_vector_map_info *cpup;
+	int  idx, len = 0;
+
+	if ((phba->sli_rev != LPFC_SLI_REV4) ||
+	    (phba->intr_type != MSIX))
+		return len;
+
+	switch (phba->cfg_fcp_cpu_map) {
+	case 0:
+		len += snprintf(buf + len, PAGE_SIZE-len,
+				"fcp_cpu_map: No mapping (%d)\n",
+				phba->cfg_fcp_cpu_map);
+		return len;
+	case 1:
+		len += snprintf(buf + len, PAGE_SIZE-len,
+				"fcp_cpu_map: HBA centric mapping (%d): "
+				"%d online CPUs\n",
+				phba->cfg_fcp_cpu_map,
+				phba->sli4_hba.num_online_cpu);
+		break;
+	case 2:
+		len += snprintf(buf + len, PAGE_SIZE-len,
+				"fcp_cpu_map: Driver centric mapping (%d): "
+				"%d online CPUs\n",
+				phba->cfg_fcp_cpu_map,
+				phba->sli4_hba.num_online_cpu);
+		break;
+	}
+
+	cpup = phba->sli4_hba.cpu_map;
+	for (idx = 0; idx < phba->sli4_hba.num_present_cpu; idx++) {
+		if (cpup->irq == LPFC_VECTOR_MAP_EMPTY)
+			len += snprintf(buf + len, PAGE_SIZE-len,
+					"CPU %02d io_chan %02d "
+					"physid %d coreid %d\n",
+					idx, cpup->channel_id, cpup->phys_id,
+					cpup->core_id);
+		else
+			len += snprintf(buf + len, PAGE_SIZE-len,
+					"CPU %02d io_chan %02d "
+					"physid %d coreid %d IRQ %d\n",
+					idx, cpup->channel_id, cpup->phys_id,
+					cpup->core_id, cpup->irq);
+
+		cpup++;
+	}
+	return len;
+}
+
+/**
+ * lpfc_fcp_cpu_map_store - Change CPU affinity of driver vectors
+ * @dev: class device that is converted into a Scsi_host.
+ * @attr: device attribute, not used.
+ * @buf: one or more lpfc_polling_flags values.
+ * @count: not used.
+ *
+ * Returns:
+ * -EINVAL  - Not implemented yet.
+ **/
+static ssize_t
+lpfc_fcp_cpu_map_store(struct device *dev, struct device_attribute *attr,
+		       const char *buf, size_t count)
+{
+	int status = -EINVAL;
+	return status;
+}
+
+/*
+# lpfc_fcp_cpu_map: Defines how to map CPUs to IRQ vectors
+# for the HBA.
+#
+# Value range is [0 to 2]. Default value is LPFC_DRIVER_CPU_MAP (2).
+#	0 - Do not affinitze IRQ vectors
+#	1 - Affintize HBA vectors with respect to each HBA
+#	    (start with CPU0 for each HBA)
+#	2 - Affintize HBA vectors with respect to the entire driver
+#	    (round robin thru all CPUs across all HBAs)
+*/
+static int lpfc_fcp_cpu_map = LPFC_DRIVER_CPU_MAP;
+module_param(lpfc_fcp_cpu_map, int, S_IRUGO|S_IWUSR);
+MODULE_PARM_DESC(lpfc_fcp_cpu_map,
+		 "Defines how to map CPUs to IRQ vectors per HBA");
+
+/**
+ * lpfc_fcp_cpu_map_init - Set the initial sr-iov virtual function enable
+ * @phba: lpfc_hba pointer.
+ * @val: link speed value.
+ *
+ * Description:
+ * If val is in a valid range [0-2], then affinitze the adapter's
+ * MSIX vectors.
+ *
+ * Returns:
+ * zero if val saved.
+ * -EINVAL val out of range
+ **/
+static int
+lpfc_fcp_cpu_map_init(struct lpfc_hba *phba, int val)
+{
+	if (phba->sli_rev != LPFC_SLI_REV4) {
+		phba->cfg_fcp_cpu_map = 0;
+		return 0;
+	}
+
+	if (val >= LPFC_MIN_CPU_MAP && val <= LPFC_MAX_CPU_MAP) {
+		phba->cfg_fcp_cpu_map = val;
+		return 0;
+	}
+
+	lpfc_printf_log(phba, KERN_ERR, LOG_INIT,
+			"3326 fcp_cpu_map: %d out of range, using default\n",
+			val);
+	phba->cfg_fcp_cpu_map = LPFC_DRIVER_CPU_MAP;
+
+	return 0;
+}
+
+static DEVICE_ATTR(lpfc_fcp_cpu_map, S_IRUGO | S_IWUSR,
+		   lpfc_fcp_cpu_map_show, lpfc_fcp_cpu_map_store);
+
 /*
 # lpfc_fcp_class:  Determines FC class to use for the FCP protocol.
 # Value range is [2,3]. Default value is 3.
@@ -3680,6 +3997,26 @@ static DEVICE_ATTR(lpfc_max_scsicmpl_time, S_IRUGO | S_IWUSR,
 LPFC_ATTR_R(ack0, 0, 0, 1, "Enable ACK0 support");
 
 /*
+# lpfc_fcp_io_sched: Determine scheduling algrithmn for issuing FCP cmds
+# range is [0,1]. Default value is 0.
+# For [0], FCP commands are issued to Work Queues ina round robin fashion.
+# For [1], FCP commands are issued to a Work Queue associated with the
+#          current CPU.
+*/
+LPFC_ATTR_RW(fcp_io_sched, 0, 0, 1, "Determine scheduling algrithmn for "
+		"issuing commands [0] - Round Robin, [1] - Current CPU");
+
+/*
+# lpfc_fcp2_no_tgt_reset: Determine bus reset behavior
+# range is [0,1]. Default value is 0.
+# For [0], bus reset issues target reset to ALL devices
+# For [1], bus reset issues target reset to non-FCP2 devices
+*/
+LPFC_ATTR_RW(fcp2_no_tgt_reset, 0, 0, 1, "Determine bus reset behavior for "
+	     "FCP2 devices [0] - issue tgt reset, [1] - no tgt reset");
+
+
+/*
 # lpfc_cr_delay & lpfc_cr_count: Default values for I/O colaesing
 # cr_delay (msec) or cr_count outstanding commands. cr_delay can take
 # value [0,63]. cr_count can take value [1,255]. Default value of cr_delay
@@ -3733,11 +4070,28 @@ LPFC_VPORT_ATTR(discovery_threads, 32, 1, 64, "Maximum number of ELS commands "
 		 "during discovery");
 
 /*
-# lpfc_max_luns: maximum allowed LUN.
+# lpfc_max_luns: maximum allowed LUN ID. This is the highest LUN ID that
+#    will be scanned by the SCSI midlayer when sequential scanning is
+#    used; and is also the highest LUN ID allowed when the SCSI midlayer
+#    parses REPORT_LUN responses. The lpfc driver has no LUN count or
+#    LUN ID limit, but the SCSI midlayer requires this field for the uses
+#    above. The lpfc driver limits the default value to 255 for two reasons.
+#    As it bounds the sequential scan loop, scanning for thousands of luns
+#    on a target can take minutes of wall clock time.  Additionally,
+#    there are FC targets, such as JBODs, that only recognize 8-bits of
+#    LUN ID. When they receive a value greater than 8 bits, they chop off
+#    the high order bits. In other words, they see LUN IDs 0, 256, 512,
+#    and so on all as LUN ID 0. This causes the linux kernel, which sees
+#    valid responses at each of the LUN IDs, to believe there are multiple
+#    devices present, when in fact, there is only 1.
+#    A customer that is aware of their target behaviors, and the results as
+#    indicated above, is welcome to increase the lpfc_max_luns value.
+#    As mentioned, this value is not used by the lpfc driver, only the
+#    SCSI midlayer.
 # Value range is [0,65535]. Default value is 255.
 # NOTE: The SCSI layer might probe all allowed LUN on some old targets.
 */
-LPFC_VPORT_ATTR_R(max_luns, 255, 0, 65535, "Maximum allowed LUN");
+LPFC_VPORT_ATTR_R(max_luns, 255, 0, 65535, "Maximum allowed LUN ID");
 
 /*
 # lpfc_poll_tmo: .Milliseconds driver will wait between polling FCP ring.
@@ -3758,28 +4112,32 @@ LPFC_ATTR_R(use_msi, 2, 0, 2, "Use Message Signaled Interrupts (1) or "
 	    "MSI-X (2), if possible");
 
 /*
-# lpfc_fcp_imax: Set the maximum number of fast-path FCP interrupts per second
-#
-# Value range is [636,651042]. Default value is 10000.
-*/
-LPFC_ATTR_R(fcp_imax, LPFC_FP_DEF_IMAX, LPFC_MIM_IMAX, LPFC_DMULT_CONST,
-	    "Set the maximum number of fast-path FCP interrupts per second");
-
-/*
 # lpfc_fcp_wq_count: Set the number of fast-path FCP work queues
+# This parameter is ignored and will eventually be depricated
 #
-# Value range is [1,31]. Default value is 4.
+# Value range is [1,7]. Default value is 4.
 */
-LPFC_ATTR_R(fcp_wq_count, LPFC_FP_WQN_DEF, LPFC_FP_WQN_MIN, LPFC_FP_WQN_MAX,
+LPFC_ATTR_R(fcp_wq_count, LPFC_FCP_IO_CHAN_DEF, LPFC_FCP_IO_CHAN_MIN,
+	    LPFC_FCP_IO_CHAN_MAX,
 	    "Set the number of fast-path FCP work queues, if possible");
 
 /*
-# lpfc_fcp_eq_count: Set the number of fast-path FCP event queues
+# lpfc_fcp_eq_count: Set the number of FCP EQ/CQ/WQ IO channels
 #
-# Value range is [1,7]. Default value is 1.
+# Value range is [1,7]. Default value is 4.
 */
-LPFC_ATTR_R(fcp_eq_count, LPFC_FP_EQN_DEF, LPFC_FP_EQN_MIN, LPFC_FP_EQN_MAX,
+LPFC_ATTR_R(fcp_eq_count, LPFC_FCP_IO_CHAN_DEF, LPFC_FCP_IO_CHAN_MIN,
+	    LPFC_FCP_IO_CHAN_MAX,
 	    "Set the number of fast-path FCP event queues, if possible");
+
+/*
+# lpfc_fcp_io_channel: Set the number of FCP EQ/CQ/WQ IO channels
+#
+# Value range is [1,7]. Default value is 4.
+*/
+LPFC_ATTR_R(fcp_io_channel, LPFC_FCP_IO_CHAN_DEF, LPFC_FCP_IO_CHAN_MIN,
+	    LPFC_FCP_IO_CHAN_MAX,
+	    "Set the number of FCP I/O channels");
 
 /*
 # lpfc_enable_hba_reset: Allow or prevent HBA resets to the hardware.
@@ -3806,12 +4164,28 @@ LPFC_ATTR_R(enable_hba_heartbeat, 0, 0, 1, "Enable HBA Heartbeat.");
 LPFC_ATTR_R(enable_bg, 0, 0, 1, "Enable BlockGuard Support");
 
 /*
+# lpfc_fcp_look_ahead: Look ahead for completions in FCP start routine
+#       0  = disabled (default)
+#       1  = enabled
+# Value range is [0,1]. Default value is 0.
+#
+# This feature in under investigation and may be supported in the future.
+*/
+unsigned int lpfc_fcp_look_ahead = LPFC_LOOK_AHEAD_OFF;
+
+/*
 # lpfc_prot_mask: i
 #	- Bit mask of host protection capabilities used to register with the
 #	  SCSI mid-layer
 # 	- Only meaningful if BG is turned on (lpfc_enable_bg=1).
 #	- Allows you to ultimately specify which profiles to use
 #	- Default will result in registering capabilities for all profiles.
+#	- SHOST_DIF_TYPE1_PROTECTION	1
+#		HBA supports T10 DIF Type 1: HBA to Target Type 1 Protection
+#	- SHOST_DIX_TYPE0_PROTECTION	8
+#		HBA supports DIX Type 0: Host to HBA protection only
+#	- SHOST_DIX_TYPE1_PROTECTION	16
+#		HBA supports DIX Type 1: Host to HBA  Type 1 protection
 #
 */
 unsigned int lpfc_prot_mask = SHOST_DIF_TYPE1_PROTECTION |
@@ -3824,7 +4198,7 @@ MODULE_PARM_DESC(lpfc_prot_mask, "host protection mask");
 /*
 # lpfc_prot_guard: i
 #	- Bit mask of protection guard types to register with the SCSI mid-layer
-# 	- Guard types are currently either 1) IP checksum 2) T10-DIF CRC
+#	- Guard types are currently either 1) T10-DIF CRC 2) IP checksum
 #	- Allows you to ultimately specify which profiles to use
 #	- Default will result in registering capabilities for all guard types
 #
@@ -3855,16 +4229,23 @@ MODULE_PARM_DESC(lpfc_delay_discovery,
 
 /*
  * lpfc_sg_seg_cnt - Initial Maximum DMA Segment Count
- * This value can be set to values between 64 and 256. The default value is
+ * This value can be set to values between 64 and 4096. The default value is
  * 64, but may be increased to allow for larger Max I/O sizes. The scsi layer
  * will be allowed to request I/Os of sizes up to (MAX_SEG_COUNT * SEG_SIZE).
+ * Because of the additional overhead involved in setting up T10-DIF,
+ * this parameter will be limited to 128 if BlockGuard is enabled under SLI4
+ * and will be limited to 512 if BlockGuard is enabled under SLI3.
  */
 LPFC_ATTR_R(sg_seg_cnt, LPFC_DEFAULT_SG_SEG_CNT, LPFC_DEFAULT_SG_SEG_CNT,
 	    LPFC_MAX_SG_SEG_CNT, "Max Scatter Gather Segment Count");
 
-LPFC_ATTR_R(prot_sg_seg_cnt, LPFC_DEFAULT_PROT_SG_SEG_CNT,
-		LPFC_DEFAULT_PROT_SG_SEG_CNT, LPFC_MAX_PROT_SG_SEG_CNT,
-		"Max Protection Scatter Gather Segment Count");
+/*
+ * This parameter will be depricated, the driver cannot limit the
+ * protection data s/g list.
+ */
+LPFC_ATTR_R(prot_sg_seg_cnt, LPFC_DEFAULT_SG_SEG_CNT,
+	    LPFC_DEFAULT_SG_SEG_CNT, LPFC_MAX_SG_SEG_CNT,
+	    "Max Protection Scatter Gather Segment Count");
 
 struct device_attribute *lpfc_hba_attrs[] = {
 	&dev_attr_bg_info,
@@ -3899,6 +4280,8 @@ struct device_attribute *lpfc_hba_attrs[] = {
 	&dev_attr_lpfc_topology,
 	&dev_attr_lpfc_scan_down,
 	&dev_attr_lpfc_link_speed,
+	&dev_attr_lpfc_fcp_io_sched,
+	&dev_attr_lpfc_fcp2_no_tgt_reset,
 	&dev_attr_lpfc_cr_delay,
 	&dev_attr_lpfc_cr_count,
 	&dev_attr_lpfc_multi_ring_support,
@@ -3923,8 +4306,10 @@ struct device_attribute *lpfc_hba_attrs[] = {
 	&dev_attr_lpfc_poll_tmo,
 	&dev_attr_lpfc_use_msi,
 	&dev_attr_lpfc_fcp_imax,
+	&dev_attr_lpfc_fcp_cpu_map,
 	&dev_attr_lpfc_fcp_wq_count,
 	&dev_attr_lpfc_fcp_eq_count,
+	&dev_attr_lpfc_fcp_io_channel,
 	&dev_attr_lpfc_enable_bg,
 	&dev_attr_lpfc_soft_wwnn,
 	&dev_attr_lpfc_soft_wwpn,
@@ -3938,6 +4323,7 @@ struct device_attribute *lpfc_hba_attrs[] = {
 	&dev_attr_lpfc_aer_support,
 	&dev_attr_lpfc_aer_state_cleanup,
 	&dev_attr_lpfc_sriov_nr_virtfn,
+	&dev_attr_lpfc_req_fw_upgrade,
 	&dev_attr_lpfc_suppress_link_up,
 	&dev_attr_lpfc_iocb_cnt,
 	&dev_attr_iocb_hw,
@@ -4887,6 +5273,8 @@ struct fc_function_template lpfc_vport_transport_functions = {
 void
 lpfc_get_cfgparam(struct lpfc_hba *phba)
 {
+	lpfc_fcp_io_sched_init(phba, lpfc_fcp_io_sched);
+	lpfc_fcp2_no_tgt_reset_init(phba, lpfc_fcp2_no_tgt_reset);
 	lpfc_cr_delay_init(phba, lpfc_cr_delay);
 	lpfc_cr_count_init(phba, lpfc_cr_count);
 	lpfc_multi_ring_support_init(phba, lpfc_multi_ring_support);
@@ -4901,8 +5289,10 @@ lpfc_get_cfgparam(struct lpfc_hba *phba)
 	lpfc_enable_rrq_init(phba, lpfc_enable_rrq);
 	lpfc_use_msi_init(phba, lpfc_use_msi);
 	lpfc_fcp_imax_init(phba, lpfc_fcp_imax);
+	lpfc_fcp_cpu_map_init(phba, lpfc_fcp_cpu_map);
 	lpfc_fcp_wq_count_init(phba, lpfc_fcp_wq_count);
 	lpfc_fcp_eq_count_init(phba, lpfc_fcp_eq_count);
+	lpfc_fcp_io_channel_init(phba, lpfc_fcp_io_channel);
 	lpfc_enable_hba_reset_init(phba, lpfc_enable_hba_reset);
 	lpfc_enable_hba_heartbeat_init(phba, lpfc_enable_hba_heartbeat);
 	lpfc_enable_bg_init(phba, lpfc_enable_bg);
@@ -4918,6 +5308,7 @@ lpfc_get_cfgparam(struct lpfc_hba *phba)
 	lpfc_hba_log_verbose_init(phba, lpfc_log_verbose);
 	lpfc_aer_support_init(phba, lpfc_aer_support);
 	lpfc_sriov_nr_virtfn_init(phba, lpfc_sriov_nr_virtfn);
+	lpfc_request_firmware_upgrade_init(phba, lpfc_req_fw_upgrade);
 	lpfc_suppress_link_up_init(phba, lpfc_suppress_link_up);
 	lpfc_iocb_cnt_init(phba, lpfc_iocb_cnt);
 	phba->cfg_enable_dss = 1;

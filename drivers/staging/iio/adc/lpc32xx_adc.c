@@ -30,9 +30,10 @@
 #include <linux/clk.h>
 #include <linux/err.h>
 #include <linux/completion.h>
+#include <linux/of.h>
 
-#include "../iio.h"
-#include "../sysfs.h"
+#include <linux/iio/iio.h>
+#include <linux/iio/sysfs.h>
 
 /*
  * LPC32XX registers definitions
@@ -73,7 +74,7 @@ static int lpc32xx_read_raw(struct iio_dev *indio_dev,
 {
 	struct lpc32xx_adc_info *info = iio_priv(indio_dev);
 
-	if (mask == 0) {
+	if (mask == IIO_CHAN_INFO_RAW) {
 		mutex_lock(&indio_dev->mlock);
 		clk_enable(info->clk);
 		/* Measurement setup */
@@ -98,15 +99,16 @@ static const struct iio_info lpc32xx_adc_iio_info = {
 	.driver_module = THIS_MODULE,
 };
 
-#define LPC32XX_ADC_CHANNEL(_index) {		\
-	.type = IIO_VOLTAGE,			\
-	.indexed = 1,				\
-	.channel = _index,			\
-	.address = AD_IN * _index,		\
-	.scan_index = _index,			\
+#define LPC32XX_ADC_CHANNEL(_index) {			\
+	.type = IIO_VOLTAGE,				\
+	.indexed = 1,					\
+	.channel = _index,				\
+	.info_mask_separate = BIT(IIO_CHAN_INFO_RAW),	\
+	.address = AD_IN * _index,			\
+	.scan_index = _index,				\
 }
 
-static struct iio_chan_spec lpc32xx_adc_iio_channels[] = {
+static const struct iio_chan_spec lpc32xx_adc_iio_channels[] = {
 	LPC32XX_ADC_CHANNEL(0),
 	LPC32XX_ADC_CHANNEL(1),
 	LPC32XX_ADC_CHANNEL(2),
@@ -124,7 +126,7 @@ static irqreturn_t lpc32xx_adc_isr(int irq, void *dev_id)
 	return IRQ_HANDLED;
 }
 
-static int __devinit lpc32xx_adc_probe(struct platform_device *pdev)
+static int lpc32xx_adc_probe(struct platform_device *pdev)
 {
 	struct lpc32xx_adc_info *info = NULL;
 	struct resource *res;
@@ -139,7 +141,7 @@ static int __devinit lpc32xx_adc_probe(struct platform_device *pdev)
 		goto errout1;
 	}
 
-	iodev = iio_allocate_device(sizeof(struct lpc32xx_adc_info));
+	iodev = iio_device_alloc(sizeof(struct lpc32xx_adc_info));
 	if (!iodev) {
 		dev_err(&pdev->dev, "failed allocating iio device\n");
 		retval = -ENOMEM;
@@ -148,7 +150,7 @@ static int __devinit lpc32xx_adc_probe(struct platform_device *pdev)
 
 	info = iio_priv(iodev);
 
-	info->adc_base = ioremap(res->start, res->end - res->start + 1);
+	info->adc_base = ioremap(res->start, resource_size(res));
 	if (!info->adc_base) {
 		dev_err(&pdev->dev, "failed mapping memory\n");
 		retval = -EBUSY;
@@ -194,39 +196,47 @@ static int __devinit lpc32xx_adc_probe(struct platform_device *pdev)
 	return 0;
 
 errout5:
-	free_irq(irq, iodev);
+	free_irq(irq, info);
 errout4:
 	clk_put(info->clk);
 errout3:
 	iounmap(info->adc_base);
 errout2:
-	iio_free_device(iodev);
+	iio_device_free(iodev);
 errout1:
 	return retval;
 }
 
-static int __devexit lpc32xx_adc_remove(struct platform_device *pdev)
+static int lpc32xx_adc_remove(struct platform_device *pdev)
 {
 	struct iio_dev *iodev = platform_get_drvdata(pdev);
 	struct lpc32xx_adc_info *info = iio_priv(iodev);
 	int irq = platform_get_irq(pdev, 0);
 
 	iio_device_unregister(iodev);
-	free_irq(irq, iodev);
-	platform_set_drvdata(pdev, NULL);
+	free_irq(irq, info);
 	clk_put(info->clk);
 	iounmap(info->adc_base);
-	iio_free_device(iodev);
+	iio_device_free(iodev);
 
 	return 0;
 }
 
+#ifdef CONFIG_OF
+static const struct of_device_id lpc32xx_adc_match[] = {
+	{ .compatible = "nxp,lpc3220-adc" },
+	{},
+};
+MODULE_DEVICE_TABLE(of, lpc32xx_adc_match);
+#endif
+
 static struct platform_driver lpc32xx_adc_driver = {
 	.probe		= lpc32xx_adc_probe,
-	.remove		= __devexit_p(lpc32xx_adc_remove),
+	.remove		= lpc32xx_adc_remove,
 	.driver		= {
 		.name	= MOD_NAME,
 		.owner	= THIS_MODULE,
+		.of_match_table = of_match_ptr(lpc32xx_adc_match),
 	},
 };
 

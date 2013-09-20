@@ -633,6 +633,8 @@ struct pch_gbe_adapter {
 	struct pci_dev *ptp_pdev;
 };
 
+#define pch_gbe_hw_to_adapter(hw)	container_of(hw, struct pch_gbe_adapter, hw)
+
 extern const char pch_driver_version[];
 
 /* pch_gbe_main.c */
@@ -649,7 +651,6 @@ extern void pch_gbe_free_tx_resources(struct pch_gbe_adapter *adapter,
 extern void pch_gbe_free_rx_resources(struct pch_gbe_adapter *adapter,
 				       struct pch_gbe_rx_ring *rx_ring);
 extern void pch_gbe_update_stats(struct pch_gbe_adapter *adapter);
-#ifdef CONFIG_PCH_PTP
 extern u32 pch_ch_control_read(struct pci_dev *pdev);
 extern void pch_ch_control_write(struct pci_dev *pdev, u32 val);
 extern u32 pch_ch_event_read(struct pci_dev *pdev);
@@ -658,7 +659,7 @@ extern u32 pch_src_uuid_lo_read(struct pci_dev *pdev);
 extern u32 pch_src_uuid_hi_read(struct pci_dev *pdev);
 extern u64 pch_rx_snap_read(struct pci_dev *pdev);
 extern u64 pch_tx_snap_read(struct pci_dev *pdev);
-#endif
+extern int pch_set_station_address(u8 *addr, struct pci_dev *pdev);
 
 /* pch_gbe_param.c */
 extern void pch_gbe_check_options(struct pch_gbe_adapter *adapter);

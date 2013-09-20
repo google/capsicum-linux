@@ -25,11 +25,11 @@
 
 #include <linux/module.h>
 
-#include "drmP.h"
-#include "savage_drm.h"
+#include <drm/drmP.h>
+#include <drm/savage_drm.h>
 #include "savage_drv.h"
 
-#include "drm_pciids.h"
+#include <drm/drm_pciids.h>
 
 static struct pci_device_id pciidlist[] = {
 	savage_PCI_IDS
@@ -43,6 +43,9 @@ static const struct file_operations savage_driver_fops = {
 	.mmap = drm_mmap,
 	.poll = drm_poll,
 	.fasync = drm_fasync,
+#ifdef CONFIG_COMPAT
+	.compat_ioctl = drm_compat_ioctl,
+#endif
 	.llseek = noop_llseek,
 };
 
@@ -52,9 +55,9 @@ static struct drm_driver driver = {
 	.dev_priv_size = sizeof(drm_savage_buf_priv_t),
 	.load = savage_driver_load,
 	.firstopen = savage_driver_firstopen,
+	.preclose = savage_reclaim_buffers,
 	.lastclose = savage_driver_lastclose,
 	.unload = savage_driver_unload,
-	.reclaim_buffers = savage_reclaim_buffers,
 	.ioctls = savage_ioctls,
 	.dma_ioctl = savage_bci_buffers,
 	.fops = &savage_driver_fops,

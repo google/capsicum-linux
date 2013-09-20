@@ -226,6 +226,11 @@ static int msm_iommu_domain_init(struct iommu_domain *domain)
 
 	memset(priv->pgtable, 0, SZ_16K);
 	domain->priv = priv;
+
+	domain->geometry.aperture_start = 0;
+	domain->geometry.aperture_end   = (1ULL << 32) - 1;
+	domain->geometry.force_aperture = true;
+
 	return 0;
 
 fail_nomem:
@@ -549,7 +554,7 @@ fail:
 }
 
 static phys_addr_t msm_iommu_iova_to_phys(struct iommu_domain *domain,
-					  unsigned long va)
+					  dma_addr_t va)
 {
 	struct msm_priv *priv;
 	struct msm_iommu_drvdata *iommu_drvdata;

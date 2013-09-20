@@ -5,7 +5,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2012, Intel Corp.
+ * Copyright (C) 2000 - 2013, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -247,8 +247,9 @@ struct acpi_fixed_event_info acpi_gbl_fixed_event_info[ACPI_NUM_FIXED_EVENTS] = 
  *
  * RETURN:      Status
  *
- * DESCRIPTION: Init library globals.  All globals that require specific
- *              initialization should be initialized here!
+ * DESCRIPTION: Initialize ACPICA globals. All globals that require specific
+ *              initialization should be initialized here. This allows for
+ *              a warm restart.
  *
  ******************************************************************************/
 
@@ -284,7 +285,7 @@ acpi_status acpi_ut_init_globals(void)
 		acpi_gbl_owner_id_mask[i] = 0;
 	}
 
-	/* Last owner_iD is never valid */
+	/* Last owner_ID is never valid */
 
 	acpi_gbl_owner_id_mask[ACPI_NUM_OWNERID_MASKS - 1] = 0x80000000;
 
@@ -292,11 +293,11 @@ acpi_status acpi_ut_init_globals(void)
 
 	/* GPE support */
 
+	acpi_gbl_all_gpes_initialized = FALSE;
 	acpi_gbl_gpe_xrupt_list_head = NULL;
 	acpi_gbl_gpe_fadt_blocks[0] = NULL;
 	acpi_gbl_gpe_fadt_blocks[1] = NULL;
 	acpi_current_gpe_count = 0;
-	acpi_gbl_all_gpes_initialized = FALSE;
 
 	acpi_gbl_global_event_handler = NULL;
 
@@ -304,8 +305,8 @@ acpi_status acpi_ut_init_globals(void)
 
 	/* Global handlers */
 
-	acpi_gbl_system_notify.handler = NULL;
-	acpi_gbl_device_notify.handler = NULL;
+	acpi_gbl_global_notify[0].handler = NULL;
+	acpi_gbl_global_notify[1].handler = NULL;
 	acpi_gbl_exception_handler = NULL;
 	acpi_gbl_init_handler = NULL;
 	acpi_gbl_table_handler = NULL;
@@ -356,16 +357,25 @@ acpi_status acpi_ut_init_globals(void)
 	acpi_gbl_root_node_struct.peer = NULL;
 	acpi_gbl_root_node_struct.object = NULL;
 
+#ifdef ACPI_DISASSEMBLER
+	acpi_gbl_external_list = NULL;
+	acpi_gbl_num_external_methods = 0;
+	acpi_gbl_resolved_external_methods = 0;
+#endif
+
 #ifdef ACPI_DEBUG_OUTPUT
 	acpi_gbl_lowest_stack_pointer = ACPI_CAST_PTR(acpi_size, ACPI_SIZE_MAX);
 #endif
 
 #ifdef ACPI_DBG_TRACK_ALLOCATIONS
 	acpi_gbl_display_final_mem_stats = FALSE;
+	acpi_gbl_disable_mem_tracking = FALSE;
 #endif
 
 	return_ACPI_STATUS(AE_OK);
 }
+
+/* Public globals */
 
 ACPI_EXPORT_SYMBOL(acpi_gbl_FADT)
 ACPI_EXPORT_SYMBOL(acpi_dbg_level)

@@ -1,8 +1,9 @@
 #ifndef LINUX_KEXEC_H
 #define LINUX_KEXEC_H
 
+#include <uapi/linux/kexec.h>
+
 #ifdef CONFIG_KEXEC
-#include <linux/types.h>
 #include <linux/list.h>
 #include <linux/linkage.h>
 #include <linux/compat.h>
@@ -67,11 +68,10 @@ typedef unsigned long kimage_entry_t;
 #define IND_DONE         0x4
 #define IND_SOURCE       0x8
 
-#define KEXEC_SEGMENT_MAX 16
 struct kexec_segment {
 	void __user *buf;
 	size_t bufsz;
-	unsigned long mem;	/* User space sees this as a (void *) ... */
+	unsigned long mem;
 	size_t memsz;
 };
 
@@ -175,25 +175,6 @@ extern struct kimage *kexec_crash_image;
 #define kexec_flush_icache_page(page)
 #endif
 
-#define KEXEC_ON_CRASH		0x00000001
-#define KEXEC_PRESERVE_CONTEXT	0x00000002
-#define KEXEC_ARCH_MASK		0xffff0000
-
-/* These values match the ELF architecture values.
- * Unless there is a good reason that should continue to be the case.
- */
-#define KEXEC_ARCH_DEFAULT ( 0 << 16)
-#define KEXEC_ARCH_386     ( 3 << 16)
-#define KEXEC_ARCH_X86_64  (62 << 16)
-#define KEXEC_ARCH_PPC     (20 << 16)
-#define KEXEC_ARCH_PPC64   (21 << 16)
-#define KEXEC_ARCH_IA_64   (50 << 16)
-#define KEXEC_ARCH_ARM     (40 << 16)
-#define KEXEC_ARCH_S390    (22 << 16)
-#define KEXEC_ARCH_SH      (42 << 16)
-#define KEXEC_ARCH_MIPS_LE (10 << 16)
-#define KEXEC_ARCH_MIPS    ( 8 << 16)
-
 /* List of defined/legal kexec flags */
 #ifndef CONFIG_KEXEC_JUMP
 #define KEXEC_FLAGS    KEXEC_ON_CRASH
@@ -210,6 +191,7 @@ extern struct kimage *kexec_crash_image;
 /* Location of a reserved region to hold the crash kernel.
  */
 extern struct resource crashk_res;
+extern struct resource crashk_low_res;
 typedef u32 note_buf_t[KEXEC_NOTE_BYTES/4];
 extern note_buf_t __percpu *crash_notes;
 extern u32 vmcoreinfo_note[VMCOREINFO_NOTE_SIZE/4];
@@ -217,6 +199,10 @@ extern size_t vmcoreinfo_size;
 extern size_t vmcoreinfo_max_size;
 
 int __init parse_crashkernel(char *cmdline, unsigned long long system_ram,
+		unsigned long long *crash_size, unsigned long long *crash_base);
+int parse_crashkernel_high(char *cmdline, unsigned long long system_ram,
+		unsigned long long *crash_size, unsigned long long *crash_base);
+int parse_crashkernel_low(char *cmdline, unsigned long long system_ram,
 		unsigned long long *crash_size, unsigned long long *crash_base);
 int crash_shrink_memory(unsigned long new_size);
 size_t crash_get_memory_size(void);

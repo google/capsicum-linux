@@ -18,6 +18,7 @@
 #include "hw-ops.h"
 #include "../regd.h"
 #include "ar9002_phy.h"
+#include "ar5008_initvals.h"
 
 /* All code below is for AR5008, AR9001, AR9002 */
 
@@ -43,23 +44,16 @@ static const int m2ThreshLowExt_off = 127;
 static const int m1ThreshExt_off = 127;
 static const int m2ThreshExt_off = 127;
 
+static const struct ar5416IniArray bank0 = STATIC_INI_ARRAY(ar5416Bank0);
+static const struct ar5416IniArray bank1 = STATIC_INI_ARRAY(ar5416Bank1);
+static const struct ar5416IniArray bank2 = STATIC_INI_ARRAY(ar5416Bank2);
+static const struct ar5416IniArray bank3 = STATIC_INI_ARRAY(ar5416Bank3);
+static const struct ar5416IniArray bank7 = STATIC_INI_ARRAY(ar5416Bank7);
 
-static void ar5008_rf_bank_setup(u32 *bank, struct ar5416IniArray *array,
-				 int col)
+static void ar5008_write_bank6(struct ath_hw *ah, unsigned int *writecnt)
 {
-	int i;
-
-	for (i = 0; i < array->ia_rows; i++)
-		bank[i] = INI_RA(array, i, col);
-}
-
-
-#define REG_WRITE_RF_ARRAY(iniarray, regData, regWr) \
-	ar5008_write_rf_array(ah, iniarray, regData, &(regWr))
-
-static void ar5008_write_rf_array(struct ath_hw *ah, struct ar5416IniArray *array,
-				  u32 *data, unsigned int *writecnt)
-{
+	struct ar5416IniArray *array = &ah->iniBank6;
+	u32 *data = ah->analogBank6Data;
 	int r;
 
 	ENABLE_REGWRITE_BUFFER(ah);
@@ -165,7 +159,7 @@ static void ar5008_hw_force_bias(struct ath_hw *ah, u16 synth_freq)
 	ar5008_hw_phy_modify_rx_buffer(ah->analogBank6Data, tmp_reg, 3, 181, 3);
 
 	/* write Bank 6 with new params */
-	REG_WRITE_RF_ARRAY(&ah->iniBank6, ah->analogBank6Data, reg_writes);
+	ar5008_write_bank6(ah, &reg_writes);
 }
 
 /**
@@ -245,7 +239,6 @@ static int ar5008_hw_set_channel(struct ath_hw *ah, struct ath9k_channel *chan)
 	REG_WRITE(ah, AR_PHY(0x37), reg32);
 
 	ah->curchan = chan;
-	ah->curchan_rad_index = -1;
 
 	return 0;
 }
@@ -470,57 +463,18 @@ static void ar5008_hw_spur_mitigate(struct ath_hw *ah,
  */
 static int ar5008_hw_rf_alloc_ext_banks(struct ath_hw *ah)
 {
-#define ATH_ALLOC_BANK(bank, size) do { \
-		bank = kzalloc((sizeof(u32) * size), GFP_KERNEL); \
-		if (!bank) { \
-			ath_err(common, "Cannot allocate RF banks\n"); \
-			return -ENOMEM; \
-		} \
-	} while (0);
+	int size = ah->iniBank6.ia_rows * sizeof(u32);
 
-	struct ath_common *common = ath9k_hw_common(ah);
+	if (AR_SREV_9280_20_OR_LATER(ah))
+	    return 0;
 
-	BUG_ON(AR_SREV_9280_20_OR_LATER(ah));
-
-	ATH_ALLOC_BANK(ah->analogBank0Data, ah->iniBank0.ia_rows);
-	ATH_ALLOC_BANK(ah->analogBank1Data, ah->iniBank1.ia_rows);
-	ATH_ALLOC_BANK(ah->analogBank2Data, ah->iniBank2.ia_rows);
-	ATH_ALLOC_BANK(ah->analogBank3Data, ah->iniBank3.ia_rows);
-	ATH_ALLOC_BANK(ah->analogBank6Data, ah->iniBank6.ia_rows);
-	ATH_ALLOC_BANK(ah->analogBank6TPCData, ah->iniBank6TPC.ia_rows);
-	ATH_ALLOC_BANK(ah->analogBank7Data, ah->iniBank7.ia_rows);
-	ATH_ALLOC_BANK(ah->bank6Temp, ah->iniBank6.ia_rows);
+	ah->analogBank6Data = devm_kzalloc(ah->dev, size, GFP_KERNEL);
+	if (!ah->analogBank6Data)
+		return -ENOMEM;
 
 	return 0;
-#undef ATH_ALLOC_BANK
 }
 
-
-/**
- * ar5008_hw_rf_free_ext_banks - Free memory for analog bank scratch buffers
- * @ah: atheros hardware struture
- * For the external AR2133/AR5133 radios banks.
- */
-static void ar5008_hw_rf_free_ext_banks(struct ath_hw *ah)
-{
-#define ATH_FREE_BANK(bank) do { \
-		kfree(bank); \
-		bank = NULL; \
-	} while (0);
-
-	BUG_ON(AR_SREV_9280_20_OR_LATER(ah));
-
-	ATH_FREE_BANK(ah->analogBank0Data);
-	ATH_FREE_BANK(ah->analogBank1Data);
-	ATH_FREE_BANK(ah->analogBank2Data);
-	ATH_FREE_BANK(ah->analogBank3Data);
-	ATH_FREE_BANK(ah->analogBank6Data);
-	ATH_FREE_BANK(ah->analogBank6TPCData);
-	ATH_FREE_BANK(ah->analogBank7Data);
-	ATH_FREE_BANK(ah->bank6Temp);
-
-#undef ATH_FREE_BANK
-}
 
 /* *
  * ar5008_hw_set_rf_regs - programs rf registers based on EEPROM
@@ -542,6 +496,7 @@ static bool ar5008_hw_set_rf_regs(struct ath_hw *ah,
 	u32 ob5GHz = 0, db5GHz = 0;
 	u32 ob2GHz = 0, db2GHz = 0;
 	int regWrites = 0;
+	int i;
 
 	/*
 	 * Software does not need to program bank data
@@ -554,25 +509,8 @@ static bool ar5008_hw_set_rf_regs(struct ath_hw *ah,
 	/* Setup rf parameters */
 	eepMinorRev = ah->eep_ops->get_eeprom(ah, EEP_MINOR_REV);
 
-	/* Setup Bank 0 Write */
-	ar5008_rf_bank_setup(ah->analogBank0Data, &ah->iniBank0, 1);
-
-	/* Setup Bank 1 Write */
-	ar5008_rf_bank_setup(ah->analogBank1Data, &ah->iniBank1, 1);
-
-	/* Setup Bank 2 Write */
-	ar5008_rf_bank_setup(ah->analogBank2Data, &ah->iniBank2, 1);
-
-	/* Setup Bank 6 Write */
-	ar5008_rf_bank_setup(ah->analogBank3Data, &ah->iniBank3,
-		      modesIndex);
-	{
-		int i;
-		for (i = 0; i < ah->iniBank6TPC.ia_rows; i++) {
-			ah->analogBank6Data[i] =
-			    INI_RA(&ah->iniBank6TPC, i, modesIndex);
-		}
-	}
+	for (i = 0; i < ah->iniBank6.ia_rows; i++)
+		ah->analogBank6Data[i] = INI_RA(&ah->iniBank6, i, modesIndex);
 
 	/* Only the 5 or 2 GHz OB/DB need to be set for a mode */
 	if (eepMinorRev >= 2) {
@@ -593,22 +531,13 @@ static bool ar5008_hw_set_rf_regs(struct ath_hw *ah,
 		}
 	}
 
-	/* Setup Bank 7 Setup */
-	ar5008_rf_bank_setup(ah->analogBank7Data, &ah->iniBank7, 1);
-
 	/* Write Analog registers */
-	REG_WRITE_RF_ARRAY(&ah->iniBank0, ah->analogBank0Data,
-			   regWrites);
-	REG_WRITE_RF_ARRAY(&ah->iniBank1, ah->analogBank1Data,
-			   regWrites);
-	REG_WRITE_RF_ARRAY(&ah->iniBank2, ah->analogBank2Data,
-			   regWrites);
-	REG_WRITE_RF_ARRAY(&ah->iniBank3, ah->analogBank3Data,
-			   regWrites);
-	REG_WRITE_RF_ARRAY(&ah->iniBank6TPC, ah->analogBank6Data,
-			   regWrites);
-	REG_WRITE_RF_ARRAY(&ah->iniBank7, ah->analogBank7Data,
-			   regWrites);
+	REG_WRITE_ARRAY(&bank0, 1, regWrites);
+	REG_WRITE_ARRAY(&bank1, 1, regWrites);
+	REG_WRITE_ARRAY(&bank2, 1, regWrites);
+	REG_WRITE_ARRAY(&bank3, modesIndex, regWrites);
+	ar5008_write_bank6(ah, &regWrites);
+	REG_WRITE_ARRAY(&bank7, 1, regWrites);
 
 	return true;
 }
@@ -619,19 +548,10 @@ static void ar5008_hw_init_bb(struct ath_hw *ah,
 	u32 synthDelay;
 
 	synthDelay = REG_READ(ah, AR_PHY_RX_DELAY) & AR_PHY_RX_DELAY_DELAY;
-	if (IS_CHAN_B(chan))
-		synthDelay = (4 * synthDelay) / 22;
-	else
-		synthDelay /= 10;
-
-	if (IS_CHAN_HALF_RATE(chan))
-		synthDelay *= 2;
-	else if (IS_CHAN_QUARTER_RATE(chan))
-		synthDelay *= 4;
 
 	REG_WRITE(ah, AR_PHY_ACTIVE, AR_PHY_ACTIVE_EN);
 
-	udelay(synthDelay + BASE_ACTIVATE_DELAY);
+	ath9k_hw_synth_delay(ah, chan, synthDelay);
 }
 
 static void ar5008_hw_init_chain_masks(struct ath_hw *ah)
@@ -690,7 +610,15 @@ static void ar5008_hw_override_ini(struct ath_hw *ah,
 	REG_SET_BIT(ah, AR_DIAG_SW, (AR_DIAG_RX_DIS | AR_DIAG_RX_ABORT));
 
 	if (AR_SREV_9280_20_OR_LATER(ah)) {
-		val = REG_READ(ah, AR_PCU_MISC_MODE2);
+		/*
+		 * For AR9280 and above, there is a new feature that allows
+		 * Multicast search based on both MAC Address and Key ID.
+		 * By default, this feature is enabled. But since the driver
+		 * is not using this feature, we switch it off; otherwise
+		 * multicast search based on MAC addr only will fail.
+		 */
+		val = REG_READ(ah, AR_PCU_MISC_MODE2) &
+			(~AR_ADHOC_MCAST_KEYID_ENABLE);
 
 		if (!AR_SREV_9271(ah))
 			val &= ~AR_PCU_MISC_MODE2_HWWAR1;
@@ -949,12 +877,8 @@ static bool ar5008_hw_rfbus_req(struct ath_hw *ah)
 static void ar5008_hw_rfbus_done(struct ath_hw *ah)
 {
 	u32 synthDelay = REG_READ(ah, AR_PHY_RX_DELAY) & AR_PHY_RX_DELAY_DELAY;
-	if (IS_CHAN_B(ah->curchan))
-		synthDelay = (4 * synthDelay) / 22;
-	else
-		synthDelay /= 10;
 
-	udelay(synthDelay + BASE_ACTIVATE_DELAY);
+	ath9k_hw_synth_delay(ah, ah->curchan, synthDelay);
 
 	REG_WRITE(ah, AR_PHY_RFBUS_REQ, 0);
 }
@@ -1009,186 +933,13 @@ static u32 ar5008_hw_compute_pll_control(struct ath_hw *ah,
 	return pll;
 }
 
-static bool ar5008_hw_ani_control_old(struct ath_hw *ah,
-				      enum ath9k_ani_cmd cmd,
-				      int param)
-{
-	struct ar5416AniState *aniState = &ah->curchan->ani;
-	struct ath_common *common = ath9k_hw_common(ah);
-
-	switch (cmd & ah->ani_function) {
-	case ATH9K_ANI_NOISE_IMMUNITY_LEVEL:{
-		u32 level = param;
-
-		if (level >= ARRAY_SIZE(ah->totalSizeDesired)) {
-			ath_dbg(common, ANI, "level out of range (%u > %zu)\n",
-				level, ARRAY_SIZE(ah->totalSizeDesired));
-			return false;
-		}
-
-		REG_RMW_FIELD(ah, AR_PHY_DESIRED_SZ,
-			      AR_PHY_DESIRED_SZ_TOT_DES,
-			      ah->totalSizeDesired[level]);
-		REG_RMW_FIELD(ah, AR_PHY_AGC_CTL1,
-			      AR_PHY_AGC_CTL1_COARSE_LOW,
-			      ah->coarse_low[level]);
-		REG_RMW_FIELD(ah, AR_PHY_AGC_CTL1,
-			      AR_PHY_AGC_CTL1_COARSE_HIGH,
-			      ah->coarse_high[level]);
-		REG_RMW_FIELD(ah, AR_PHY_FIND_SIG,
-			      AR_PHY_FIND_SIG_FIRPWR,
-			      ah->firpwr[level]);
-
-		if (level > aniState->noiseImmunityLevel)
-			ah->stats.ast_ani_niup++;
-		else if (level < aniState->noiseImmunityLevel)
-			ah->stats.ast_ani_nidown++;
-		aniState->noiseImmunityLevel = level;
-		break;
-	}
-	case ATH9K_ANI_OFDM_WEAK_SIGNAL_DETECTION:{
-		static const int m1ThreshLow[] = { 127, 50 };
-		static const int m2ThreshLow[] = { 127, 40 };
-		static const int m1Thresh[] = { 127, 0x4d };
-		static const int m2Thresh[] = { 127, 0x40 };
-		static const int m2CountThr[] = { 31, 16 };
-		static const int m2CountThrLow[] = { 63, 48 };
-		u32 on = param ? 1 : 0;
-
-		REG_RMW_FIELD(ah, AR_PHY_SFCORR_LOW,
-			      AR_PHY_SFCORR_LOW_M1_THRESH_LOW,
-			      m1ThreshLow[on]);
-		REG_RMW_FIELD(ah, AR_PHY_SFCORR_LOW,
-			      AR_PHY_SFCORR_LOW_M2_THRESH_LOW,
-			      m2ThreshLow[on]);
-		REG_RMW_FIELD(ah, AR_PHY_SFCORR,
-			      AR_PHY_SFCORR_M1_THRESH,
-			      m1Thresh[on]);
-		REG_RMW_FIELD(ah, AR_PHY_SFCORR,
-			      AR_PHY_SFCORR_M2_THRESH,
-			      m2Thresh[on]);
-		REG_RMW_FIELD(ah, AR_PHY_SFCORR,
-			      AR_PHY_SFCORR_M2COUNT_THR,
-			      m2CountThr[on]);
-		REG_RMW_FIELD(ah, AR_PHY_SFCORR_LOW,
-			      AR_PHY_SFCORR_LOW_M2COUNT_THR_LOW,
-			      m2CountThrLow[on]);
-
-		REG_RMW_FIELD(ah, AR_PHY_SFCORR_EXT,
-			      AR_PHY_SFCORR_EXT_M1_THRESH_LOW,
-			      m1ThreshLow[on]);
-		REG_RMW_FIELD(ah, AR_PHY_SFCORR_EXT,
-			      AR_PHY_SFCORR_EXT_M2_THRESH_LOW,
-			      m2ThreshLow[on]);
-		REG_RMW_FIELD(ah, AR_PHY_SFCORR_EXT,
-			      AR_PHY_SFCORR_EXT_M1_THRESH,
-			      m1Thresh[on]);
-		REG_RMW_FIELD(ah, AR_PHY_SFCORR_EXT,
-			      AR_PHY_SFCORR_EXT_M2_THRESH,
-			      m2Thresh[on]);
-
-		if (on)
-			REG_SET_BIT(ah, AR_PHY_SFCORR_LOW,
-				    AR_PHY_SFCORR_LOW_USE_SELF_CORR_LOW);
-		else
-			REG_CLR_BIT(ah, AR_PHY_SFCORR_LOW,
-				    AR_PHY_SFCORR_LOW_USE_SELF_CORR_LOW);
-
-		if (!on != aniState->ofdmWeakSigDetectOff) {
-			if (on)
-				ah->stats.ast_ani_ofdmon++;
-			else
-				ah->stats.ast_ani_ofdmoff++;
-			aniState->ofdmWeakSigDetectOff = !on;
-		}
-		break;
-	}
-	case ATH9K_ANI_CCK_WEAK_SIGNAL_THR:{
-		static const int weakSigThrCck[] = { 8, 6 };
-		u32 high = param ? 1 : 0;
-
-		REG_RMW_FIELD(ah, AR_PHY_CCK_DETECT,
-			      AR_PHY_CCK_DETECT_WEAK_SIG_THR_CCK,
-			      weakSigThrCck[high]);
-		if (high != aniState->cckWeakSigThreshold) {
-			if (high)
-				ah->stats.ast_ani_cckhigh++;
-			else
-				ah->stats.ast_ani_ccklow++;
-			aniState->cckWeakSigThreshold = high;
-		}
-		break;
-	}
-	case ATH9K_ANI_FIRSTEP_LEVEL:{
-		static const int firstep[] = { 0, 4, 8 };
-		u32 level = param;
-
-		if (level >= ARRAY_SIZE(firstep)) {
-			ath_dbg(common, ANI, "level out of range (%u > %zu)\n",
-				level, ARRAY_SIZE(firstep));
-			return false;
-		}
-		REG_RMW_FIELD(ah, AR_PHY_FIND_SIG,
-			      AR_PHY_FIND_SIG_FIRSTEP,
-			      firstep[level]);
-		if (level > aniState->firstepLevel)
-			ah->stats.ast_ani_stepup++;
-		else if (level < aniState->firstepLevel)
-			ah->stats.ast_ani_stepdown++;
-		aniState->firstepLevel = level;
-		break;
-	}
-	case ATH9K_ANI_SPUR_IMMUNITY_LEVEL:{
-		static const int cycpwrThr1[] = { 2, 4, 6, 8, 10, 12, 14, 16 };
-		u32 level = param;
-
-		if (level >= ARRAY_SIZE(cycpwrThr1)) {
-			ath_dbg(common, ANI, "level out of range (%u > %zu)\n",
-				level, ARRAY_SIZE(cycpwrThr1));
-			return false;
-		}
-		REG_RMW_FIELD(ah, AR_PHY_TIMING5,
-			      AR_PHY_TIMING5_CYCPWR_THR1,
-			      cycpwrThr1[level]);
-		if (level > aniState->spurImmunityLevel)
-			ah->stats.ast_ani_spurup++;
-		else if (level < aniState->spurImmunityLevel)
-			ah->stats.ast_ani_spurdown++;
-		aniState->spurImmunityLevel = level;
-		break;
-	}
-	case ATH9K_ANI_PRESENT:
-		break;
-	default:
-		ath_dbg(common, ANI, "invalid cmd %u\n", cmd);
-		return false;
-	}
-
-	ath_dbg(common, ANI, "ANI parameters:\n");
-	ath_dbg(common, ANI,
-		"noiseImmunityLevel=%d, spurImmunityLevel=%d, ofdmWeakSigDetectOff=%d\n",
-		aniState->noiseImmunityLevel,
-		aniState->spurImmunityLevel,
-		!aniState->ofdmWeakSigDetectOff);
-	ath_dbg(common, ANI,
-		"cckWeakSigThreshold=%d, firstepLevel=%d, listenTime=%d\n",
-		aniState->cckWeakSigThreshold,
-		aniState->firstepLevel,
-		aniState->listenTime);
-	ath_dbg(common, ANI, "ofdmPhyErrCount=%d, cckPhyErrCount=%d\n\n",
-		aniState->ofdmPhyErrCount,
-		aniState->cckPhyErrCount);
-
-	return true;
-}
-
 static bool ar5008_hw_ani_control_new(struct ath_hw *ah,
 				      enum ath9k_ani_cmd cmd,
 				      int param)
 {
 	struct ath_common *common = ath9k_hw_common(ah);
 	struct ath9k_channel *chan = ah->curchan;
-	struct ar5416AniState *aniState = &chan->ani;
+	struct ar5416AniState *aniState = &ah->ani;
 	s32 value, value2;
 
 	switch (cmd & ah->ani_function) {
@@ -1258,18 +1009,18 @@ static bool ar5008_hw_ani_control_new(struct ath_hw *ah,
 			REG_CLR_BIT(ah, AR_PHY_SFCORR_LOW,
 				    AR_PHY_SFCORR_LOW_USE_SELF_CORR_LOW);
 
-		if (!on != aniState->ofdmWeakSigDetectOff) {
+		if (on != aniState->ofdmWeakSigDetect) {
 			ath_dbg(common, ANI,
 				"** ch %d: ofdm weak signal: %s=>%s\n",
 				chan->channel,
-				!aniState->ofdmWeakSigDetectOff ?
+				aniState->ofdmWeakSigDetect ?
 				"on" : "off",
 				on ? "on" : "off");
 			if (on)
 				ah->stats.ast_ani_ofdmon++;
 			else
 				ah->stats.ast_ani_ofdmoff++;
-			aniState->ofdmWeakSigDetectOff = !on;
+			aniState->ofdmWeakSigDetect = on;
 		}
 		break;
 	}
@@ -1288,7 +1039,7 @@ static bool ar5008_hw_ani_control_new(struct ath_hw *ah,
 		 * from INI file & cap value
 		 */
 		value = firstep_table[level] -
-			firstep_table[ATH9K_ANI_FIRSTEP_LVL_NEW] +
+			firstep_table[ATH9K_ANI_FIRSTEP_LVL] +
 			aniState->iniDef.firstep;
 		if (value < ATH9K_SIG_FIRSTEP_SETTING_MIN)
 			value = ATH9K_SIG_FIRSTEP_SETTING_MIN;
@@ -1303,7 +1054,7 @@ static bool ar5008_hw_ani_control_new(struct ath_hw *ah,
 		 * from INI file & cap value
 		 */
 		value2 = firstep_table[level] -
-			 firstep_table[ATH9K_ANI_FIRSTEP_LVL_NEW] +
+			 firstep_table[ATH9K_ANI_FIRSTEP_LVL] +
 			 aniState->iniDef.firstepLow;
 		if (value2 < ATH9K_SIG_FIRSTEP_SETTING_MIN)
 			value2 = ATH9K_SIG_FIRSTEP_SETTING_MIN;
@@ -1319,7 +1070,7 @@ static bool ar5008_hw_ani_control_new(struct ath_hw *ah,
 				chan->channel,
 				aniState->firstepLevel,
 				level,
-				ATH9K_ANI_FIRSTEP_LVL_NEW,
+				ATH9K_ANI_FIRSTEP_LVL,
 				value,
 				aniState->iniDef.firstep);
 			ath_dbg(common, ANI,
@@ -1327,7 +1078,7 @@ static bool ar5008_hw_ani_control_new(struct ath_hw *ah,
 				chan->channel,
 				aniState->firstepLevel,
 				level,
-				ATH9K_ANI_FIRSTEP_LVL_NEW,
+				ATH9K_ANI_FIRSTEP_LVL,
 				value2,
 				aniState->iniDef.firstepLow);
 			if (level > aniState->firstepLevel)
@@ -1352,7 +1103,7 @@ static bool ar5008_hw_ani_control_new(struct ath_hw *ah,
 		 * from INI file & cap value
 		 */
 		value = cycpwrThr1_table[level] -
-			cycpwrThr1_table[ATH9K_ANI_SPUR_IMMUNE_LVL_NEW] +
+			cycpwrThr1_table[ATH9K_ANI_SPUR_IMMUNE_LVL] +
 			aniState->iniDef.cycpwrThr1;
 		if (value < ATH9K_SIG_SPUR_IMM_SETTING_MIN)
 			value = ATH9K_SIG_SPUR_IMM_SETTING_MIN;
@@ -1368,7 +1119,7 @@ static bool ar5008_hw_ani_control_new(struct ath_hw *ah,
 		 * from INI file & cap value
 		 */
 		value2 = cycpwrThr1_table[level] -
-			 cycpwrThr1_table[ATH9K_ANI_SPUR_IMMUNE_LVL_NEW] +
+			 cycpwrThr1_table[ATH9K_ANI_SPUR_IMMUNE_LVL] +
 			 aniState->iniDef.cycpwrThr1Ext;
 		if (value2 < ATH9K_SIG_SPUR_IMM_SETTING_MIN)
 			value2 = ATH9K_SIG_SPUR_IMM_SETTING_MIN;
@@ -1383,7 +1134,7 @@ static bool ar5008_hw_ani_control_new(struct ath_hw *ah,
 				chan->channel,
 				aniState->spurImmunityLevel,
 				level,
-				ATH9K_ANI_SPUR_IMMUNE_LVL_NEW,
+				ATH9K_ANI_SPUR_IMMUNE_LVL,
 				value,
 				aniState->iniDef.cycpwrThr1);
 			ath_dbg(common, ANI,
@@ -1391,7 +1142,7 @@ static bool ar5008_hw_ani_control_new(struct ath_hw *ah,
 				chan->channel,
 				aniState->spurImmunityLevel,
 				level,
-				ATH9K_ANI_SPUR_IMMUNE_LVL_NEW,
+				ATH9K_ANI_SPUR_IMMUNE_LVL,
 				value2,
 				aniState->iniDef.cycpwrThr1Ext);
 			if (level > aniState->spurImmunityLevel)
@@ -1419,9 +1170,9 @@ static bool ar5008_hw_ani_control_new(struct ath_hw *ah,
 	ath_dbg(common, ANI,
 		"ANI parameters: SI=%d, ofdmWS=%s FS=%d MRCcck=%s listenTime=%d ofdmErrs=%d cckErrs=%d\n",
 		aniState->spurImmunityLevel,
-		!aniState->ofdmWeakSigDetectOff ? "on" : "off",
+		aniState->ofdmWeakSigDetect ? "on" : "off",
 		aniState->firstepLevel,
-		!aniState->mrcCCKOff ? "on" : "off",
+		aniState->mrcCCK ? "on" : "off",
 		aniState->listenTime,
 		aniState->ofdmPhyErrCount,
 		aniState->cckPhyErrCount);
@@ -1464,7 +1215,7 @@ static void ar5008_hw_ani_cache_ini_regs(struct ath_hw *ah)
 {
 	struct ath_common *common = ath9k_hw_common(ah);
 	struct ath9k_channel *chan = ah->curchan;
-	struct ar5416AniState *aniState = &chan->ani;
+	struct ar5416AniState *aniState = &ah->ani;
 	struct ath9k_ani_default *iniDef;
 	u32 val;
 
@@ -1506,10 +1257,10 @@ static void ar5008_hw_ani_cache_ini_regs(struct ath_hw *ah)
 					       AR_PHY_EXT_TIMING5_CYCPWR_THR1);
 
 	/* these levels just got reset to defaults by the INI */
-	aniState->spurImmunityLevel = ATH9K_ANI_SPUR_IMMUNE_LVL_NEW;
-	aniState->firstepLevel = ATH9K_ANI_FIRSTEP_LVL_NEW;
-	aniState->ofdmWeakSigDetectOff = !ATH9K_ANI_USE_OFDM_WEAK_SIG;
-	aniState->mrcCCKOff = true; /* not available on pre AR9003 */
+	aniState->spurImmunityLevel = ATH9K_ANI_SPUR_IMMUNE_LVL;
+	aniState->firstepLevel = ATH9K_ANI_FIRSTEP_LVL;
+	aniState->ofdmWeakSigDetect = true;
+	aniState->mrcCCK = false; /* not available on pre AR9003 */
 }
 
 static void ar5008_hw_set_nf_limits(struct ath_hw *ah)
@@ -1567,7 +1318,7 @@ static void ar5008_hw_set_radar_conf(struct ath_hw *ah)
 	conf->radar_inband = 8;
 }
 
-void ar5008_hw_attach_phy_ops(struct ath_hw *ah)
+int ar5008_hw_attach_phy_ops(struct ath_hw *ah)
 {
 	struct ath_hw_private_ops *priv_ops = ath9k_hw_private_ops(ah);
 	static const u32 ar5416_cca_regs[6] = {
@@ -1578,12 +1329,15 @@ void ar5008_hw_attach_phy_ops(struct ath_hw *ah)
 		AR_PHY_CH1_EXT_CCA,
 		AR_PHY_CH2_EXT_CCA
 	};
+	int ret;
+
+	ret = ar5008_hw_rf_alloc_ext_banks(ah);
+	if (ret)
+	    return ret;
 
 	priv_ops->rf_set_freq = ar5008_hw_set_channel;
 	priv_ops->spur_mitigate_freq = ar5008_hw_spur_mitigate;
 
-	priv_ops->rf_alloc_ext_banks = ar5008_hw_rf_alloc_ext_banks;
-	priv_ops->rf_free_ext_banks = ar5008_hw_rf_free_ext_banks;
 	priv_ops->set_rf_regs = ar5008_hw_set_rf_regs;
 	priv_ops->set_channel_regs = ar5008_hw_set_channel_regs;
 	priv_ops->init_bb = ar5008_hw_init_bb;
@@ -1597,11 +1351,8 @@ void ar5008_hw_attach_phy_ops(struct ath_hw *ah)
 	priv_ops->do_getnf = ar5008_hw_do_getnf;
 	priv_ops->set_radar_params = ar5008_hw_set_radar_params;
 
-	if (modparam_force_new_ani) {
-		priv_ops->ani_control = ar5008_hw_ani_control_new;
-		priv_ops->ani_cache_ini_regs = ar5008_hw_ani_cache_ini_regs;
-	} else
-		priv_ops->ani_control = ar5008_hw_ani_control_old;
+	priv_ops->ani_control = ar5008_hw_ani_control_new;
+	priv_ops->ani_cache_ini_regs = ar5008_hw_ani_cache_ini_regs;
 
 	if (AR_SREV_9100(ah) || AR_SREV_9160_10_OR_LATER(ah))
 		priv_ops->compute_pll_control = ar9160_hw_compute_pll_control;
@@ -1611,4 +1362,5 @@ void ar5008_hw_attach_phy_ops(struct ath_hw *ah)
 	ar5008_hw_set_nf_limits(ah);
 	ar5008_hw_set_radar_conf(ah);
 	memcpy(ah->nf_regs, ar5416_cca_regs, sizeof(ah->nf_regs));
+	return 0;
 }

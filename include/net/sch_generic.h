@@ -50,15 +50,20 @@ struct Qdisc {
 #define TCQ_F_INGRESS		2
 #define TCQ_F_CAN_BYPASS	4
 #define TCQ_F_MQROOT		8
+#define TCQ_F_ONETXQUEUE	0x10 /* dequeue_skb() can assume all skbs are for
+				      * q->dev_queue : It can test
+				      * netif_xmit_frozen_or_stopped() before
+				      * dequeueing next packet.
+				      * Its true for MQ/MQPRIO slaves, or non
+				      * multiqueue device.
+				      */
 #define TCQ_F_WARN_NONWC	(1 << 16)
-	int			padded;
+	u32			limit;
 	const struct Qdisc_ops	*ops;
 	struct qdisc_size_table	__rcu *stab;
 	struct list_head	list;
 	u32			handle;
 	u32			parent;
-	atomic_t		refcnt;
-	struct gnet_stats_rate_est	rate_est;
 	int			(*reshape_fail)(struct sk_buff *skb,
 					struct Qdisc *q);
 
@@ -69,8 +74,9 @@ struct Qdisc {
 	 */
 	struct Qdisc		*__parent;
 	struct netdev_queue	*dev_queue;
-	struct Qdisc		*next_sched;
 
+	struct gnet_stats_rate_est64	rate_est;
+	struct Qdisc		*next_sched;
 	struct sk_buff		*gso_skb;
 	/*
 	 * For performance sake on SMP, we put highly modified fields at the end
@@ -81,8 +87,10 @@ struct Qdisc {
 	unsigned int		__state;
 	struct gnet_stats_queue	qstats;
 	struct rcu_head		rcu_head;
-	spinlock_t		busylock;
-	u32			limit;
+	int			padded;
+	atomic_t		refcnt;
+
+	spinlock_t		busylock ____cacheline_aligned_in_smp;
 };
 
 static inline bool qdisc_is_running(const struct Qdisc *qdisc)
@@ -188,7 +196,8 @@ struct tcf_proto_ops {
 
 	unsigned long		(*get)(struct tcf_proto*, u32 handle);
 	void			(*put)(struct tcf_proto*, unsigned long);
-	int			(*change)(struct tcf_proto*, unsigned long,
+	int			(*change)(struct net *net, struct sk_buff *,
+					struct tcf_proto*, unsigned long,
 					u32 handle, struct nlattr **,
 					unsigned long *);
 	int			(*delete)(struct tcf_proto*, unsigned long);
@@ -220,13 +229,16 @@ struct tcf_proto {
 
 struct qdisc_skb_cb {
 	unsigned int		pkt_len;
-	unsigned char		data[24];
+	u16			slave_dev_queue_mapping;
+	u16			_pad;
+	unsigned char		data[20];
 };
 
 static inline void qdisc_cb_private_validate(const struct sk_buff *skb, int sz)
 {
 	struct qdisc_skb_cb *qcb;
-	BUILD_BUG_ON(sizeof(skb->cb) < sizeof(unsigned int) + sz);
+
+	BUILD_BUG_ON(sizeof(skb->cb) < offsetof(struct qdisc_skb_cb, data) + sz);
 	BUILD_BUG_ON(sizeof(qcb->data) < sz);
 }
 
@@ -328,11 +340,10 @@ static inline struct Qdisc_class_common *
 qdisc_class_find(const struct Qdisc_class_hash *hash, u32 id)
 {
 	struct Qdisc_class_common *cl;
-	struct hlist_node *n;
 	unsigned int h;
 
 	h = qdisc_class_hash(id, hash->hashmask);
-	hlist_for_each_entry(cl, n, &hash->hash[h], hnode) {
+	hlist_for_each_entry(cl, &hash->hash[h], hnode) {
 		if (cl->classid == id)
 			return cl;
 	}
@@ -667,5 +678,35 @@ static inline struct sk_buff *skb_act_clone(struct sk_buff *skb, gfp_t gfp_mask,
 	return n;
 }
 #endif
+
+struct psched_ratecfg {
+	u64	rate_bytes_ps; /* bytes per second */
+	u32	mult;
+	u16	overhead;
+	u8	linklayer;
+	u8	shift;
+};
+
+static inline u64 psched_l2t_ns(const struct psched_ratecfg *r,
+				unsigned int len)
+{
+	len += r->overhead;
+
+	if (unlikely(r->linklayer == TC_LINKLAYER_ATM))
+		return ((u64)(DIV_ROUND_UP(len,48)*53) * r->mult) >> r->shift;
+
+	return ((u64)len * r->mult) >> r->shift;
+}
+
+extern void psched_ratecfg_precompute(struct psched_ratecfg *r, const struct tc_ratespec *conf);
+
+static inline void psched_ratecfg_getrate(struct tc_ratespec *res,
+					  const struct psched_ratecfg *r)
+{
+	memset(res, 0, sizeof(*res));
+	res->rate = r->rate_bytes_ps;
+	res->overhead = r->overhead;
+	res->linklayer = (r->linklayer & TC_LINKLAYER_MASK);
+}
 
 #endif

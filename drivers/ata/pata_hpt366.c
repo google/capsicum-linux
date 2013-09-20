@@ -390,7 +390,7 @@ static int hpt36x_init_one(struct pci_dev *dev, const struct pci_device_id *id)
 #ifdef CONFIG_PM
 static int hpt36x_reinit_one(struct pci_dev *dev)
 {
-	struct ata_host *host = dev_get_drvdata(&dev->dev);
+	struct ata_host *host = pci_get_drvdata(dev);
 	int rc;
 
 	rc = ata_pci_device_do_resume(dev);
@@ -418,21 +418,10 @@ static struct pci_driver hpt36x_pci_driver = {
 #endif
 };
 
-static int __init hpt36x_init(void)
-{
-	return pci_register_driver(&hpt36x_pci_driver);
-}
-
-static void __exit hpt36x_exit(void)
-{
-	pci_unregister_driver(&hpt36x_pci_driver);
-}
+module_pci_driver(hpt36x_pci_driver);
 
 MODULE_AUTHOR("Alan Cox");
 MODULE_DESCRIPTION("low-level driver for the Highpoint HPT366/368");
 MODULE_LICENSE("GPL");
 MODULE_DEVICE_TABLE(pci, hpt36x);
 MODULE_VERSION(DRV_VERSION);
-
-module_init(hpt36x_init);
-module_exit(hpt36x_exit);

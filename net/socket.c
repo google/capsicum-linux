@@ -69,7 +69,6 @@
 #include <linux/proc_fs.h>
 #include <linux/seq_file.h>
 #include <linux/mutex.h>
-#include <linux/wanrouter.h>
 #include <linux/if_bridge.h>
 #include <linux/if_frad.h>
 #include <linux/if_vlan.h>
@@ -88,6 +87,7 @@
 #include <linux/nsproxy.h>
 #include <linux/magic.h>
 #include <linux/slab.h>
+#include <linux/xattr.h>
 
 #include <asm/uaccess.h>
 #include <asm/unistd.h>
@@ -104,6 +104,12 @@
 #include <linux/route.h>
 #include <linux/sockios.h>
 #include <linux/atalk.h>
+#include <net/busy_poll.h>
+
+#ifdef CONFIG_NET_RX_BUSY_POLL
+unsigned int sysctl_net_busy_read __read_mostly;
+unsigned int sysctl_net_busy_poll __read_mostly;
+#endif
 
 static int sock_no_open(struct inode *irrelevant, struct file *dontcare);
 static ssize_t sock_aio_read(struct kiocb *iocb, const struct iovec *iov,
@@ -346,22 +352,22 @@ static struct file_system_type sock_fs_type = {
  *	but we take care of internal coherence yet.
  */
 
-static int sock_alloc_file(struct socket *sock, struct file **f, int flags)
+struct file *sock_alloc_file(struct socket *sock, int flags, const char *dname)
 {
 	struct qstr name = { .name = "" };
 	struct path path;
 	struct file *file;
-	int fd;
 
-	fd = get_unused_fd_flags(flags);
-	if (unlikely(fd < 0))
-		return fd;
-
-	path.dentry = d_alloc_pseudo(sock_mnt->mnt_sb, &name);
-	if (unlikely(!path.dentry)) {
-		put_unused_fd(fd);
-		return -ENOMEM;
+	if (dname) {
+		name.name = dname;
+		name.len = strlen(name.name);
+	} else if (sock->sk) {
+		name.name = sock->sk->sk_prot_creator->name;
+		name.len = strlen(name.name);
 	}
+	path.dentry = d_alloc_pseudo(sock_mnt->mnt_sb, &name);
+	if (unlikely(!path.dentry))
+		return ERR_PTR(-ENOMEM);
 	path.mnt = mntget(sock_mnt);
 
 	d_instantiate(path.dentry, SOCK_INODE(sock));
@@ -369,36 +375,38 @@ static int sock_alloc_file(struct socket *sock, struct file **f, int flags)
 
 	file = alloc_file(&path, FMODE_READ | FMODE_WRITE,
 		  &socket_file_ops);
-	if (unlikely(!file)) {
+	if (unlikely(IS_ERR(file))) {
 		/* drop dentry, keep inode */
 		ihold(path.dentry->d_inode);
 		path_put(&path);
-		put_unused_fd(fd);
-		return -ENFILE;
+		return file;
 	}
 
 	sock->file = file;
 	file->f_flags = O_RDWR | (flags & O_NONBLOCK);
-	file->f_pos = 0;
 	file->private_data = sock;
-
-	*f = file;
-	return fd;
+	return file;
 }
+EXPORT_SYMBOL(sock_alloc_file);
 
-int sock_map_fd(struct socket *sock, int flags)
+static int sock_map_fd(struct socket *sock, int flags)
 {
 	struct file *newfile;
-	int fd = sock_alloc_file(sock, &newfile, flags);
+	int fd = get_unused_fd_flags(flags);
+	if (unlikely(fd < 0))
+		return fd;
 
-	if (likely(fd >= 0))
+	newfile = sock_alloc_file(sock, flags, NULL);
+	if (likely(!IS_ERR(newfile))) {
 		fd_install(fd, newfile);
+		return fd;
+	}
 
-	return fd;
+	put_unused_fd(fd);
+	return PTR_ERR(newfile);
 }
-EXPORT_SYMBOL(sock_map_fd);
 
-static struct socket *sock_from_file(struct file *file, int *err)
+struct socket *sock_from_file(struct file *file, int *err)
 {
 	if (file->f_op == &socket_file_ops)
 		return file->private_data;	/* set in sock_map_fd */
@@ -406,6 +414,7 @@ static struct socket *sock_from_file(struct file *file, int *err)
 	*err = -ENOTSOCK;
 	return NULL;
 }
+EXPORT_SYMBOL(sock_from_file);
 
 /**
  *	sockfd_lookup - Go from a file number to its socket slot
@@ -454,6 +463,68 @@ static struct socket *sockfd_lookup_light(int fd, int *err, int *fput_needed)
 	return NULL;
 }
 
+#define XATTR_SOCKPROTONAME_SUFFIX "sockprotoname"
+#define XATTR_NAME_SOCKPROTONAME (XATTR_SYSTEM_PREFIX XATTR_SOCKPROTONAME_SUFFIX)
+#define XATTR_NAME_SOCKPROTONAME_LEN (sizeof(XATTR_NAME_SOCKPROTONAME)-1)
+static ssize_t sockfs_getxattr(struct dentry *dentry,
+			       const char *name, void *value, size_t size)
+{
+	const char *proto_name;
+	size_t proto_size;
+	int error;
+
+	error = -ENODATA;
+	if (!strncmp(name, XATTR_NAME_SOCKPROTONAME, XATTR_NAME_SOCKPROTONAME_LEN)) {
+		proto_name = dentry->d_name.name;
+		proto_size = strlen(proto_name);
+
+		if (value) {
+			error = -ERANGE;
+			if (proto_size + 1 > size)
+				goto out;
+
+			strncpy(value, proto_name, proto_size + 1);
+		}
+		error = proto_size + 1;
+	}
+
+out:
+	return error;
+}
+
+static ssize_t sockfs_listxattr(struct dentry *dentry, char *buffer,
+				size_t size)
+{
+	ssize_t len;
+	ssize_t used = 0;
+
+	len = security_inode_listsecurity(dentry->d_inode, buffer, size);
+	if (len < 0)
+		return len;
+	used += len;
+	if (buffer) {
+		if (size < used)
+			return -ERANGE;
+		buffer += len;
+	}
+
+	len = (XATTR_NAME_SOCKPROTONAME_LEN + 1);
+	used += len;
+	if (buffer) {
+		if (size < used)
+			return -ERANGE;
+		memcpy(buffer, XATTR_NAME_SOCKPROTONAME, len);
+		buffer += len;
+	}
+
+	return used;
+}
+
+static const struct inode_operations sockfs_inode_ops = {
+	.getxattr = sockfs_getxattr,
+	.listxattr = sockfs_listxattr,
+};
+
 /**
  *	sock_alloc	-	allocate a socket
  *
@@ -478,8 +549,9 @@ static struct socket *sock_alloc(void)
 	inode->i_mode = S_IFSOCK | S_IRWXUGO;
 	inode->i_uid = current_fsuid();
 	inode->i_gid = current_fsgid();
+	inode->i_op = &sockfs_inode_ops;
 
-	percpu_add(sockets_in_use, 1);
+	this_cpu_add(sockets_in_use, 1);
 	return sock;
 }
 
@@ -522,7 +594,10 @@ void sock_release(struct socket *sock)
 	if (rcu_dereference_protected(sock->wq, 1)->fasync_list)
 		printk(KERN_ERR "sock_release: fasync list not empty!\n");
 
-	percpu_sub(sockets_in_use, 1);
+	if (test_bit(SOCK_EXTERNALLY_ALLOCATED, &sock->flags))
+		return;
+
+	this_cpu_sub(sockets_in_use, 1);
 	if (!sock->file) {
 		iput(SOCK_INODE(sock));
 		return;
@@ -531,7 +606,7 @@ void sock_release(struct socket *sock)
 }
 EXPORT_SYMBOL(sock_release);
 
-int sock_tx_timestamp(struct sock *sk, __u8 *tx_flags)
+void sock_tx_timestamp(struct sock *sk, __u8 *tx_flags)
 {
 	*tx_flags = 0;
 	if (sock_flag(sk, SOCK_TIMESTAMPING_TX_HARDWARE))
@@ -540,7 +615,6 @@ int sock_tx_timestamp(struct sock *sk, __u8 *tx_flags)
 		*tx_flags |= SKBTX_SW_TSTAMP;
 	if (sock_flag(sk, SOCK_WIFI_STATUS))
 		*tx_flags |= SKBTX_WIFI_STATUS;
-	return 0;
 }
 EXPORT_SYMBOL(sock_tx_timestamp);
 
@@ -548,10 +622,6 @@ static inline int __sock_sendmsg_nosec(struct kiocb *iocb, struct socket *sock,
 				       struct msghdr *msg, size_t size)
 {
 	struct sock_iocb *si = kiocb_to_siocb(iocb);
-
-	sock_update_classid(sock->sk);
-
-	sock_update_netprioidx(sock->sk);
 
 	si->sock = sock;
 	si->scm = NULL;
@@ -617,16 +687,6 @@ int kernel_sendmsg(struct socket *sock, struct msghdr *msg,
 }
 EXPORT_SYMBOL(kernel_sendmsg);
 
-static int ktime2ts(ktime_t kt, struct timespec *ts)
-{
-	if (kt.tv64) {
-		*ts = ktime_to_timespec(kt);
-		return 1;
-	} else {
-		return 0;
-	}
-}
-
 /*
  * called from sock_recv_timestamp() if sock_flag(sk, SOCK_RCVTSTAMP)
  */
@@ -659,17 +719,15 @@ void __sock_recv_timestamp(struct msghdr *msg, struct sock *sk,
 
 
 	memset(ts, 0, sizeof(ts));
-	if (skb->tstamp.tv64 &&
-	    sock_flag(sk, SOCK_TIMESTAMPING_SOFTWARE)) {
-		skb_get_timestampns(skb, ts + 0);
+	if (sock_flag(sk, SOCK_TIMESTAMPING_SOFTWARE) &&
+	    ktime_to_timespec_cond(skb->tstamp, ts + 0))
 		empty = 0;
-	}
 	if (shhwtstamps) {
 		if (sock_flag(sk, SOCK_TIMESTAMPING_SYS_HARDWARE) &&
-		    ktime2ts(shhwtstamps->syststamp, ts + 1))
+		    ktime_to_timespec_cond(shhwtstamps->syststamp, ts + 1))
 			empty = 0;
 		if (sock_flag(sk, SOCK_TIMESTAMPING_RAW_HARDWARE) &&
-		    ktime2ts(shhwtstamps->hwtstamp, ts + 2))
+		    ktime_to_timespec_cond(shhwtstamps->hwtstamp, ts + 2))
 			empty = 0;
 	}
 	if (!empty)
@@ -714,8 +772,6 @@ static inline int __sock_recvmsg_nosec(struct kiocb *iocb, struct socket *sock,
 				       struct msghdr *msg, size_t size, int flags)
 {
 	struct sock_iocb *si = kiocb_to_siocb(iocb);
-
-	sock_update_classid(sock->sk);
 
 	si->sock = sock;
 	si->scm = NULL;
@@ -826,8 +882,6 @@ static ssize_t sock_splice_read(struct file *file, loff_t *ppos,
 
 	if (unlikely(!sock->ops->splice_read))
 		return -EINVAL;
-
-	sock_update_classid(sock->sk);
 
 	return sock->ops->splice_read(sock, ppos, pipe, len, flags);
 }
@@ -1094,13 +1148,24 @@ EXPORT_SYMBOL(sock_create_lite);
 /* No kernel lock held - perfect */
 static unsigned int sock_poll(struct file *file, poll_table *wait)
 {
+	unsigned int busy_flag = 0;
 	struct socket *sock;
 
 	/*
 	 *      We can't return errors to poll, so it's either yes or no.
 	 */
 	sock = file->private_data;
-	return sock->ops->poll(file, sock, wait);
+
+	if (sk_can_busy_loop(sock->sk)) {
+		/* this socket can poll_ll so tell the system call */
+		busy_flag = POLL_BUSY_LOOP;
+
+		/* once, only if requested by syscall */
+		if (wait && (wait->_key & POLL_BUSY_LOOP))
+			sk_busy_loop(sock->sk, 1);
+	}
+
+	return busy_flag | sock->ops->poll(file, sock, wait);
 }
 
 static int sock_mmap(struct file *file, struct vm_area_struct *vma)
@@ -1112,15 +1177,6 @@ static int sock_mmap(struct file *file, struct vm_area_struct *vma)
 
 static int sock_close(struct inode *inode, struct file *filp)
 {
-	/*
-	 *      It was possible the inode is NULL we were
-	 *      closing an unfinished socket.
-	 */
-
-	if (!inode) {
-		printk(KERN_DEBUG "sock_close: NULL inode\n");
-		return 0;
-	}
 	sock_release(SOCKET_I(inode));
 	return 0;
 }
@@ -1234,8 +1290,7 @@ int __sock_create(struct net *net, int family, int type, int protocol,
 	 */
 	sock = sock_alloc();
 	if (!sock) {
-		if (net_ratelimit())
-			printk(KERN_WARNING "socket: no more sockets\n");
+		net_warn_ratelimited("socket: no more sockets\n");
 		return -ENFILE;	/* Not exactly a match, but its the
 				   closest posix thing */
 	}
@@ -1393,17 +1448,32 @@ SYSCALL_DEFINE4(socketpair, int, family, int, type, int, protocol,
 	if (err < 0)
 		goto out_release_both;
 
-	fd1 = sock_alloc_file(sock1, &newfile1, flags);
+	fd1 = get_unused_fd_flags(flags);
 	if (unlikely(fd1 < 0)) {
 		err = fd1;
 		goto out_release_both;
 	}
-
-	fd2 = sock_alloc_file(sock2, &newfile2, flags);
+	fd2 = get_unused_fd_flags(flags);
 	if (unlikely(fd2 < 0)) {
 		err = fd2;
+		put_unused_fd(fd1);
+		goto out_release_both;
+	}
+
+	newfile1 = sock_alloc_file(sock1, flags, NULL);
+	if (unlikely(IS_ERR(newfile1))) {
+		err = PTR_ERR(newfile1);
+		put_unused_fd(fd1);
+		put_unused_fd(fd2);
+		goto out_release_both;
+	}
+
+	newfile2 = sock_alloc_file(sock2, flags, NULL);
+	if (IS_ERR(newfile2)) {
+		err = PTR_ERR(newfile2);
 		fput(newfile1);
 		put_unused_fd(fd1);
+		put_unused_fd(fd2);
 		sock_release(sock2);
 		goto out;
 	}
@@ -1479,7 +1549,7 @@ SYSCALL_DEFINE2(listen, int, fd, int, backlog)
 	sock = sockfd_lookup_light(fd, &err, &fput_needed);
 	if (sock) {
 		somaxconn = sock_net(sock->sk)->core.sysctl_somaxconn;
-		if ((unsigned)backlog > somaxconn)
+		if ((unsigned int)backlog > somaxconn)
 			backlog = somaxconn;
 
 		err = security_socket_listen(sock, backlog);
@@ -1535,9 +1605,16 @@ SYSCALL_DEFINE4(accept4, int, fd, struct sockaddr __user *, upeer_sockaddr,
 	 */
 	__module_get(newsock->ops->owner);
 
-	newfd = sock_alloc_file(newsock, &newfile, flags);
+	newfd = get_unused_fd_flags(flags);
 	if (unlikely(newfd < 0)) {
 		err = newfd;
+		sock_release(newsock);
+		goto out_put;
+	}
+	newfile = sock_alloc_file(newsock, flags, sock->sk->sk_prot_creator->name);
+	if (unlikely(IS_ERR(newfile))) {
+		err = PTR_ERR(newfile);
+		put_unused_fd(newfd);
 		sock_release(newsock);
 		goto out_put;
 	}
@@ -1691,7 +1768,7 @@ SYSCALL_DEFINE3(getpeername, int, fd, struct sockaddr __user *, usockaddr,
  */
 
 SYSCALL_DEFINE6(sendto, int, fd, void __user *, buff, size_t, len,
-		unsigned, flags, struct sockaddr __user *, addr,
+		unsigned int, flags, struct sockaddr __user *, addr,
 		int, addr_len)
 {
 	struct socket *sock;
@@ -1738,7 +1815,7 @@ out:
  */
 
 SYSCALL_DEFINE4(send, int, fd, void __user *, buff, size_t, len,
-		unsigned, flags)
+		unsigned int, flags)
 {
 	return sys_sendto(fd, buff, len, flags, NULL, 0);
 }
@@ -1750,7 +1827,7 @@ SYSCALL_DEFINE4(send, int, fd, void __user *, buff, size_t, len,
  */
 
 SYSCALL_DEFINE6(recvfrom, int, fd, void __user *, ubuf, size_t, size,
-		unsigned, flags, struct sockaddr __user *, addr,
+		unsigned int, flags, struct sockaddr __user *, addr,
 		int __user *, addr_len)
 {
 	struct socket *sock;
@@ -1795,7 +1872,7 @@ out:
  */
 
 asmlinkage long sys_recv(int fd, void __user *ubuf, size_t size,
-			 unsigned flags)
+			 unsigned int flags)
 {
 	return sys_recvfrom(fd, ubuf, size, flags, NULL, NULL);
 }
@@ -1896,8 +1973,8 @@ struct used_address {
 	unsigned int name_len;
 };
 
-static int __sys_sendmsg(struct socket *sock, struct msghdr __user *msg,
-			 struct msghdr *msg_sys, unsigned flags,
+static int ___sys_sendmsg(struct socket *sock, struct msghdr __user *msg,
+			 struct msghdr *msg_sys, unsigned int flags,
 			 struct used_address *used_address)
 {
 	struct compat_msghdr __user *msg_compat =
@@ -1908,7 +1985,7 @@ static int __sys_sendmsg(struct socket *sock, struct msghdr __user *msg,
 	    __attribute__ ((aligned(sizeof(__kernel_size_t))));
 	/* 20 is size of ipv6_pktinfo */
 	unsigned char *ctl_buf = ctl;
-	int err, ctl_len, iov_size, total_len;
+	int err, ctl_len, total_len;
 
 	err = -EFAULT;
 	if (MSG_CMSG_COMPAT & flags) {
@@ -1917,16 +1994,13 @@ static int __sys_sendmsg(struct socket *sock, struct msghdr __user *msg,
 	} else if (copy_from_user(msg_sys, msg, sizeof(struct msghdr)))
 		return -EFAULT;
 
-	/* do not move before msg_sys is valid */
-	err = -EMSGSIZE;
-	if (msg_sys->msg_iovlen > UIO_MAXIOV)
-		goto out;
-
-	/* Check whether to allocate the iovec area */
-	err = -ENOMEM;
-	iov_size = msg_sys->msg_iovlen * sizeof(struct iovec);
 	if (msg_sys->msg_iovlen > UIO_FASTIOV) {
-		iov = sock_kmalloc(sock->sk, iov_size, GFP_KERNEL);
+		err = -EMSGSIZE;
+		if (msg_sys->msg_iovlen > UIO_MAXIOV)
+			goto out;
+		err = -ENOMEM;
+		iov = kmalloc(msg_sys->msg_iovlen * sizeof(struct iovec),
+			      GFP_KERNEL);
 		if (!iov)
 			goto out;
 	}
@@ -2005,7 +2079,7 @@ out_freectl:
 		sock_kfree_s(sock->sk, ctl_buf, ctl_len);
 out_freeiov:
 	if (iov != iovstack)
-		sock_kfree_s(sock->sk, iov, iov_size);
+		kfree(iov);
 out:
 	return err;
 }
@@ -2014,20 +2088,28 @@ out:
  *	BSD sendmsg interface
  */
 
-SYSCALL_DEFINE3(sendmsg, int, fd, struct msghdr __user *, msg, unsigned, flags)
+long __sys_sendmsg(int fd, struct msghdr __user *msg, unsigned flags)
 {
 	int fput_needed, err;
 	struct msghdr msg_sys;
-	struct socket *sock = sockfd_lookup_light(fd, &err, &fput_needed);
+	struct socket *sock;
 
+	sock = sockfd_lookup_light(fd, &err, &fput_needed);
 	if (!sock)
 		goto out;
 
-	err = __sys_sendmsg(sock, msg, &msg_sys, flags, NULL);
+	err = ___sys_sendmsg(sock, msg, &msg_sys, flags, NULL);
 
 	fput_light(sock->file, fput_needed);
 out:
 	return err;
+}
+
+SYSCALL_DEFINE3(sendmsg, int, fd, struct msghdr __user *, msg, unsigned int, flags)
+{
+	if (flags & MSG_CMSG_COMPAT)
+		return -EINVAL;
+	return __sys_sendmsg(fd, msg, flags);
 }
 
 /*
@@ -2060,15 +2142,16 @@ int __sys_sendmmsg(int fd, struct mmsghdr __user *mmsg, unsigned int vlen,
 
 	while (datagrams < vlen) {
 		if (MSG_CMSG_COMPAT & flags) {
-			err = __sys_sendmsg(sock, (struct msghdr __user *)compat_entry,
-					    &msg_sys, flags, &used_address);
+			err = ___sys_sendmsg(sock, (struct msghdr __user *)compat_entry,
+					     &msg_sys, flags, &used_address);
 			if (err < 0)
 				break;
 			err = __put_user(err, &compat_entry->msg_len);
 			++compat_entry;
 		} else {
-			err = __sys_sendmsg(sock, (struct msghdr __user *)entry,
-					    &msg_sys, flags, &used_address);
+			err = ___sys_sendmsg(sock,
+					     (struct msghdr __user *)entry,
+					     &msg_sys, flags, &used_address);
 			if (err < 0)
 				break;
 			err = put_user(err, &entry->msg_len);
@@ -2092,18 +2175,20 @@ int __sys_sendmmsg(int fd, struct mmsghdr __user *mmsg, unsigned int vlen,
 SYSCALL_DEFINE4(sendmmsg, int, fd, struct mmsghdr __user *, mmsg,
 		unsigned int, vlen, unsigned int, flags)
 {
+	if (flags & MSG_CMSG_COMPAT)
+		return -EINVAL;
 	return __sys_sendmmsg(fd, mmsg, vlen, flags);
 }
 
-static int __sys_recvmsg(struct socket *sock, struct msghdr __user *msg,
-			 struct msghdr *msg_sys, unsigned flags, int nosec)
+static int ___sys_recvmsg(struct socket *sock, struct msghdr __user *msg,
+			 struct msghdr *msg_sys, unsigned int flags, int nosec)
 {
 	struct compat_msghdr __user *msg_compat =
 	    (struct compat_msghdr __user *)msg;
 	struct iovec iovstack[UIO_FASTIOV];
 	struct iovec *iov = iovstack;
 	unsigned long cmsg_ptr;
-	int err, iov_size, total_len, len;
+	int err, total_len, len;
 
 	/* kernel mode address */
 	struct sockaddr_storage addr;
@@ -2118,15 +2203,13 @@ static int __sys_recvmsg(struct socket *sock, struct msghdr __user *msg,
 	} else if (copy_from_user(msg_sys, msg, sizeof(struct msghdr)))
 		return -EFAULT;
 
-	err = -EMSGSIZE;
-	if (msg_sys->msg_iovlen > UIO_MAXIOV)
-		goto out;
-
-	/* Check whether to allocate the iovec area */
-	err = -ENOMEM;
-	iov_size = msg_sys->msg_iovlen * sizeof(struct iovec);
 	if (msg_sys->msg_iovlen > UIO_FASTIOV) {
-		iov = sock_kmalloc(sock->sk, iov_size, GFP_KERNEL);
+		err = -EMSGSIZE;
+		if (msg_sys->msg_iovlen > UIO_MAXIOV)
+			goto out;
+		err = -ENOMEM;
+		iov = kmalloc(msg_sys->msg_iovlen * sizeof(struct iovec),
+			      GFP_KERNEL);
 		if (!iov)
 			goto out;
 	}
@@ -2180,7 +2263,7 @@ static int __sys_recvmsg(struct socket *sock, struct msghdr __user *msg,
 
 out_freeiov:
 	if (iov != iovstack)
-		sock_kfree_s(sock->sk, iov, iov_size);
+		kfree(iov);
 out:
 	return err;
 }
@@ -2189,21 +2272,29 @@ out:
  *	BSD recvmsg interface
  */
 
-SYSCALL_DEFINE3(recvmsg, int, fd, struct msghdr __user *, msg,
-		unsigned int, flags)
+long __sys_recvmsg(int fd, struct msghdr __user *msg, unsigned flags)
 {
 	int fput_needed, err;
 	struct msghdr msg_sys;
-	struct socket *sock = sockfd_lookup_light(fd, &err, &fput_needed);
+	struct socket *sock;
 
+	sock = sockfd_lookup_light(fd, &err, &fput_needed);
 	if (!sock)
 		goto out;
 
-	err = __sys_recvmsg(sock, msg, &msg_sys, flags, 0);
+	err = ___sys_recvmsg(sock, msg, &msg_sys, flags, 0);
 
 	fput_light(sock->file, fput_needed);
 out:
 	return err;
+}
+
+SYSCALL_DEFINE3(recvmsg, int, fd, struct msghdr __user *, msg,
+		unsigned int, flags)
+{
+	if (flags & MSG_CMSG_COMPAT)
+		return -EINVAL;
+	return __sys_recvmsg(fd, msg, flags);
 }
 
 /*
@@ -2243,17 +2334,18 @@ int __sys_recvmmsg(int fd, struct mmsghdr __user *mmsg, unsigned int vlen,
 		 * No need to ask LSM for more than the first datagram.
 		 */
 		if (MSG_CMSG_COMPAT & flags) {
-			err = __sys_recvmsg(sock, (struct msghdr __user *)compat_entry,
-					    &msg_sys, flags & ~MSG_WAITFORONE,
-					    datagrams);
+			err = ___sys_recvmsg(sock, (struct msghdr __user *)compat_entry,
+					     &msg_sys, flags & ~MSG_WAITFORONE,
+					     datagrams);
 			if (err < 0)
 				break;
 			err = __put_user(err, &compat_entry->msg_len);
 			++compat_entry;
 		} else {
-			err = __sys_recvmsg(sock, (struct msghdr __user *)entry,
-					    &msg_sys, flags & ~MSG_WAITFORONE,
-					    datagrams);
+			err = ___sys_recvmsg(sock,
+					     (struct msghdr __user *)entry,
+					     &msg_sys, flags & ~MSG_WAITFORONE,
+					     datagrams);
 			if (err < 0)
 				break;
 			err = put_user(err, &entry->msg_len);
@@ -2320,6 +2412,9 @@ SYSCALL_DEFINE5(recvmmsg, int, fd, struct mmsghdr __user *, mmsg,
 	int datagrams;
 	struct timespec timeout_sys;
 
+	if (flags & MSG_CMSG_COMPAT)
+		return -EINVAL;
+
 	if (!timeout)
 		return __sys_recvmmsg(fd, mmsg, vlen, flags, NULL);
 
@@ -2357,7 +2452,7 @@ static const unsigned char nargs[21] = {
 
 SYSCALL_DEFINE2(socketcall, int, call, unsigned long __user *, args)
 {
-	unsigned long a[6];
+	unsigned long a[AUDITSC_ARGS];
 	unsigned long a0, a1;
 	int err;
 	unsigned int len;
@@ -2373,7 +2468,9 @@ SYSCALL_DEFINE2(socketcall, int, call, unsigned long __user *, args)
 	if (copy_from_user(a, args, len))
 		return -EFAULT;
 
-	audit_socketcall(nargs[call] / sizeof(unsigned long), a);
+	err = audit_socketcall(nargs[call] / sizeof(unsigned long), a);
+	if (err)
+		return err;
 
 	a0 = a[0];
 	a1 = a[1];
@@ -2524,12 +2621,12 @@ EXPORT_SYMBOL(sock_unregister);
 static int __init sock_init(void)
 {
 	int err;
-
 	/*
-	 *      Initialize sock SLAB cache.
+	 *      Initialize the network sysctl infrastructure.
 	 */
-
-	sk_init();
+	err = net_sysctl_init();
+	if (err)
+		goto out;
 
 	/*
 	 *      Initialize skbuff SLAB cache
@@ -2555,7 +2652,9 @@ static int __init sock_init(void)
 	 */
 
 #ifdef CONFIG_NETFILTER
-	netfilter_init();
+	err = netfilter_init();
+	if (err)
+		goto out;
 #endif
 
 #ifdef CONFIG_NETWORK_PHY_TIMESTAMPING
@@ -2602,7 +2701,7 @@ static int do_siocgstamp(struct net *net, struct socket *sock,
 	err = sock_do_ioctl(net, sock, cmd, (unsigned long)&ktv);
 	set_fs(old_fs);
 	if (!err)
-		err = compat_put_timeval(up, &ktv);
+		err = compat_put_timeval(&ktv, up);
 
 	return err;
 }
@@ -2618,7 +2717,7 @@ static int do_siocgstampns(struct net *net, struct socket *sock,
 	err = sock_do_ioctl(net, sock, cmd, (unsigned long)&kts);
 	set_fs(old_fs);
 	if (!err)
-		err = compat_put_timespec(up, &kts);
+		err = compat_put_timespec(&kts, up);
 
 	return err;
 }
@@ -2655,6 +2754,7 @@ static int dev_ifconf(struct net *net, struct compat_ifconf __user *uifc32)
 	if (copy_from_user(&ifc32, uifc32, sizeof(struct compat_ifconf)))
 		return -EFAULT;
 
+	memset(&ifc, 0, sizeof(ifc));
 	if (ifc32.ifcbuf == 0) {
 		ifc32.ifc_len = 0;
 		ifc.ifc_len = 0;
@@ -2758,7 +2858,7 @@ static int ethtool_ioctl(struct net *net, struct compat_ifreq __user *ifr32)
 	}
 
 	ifr = compat_alloc_user_space(buf_size);
-	rxnfc = (void *)ifr + ALIGN(sizeof(struct ifreq), 8);
+	rxnfc = (void __user *)ifr + ALIGN(sizeof(struct ifreq), 8);
 
 	if (copy_in_user(&ifr->ifr_name, &ifr32->ifr_name, IFNAMSIZ))
 		return -EFAULT;
@@ -2782,12 +2882,12 @@ static int ethtool_ioctl(struct net *net, struct compat_ifreq __user *ifr32)
 			offsetof(struct ethtool_rxnfc, fs.ring_cookie));
 
 		if (copy_in_user(rxnfc, compat_rxnfc,
-				 (void *)(&rxnfc->fs.m_ext + 1) -
-				 (void *)rxnfc) ||
+				 (void __user *)(&rxnfc->fs.m_ext + 1) -
+				 (void __user *)rxnfc) ||
 		    copy_in_user(&rxnfc->fs.ring_cookie,
 				 &compat_rxnfc->fs.ring_cookie,
-				 (void *)(&rxnfc->fs.location + 1) -
-				 (void *)&rxnfc->fs.ring_cookie) ||
+				 (void __user *)(&rxnfc->fs.location + 1) -
+				 (void __user *)&rxnfc->fs.ring_cookie) ||
 		    copy_in_user(&rxnfc->rule_cnt, &compat_rxnfc->rule_cnt,
 				 sizeof(rxnfc->rule_cnt)))
 			return -EFAULT;
@@ -2799,12 +2899,12 @@ static int ethtool_ioctl(struct net *net, struct compat_ifreq __user *ifr32)
 
 	if (convert_out) {
 		if (copy_in_user(compat_rxnfc, rxnfc,
-				 (const void *)(&rxnfc->fs.m_ext + 1) -
-				 (const void *)rxnfc) ||
+				 (const void __user *)(&rxnfc->fs.m_ext + 1) -
+				 (const void __user *)rxnfc) ||
 		    copy_in_user(&compat_rxnfc->fs.ring_cookie,
 				 &rxnfc->fs.ring_cookie,
-				 (const void *)(&rxnfc->fs.location + 1) -
-				 (const void *)&rxnfc->fs.ring_cookie) ||
+				 (const void __user *)(&rxnfc->fs.location + 1) -
+				 (const void __user *)&rxnfc->fs.ring_cookie) ||
 		    copy_in_user(&compat_rxnfc->rule_cnt, &rxnfc->rule_cnt,
 				 sizeof(rxnfc->rule_cnt)))
 			return -EFAULT;
@@ -3223,7 +3323,7 @@ static int compat_sock_ioctl_trans(struct file *file, struct socket *sock,
 	return -ENOIOCTLCMD;
 }
 
-static long compat_sock_ioctl(struct file *file, unsigned cmd,
+static long compat_sock_ioctl(struct file *file, unsigned int cmd,
 			      unsigned long arg)
 {
 	struct socket *sock = file->private_data;
@@ -3351,8 +3451,6 @@ EXPORT_SYMBOL(kernel_setsockopt);
 int kernel_sendpage(struct socket *sock, struct page *page, int offset,
 		    size_t size, int flags)
 {
-	sock_update_classid(sock->sk);
-
 	if (sock->ops->sendpage)
 		return sock->ops->sendpage(sock, page, offset, size, flags);
 

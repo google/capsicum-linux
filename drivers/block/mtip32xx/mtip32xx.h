@@ -26,13 +26,15 @@
 #include <linux/ata.h>
 #include <linux/interrupt.h>
 #include <linux/genhd.h>
-#include <linux/version.h>
 
 /* Offset of Subsystem Device ID in pci confoguration space */
 #define PCI_SUBSYSTEM_DEVICEID	0x2E
 
 /* offset of Device Control register in PCIe extended capabilites space */
 #define PCIE_CONFIG_EXT_DEVICE_CONTROL_OFFSET	0x48
+
+/* check for erase mode support during secure erase */
+#define MTIP_SEC_ERASE_MODE     0x2
 
 /* # of times to retry timed out/failed IOs */
 #define MTIP_MAX_RETRIES	2
@@ -49,6 +51,9 @@
 #define MTIP_FTL_REBUILD_OFFSET		142
 #define MTIP_FTL_REBUILD_MAGIC		0xED51
 #define MTIP_FTL_REBUILD_TIMEOUT_MS	2400000
+
+/* unaligned IO handling */
+#define MTIP_MAX_UNALIGNED_SLOTS	8
 
 /* Macro to extract the tag bit number from a tag value. */
 #define MTIP_TAG_BIT(tag)	(tag & 0x1F)
@@ -77,7 +82,13 @@
 
 /* Micron Vendor ID & P320x SSD Device ID */
 #define PCI_VENDOR_ID_MICRON    0x1344
-#define P320_DEVICE_ID		0x5150
+#define P320H_DEVICE_ID		0x5150
+#define P320M_DEVICE_ID		0x5151
+#define P320S_DEVICE_ID		0x5152
+#define P325M_DEVICE_ID		0x5153
+#define P420H_DEVICE_ID		0x5160
+#define P420M_DEVICE_ID		0x5161
+#define P425M_DEVICE_ID		0x5163
 
 /* Driver name and version strings */
 #define MTIP_DRV_NAME		"mtip32xx"
@@ -111,44 +122,79 @@
  #define dbg_printk(format, arg...)
 #endif
 
+#define MTIP_DFS_MAX_BUF_SIZE 1024
+
 #define __force_bit2int (unsigned int __force)
 
-/* below are bit numbers in 'flags' defined in mtip_port */
-#define MTIP_PF_IC_ACTIVE_BIT		0 /* pio/ioctl */
-#define MTIP_PF_EH_ACTIVE_BIT		1 /* error handling */
-#define MTIP_PF_SE_ACTIVE_BIT		2 /* secure erase */
-#define MTIP_PF_DM_ACTIVE_BIT		3 /* download microcde */
-#define MTIP_PF_PAUSE_IO	((1 << MTIP_PF_IC_ACTIVE_BIT) | \
-				(1 << MTIP_PF_EH_ACTIVE_BIT) | \
-				(1 << MTIP_PF_SE_ACTIVE_BIT) | \
-				(1 << MTIP_PF_DM_ACTIVE_BIT))
+enum {
+	/* below are bit numbers in 'flags' defined in mtip_port */
+	MTIP_PF_IC_ACTIVE_BIT       = 0, /* pio/ioctl */
+	MTIP_PF_EH_ACTIVE_BIT       = 1, /* error handling */
+	MTIP_PF_SE_ACTIVE_BIT       = 2, /* secure erase */
+	MTIP_PF_DM_ACTIVE_BIT       = 3, /* download microcde */
+	MTIP_PF_PAUSE_IO      =	((1 << MTIP_PF_IC_ACTIVE_BIT) |
+				(1 << MTIP_PF_EH_ACTIVE_BIT) |
+				(1 << MTIP_PF_SE_ACTIVE_BIT) |
+				(1 << MTIP_PF_DM_ACTIVE_BIT)),
 
-#define MTIP_PF_SVC_THD_ACTIVE_BIT	4
-#define MTIP_PF_ISSUE_CMDS_BIT		5
-#define MTIP_PF_REBUILD_BIT		6
-#define MTIP_PF_SVC_THD_STOP_BIT	8
+	MTIP_PF_SVC_THD_ACTIVE_BIT  = 4,
+	MTIP_PF_ISSUE_CMDS_BIT      = 5,
+	MTIP_PF_REBUILD_BIT         = 6,
+	MTIP_PF_SVC_THD_STOP_BIT    = 8,
 
-/* below are bit numbers in 'dd_flag' defined in driver_data */
-#define MTIP_DDF_REMOVE_PENDING_BIT	1
-#define MTIP_DDF_OVER_TEMP_BIT		2
-#define MTIP_DDF_WRITE_PROTECT_BIT	3
-#define MTIP_DDF_STOP_IO	((1 << MTIP_DDF_REMOVE_PENDING_BIT) | \
-				(1 << MTIP_DDF_OVER_TEMP_BIT) | \
-				(1 << MTIP_DDF_WRITE_PROTECT_BIT))
+	/* below are bit numbers in 'dd_flag' defined in driver_data */
+	MTIP_DDF_SEC_LOCK_BIT	    = 0,
+	MTIP_DDF_REMOVE_PENDING_BIT = 1,
+	MTIP_DDF_OVER_TEMP_BIT      = 2,
+	MTIP_DDF_WRITE_PROTECT_BIT  = 3,
+	MTIP_DDF_STOP_IO      = ((1 << MTIP_DDF_REMOVE_PENDING_BIT) |
+				(1 << MTIP_DDF_SEC_LOCK_BIT) |
+				(1 << MTIP_DDF_OVER_TEMP_BIT) |
+				(1 << MTIP_DDF_WRITE_PROTECT_BIT)),
 
-#define MTIP_DDF_CLEANUP_BIT		5
-#define MTIP_DDF_RESUME_BIT		6
-#define MTIP_DDF_INIT_DONE_BIT		7
-#define MTIP_DDF_REBUILD_FAILED_BIT	8
+	MTIP_DDF_CLEANUP_BIT        = 5,
+	MTIP_DDF_RESUME_BIT         = 6,
+	MTIP_DDF_INIT_DONE_BIT      = 7,
+	MTIP_DDF_REBUILD_FAILED_BIT = 8,
+};
 
-__packed struct smart_attr{
+struct smart_attr {
 	u8 attr_id;
 	u16 flags;
 	u8 cur;
 	u8 worst;
 	u32 data;
 	u8 res[3];
-};
+} __packed;
+
+struct mtip_work {
+	struct work_struct work;
+	void *port;
+	int cpu_binding;
+	u32 completed;
+} ____cacheline_aligned_in_smp;
+
+#define DEFINE_HANDLER(group)                                  \
+	void mtip_workq_sdbf##group(struct work_struct *work)       \
+	{                                                      \
+		struct mtip_work *w = (struct mtip_work *) work;         \
+		mtip_workq_sdbfx(w->port, group, w->completed);     \
+	}
+
+#define MTIP_TRIM_TIMEOUT_MS		240000
+#define MTIP_MAX_TRIM_ENTRIES		8
+#define MTIP_MAX_TRIM_ENTRY_LEN		0xfff8
+
+struct mtip_trim_entry {
+	u32 lba;   /* starting lba of region */
+	u16 rsvd;  /* unused */
+	u16 range; /* # of 512b blocks to trim */
+} __packed;
+
+struct mtip_trim {
+	/* Array of regions to trim */
+	struct mtip_trim_entry entry[MTIP_MAX_TRIM_ENTRIES];
+} __packed;
 
 /* Register Frame Information Structure (FIS), host to device. */
 struct host_to_dev_fis {
@@ -290,6 +336,8 @@ struct mtip_cmd {
 
 	int scatter_ents; /* Number of scatter list entries used */
 
+	int unaligned; /* command is unaligned on 4k boundary */
+
 	struct scatterlist sg[MTIP_MAX_SG]; /* Scatter list entries */
 
 	int retries; /* The number of retries left for this command. */
@@ -409,8 +457,12 @@ struct mtip_port {
 	 * command slots available.
 	 */
 	struct semaphore cmd_slot;
+
+	/* Semaphore to control queue depth of unaligned IOs */
+	struct semaphore cmd_slot_unal;
+
 	/* Spinlock for working around command-issue bug. */
-	spinlock_t cmd_issue_lock;
+	spinlock_t cmd_issue_lock[MTIP_MAX_SLOT_GROUPS];
 };
 
 /*
@@ -433,9 +485,6 @@ struct driver_data {
 
 	struct mtip_port *port; /* Pointer to the port data structure. */
 
-	/* Tasklet used to process the bottom half of the ISR. */
-	struct tasklet_struct tasklet;
-
 	unsigned product_type; /* magic value declaring the product type */
 
 	unsigned slot_groups; /* number of slot groups the product supports */
@@ -445,6 +494,28 @@ struct driver_data {
 	unsigned long dd_flag; /* NOTE: use atomic bit operations on this */
 
 	struct task_struct *mtip_svc_handler; /* task_struct of svc thd */
+
+	struct dentry *dfs_node;
+
+	bool trim_supp; /* flag indicating trim support */
+
+	int numa_node; /* NUMA support */
+
+	char workq_name[32];
+
+	struct workqueue_struct *isr_workq;
+
+	struct mtip_work work[MTIP_MAX_SLOT_GROUPS];
+
+	atomic_t irq_workers_active;
+
+	int isr_binding;
+
+	int unal_qdepth; /* qdepth of unaligned IO queue */
+
+	struct list_head online_list; /* linkage for online list */
+
+	struct list_head remove_list; /* linkage for removing list */
 };
 
 #endif

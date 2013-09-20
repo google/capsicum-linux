@@ -564,19 +564,19 @@ static struct clk init_clocks_off[] = {
 		.ctrlbit	= (1 << 5),
 	}, {
 		.name		= "spi",
-		.devname	= "s3c64xx-spi.0",
+		.devname	= "s5pc100-spi.0",
 		.parent		= &clk_div_d1_bus.clk,
 		.enable		= s5pc100_d1_4_ctrl,
 		.ctrlbit	= (1 << 6),
 	}, {
 		.name		= "spi",
-		.devname	= "s3c64xx-spi.1",
+		.devname	= "s5pc100-spi.1",
 		.parent		= &clk_div_d1_bus.clk,
 		.enable		= s5pc100_d1_4_ctrl,
 		.ctrlbit	= (1 << 7),
 	}, {
 		.name		= "spi",
-		.devname	= "s3c64xx-spi.2",
+		.devname	= "s5pc100-spi.2",
 		.parent		= &clk_div_d1_bus.clk,
 		.enable		= s5pc100_d1_4_ctrl,
 		.ctrlbit	= (1 << 8),
@@ -605,24 +605,6 @@ static struct clk init_clocks_off[] = {
 		.parent		= &clk_div_d1_bus.clk,
 		.enable		= s5pc100_d1_4_ctrl,
 		.ctrlbit	= (1 << 13),
-	}, {
-		.name		= "iis",
-		.devname	= "samsung-i2s.0",
-		.parent		= &clk_div_pclkd1.clk,
-		.enable		= s5pc100_d1_5_ctrl,
-		.ctrlbit	= (1 << 0),
-	}, {
-		.name		= "iis",
-		.devname	= "samsung-i2s.1",
-		.parent		= &clk_div_pclkd1.clk,
-		.enable		= s5pc100_d1_5_ctrl,
-		.ctrlbit	= (1 << 1),
-	}, {
-		.name		= "iis",
-		.devname	= "samsung-i2s.2",
-		.parent		= &clk_div_pclkd1.clk,
-		.enable		= s5pc100_d1_5_ctrl,
-		.ctrlbit	= (1 << 2),
 	}, {
 		.name		= "ac97",
 		.parent		= &clk_div_pclkd1.clk,
@@ -702,7 +684,7 @@ static struct clk clk_hsmmc0 = {
 
 static struct clk clk_48m_spi0 = {
 	.name		= "spi_48m",
-	.devname	= "s3c64xx-spi.0",
+	.devname	= "s5pc100-spi.0",
 	.parent		= &clk_mout_48m.clk,
 	.enable		= s5pc100_sclk0_ctrl,
 	.ctrlbit	= (1 << 7),
@@ -710,7 +692,7 @@ static struct clk clk_48m_spi0 = {
 
 static struct clk clk_48m_spi1 = {
 	.name		= "spi_48m",
-	.devname	= "s3c64xx-spi.1",
+	.devname	= "s5pc100-spi.1",
 	.parent		= &clk_mout_48m.clk,
 	.enable		= s5pc100_sclk0_ctrl,
 	.ctrlbit	= (1 << 8),
@@ -718,10 +700,34 @@ static struct clk clk_48m_spi1 = {
 
 static struct clk clk_48m_spi2 = {
 	.name		= "spi_48m",
-	.devname	= "s3c64xx-spi.2",
+	.devname	= "s5pc100-spi.2",
 	.parent		= &clk_mout_48m.clk,
 	.enable		= s5pc100_sclk0_ctrl,
 	.ctrlbit	= (1 << 9),
+};
+
+static struct clk clk_i2s0 = {
+	.name		= "iis",
+	.devname	= "samsung-i2s.0",
+	.parent		= &clk_div_pclkd1.clk,
+	.enable		= s5pc100_d1_5_ctrl,
+	.ctrlbit	= (1 << 0),
+};
+
+static struct clk clk_i2s1 = {
+	.name		= "iis",
+	.devname	= "samsung-i2s.1",
+	.parent		= &clk_div_pclkd1.clk,
+	.enable		= s5pc100_d1_5_ctrl,
+	.ctrlbit	= (1 << 1),
+};
+
+static struct clk clk_i2s2 = {
+	.name		= "iis",
+	.devname	= "samsung-i2s.2",
+	.parent		= &clk_div_pclkd1.clk,
+	.enable		= s5pc100_d1_5_ctrl,
+	.ctrlbit	= (1 << 2),
 };
 
 static struct clk clk_vclk54m = {
@@ -1085,7 +1091,7 @@ static struct clksrc_clk clk_sclk_mmc2 = {
 static struct clksrc_clk clk_sclk_spi0 = {
 	.clk	= {
 		.name		= "sclk_spi",
-		.devname	= "s3c64xx-spi.0",
+		.devname	= "s5pc100-spi.0",
 		.ctrlbit	= (1 << 4),
 		.enable		= s5pc100_sclk0_ctrl,
 	},
@@ -1097,7 +1103,7 @@ static struct clksrc_clk clk_sclk_spi0 = {
 static struct clksrc_clk clk_sclk_spi1 = {
 	.clk	= {
 		.name		= "sclk_spi",
-		.devname	= "s3c64xx-spi.1",
+		.devname	= "s5pc100-spi.1",
 		.ctrlbit	= (1 << 5),
 		.enable		= s5pc100_sclk0_ctrl,
 	},
@@ -1109,7 +1115,7 @@ static struct clksrc_clk clk_sclk_spi1 = {
 static struct clksrc_clk clk_sclk_spi2 = {
 	.clk	= {
 		.name		= "sclk_spi",
-		.devname	= "s3c64xx-spi.2",
+		.devname	= "s5pc100-spi.2",
 		.ctrlbit	= (1 << 6),
 		.enable		= s5pc100_sclk0_ctrl,
 	},
@@ -1154,6 +1160,9 @@ static struct clk *clk_cdev[] = {
 	&clk_48m_spi0,
 	&clk_48m_spi1,
 	&clk_48m_spi2,
+	&clk_i2s0,
+	&clk_i2s1,
+	&clk_i2s2,
 };
 
 static struct clksrc_clk *clksrc_cdev[] = {
@@ -1315,12 +1324,15 @@ static struct clk_lookup s5pc100_clk_lookup[] = {
 	CLKDEV_INIT("s3c-sdhci.1", "mmc_busclk.2", &clk_sclk_mmc1.clk),
 	CLKDEV_INIT("s3c-sdhci.2", "mmc_busclk.2", &clk_sclk_mmc2.clk),
 	CLKDEV_INIT(NULL, "spi_busclk0", &clk_p),
-	CLKDEV_INIT("s3c64xx-spi.0", "spi_busclk1", &clk_48m_spi0),
-	CLKDEV_INIT("s3c64xx-spi.0", "spi_busclk2", &clk_sclk_spi0.clk),
-	CLKDEV_INIT("s3c64xx-spi.1", "spi_busclk1", &clk_48m_spi1),
-	CLKDEV_INIT("s3c64xx-spi.1", "spi_busclk2", &clk_sclk_spi1.clk),
-	CLKDEV_INIT("s3c64xx-spi.2", "spi_busclk1", &clk_48m_spi2),
-	CLKDEV_INIT("s3c64xx-spi.2", "spi_busclk2", &clk_sclk_spi2.clk),
+	CLKDEV_INIT("s5pc100-spi.0", "spi_busclk1", &clk_48m_spi0),
+	CLKDEV_INIT("s5pc100-spi.0", "spi_busclk2", &clk_sclk_spi0.clk),
+	CLKDEV_INIT("s5pc100-spi.1", "spi_busclk1", &clk_48m_spi1),
+	CLKDEV_INIT("s5pc100-spi.1", "spi_busclk2", &clk_sclk_spi1.clk),
+	CLKDEV_INIT("s5pc100-spi.2", "spi_busclk1", &clk_48m_spi2),
+	CLKDEV_INIT("s5pc100-spi.2", "spi_busclk2", &clk_sclk_spi2.clk),
+	CLKDEV_INIT("samsung-i2s.0", "i2s_opclk0", &clk_i2s0),
+	CLKDEV_INIT("samsung-i2s.1", "i2s_opclk0", &clk_i2s1),
+	CLKDEV_INIT("samsung-i2s.2", "i2s_opclk0", &clk_i2s2),
 };
 
 void __init s5pc100_register_clocks(void)

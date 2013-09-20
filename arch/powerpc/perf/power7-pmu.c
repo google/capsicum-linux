@@ -51,11 +51,48 @@
 #define MMCR1_PMCSEL_MSK	0xff
 
 /*
+ * Power7 event codes.
+ */
+#define	PME_PM_CYC			0x1e
+#define	PME_PM_GCT_NOSLOT_CYC		0x100f8
+#define	PME_PM_CMPLU_STALL		0x4000a
+#define	PME_PM_INST_CMPL		0x2
+#define	PME_PM_LD_REF_L1		0xc880
+#define	PME_PM_LD_MISS_L1		0x400f0
+#define	PME_PM_BRU_FIN			0x10068
+#define	PME_PM_BR_MPRED			0x400f6
+
+#define PME_PM_CMPLU_STALL_FXU			0x20014
+#define PME_PM_CMPLU_STALL_DIV			0x40014
+#define PME_PM_CMPLU_STALL_SCALAR		0x40012
+#define PME_PM_CMPLU_STALL_SCALAR_LONG		0x20018
+#define PME_PM_CMPLU_STALL_VECTOR		0x2001c
+#define PME_PM_CMPLU_STALL_VECTOR_LONG		0x4004a
+#define PME_PM_CMPLU_STALL_LSU			0x20012
+#define PME_PM_CMPLU_STALL_REJECT		0x40016
+#define PME_PM_CMPLU_STALL_ERAT_MISS		0x40018
+#define PME_PM_CMPLU_STALL_DCACHE_MISS		0x20016
+#define PME_PM_CMPLU_STALL_STORE		0x2004a
+#define PME_PM_CMPLU_STALL_THRD			0x1001c
+#define PME_PM_CMPLU_STALL_IFU			0x4004c
+#define PME_PM_CMPLU_STALL_BRU			0x4004e
+#define PME_PM_GCT_NOSLOT_IC_MISS		0x2001a
+#define PME_PM_GCT_NOSLOT_BR_MPRED		0x4001a
+#define PME_PM_GCT_NOSLOT_BR_MPRED_IC_MISS	0x4001c
+#define PME_PM_GRP_CMPL				0x30004
+#define PME_PM_1PLUS_PPC_CMPL			0x100f2
+#define PME_PM_CMPLU_STALL_DFU			0x2003c
+#define PME_PM_RUN_CYC				0x200f4
+#define PME_PM_RUN_INST_CMPL			0x400fa
+
+/*
  * Layout of constraint bits:
  * 6666555555555544444444443333333333222222222211111111110000000000
  * 3210987654321098765432109876543210987654321098765432109876543210
- *                                                 [  ><><><><><><>
- *                                                  NC P6P5P4P3P2P1
+ *                                              < ><  ><><><><><><>
+ *                                              L2  NC P6P5P4P3P2P1
+ *
+ * L2 - 16-18 - Required L2SEL value (select field)
  *
  * NC - number of counters
  *     15: NC error 0x8000
@@ -72,7 +109,7 @@
 static int power7_get_constraint(u64 event, unsigned long *maskp,
 				 unsigned long *valp)
 {
-	int pmc, sh;
+	int pmc, sh, unit;
 	unsigned long mask = 0, value = 0;
 
 	pmc = (event >> PM_PMC_SH) & PM_PMC_MSK;
@@ -90,6 +127,15 @@ static int power7_get_constraint(u64 event, unsigned long *maskp,
 		mask  |= 0x8000;
 		value |= 0x1000;
 	}
+
+	unit = (event >> PM_UNIT_SH) & PM_UNIT_MSK;
+	if (unit == 6) {
+		/* L2SEL must be identical across events */
+		int l2sel = (event >> PM_L2SEL_SH) & PM_L2SEL_MSK;
+		mask  |= 0x7 << 16;
+		value |= l2sel << 16;
+	}
+
 	*maskp = mask;
 	*valp = value;
 	return 0;
@@ -296,14 +342,14 @@ static void power7_disable_pmc(unsigned int pmc, unsigned long mmcr[])
 }
 
 static int power7_generic_events[] = {
-	[PERF_COUNT_HW_CPU_CYCLES] = 0x1e,
-	[PERF_COUNT_HW_STALLED_CYCLES_FRONTEND] = 0x100f8, /* GCT_NOSLOT_CYC */
-	[PERF_COUNT_HW_STALLED_CYCLES_BACKEND] = 0x4000a,  /* CMPLU_STALL */
-	[PERF_COUNT_HW_INSTRUCTIONS] = 2,
-	[PERF_COUNT_HW_CACHE_REFERENCES] = 0xc880,	/* LD_REF_L1_LSU*/
-	[PERF_COUNT_HW_CACHE_MISSES] = 0x400f0,		/* LD_MISS_L1	*/
-	[PERF_COUNT_HW_BRANCH_INSTRUCTIONS] = 0x10068,	/* BRU_FIN	*/
-	[PERF_COUNT_HW_BRANCH_MISSES] = 0x400f6,	/* BR_MPRED	*/
+	[PERF_COUNT_HW_CPU_CYCLES] =			PME_PM_CYC,
+	[PERF_COUNT_HW_STALLED_CYCLES_FRONTEND] =	PME_PM_GCT_NOSLOT_CYC,
+	[PERF_COUNT_HW_STALLED_CYCLES_BACKEND] =	PME_PM_CMPLU_STALL,
+	[PERF_COUNT_HW_INSTRUCTIONS] =			PME_PM_INST_CMPL,
+	[PERF_COUNT_HW_CACHE_REFERENCES] =		PME_PM_LD_REF_L1,
+	[PERF_COUNT_HW_CACHE_MISSES] =			PME_PM_LD_MISS_L1,
+	[PERF_COUNT_HW_BRANCH_INSTRUCTIONS] =		PME_PM_BRU_FIN,
+	[PERF_COUNT_HW_BRANCH_MISSES] =			PME_PM_BR_MPRED,
 };
 
 #define C(x)	PERF_COUNT_HW_CACHE_##x
@@ -351,6 +397,120 @@ static int power7_cache_events[C(MAX)][C(OP_MAX)][C(RESULT_MAX)] = {
 	},
 };
 
+
+GENERIC_EVENT_ATTR(cpu-cycles,			CYC);
+GENERIC_EVENT_ATTR(stalled-cycles-frontend,	GCT_NOSLOT_CYC);
+GENERIC_EVENT_ATTR(stalled-cycles-backend,	CMPLU_STALL);
+GENERIC_EVENT_ATTR(instructions,		INST_CMPL);
+GENERIC_EVENT_ATTR(cache-references,		LD_REF_L1);
+GENERIC_EVENT_ATTR(cache-misses,		LD_MISS_L1);
+GENERIC_EVENT_ATTR(branch-instructions,		BRU_FIN);
+GENERIC_EVENT_ATTR(branch-misses,		BR_MPRED);
+
+POWER_EVENT_ATTR(CYC,				CYC);
+POWER_EVENT_ATTR(GCT_NOSLOT_CYC,		GCT_NOSLOT_CYC);
+POWER_EVENT_ATTR(CMPLU_STALL,			CMPLU_STALL);
+POWER_EVENT_ATTR(INST_CMPL,			INST_CMPL);
+POWER_EVENT_ATTR(LD_REF_L1,			LD_REF_L1);
+POWER_EVENT_ATTR(LD_MISS_L1,			LD_MISS_L1);
+POWER_EVENT_ATTR(BRU_FIN,			BRU_FIN)
+POWER_EVENT_ATTR(BR_MPRED,			BR_MPRED);
+
+POWER_EVENT_ATTR(CMPLU_STALL_FXU,		CMPLU_STALL_FXU);
+POWER_EVENT_ATTR(CMPLU_STALL_DIV,		CMPLU_STALL_DIV);
+POWER_EVENT_ATTR(CMPLU_STALL_SCALAR,		CMPLU_STALL_SCALAR);
+POWER_EVENT_ATTR(CMPLU_STALL_SCALAR_LONG,	CMPLU_STALL_SCALAR_LONG);
+POWER_EVENT_ATTR(CMPLU_STALL_VECTOR,		CMPLU_STALL_VECTOR);
+POWER_EVENT_ATTR(CMPLU_STALL_VECTOR_LONG,	CMPLU_STALL_VECTOR_LONG);
+POWER_EVENT_ATTR(CMPLU_STALL_LSU,		CMPLU_STALL_LSU);
+POWER_EVENT_ATTR(CMPLU_STALL_REJECT,		CMPLU_STALL_REJECT);
+
+POWER_EVENT_ATTR(CMPLU_STALL_ERAT_MISS,		CMPLU_STALL_ERAT_MISS);
+POWER_EVENT_ATTR(CMPLU_STALL_DCACHE_MISS,	CMPLU_STALL_DCACHE_MISS);
+POWER_EVENT_ATTR(CMPLU_STALL_STORE,		CMPLU_STALL_STORE);
+POWER_EVENT_ATTR(CMPLU_STALL_THRD,		CMPLU_STALL_THRD);
+POWER_EVENT_ATTR(CMPLU_STALL_IFU,		CMPLU_STALL_IFU);
+POWER_EVENT_ATTR(CMPLU_STALL_BRU,		CMPLU_STALL_BRU);
+POWER_EVENT_ATTR(GCT_NOSLOT_IC_MISS,		GCT_NOSLOT_IC_MISS);
+
+POWER_EVENT_ATTR(GCT_NOSLOT_BR_MPRED,		GCT_NOSLOT_BR_MPRED);
+POWER_EVENT_ATTR(GCT_NOSLOT_BR_MPRED_IC_MISS,	GCT_NOSLOT_BR_MPRED_IC_MISS);
+POWER_EVENT_ATTR(GRP_CMPL,			GRP_CMPL);
+POWER_EVENT_ATTR(1PLUS_PPC_CMPL,		1PLUS_PPC_CMPL);
+POWER_EVENT_ATTR(CMPLU_STALL_DFU,		CMPLU_STALL_DFU);
+POWER_EVENT_ATTR(RUN_CYC,			RUN_CYC);
+POWER_EVENT_ATTR(RUN_INST_CMPL,			RUN_INST_CMPL);
+
+static struct attribute *power7_events_attr[] = {
+	GENERIC_EVENT_PTR(CYC),
+	GENERIC_EVENT_PTR(GCT_NOSLOT_CYC),
+	GENERIC_EVENT_PTR(CMPLU_STALL),
+	GENERIC_EVENT_PTR(INST_CMPL),
+	GENERIC_EVENT_PTR(LD_REF_L1),
+	GENERIC_EVENT_PTR(LD_MISS_L1),
+	GENERIC_EVENT_PTR(BRU_FIN),
+	GENERIC_EVENT_PTR(BR_MPRED),
+
+	POWER_EVENT_PTR(CYC),
+	POWER_EVENT_PTR(GCT_NOSLOT_CYC),
+	POWER_EVENT_PTR(CMPLU_STALL),
+	POWER_EVENT_PTR(INST_CMPL),
+	POWER_EVENT_PTR(LD_REF_L1),
+	POWER_EVENT_PTR(LD_MISS_L1),
+	POWER_EVENT_PTR(BRU_FIN),
+	POWER_EVENT_PTR(BR_MPRED),
+
+	POWER_EVENT_PTR(CMPLU_STALL_FXU),
+	POWER_EVENT_PTR(CMPLU_STALL_DIV),
+	POWER_EVENT_PTR(CMPLU_STALL_SCALAR),
+	POWER_EVENT_PTR(CMPLU_STALL_SCALAR_LONG),
+	POWER_EVENT_PTR(CMPLU_STALL_VECTOR),
+	POWER_EVENT_PTR(CMPLU_STALL_VECTOR_LONG),
+	POWER_EVENT_PTR(CMPLU_STALL_LSU),
+	POWER_EVENT_PTR(CMPLU_STALL_REJECT),
+
+	POWER_EVENT_PTR(CMPLU_STALL_ERAT_MISS),
+	POWER_EVENT_PTR(CMPLU_STALL_DCACHE_MISS),
+	POWER_EVENT_PTR(CMPLU_STALL_STORE),
+	POWER_EVENT_PTR(CMPLU_STALL_THRD),
+	POWER_EVENT_PTR(CMPLU_STALL_IFU),
+	POWER_EVENT_PTR(CMPLU_STALL_BRU),
+	POWER_EVENT_PTR(GCT_NOSLOT_IC_MISS),
+	POWER_EVENT_PTR(GCT_NOSLOT_BR_MPRED),
+
+	POWER_EVENT_PTR(GCT_NOSLOT_BR_MPRED_IC_MISS),
+	POWER_EVENT_PTR(GRP_CMPL),
+	POWER_EVENT_PTR(1PLUS_PPC_CMPL),
+	POWER_EVENT_PTR(CMPLU_STALL_DFU),
+	POWER_EVENT_PTR(RUN_CYC),
+	POWER_EVENT_PTR(RUN_INST_CMPL),
+	NULL
+};
+
+
+static struct attribute_group power7_pmu_events_group = {
+	.name = "events",
+	.attrs = power7_events_attr,
+};
+
+PMU_FORMAT_ATTR(event, "config:0-19");
+
+static struct attribute *power7_pmu_format_attr[] = {
+	&format_attr_event.attr,
+	NULL,
+};
+
+struct attribute_group power7_pmu_format_group = {
+	.name = "format",
+	.attrs = power7_pmu_format_attr,
+};
+
+static const struct attribute_group *power7_pmu_attr_groups[] = {
+	&power7_pmu_format_group,
+	&power7_pmu_events_group,
+	NULL,
+};
+
 static struct power_pmu power7_pmu = {
 	.name			= "POWER7",
 	.n_counter		= 6,
@@ -362,6 +522,7 @@ static struct power_pmu power7_pmu = {
 	.get_alternatives	= power7_get_alternatives,
 	.disable_pmc		= power7_disable_pmc,
 	.flags			= PPMU_ALT_SIPR,
+	.attr_groups		= power7_pmu_attr_groups,
 	.n_generic		= ARRAY_SIZE(power7_generic_events),
 	.generic_events		= power7_generic_events,
 	.cache_events		= &power7_cache_events,
@@ -372,6 +533,9 @@ static int __init init_power7_pmu(void)
 	if (!cur_cpu_spec->oprofile_cpu_type ||
 	    strcmp(cur_cpu_spec->oprofile_cpu_type, "ppc64/power7"))
 		return -ENODEV;
+
+	if (pvr_version_is(PVR_POWER7p))
+		power7_pmu.flags |= PPMU_SIAR_VALID;
 
 	return register_power_pmu(&power7_pmu);
 }

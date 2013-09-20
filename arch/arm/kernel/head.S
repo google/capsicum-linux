@@ -23,8 +23,8 @@
 #include <asm/thread_info.h>
 #include <asm/pgtable.h>
 
-#ifdef CONFIG_DEBUG_LL
-#include <mach/debug-macro.S>
+#if defined(CONFIG_DEBUG_LL) && !defined(CONFIG_DEBUG_SEMIHOSTING)
+#include CONFIG_DEBUG_LL_INCLUDE
 #endif
 
 /*
@@ -55,14 +55,6 @@
 	add	\rd, \phys, #TEXT_OFFSET - PG_DIR_SIZE
 	.endm
 
-#ifdef CONFIG_XIP_KERNEL
-#define KERNEL_START	XIP_VIRT_ADDR(CONFIG_XIP_PHYS_ADDR)
-#define KERNEL_END	_edata_loc
-#else
-#define KERNEL_START	KERNEL_RAM_VADDR
-#define KERNEL_END	_end
-#endif
-
 /*
  * Kernel startup entry point.
  * ---------------------------
@@ -91,8 +83,12 @@ ENTRY(stext)
  THUMB(	.thumb			)	@ switch to Thumb now.
  THUMB(1:			)
 
-	setmode	PSR_F_BIT | PSR_I_BIT | SVC_MODE, r9 @ ensure svc mode
-						@ and irqs disabled
+#ifdef CONFIG_ARM_VIRT_EXT
+	bl	__hyp_stub_install
+#endif
+	@ ensure svc mode and all interrupts masked
+	safe_svcmode_maskall r9
+
 	mrc	p15, 0, r9, c0, c0		@ get processor id
 	bl	__lookup_processor_type		@ r5=procinfo r9=cpuid
 	movs	r10, r5				@ invalid processor (r5=0)?
@@ -160,7 +156,7 @@ ENDPROC(stext)
  *
  * Returns:
  *  r0, r3, r5-r7 corrupted
- *  r4 = physical page table address
+ *  r4 = page table (see ARCH_PGD_SHIFT in asm/memory.h)
  */
 __create_page_tables:
 	pgtbl	r4, r8				@ page table address
@@ -188,13 +184,22 @@ __create_page_tables:
 	orr	r3, r3, #3			@ PGD block type
 	mov	r6, #4				@ PTRS_PER_PGD
 	mov	r7, #1 << (55 - 32)		@ L_PGD_SWAPPER
-1:	str	r3, [r0], #4			@ set bottom PGD entry bits
+1:
+#ifdef CONFIG_CPU_ENDIAN_BE8
 	str	r7, [r0], #4			@ set top PGD entry bits
+	str	r3, [r0], #4			@ set bottom PGD entry bits
+#else
+	str	r3, [r0], #4			@ set bottom PGD entry bits
+	str	r7, [r0], #4			@ set top PGD entry bits
+#endif
 	add	r3, r3, #0x1000			@ next PMD table
 	subs	r6, r6, #1
 	bne	1b
 
 	add	r4, r4, #0x1000			@ point to the PMD tables
+#ifdef CONFIG_CPU_ENDIAN_BE8
+	add	r4, r4, #4			@ we only write the bottom word
+#endif
 #endif
 
 	ldr	r7, [r10, #PROCINFO_MM_MMUFLAGS] @ mm_mmuflags
@@ -218,51 +223,54 @@ __create_page_tables:
 	blo	1b
 
 	/*
-	 * Now setup the pagetables for our kernel direct
-	 * mapped region.
+	 * Map our RAM from the start to the end of the kernel .bss section.
 	 */
+	add	r0, r4, #PAGE_OFFSET >> (SECTION_SHIFT - PMD_ORDER)
+	ldr	r6, =(_end - 1)
+	orr	r3, r8, r7
+	add	r6, r4, r6, lsr #(SECTION_SHIFT - PMD_ORDER)
+1:	str	r3, [r0], #1 << PMD_ORDER
+	add	r3, r3, #1 << SECTION_SHIFT
+	cmp	r0, r6
+	bls	1b
+
+#ifdef CONFIG_XIP_KERNEL
+	/*
+	 * Map the kernel image separately as it is not located in RAM.
+	 */
+#define XIP_START XIP_VIRT_ADDR(CONFIG_XIP_PHYS_ADDR)
 	mov	r3, pc
 	mov	r3, r3, lsr #SECTION_SHIFT
 	orr	r3, r7, r3, lsl #SECTION_SHIFT
-	add	r0, r4,  #(KERNEL_START & 0xff000000) >> (SECTION_SHIFT - PMD_ORDER)
-	str	r3, [r0, #((KERNEL_START & 0x00f00000) >> SECTION_SHIFT) << PMD_ORDER]!
-	ldr	r6, =(KERNEL_END - 1)
+	add	r0, r4,  #(XIP_START & 0xff000000) >> (SECTION_SHIFT - PMD_ORDER)
+	str	r3, [r0, #((XIP_START & 0x00f00000) >> SECTION_SHIFT) << PMD_ORDER]!
+	ldr	r6, =(_edata_loc - 1)
 	add	r0, r0, #1 << PMD_ORDER
 	add	r6, r4, r6, lsr #(SECTION_SHIFT - PMD_ORDER)
 1:	cmp	r0, r6
 	add	r3, r3, #1 << SECTION_SHIFT
 	strls	r3, [r0], #1 << PMD_ORDER
 	bls	1b
-
-#ifdef CONFIG_XIP_KERNEL
-	/*
-	 * Map some ram to cover our .data and .bss areas.
-	 */
-	add	r3, r8, #TEXT_OFFSET
-	orr	r3, r3, r7
-	add	r0, r4,  #(KERNEL_RAM_VADDR & 0xff000000) >> (SECTION_SHIFT - PMD_ORDER)
-	str	r3, [r0, #(KERNEL_RAM_VADDR & 0x00f00000) >> (SECTION_SHIFT - PMD_ORDER)]!
-	ldr	r6, =(_end - 1)
-	add	r0, r0, #4
-	add	r6, r4, r6, lsr #(SECTION_SHIFT - PMD_ORDER)
-1:	cmp	r0, r6
-	add	r3, r3, #1 << 20
-	strls	r3, [r0], #4
-	bls	1b
 #endif
 
 	/*
-	 * Then map boot params address in r2 or the first 1MB (2MB with LPAE)
-	 * of ram if boot params address is not specified.
+	 * Then map boot params address in r2 if specified.
+	 * We map 2 sections in case the ATAGs/DTB crosses a section boundary.
 	 */
 	mov	r0, r2, lsr #SECTION_SHIFT
 	movs	r0, r0, lsl #SECTION_SHIFT
-	moveq	r0, r8
-	sub	r3, r0, r8
-	add	r3, r3, #PAGE_OFFSET
-	add	r3, r4, r3, lsr #(SECTION_SHIFT - PMD_ORDER)
-	orr	r6, r7, r0
-	str	r6, [r3]
+	subne	r3, r0, r8
+	addne	r3, r3, #PAGE_OFFSET
+	addne	r3, r4, r3, lsr #(SECTION_SHIFT - PMD_ORDER)
+	orrne	r6, r7, r0
+	strne	r6, [r3], #1 << PMD_ORDER
+	addne	r6, r6, #1 << SECTION_SHIFT
+	strne	r6, [r3]
+
+#if defined(CONFIG_ARM_LPAE) && defined(CONFIG_CPU_ENDIAN_BE8)
+	sub	r4, r4, #4			@ Fixup page table pointer
+						@ for 64-bit descriptors
+#endif
 
 #ifdef CONFIG_DEBUG_LL
 #if !defined(CONFIG_DEBUG_ICEDCC) && !defined(CONFIG_DEBUG_SEMIHOSTING)
@@ -277,25 +285,22 @@ __create_page_tables:
 	mov	r3, r3, lsl #PMD_ORDER
 
 	add	r0, r4, r3
-	rsb	r3, r3, #0x4000			@ PTRS_PER_PGD*sizeof(long)
-	cmp	r3, #0x0800			@ limit to 512MB
-	movhi	r3, #0x0800
-	add	r6, r0, r3
 	mov	r3, r7, lsr #SECTION_SHIFT
 	ldr	r7, [r10, #PROCINFO_IO_MMUFLAGS] @ io_mmuflags
 	orr	r3, r7, r3, lsl #SECTION_SHIFT
 #ifdef CONFIG_ARM_LPAE
 	mov	r7, #1 << (54 - 32)		@ XN
+#ifdef CONFIG_CPU_ENDIAN_BE8
+	str	r7, [r0], #4
+	str	r3, [r0], #4
 #else
-	orr	r3, r3, #PMD_SECT_XN
-#endif
-1:	str	r3, [r0], #4
-#ifdef CONFIG_ARM_LPAE
+	str	r3, [r0], #4
 	str	r7, [r0], #4
 #endif
-	add	r3, r3, #1 << SECTION_SHIFT
-	cmp	r0, r6
-	blo	1b
+#else
+	orr	r3, r3, #PMD_SECT_XN
+	str	r3, [r0], #4
+#endif
 
 #else /* CONFIG_DEBUG_ICEDCC || CONFIG_DEBUG_SEMIHOSTING */
 	/* we don't need any serial debugging mappings */
@@ -326,6 +331,7 @@ __create_page_tables:
 #endif
 #ifdef CONFIG_ARM_LPAE
 	sub	r4, r4, #0x1000		@ point to the PGD table
+	mov	r4, r4, lsr #ARCH_PGD_SHIFT
 #endif
 	mov	pc, lr
 ENDPROC(__create_page_tables)
@@ -337,7 +343,7 @@ __turn_mmu_on_loc:
 	.long	__turn_mmu_on_end
 
 #if defined(CONFIG_SMP)
-	__CPUINIT
+	.text
 ENTRY(secondary_startup)
 	/*
 	 * Common entry point for secondary CPUs.
@@ -346,7 +352,11 @@ ENTRY(secondary_startup)
 	 * the processor type - there is no need to check the machine type
 	 * as it has already been validated by the primary processor.
 	 */
-	setmode	PSR_F_BIT | PSR_I_BIT | SVC_MODE, r9
+#ifdef CONFIG_ARM_VIRT_EXT
+	bl	__hyp_stub_install_secondary
+#endif
+	safe_svcmode_maskall r9
+
 	mrc	p15, 0, r9, c0, c0		@ get processor id
 	bl	__lookup_processor_type
 	movs	r10, r5				@ invalid processor?
@@ -399,7 +409,7 @@ __secondary_data:
  *  r0  = cp#15 control register
  *  r1  = machine ID
  *  r2  = atags or dtb pointer
- *  r4  = page table pointer
+ *  r4  = page table (see ARCH_PGD_SHIFT in asm/memory.h)
  *  r9  = processor ID
  *  r13 = *virtual* address to jump to upon completion
  */
@@ -418,10 +428,7 @@ __enable_mmu:
 #ifdef CONFIG_CPU_ICACHE_DISABLE
 	bic	r0, r0, #CR_I
 #endif
-#ifdef CONFIG_ARM_LPAE
-	mov	r5, #0
-	mcrr	p15, 0, r4, r5, c2		@ load TTBR0
-#else
+#ifndef CONFIG_ARM_LPAE
 	mov	r5, #(domain_val(DOMAIN_USER, DOMAIN_MANAGER) | \
 		      domain_val(DOMAIN_KERNEL, DOMAIN_MANAGER) | \
 		      domain_val(DOMAIN_TABLE, DOMAIN_MANAGER) | \

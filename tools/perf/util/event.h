@@ -6,6 +6,7 @@
 
 #include "../perf.h"
 #include "map.h"
+#include "build-id.h"
 
 /*
  * PERF_SAMPLE_IP | PERF_SAMPLE_TID | *
@@ -69,6 +70,16 @@ struct sample_event {
 	u64 array[];
 };
 
+struct regs_dump {
+	u64 *regs;
+};
+
+struct stack_dump {
+	u16 offset;
+	u64 size;
+	char *data;
+};
+
 struct perf_sample {
 	u64 ip;
 	u32 pid, tid;
@@ -77,19 +88,28 @@ struct perf_sample {
 	u64 id;
 	u64 stream_id;
 	u64 period;
+	u64 weight;
 	u32 cpu;
 	u32 raw_size;
+	u64 data_src;
 	void *raw_data;
 	struct ip_callchain *callchain;
 	struct branch_stack *branch_stack;
+	struct regs_dump  user_regs;
+	struct stack_dump user_stack;
 };
 
-#define BUILD_ID_SIZE 20
+#define PERF_MEM_DATA_SRC_NONE \
+	(PERF_MEM_S(OP, NA) |\
+	 PERF_MEM_S(LVL, NA) |\
+	 PERF_MEM_S(SNOOP, NA) |\
+	 PERF_MEM_S(LOCK, NA) |\
+	 PERF_MEM_S(TLB, NA))
 
 struct build_id_event {
 	struct perf_event_header header;
 	pid_t			 pid;
-	u8			 build_id[ALIGN(BUILD_ID_SIZE, sizeof(u64))];
+	u8			 build_id[PERF_ALIGN(BUILD_ID_SIZE, sizeof(u64))];
 	char			 filename[];
 };
 
@@ -179,7 +199,11 @@ int perf_event__process_mmap(struct perf_tool *tool,
 			     union perf_event *event,
 			     struct perf_sample *sample,
 			     struct machine *machine);
-int perf_event__process_task(struct perf_tool *tool,
+int perf_event__process_fork(struct perf_tool *tool,
+			     union perf_event *event,
+			     struct perf_sample *sample,
+			     struct machine *machine);
+int perf_event__process_exit(struct perf_tool *tool,
 			     union perf_event *event,
 			     struct perf_sample *sample,
 			     struct machine *machine);
@@ -197,9 +221,6 @@ int perf_event__preprocess_sample(const union perf_event *self,
 
 const char *perf_event__name(unsigned int id);
 
-int perf_event__parse_sample(const union perf_event *event, u64 type,
-			     int sample_size, bool sample_id_all,
-			     struct perf_sample *sample, bool swapped);
 int perf_event__synthesize_sample(union perf_event *event, u64 type,
 				  const struct perf_sample *sample,
 				  bool swapped);

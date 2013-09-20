@@ -38,7 +38,7 @@
 #include <linux/log2.h>
 #include <linux/export.h>
 #include <asm/shmparam.h>
-#include "drmP.h"
+#include <drm/drmP.h>
 
 static struct drm_map_list *drm_find_matching_map(struct drm_device *dev,
 						  struct drm_local_map *map)
@@ -210,12 +210,16 @@ static int drm_addmap_core(struct drm_device * dev, resource_size_t offset,
 		if (drm_core_has_MTRR(dev)) {
 			if (map->type == _DRM_FRAME_BUFFER ||
 			    (map->flags & _DRM_WRITE_COMBINING)) {
-				map->mtrr = mtrr_add(map->offset, map->size,
-						     MTRR_TYPE_WRCOMB, 1);
+				map->mtrr =
+					arch_phys_wc_add(map->offset, map->size);
 			}
 		}
 		if (map->type == _DRM_REGISTERS) {
-			map->handle = ioremap(map->offset, map->size);
+			if (map->flags & _DRM_WRITE_COMBINING)
+				map->handle = ioremap_wc(map->offset,
+							 map->size);
+			else
+				map->handle = ioremap(map->offset, map->size);
 			if (!map->handle) {
 				kfree(map);
 				return -ENOMEM;
@@ -410,6 +414,15 @@ int drm_addmap_ioctl(struct drm_device *dev, void *data,
 
 	/* avoid a warning on 64-bit, this casting isn't very nice, but the API is set so too late */
 	map->handle = (void *)(unsigned long)maplist->user_token;
+
+	/*
+	 * It appears that there are no users of this value whatsoever --
+	 * drmAddMap just discards it.  Let's not encourage its use.
+	 * (Keeping drm_addmap_core's returned mtrr value would be wrong --
+	 *  it's not a real mtrr index anymore.)
+	 */
+	map->mtrr = -1;
+
 	return 0;
 }
 
@@ -451,11 +464,8 @@ int drm_rmmap_locked(struct drm_device *dev, struct drm_local_map *map)
 		iounmap(map->handle);
 		/* FALLTHROUGH */
 	case _DRM_FRAME_BUFFER:
-		if (drm_core_has_MTRR(dev) && map->mtrr >= 0) {
-			int retcode;
-			retcode = mtrr_del(map->mtrr, map->offset, map->size);
-			DRM_DEBUG("mtrr_del=%d\n", retcode);
-		}
+		if (drm_core_has_MTRR(dev))
+			arch_phys_wc_del(map->mtrr);
 		break;
 	case _DRM_SHM:
 		vfree(map->handle);
@@ -641,8 +651,6 @@ int drm_addbufs_agp(struct drm_device * dev, struct drm_buf_desc * request)
 
 	if (order < DRM_MIN_ORDER || order > DRM_MAX_ORDER)
 		return -EINVAL;
-	if (dev->queue_count)
-		return -EBUSY;	/* Not while in use */
 
 	/* Make sure buffers are located in AGP memory that we own */
 	valid = 0;
@@ -704,7 +712,6 @@ int drm_addbufs_agp(struct drm_device * dev, struct drm_buf_desc * request)
 		buf->next = NULL;
 		buf->waiting = 0;
 		buf->pending = 0;
-		init_waitqueue_head(&buf->dma_wait);
 		buf->file_priv = NULL;
 
 		buf->dev_priv_size = dev->driver->dev_priv_size;
@@ -796,13 +803,11 @@ int drm_addbufs_pci(struct drm_device * dev, struct drm_buf_desc * request)
 	order = drm_order(request->size);
 	size = 1 << order;
 
-	DRM_DEBUG("count=%d, size=%d (%d), order=%d, queue_count=%d\n",
-		  request->count, request->size, size, order, dev->queue_count);
+	DRM_DEBUG("count=%d, size=%d (%d), order=%d\n",
+		  request->count, request->size, size, order);
 
 	if (order < DRM_MIN_ORDER || order > DRM_MAX_ORDER)
 		return -EINVAL;
-	if (dev->queue_count)
-		return -EBUSY;	/* Not while in use */
 
 	alignment = (request->flags & _DRM_PAGE_ALIGN)
 	    ? PAGE_ALIGN(size) : size;
@@ -904,7 +909,6 @@ int drm_addbufs_pci(struct drm_device * dev, struct drm_buf_desc * request)
 			buf->next = NULL;
 			buf->waiting = 0;
 			buf->pending = 0;
-			init_waitqueue_head(&buf->dma_wait);
 			buf->file_priv = NULL;
 
 			buf->dev_priv_size = dev->driver->dev_priv_size;
@@ -1019,8 +1023,6 @@ static int drm_addbufs_sg(struct drm_device * dev, struct drm_buf_desc * request
 
 	if (order < DRM_MIN_ORDER || order > DRM_MAX_ORDER)
 		return -EINVAL;
-	if (dev->queue_count)
-		return -EBUSY;	/* Not while in use */
 
 	spin_lock(&dev->count_lock);
 	if (dev->buf_use) {
@@ -1071,7 +1073,6 @@ static int drm_addbufs_sg(struct drm_device * dev, struct drm_buf_desc * request
 		buf->next = NULL;
 		buf->waiting = 0;
 		buf->pending = 0;
-		init_waitqueue_head(&buf->dma_wait);
 		buf->file_priv = NULL;
 
 		buf->dev_priv_size = dev->driver->dev_priv_size;
@@ -1177,8 +1178,6 @@ static int drm_addbufs_fb(struct drm_device * dev, struct drm_buf_desc * request
 
 	if (order < DRM_MIN_ORDER || order > DRM_MAX_ORDER)
 		return -EINVAL;
-	if (dev->queue_count)
-		return -EBUSY;	/* Not while in use */
 
 	spin_lock(&dev->count_lock);
 	if (dev->buf_use) {
@@ -1228,7 +1227,6 @@ static int drm_addbufs_fb(struct drm_device * dev, struct drm_buf_desc * request
 		buf->next = NULL;
 		buf->waiting = 0;
 		buf->pending = 0;
-		init_waitqueue_head(&buf->dma_wait);
 		buf->file_priv = NULL;
 
 		buf->dev_priv_size = dev->driver->dev_priv_size;

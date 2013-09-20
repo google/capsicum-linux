@@ -416,7 +416,8 @@ static const struct nla_policy rsvp_policy[TCA_RSVP_MAX + 1] = {
 	[TCA_RSVP_PINFO]	= { .len = sizeof(struct tc_rsvp_pinfo) },
 };
 
-static int rsvp_change(struct tcf_proto *tp, unsigned long base,
+static int rsvp_change(struct net *net, struct sk_buff *in_skb,
+		       struct tcf_proto *tp, unsigned long base,
 		       u32 handle,
 		       struct nlattr **tca,
 		       unsigned long *arg)
@@ -439,7 +440,7 @@ static int rsvp_change(struct tcf_proto *tp, unsigned long base,
 	if (err < 0)
 		return err;
 
-	err = tcf_exts_validate(tp, tb, tca[TCA_RATE], &e, &rsvp_ext_map);
+	err = tcf_exts_validate(net, tp, tb, tca[TCA_RATE], &e, &rsvp_ext_map);
 	if (err < 0)
 		return err;
 
@@ -615,18 +616,22 @@ static int rsvp_dump(struct tcf_proto *tp, unsigned long fh,
 	if (nest == NULL)
 		goto nla_put_failure;
 
-	NLA_PUT(skb, TCA_RSVP_DST, sizeof(s->dst), &s->dst);
+	if (nla_put(skb, TCA_RSVP_DST, sizeof(s->dst), &s->dst))
+		goto nla_put_failure;
 	pinfo.dpi = s->dpi;
 	pinfo.spi = f->spi;
 	pinfo.protocol = s->protocol;
 	pinfo.tunnelid = s->tunnelid;
 	pinfo.tunnelhdr = f->tunnelhdr;
 	pinfo.pad = 0;
-	NLA_PUT(skb, TCA_RSVP_PINFO, sizeof(pinfo), &pinfo);
-	if (f->res.classid)
-		NLA_PUT_U32(skb, TCA_RSVP_CLASSID, f->res.classid);
-	if (((f->handle >> 8) & 0xFF) != 16)
-		NLA_PUT(skb, TCA_RSVP_SRC, sizeof(f->src), f->src);
+	if (nla_put(skb, TCA_RSVP_PINFO, sizeof(pinfo), &pinfo))
+		goto nla_put_failure;
+	if (f->res.classid &&
+	    nla_put_u32(skb, TCA_RSVP_CLASSID, f->res.classid))
+		goto nla_put_failure;
+	if (((f->handle >> 8) & 0xFF) != 16 &&
+	    nla_put(skb, TCA_RSVP_SRC, sizeof(f->src), f->src))
+		goto nla_put_failure;
 
 	if (tcf_exts_dump(skb, &f->exts, &rsvp_ext_map) < 0)
 		goto nla_put_failure;

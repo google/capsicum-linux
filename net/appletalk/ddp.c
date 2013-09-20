@@ -63,7 +63,7 @@
 #include <net/tcp_states.h>
 #include <net/route.h>
 #include <linux/atalk.h>
-#include "../core/kmap_skb.h"
+#include <linux/highmem.h>
 
 struct datalink_proto *ddp_dl, *aarp_dl;
 static const struct proto_ops atalk_dgram_ops;
@@ -93,10 +93,9 @@ static struct sock *atalk_search_socket(struct sockaddr_at *to,
 					struct atalk_iface *atif)
 {
 	struct sock *s;
-	struct hlist_node *node;
 
 	read_lock_bh(&atalk_sockets_lock);
-	sk_for_each(s, node, &atalk_sockets) {
+	sk_for_each(s, &atalk_sockets) {
 		struct atalk_sock *at = at_sk(s);
 
 		if (to->sat_port != at->src_port)
@@ -129,8 +128,8 @@ found:
 
 /**
  * atalk_find_or_insert_socket - Try to find a socket matching ADDR
- * @sk - socket to insert in the list if it is not there already
- * @sat - address to search for
+ * @sk: socket to insert in the list if it is not there already
+ * @sat: address to search for
  *
  * Try to find a socket matching ADDR in the socket list, if found then return
  * it. If not, insert SK into the socket list.
@@ -141,11 +140,10 @@ static struct sock *atalk_find_or_insert_socket(struct sock *sk,
 						struct sockaddr_at *sat)
 {
 	struct sock *s;
-	struct hlist_node *node;
 	struct atalk_sock *at;
 
 	write_lock_bh(&atalk_sockets_lock);
-	sk_for_each(s, node, &atalk_sockets) {
+	sk_for_each(s, &atalk_sockets) {
 		at = at_sk(s);
 
 		if (at->src_net == sat->sat_addr.s_net &&
@@ -646,7 +644,7 @@ static inline void atalk_dev_down(struct net_device *dev)
 static int ddp_device_event(struct notifier_block *this, unsigned long event,
 			    void *ptr)
 {
-	struct net_device *dev = ptr;
+	struct net_device *dev = netdev_notifier_info_to_dev(ptr);
 
 	if (!net_eq(dev_net(dev), &init_net))
 		return NOTIFY_DONE;
@@ -960,10 +958,10 @@ static unsigned long atalk_sum_skb(const struct sk_buff *skb, int offset,
 
 			if (copy > len)
 				copy = len;
-			vaddr = kmap_skb_frag(frag);
+			vaddr = kmap_atomic(skb_frag_page(frag));
 			sum = atalk_sum_partial(vaddr + frag->page_offset +
 						  offset - start, copy, sum);
-			kunmap_skb_frag(vaddr);
+			kunmap_atomic(vaddr);
 
 			if (!(len -= copy))
 				return sum;
@@ -1066,8 +1064,8 @@ static int atalk_release(struct socket *sock)
 
 /**
  * atalk_pick_and_bind_port - Pick a source port when one is not given
- * @sk - socket to insert into the tables
- * @sat - address to search for
+ * @sk: socket to insert into the tables
+ * @sat: address to search for
  *
  * Pick a source port when one is not given. If we can find a suitable free
  * one, we insert the socket into the tables using it.
@@ -1084,9 +1082,8 @@ static int atalk_pick_and_bind_port(struct sock *sk, struct sockaddr_at *sat)
 	     sat->sat_port < ATPORT_LAST;
 	     sat->sat_port++) {
 		struct sock *s;
-		struct hlist_node *node;
 
-		sk_for_each(s, node, &atalk_sockets) {
+		sk_for_each(s, &atalk_sockets) {
 			struct atalk_sock *at = at_sk(s);
 
 			if (at->src_net == sat->sat_addr.s_net &&
@@ -1208,9 +1205,7 @@ static int atalk_connect(struct socket *sock, struct sockaddr *uaddr,
 	if (addr->sat_addr.s_node == ATADDR_BCAST &&
 	    !sock_flag(sk, SOCK_BROADCAST)) {
 #if 1
-		printk(KERN_WARNING "%s is broken and did not set "
-				    "SO_BROADCAST. It will break when 2.2 is "
-				    "released.\n",
+		pr_warn("atalk_connect: %s is broken and did not set SO_BROADCAST.\n",
 			current->comm);
 #else
 		return -EACCES;
@@ -1258,7 +1253,7 @@ static int atalk_getname(struct socket *sock, struct sockaddr *uaddr,
 			goto out;
 
 	*uaddr_len = sizeof(struct sockaddr_at);
-	memset(&sat.sat_zero, 0, sizeof(sat.sat_zero));
+	memset(&sat, 0, sizeof(sat));
 
 	if (peer) {
 		err = -ENOTCONN;

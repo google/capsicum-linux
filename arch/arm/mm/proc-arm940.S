@@ -160,7 +160,7 @@ ENTRY(arm940_coherent_user_range)
  *	- size	- region size
  */
 ENTRY(arm940_flush_kern_dcache_area)
-	mov	ip, #0
+	mov	r0, #0
 	mov	r1, #(CACHE_DSEGMENTS - 1) << 4	@ 4 segments
 1:	orr	r3, r1, #(CACHE_DENTRIES - 1) << 26 @ 64 entries
 2:	mcr	p15, 0, r3, c7, c14, 2		@ clean/flush D index
@@ -168,8 +168,8 @@ ENTRY(arm940_flush_kern_dcache_area)
 	bcs	2b				@ entries 63 to 0
 	subs	r1, r1, #1 << 4
 	bcs	1b				@ segments 7 to 0
-	mcr	p15, 0, ip, c7, c5, 0		@ invalidate I cache
-	mcr	p15, 0, ip, c7, c10, 4		@ drain WB
+	mcr	p15, 0, r0, c7, c5, 0		@ invalidate I cache
+	mcr	p15, 0, r0, c7, c10, 4		@ drain WB
 	mov	pc, lr
 
 /*
@@ -267,10 +267,11 @@ ENTRY(arm940_dma_unmap_area)
 	mov	pc, lr
 ENDPROC(arm940_dma_unmap_area)
 
+	.globl	arm940_flush_kern_cache_louis
+	.equ	arm940_flush_kern_cache_louis, arm940_flush_kern_cache_all
+
 	@ define struct cpu_cache_fns (see <asm/cacheflush.h> and proc-macros.S)
 	define_cache_functions arm940
-
-	__CPUINIT
 
 	.type	__arm940_setup, #function
 __arm940_setup:

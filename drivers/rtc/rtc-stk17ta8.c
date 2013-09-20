@@ -285,7 +285,7 @@ static struct bin_attribute stk17ta8_nvram_attr = {
 	.write = stk17ta8_nvram_write,
 };
 
-static int __devinit stk17ta8_rtc_probe(struct platform_device *pdev)
+static int stk17ta8_rtc_probe(struct platform_device *pdev)
 {
 	struct resource *res;
 	unsigned int cal;
@@ -336,23 +336,21 @@ static int __devinit stk17ta8_rtc_probe(struct platform_device *pdev)
 		}
 	}
 
-	pdata->rtc = rtc_device_register(pdev->name, &pdev->dev,
+	pdata->rtc = devm_rtc_device_register(&pdev->dev, pdev->name,
 				  &stk17ta8_rtc_ops, THIS_MODULE);
 	if (IS_ERR(pdata->rtc))
 		return PTR_ERR(pdata->rtc);
 
 	ret = sysfs_create_bin_file(&pdev->dev.kobj, &stk17ta8_nvram_attr);
-	if (ret)
-		rtc_device_unregister(pdata->rtc);
+
 	return ret;
 }
 
-static int __devexit stk17ta8_rtc_remove(struct platform_device *pdev)
+static int stk17ta8_rtc_remove(struct platform_device *pdev)
 {
 	struct rtc_plat_data *pdata = platform_get_drvdata(pdev);
 
 	sysfs_remove_bin_file(&pdev->dev.kobj, &stk17ta8_nvram_attr);
-	rtc_device_unregister(pdata->rtc);
 	if (pdata->irq > 0)
 		writeb(0, pdata->ioaddr + RTC_INTERRUPTS);
 	return 0;
@@ -363,7 +361,7 @@ MODULE_ALIAS("platform:stk17ta8");
 
 static struct platform_driver stk17ta8_rtc_driver = {
 	.probe		= stk17ta8_rtc_probe,
-	.remove		= __devexit_p(stk17ta8_rtc_remove),
+	.remove		= stk17ta8_rtc_remove,
 	.driver		= {
 		.name	= "stk17ta8",
 		.owner	= THIS_MODULE,

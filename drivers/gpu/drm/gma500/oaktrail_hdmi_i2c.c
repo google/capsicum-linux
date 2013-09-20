@@ -250,7 +250,7 @@ static irqreturn_t oaktrail_hdmi_i2c_handler(int this_irq, void *dev)
  */
 static void oaktrail_hdmi_i2c_gpio_fix(void)
 {
-	void *base;
+	void __iomem *base;
 	unsigned int gpio_base = 0xff12c000;
 	int gpio_len = 0x1000;
 	u32 temp;
@@ -319,8 +319,7 @@ void oaktrail_hdmi_i2c_exit(struct pci_dev *dev)
 	struct hdmi_i2c_dev *i2c_dev;
 
 	hdmi_dev = pci_get_drvdata(dev);
-	if (i2c_del_adapter(&oaktrail_hdmi_i2c_adapter))
-		DRM_DEBUG_DRIVER("Failed to delete hdmi-i2c adapter\n");
+	i2c_del_adapter(&oaktrail_hdmi_i2c_adapter);
 
 	i2c_dev = hdmi_dev->i2c_dev;
 	kfree(i2c_dev);

@@ -48,8 +48,8 @@ int apparmor_initialized __initdata;
  */
 static void apparmor_cred_free(struct cred *cred)
 {
-	aa_free_task_context(cred->security);
-	cred->security = NULL;
+	aa_free_task_context(cred_cxt(cred));
+	cred_cxt(cred) = NULL;
 }
 
 /*
@@ -62,7 +62,7 @@ static int apparmor_cred_alloc_blank(struct cred *cred, gfp_t gfp)
 	if (!cxt)
 		return -ENOMEM;
 
-	cred->security = cxt;
+	cred_cxt(cred) = cxt;
 	return 0;
 }
 
@@ -77,8 +77,8 @@ static int apparmor_cred_prepare(struct cred *new, const struct cred *old,
 	if (!cxt)
 		return -ENOMEM;
 
-	aa_dup_task_context(cxt, old->security);
-	new->security = cxt;
+	aa_dup_task_context(cxt, cred_cxt(old));
+	cred_cxt(new) = cxt;
 	return 0;
 }
 
@@ -87,8 +87,8 @@ static int apparmor_cred_prepare(struct cred *new, const struct cred *old,
  */
 static void apparmor_cred_transfer(struct cred *new, const struct cred *old)
 {
-	const struct aa_task_cxt *old_cxt = old->security;
-	struct aa_task_cxt *new_cxt = new->security;
+	const struct aa_task_cxt *old_cxt = cred_cxt(old);
+	struct aa_task_cxt *new_cxt = cred_cxt(new);
 
 	aa_dup_task_context(new_cxt, old_cxt);
 }
@@ -352,7 +352,7 @@ static int apparmor_path_chmod(struct path *path, umode_t mode)
 	return common_perm_mnt_dentry(OP_CHMOD, path->mnt, path->dentry, AA_MAY_CHMOD);
 }
 
-static int apparmor_path_chown(struct path *path, uid_t uid, gid_t gid)
+static int apparmor_path_chown(struct path *path, kuid_t uid, kgid_t gid)
 {
 	struct path_cond cond =  { path->dentry->d_inode->i_uid,
 				   path->dentry->d_inode->i_mode
@@ -373,13 +373,13 @@ static int apparmor_inode_getattr(struct vfsmount *mnt, struct dentry *dentry)
 				      AA_MAY_META_READ);
 }
 
-static int apparmor_dentry_open(struct file *file, const struct cred *cred)
+static int apparmor_file_open(struct file *file, const struct cred *cred)
 {
 	struct aa_file_cxt *fcxt = file->f_security;
 	struct aa_profile *profile;
 	int error = 0;
 
-	if (!mediated_filesystem(file->f_path.dentry->d_inode))
+	if (!mediated_filesystem(file_inode(file)))
 		return 0;
 
 	/* If in exec, permission is handled by bprm hooks.
@@ -394,7 +394,7 @@ static int apparmor_dentry_open(struct file *file, const struct cred *cred)
 
 	profile = aa_cred_profile(cred);
 	if (!unconfined(profile)) {
-		struct inode *inode = file->f_path.dentry->d_inode;
+		struct inode *inode = file_inode(file);
 		struct path_cond cond = { inode->i_uid, inode->i_mode };
 
 		error = aa_path_perm(OP_OPEN, profile, &file->f_path, 0,
@@ -432,7 +432,7 @@ static int common_file_perm(int op, struct file *file, u32 mask)
 	BUG_ON(!fprofile);
 
 	if (!file->f_path.mnt ||
-	    !mediated_filesystem(file->f_path.dentry->d_inode))
+	    !mediated_filesystem(file_inode(file)))
 		return 0;
 
 	profile = __aa_current_profile();
@@ -469,7 +469,6 @@ static int apparmor_file_lock(struct file *file, unsigned int cmd)
 static int common_mmap(int op, struct file *file, unsigned long prot,
 		       unsigned long flags)
 {
-	struct dentry *dentry;
 	int mask = 0;
 
 	if (!file || !file->f_security)
@@ -486,21 +485,12 @@ static int common_mmap(int op, struct file *file, unsigned long prot,
 	if (prot & PROT_EXEC)
 		mask |= AA_EXEC_MMAP;
 
-	dentry = file->f_path.dentry;
 	return common_file_perm(op, file, mask);
 }
 
-static int apparmor_file_mmap(struct file *file, unsigned long reqprot,
-			      unsigned long prot, unsigned long flags,
-			      unsigned long addr, unsigned long addr_only)
+static int apparmor_mmap_file(struct file *file, unsigned long reqprot,
+			      unsigned long prot, unsigned long flags)
 {
-	int rc = 0;
-
-	/* do DAC check */
-	rc = cap_file_mmap(file, reqprot, prot, flags, addr, addr_only);
-	if (rc || addr_only)
-		return rc;
-
 	return common_mmap(OP_FMMAP, file, prot, flags);
 }
 
@@ -515,11 +505,9 @@ static int apparmor_getprocattr(struct task_struct *task, char *name,
 				char **value)
 {
 	int error = -ENOENT;
-	struct aa_profile *profile;
 	/* released below */
 	const struct cred *cred = get_task_cred(task);
-	struct aa_task_cxt *cxt = cred->security;
-	profile = aa_cred_profile(cred);
+	struct aa_task_cxt *cxt = cred_cxt(cred);
 
 	if (strcmp(name, "current") == 0)
 		error = aa_getprocattr(aa_newest_version(cxt->profile),
@@ -541,6 +529,8 @@ static int apparmor_getprocattr(struct task_struct *task, char *name,
 static int apparmor_setprocattr(struct task_struct *task, char *name,
 				void *value, size_t size)
 {
+	struct common_audit_data sa;
+	struct apparmor_audit_data aad = {0,};
 	char *command, *args = value;
 	size_t arg_size;
 	int error;
@@ -584,30 +574,31 @@ static int apparmor_setprocattr(struct task_struct *task, char *name,
 		} else if (strcmp(command, "permprofile") == 0) {
 			error = aa_setprocattr_changeprofile(args, !AA_ONEXEC,
 							     AA_DO_TEST);
-		} else if (strcmp(command, "permipc") == 0) {
-			error = aa_setprocattr_permipc(args);
-		} else {
-			struct common_audit_data sa;
-			struct apparmor_audit_data aad = {0,};
-			COMMON_AUDIT_DATA_INIT(&sa, NONE);
-			sa.aad = &aad;
-			aad.op = OP_SETPROCATTR;
-			aad.info = name;
-			aad.error = -EINVAL;
-			return aa_audit(AUDIT_APPARMOR_DENIED,
-					__aa_current_profile(), GFP_KERNEL,
-					&sa, NULL);
-		}
+		} else
+			goto fail;
 	} else if (strcmp(name, "exec") == 0) {
-		error = aa_setprocattr_changeprofile(args, AA_ONEXEC,
-						     !AA_DO_TEST);
-	} else {
+		if (strcmp(command, "exec") == 0)
+			error = aa_setprocattr_changeprofile(args, AA_ONEXEC,
+							     !AA_DO_TEST);
+		else
+			goto fail;
+	} else
 		/* only support the "current" and "exec" process attributes */
 		return -EINVAL;
-	}
+
 	if (!error)
 		error = size;
 	return error;
+
+fail:
+	sa.type = LSM_AUDIT_DATA_NONE;
+	sa.aad = &aad;
+	aad.profile = aa_current_profile();
+	aad.op = OP_SETPROCATTR;
+	aad.info = name;
+	aad.error = -EINVAL;
+	aa_audit_msg(AUDIT_APPARMOR_DENIED, &sa, NULL);
+	return -EINVAL;
 }
 
 static int apparmor_task_setrlimit(struct task_struct *task,
@@ -640,13 +631,14 @@ static struct security_operations apparmor_ops = {
 	.path_chmod =			apparmor_path_chmod,
 	.path_chown =			apparmor_path_chown,
 	.path_truncate =		apparmor_path_truncate,
-	.dentry_open =			apparmor_dentry_open,
 	.inode_getattr =                apparmor_inode_getattr,
 
+	.file_open =			apparmor_file_open,
 	.file_permission =		apparmor_file_permission,
 	.file_alloc_security =		apparmor_file_alloc_security,
 	.file_free_security =		apparmor_file_free_security,
-	.file_mmap =			apparmor_file_mmap,
+	.mmap_file =			apparmor_mmap_file,
+	.mmap_addr =			cap_mmap_addr,
 	.file_mprotect =		apparmor_file_mprotect,
 	.file_lock =			apparmor_file_lock,
 
@@ -893,7 +885,7 @@ static int __init set_init_cxt(void)
 		return -ENOMEM;
 
 	cxt->profile = aa_get_profile(root_ns->unconfined);
-	cred->security = cxt;
+	cred_cxt(cred) = cxt;
 
 	return 0;
 }
@@ -922,8 +914,11 @@ static int __init apparmor_init(void)
 
 	error = register_security(&apparmor_ops);
 	if (error) {
+		struct cred *cred = (struct cred *)current->real_cred;
+		aa_free_task_context(cred_cxt(cred));
+		cred_cxt(cred) = NULL;
 		AA_ERROR("Unable to register AppArmor\n");
-		goto set_init_cxt_out;
+		goto register_security_out;
 	}
 
 	/* Report that AppArmor successfully initialized */
@@ -936,9 +931,6 @@ static int __init apparmor_init(void)
 		aa_info_message("AppArmor initialized");
 
 	return error;
-
-set_init_cxt_out:
-	aa_free_task_context(current->real_cred->security);
 
 register_security_out:
 	aa_free_root_ns();

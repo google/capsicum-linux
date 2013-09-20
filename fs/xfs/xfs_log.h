@@ -88,7 +88,8 @@ static inline xfs_lsn_t	_lsn_cmp(xfs_lsn_t lsn1, xfs_lsn_t lsn2)
 #define XLOG_REG_TYPE_UNMOUNT		17
 #define XLOG_REG_TYPE_COMMIT		18
 #define XLOG_REG_TYPE_TRANSHDR		19
-#define XLOG_REG_TYPE_MAX		19
+#define XLOG_REG_TYPE_ICREATE		20
+#define XLOG_REG_TYPE_MAX		20
 
 typedef struct xfs_log_iovec {
 	void		*i_addr;	/* beginning address of region */
@@ -104,6 +105,8 @@ struct xfs_log_vec {
 	char			*lv_buf;	/* formatted buffer */
 	int			lv_buf_len;	/* size of formatted buffer */
 };
+
+#define XFS_LOG_VEC_ORDERED	(-1)
 
 /*
  * Structure used to pass callback function and the function's argument
@@ -152,6 +155,7 @@ int	  xfs_log_mount(struct xfs_mount	*mp,
 			int		 	num_bblocks);
 int	  xfs_log_mount_finish(struct xfs_mount *mp);
 xfs_lsn_t xlog_assign_tail_lsn(struct xfs_mount *mp);
+xfs_lsn_t xlog_assign_tail_lsn_locked(struct xfs_mount *mp);
 void	  xfs_log_space_wake(struct xfs_mount *mp);
 int	  xfs_log_notify(struct xfs_mount	*mp,
 			 struct xlog_in_core	*iclog,
@@ -179,6 +183,10 @@ void	  xfs_log_ticket_put(struct xlog_ticket *ticket);
 int	xfs_log_commit_cil(struct xfs_mount *mp, struct xfs_trans *tp,
 				xfs_lsn_t *commit_lsn, int flags);
 bool	xfs_log_item_in_current_chkpt(struct xfs_log_item *lip);
+
+void	xfs_log_work_queue(struct xfs_mount *mp);
+void	xfs_log_worker(struct work_struct *work);
+void	xfs_log_quiesce(struct xfs_mount *mp);
 
 #endif
 #endif	/* __XFS_LOG_H__ */

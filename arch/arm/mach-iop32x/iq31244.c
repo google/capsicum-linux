@@ -75,10 +75,6 @@ static void __init iq31244_timer_init(void)
 	}
 }
 
-static struct sys_timer iq31244_timer = {
-	.init		= iq31244_timer_init,
-};
-
 
 /*
  * IQ31244 I/O.
@@ -130,11 +126,10 @@ ep80219_pci_map_irq(const struct pci_dev *dev, u8 slot, u8 pin)
 }
 
 static struct hw_pci ep80219_pci __initdata = {
-	.swizzle	= pci_std_swizzle,
 	.nr_controllers = 1,
+	.ops		= &iop3xx_ops,
 	.setup		= iop3xx_pci_setup,
 	.preinit	= iop3xx_pci_preinit,
-	.scan		= iop3xx_pci_scan_bus,
 	.map_irq	= ep80219_pci_map_irq,
 };
 
@@ -166,11 +161,10 @@ iq31244_pci_map_irq(const struct pci_dev *dev, u8 slot, u8 pin)
 }
 
 static struct hw_pci iq31244_pci __initdata = {
-	.swizzle	= pci_std_swizzle,
 	.nr_controllers = 1,
+	.ops		= &iop3xx_ops,
 	.setup		= iop3xx_pci_setup,
 	.preinit	= iop3xx_pci_preinit,
-	.scan		= iop3xx_pci_scan_bus,
 	.map_irq	= iq31244_pci_map_irq,
 };
 
@@ -316,7 +310,7 @@ MACHINE_START(IQ31244, "Intel IQ31244")
 	.atag_offset	= 0x100,
 	.map_io		= iq31244_map_io,
 	.init_irq	= iop32x_init_irq,
-	.timer		= &iq31244_timer,
+	.init_time	= iq31244_timer_init,
 	.init_machine	= iq31244_init_machine,
 	.restart	= iop3xx_restart,
 MACHINE_END
@@ -331,7 +325,7 @@ MACHINE_START(EP80219, "Intel EP80219")
 	.atag_offset	= 0x100,
 	.map_io		= iq31244_map_io,
 	.init_irq	= iop32x_init_irq,
-	.timer		= &iq31244_timer,
+	.init_time	= iq31244_timer_init,
 	.init_machine	= iq31244_init_machine,
 	.restart	= iop3xx_restart,
 MACHINE_END

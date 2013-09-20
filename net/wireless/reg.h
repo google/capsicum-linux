@@ -16,23 +16,24 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-extern const struct ieee80211_regdomain *cfg80211_regdomain;
+extern const struct ieee80211_regdomain __rcu *cfg80211_regdomain;
 
 bool is_world_regdom(const char *alpha2);
-bool reg_is_valid_request(const char *alpha2);
 bool reg_supported_dfs_region(u8 dfs_region);
 
-int regulatory_hint_user(const char *alpha2);
+int regulatory_hint_user(const char *alpha2,
+			 enum nl80211_user_reg_hint_type user_reg_hint_type);
 
 int reg_device_uevent(struct device *dev, struct kobj_uevent_env *env);
-void reg_device_remove(struct wiphy *wiphy);
+void wiphy_regulatory_register(struct wiphy *wiphy);
+void wiphy_regulatory_deregister(struct wiphy *wiphy);
 
 int __init regulatory_init(void);
 void regulatory_exit(void);
 
 int set_regdom(const struct ieee80211_regdomain *rd);
 
-void regulatory_update(struct wiphy *wiphy, enum nl80211_reg_initiator setby);
+bool reg_last_request_cell_base(void);
 
 /**
  * regulatory_hint_found_beacon - hints a beacon was found on a channel
@@ -53,8 +54,8 @@ void regulatory_update(struct wiphy *wiphy, enum nl80211_reg_initiator setby);
  * set the wiphy->disable_beacon_hints to true.
  */
 int regulatory_hint_found_beacon(struct wiphy *wiphy,
-					struct ieee80211_channel *beacon_chan,
-					gfp_t gfp);
+				 struct ieee80211_channel *beacon_chan,
+				 gfp_t gfp);
 
 /**
  * regulatory_hint_11d - hints a country IE as a regulatory domain
@@ -79,7 +80,7 @@ int regulatory_hint_found_beacon(struct wiphy *wiphy,
  */
 void regulatory_hint_11d(struct wiphy *wiphy,
 			 enum ieee80211_band band,
-			 u8 *country_ie,
+			 const u8 *country_ie,
 			 u8 country_ie_len);
 
 /**

@@ -73,7 +73,7 @@
 /* powerpc clocksource/clockevent code */
 
 #include <linux/clockchips.h>
-#include <linux/clocksource.h>
+#include <linux/timekeeper_internal.h>
 
 static cycle_t rtc_read(struct clocksource *);
 static struct clocksource clocksource_rtc = {
@@ -100,7 +100,7 @@ static int decrementer_set_next_event(unsigned long evt,
 static void decrementer_set_mode(enum clock_event_mode mode,
 				 struct clock_event_device *dev);
 
-static struct clock_event_device decrementer_clockevent = {
+struct clock_event_device decrementer_clockevent = {
 	.name           = "decrementer",
 	.rating         = 200,
 	.irq            = 0,
@@ -108,6 +108,7 @@ static struct clock_event_device decrementer_clockevent = {
 	.set_mode       = decrementer_set_mode,
 	.features       = CLOCK_EVT_FEAT_ONESHOT,
 };
+EXPORT_SYMBOL(decrementer_clockevent);
 
 DEFINE_PER_CPU(u64, decrementers_next_tb);
 static DEFINE_PER_CPU(struct clock_event_device, decrementers);
@@ -142,7 +143,7 @@ EXPORT_SYMBOL_GPL(ppc_proc_freq);
 unsigned long ppc_tb_freq;
 EXPORT_SYMBOL_GPL(ppc_tb_freq);
 
-#ifdef CONFIG_VIRT_CPU_ACCOUNTING
+#ifdef CONFIG_VIRT_CPU_ACCOUNTING_NATIVE
 /*
  * Factors for converting from cputime_t (timebase ticks) to
  * jiffies, microseconds, seconds, and clock_t (1/USER_HZ seconds).
@@ -290,13 +291,14 @@ static inline u64 calculate_stolen_time(u64 stop_tb)
  * Account time for a transition between system, hard irq
  * or soft irq state.
  */
-void account_system_vtime(struct task_struct *tsk)
+static u64 vtime_delta(struct task_struct *tsk,
+			u64 *sys_scaled, u64 *stolen)
 {
-	u64 now, nowscaled, delta, deltascaled;
-	unsigned long flags;
-	u64 stolen, udelta, sys_scaled, user_scaled;
+	u64 now, nowscaled, deltascaled;
+	u64 udelta, delta, user_scaled;
 
-	local_irq_save(flags);
+	WARN_ON_ONCE(!irqs_disabled());
+
 	now = mftb();
 	nowscaled = read_spurr(now);
 	get_paca()->system_time += now - get_paca()->starttime;
@@ -304,7 +306,7 @@ void account_system_vtime(struct task_struct *tsk)
 	deltascaled = nowscaled - get_paca()->startspurr;
 	get_paca()->startspurr = nowscaled;
 
-	stolen = calculate_stolen_time(now);
+	*stolen = calculate_stolen_time(now);
 
 	delta = get_paca()->system_time;
 	get_paca()->system_time = 0;
@@ -321,39 +323,50 @@ void account_system_vtime(struct task_struct *tsk)
 	 * the user ticks get saved up in paca->user_time_scaled to be
 	 * used by account_process_tick.
 	 */
-	sys_scaled = delta;
+	*sys_scaled = delta;
 	user_scaled = udelta;
 	if (deltascaled != delta + udelta) {
 		if (udelta) {
-			sys_scaled = deltascaled * delta / (delta + udelta);
-			user_scaled = deltascaled - sys_scaled;
+			*sys_scaled = deltascaled * delta / (delta + udelta);
+			user_scaled = deltascaled - *sys_scaled;
 		} else {
-			sys_scaled = deltascaled;
+			*sys_scaled = deltascaled;
 		}
 	}
 	get_paca()->user_time_scaled += user_scaled;
 
-	if (in_interrupt() || idle_task(smp_processor_id()) != tsk) {
-		account_system_time(tsk, 0, delta, sys_scaled);
-		if (stolen)
-			account_steal_time(stolen);
-	} else {
-		account_idle_time(delta + stolen);
-	}
-	local_irq_restore(flags);
+	return delta;
 }
-EXPORT_SYMBOL_GPL(account_system_vtime);
+
+void vtime_account_system(struct task_struct *tsk)
+{
+	u64 delta, sys_scaled, stolen;
+
+	delta = vtime_delta(tsk, &sys_scaled, &stolen);
+	account_system_time(tsk, 0, delta, sys_scaled);
+	if (stolen)
+		account_steal_time(stolen);
+}
+EXPORT_SYMBOL_GPL(vtime_account_system);
+
+void vtime_account_idle(struct task_struct *tsk)
+{
+	u64 delta, sys_scaled, stolen;
+
+	delta = vtime_delta(tsk, &sys_scaled, &stolen);
+	account_idle_time(delta + stolen);
+}
 
 /*
- * Transfer the user and system times accumulated in the paca
- * by the exception entry and exit code to the generic process
- * user and system time records.
+ * Transfer the user time accumulated in the paca
+ * by the exception entry and exit code to the generic
+ * process user time records.
  * Must be called with interrupts disabled.
- * Assumes that account_system_vtime() has been called recently
- * (i.e. since the last entry from usermode) so that
+ * Assumes that vtime_account_system/idle() has been called
+ * recently (i.e. since the last entry from usermode) so that
  * get_paca()->user_time_scaled is up to date.
  */
-void account_process_tick(struct task_struct *tsk, int user_tick)
+void vtime_account_user(struct task_struct *tsk)
 {
 	cputime_t utime, utimescaled;
 
@@ -365,7 +378,7 @@ void account_process_tick(struct task_struct *tsk, int user_tick)
 	account_user_time(tsk, utime, utimescaled);
 }
 
-#else /* ! CONFIG_VIRT_CPU_ACCOUNTING */
+#else /* ! CONFIG_VIRT_CPU_ACCOUNTING_NATIVE */
 #define calc_cputime_factors()
 #endif
 
@@ -474,6 +487,7 @@ void timer_interrupt(struct pt_regs * regs)
 	struct pt_regs *old_regs;
 	u64 *next_tb = &__get_cpu_var(decrementers_next_tb);
 	struct clock_event_device *evt = &__get_cpu_var(decrementers);
+	u64 now;
 
 	/* Ensure a positive value is written to the decrementer, or else
 	 * some CPUs will continue to take decrementer exceptions.
@@ -481,17 +495,20 @@ void timer_interrupt(struct pt_regs * regs)
 	set_dec(DECREMENTER_MAX);
 
 	/* Some implementations of hotplug will get timer interrupts while
-	 * offline, just ignore these
+	 * offline, just ignore these and we also need to set
+	 * decrementers_next_tb as MAX to make sure __check_irq_replay
+	 * don't replay timer interrupt when return, otherwise we'll trap
+	 * here infinitely :(
 	 */
-	if (!cpu_online(smp_processor_id()))
+	if (!cpu_online(smp_processor_id())) {
+		*next_tb = ~(u64)0;
 		return;
+	}
 
 	/* Conditionally hard-enable interrupts now that the DEC has been
 	 * bumped to its maximum value
 	 */
 	may_hard_irq_enable();
-
-	trace_timer_interrupt_entry(regs);
 
 	__get_cpu_var(irq_stat).timer_irqs++;
 
@@ -503,14 +520,23 @@ void timer_interrupt(struct pt_regs * regs)
 	old_regs = set_irq_regs(regs);
 	irq_enter();
 
+	trace_timer_interrupt_entry(regs);
+
 	if (test_irq_work_pending()) {
 		clear_irq_work_pending();
 		irq_work_run();
 	}
 
-	*next_tb = ~(u64)0;
-	if (evt->event_handler)
-		evt->event_handler(evt);
+	now = get_tb_or_rtc();
+	if (now >= *next_tb) {
+		*next_tb = ~(u64)0;
+		if (evt->event_handler)
+			evt->event_handler(evt);
+	} else {
+		now = *next_tb - now;
+		if (now <= DECREMENTER_MAX)
+			set_dec((int)now);
+	}
 
 #ifdef CONFIG_PPC64
 	/* collect purr register values often, for accurate calculations */
@@ -520,10 +546,19 @@ void timer_interrupt(struct pt_regs * regs)
 	}
 #endif
 
+	trace_timer_interrupt_exit(regs);
+
 	irq_exit();
 	set_irq_regs(old_regs);
+}
 
-	trace_timer_interrupt_exit(regs);
+/*
+ * Hypervisor decrementer interrupts shouldn't occur but are sometimes
+ * left pending on exit from a KVM guest.  We don't need to do anything
+ * to clear them, as they are edge-triggered.
+ */
+void hdec_interrupt(struct pt_regs *regs)
+{
 }
 
 #ifdef CONFIG_SUSPEND
@@ -596,7 +631,6 @@ static int __init get_freq(char *name, int cells, unsigned long *val)
 	return found;
 }
 
-/* should become __cpuinit when secondary_cpu_time_init also is */
 void start_cpu_decrementer(void)
 {
 #if defined(CONFIG_BOOKE) || defined(CONFIG_40x)
@@ -634,7 +668,7 @@ int update_persistent_clock(struct timespec now)
 	struct rtc_time tm;
 
 	if (!ppc_md.set_rtc_time)
-		return 0;
+		return -ENODEV;
 
 	to_tm(now.tv_sec + 1 + timezone_offset, &tm);
 	tm.tm_year -= 1900;
@@ -694,7 +728,7 @@ static cycle_t timebase_read(struct clocksource *cs)
 	return (cycle_t)get_tb();
 }
 
-void update_vsyscall(struct timespec *wall_time, struct timespec *wtm,
+void update_vsyscall_old(struct timespec *wall_time, struct timespec *wtm,
 			struct clocksource *clock, u32 mult)
 {
 	u64 new_tb_to_xs, new_stamp_xsec;
@@ -741,13 +775,8 @@ void update_vsyscall(struct timespec *wall_time, struct timespec *wtm,
 
 void update_vsyscall_tz(void)
 {
-	/* Make userspace gettimeofday spin until we're done. */
-	++vdso_data->tb_update_count;
-	smp_mb();
 	vdso_data->tz_minuteswest = sys_tz.tz_minuteswest;
 	vdso_data->tz_dsttime = sys_tz.tz_dsttime;
-	smp_mb();
-	++vdso_data->tb_update_count;
 }
 
 static void __init clocksource_init(void)
@@ -1019,10 +1048,8 @@ static int __init rtc_init(void)
 		return -ENODEV;
 
 	pdev = platform_device_register_simple("rtc-generic", -1, NULL, 0);
-	if (IS_ERR(pdev))
-		return PTR_ERR(pdev);
 
-	return 0;
+	return PTR_RET(pdev);
 }
 
 module_init(rtc_init);

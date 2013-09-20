@@ -33,10 +33,10 @@
 #include <linux/err.h>
 #include <linux/module.h>
 
-#include "../iio.h"
-#include "../sysfs.h"
-#include "../events.h"
-#include "../buffer.h"
+#include <linux/iio/iio.h>
+#include <linux/iio/sysfs.h>
+#include <linux/iio/events.h>
+#include <linux/iio/buffer.h>
 
 #include "ad799x.h"
 
@@ -48,13 +48,13 @@ static int ad799x_i2c_read16(struct ad799x_state *st, u8 reg, u16 *data)
 	struct i2c_client *client = st->client;
 	int ret = 0;
 
-	ret = i2c_smbus_read_word_data(client, reg);
+	ret = i2c_smbus_read_word_swapped(client, reg);
 	if (ret < 0) {
 		dev_err(&client->dev, "I2C read error\n");
 		return ret;
 	}
 
-	*data = swab16((u16)ret);
+	*data = (u16)ret;
 
 	return 0;
 }
@@ -80,7 +80,7 @@ static int ad799x_i2c_write16(struct ad799x_state *st, u8 reg, u16 data)
 	struct i2c_client *client = st->client;
 	int ret = 0;
 
-	ret = i2c_smbus_write_word_data(client, reg, swab16(data));
+	ret = i2c_smbus_write_word_swapped(client, reg, data);
 	if (ret < 0)
 		dev_err(&client->dev, "I2C write error\n");
 
@@ -99,10 +99,28 @@ static int ad799x_i2c_write8(struct ad799x_state *st, u8 reg, u8 data)
 	return ret;
 }
 
-int ad7997_8_set_scan_mode(struct ad799x_state *st, unsigned mask)
+static int ad7997_8_update_scan_mode(struct iio_dev *indio_dev,
+	const unsigned long *scan_mask)
 {
-	return ad799x_i2c_write16(st, AD7998_CONF_REG,
-		st->config | (mask << AD799X_CHANNEL_SHIFT));
+	struct ad799x_state *st = iio_priv(indio_dev);
+
+	kfree(st->rx_buf);
+	st->rx_buf = kmalloc(indio_dev->scan_bytes, GFP_KERNEL);
+	if (!st->rx_buf)
+		return -ENOMEM;
+
+	st->transfer_size = bitmap_weight(scan_mask, indio_dev->masklength) * 2;
+
+	switch (st->id) {
+	case ad7997:
+	case ad7998:
+		return ad799x_i2c_write16(st, AD7998_CONF_REG,
+			st->config | (*scan_mask << AD799X_CHANNEL_SHIFT));
+	default:
+		break;
+	}
+
+	return 0;
 }
 
 static int ad799x_scan_direct(struct ad799x_state *st, unsigned ch)
@@ -148,7 +166,7 @@ static int ad799x_read_raw(struct iio_dev *indio_dev,
 	unsigned int scale_uv;
 
 	switch (m) {
-	case 0:
+	case IIO_CHAN_INFO_RAW:
 		mutex_lock(&indio_dev->mlock);
 		if (iio_buffer_enabled(indio_dev))
 			ret = -EBUSY;
@@ -182,7 +200,7 @@ static ssize_t ad799x_read_frequency(struct device *dev,
 					struct device_attribute *attr,
 					char *buf)
 {
-	struct iio_dev *indio_dev = dev_get_drvdata(dev);
+	struct iio_dev *indio_dev = dev_to_iio_dev(dev);
 	struct ad799x_state *st = iio_priv(indio_dev);
 
 	int ret;
@@ -201,14 +219,14 @@ static ssize_t ad799x_write_frequency(struct device *dev,
 					 const char *buf,
 					 size_t len)
 {
-	struct iio_dev *indio_dev = dev_get_drvdata(dev);
+	struct iio_dev *indio_dev = dev_to_iio_dev(dev);
 	struct ad799x_state *st = iio_priv(indio_dev);
 
 	long val;
 	int ret, i;
 	u8 t;
 
-	ret = strict_strtol(buf, 10, &val);
+	ret = kstrtol(buf, 10, &val);
 	if (ret)
 		return ret;
 
@@ -294,7 +312,7 @@ static ssize_t ad799x_read_channel_config(struct device *dev,
 					struct device_attribute *attr,
 					char *buf)
 {
-	struct iio_dev *indio_dev = dev_get_drvdata(dev);
+	struct iio_dev *indio_dev = dev_to_iio_dev(dev);
 	struct ad799x_state *st = iio_priv(indio_dev);
 	struct iio_dev_attr *this_attr = to_iio_dev_attr(attr);
 
@@ -312,14 +330,14 @@ static ssize_t ad799x_write_channel_config(struct device *dev,
 					 const char *buf,
 					 size_t len)
 {
-	struct iio_dev *indio_dev = dev_get_drvdata(dev);
+	struct iio_dev *indio_dev = dev_to_iio_dev(dev);
 	struct ad799x_state *st = iio_priv(indio_dev);
 	struct iio_dev_attr *this_attr = to_iio_dev_attr(attr);
 
 	long val;
 	int ret;
 
-	ret = strict_strtol(buf, 10, &val);
+	ret = kstrtol(buf, 10, &val);
 	if (ret)
 		return ret;
 
@@ -339,10 +357,10 @@ static irqreturn_t ad799x_event_handler(int irq, void *private)
 
 	ret = ad799x_i2c_read8(st, AD7998_ALERT_STAT_REG, &status);
 	if (ret)
-		return ret;
+		goto done;
 
 	if (!status)
-		return -EIO;
+		goto done;
 
 	ad799x_i2c_write8(st, AD7998_ALERT_STAT_REG, AD7998_ALERT_STAT_CLEAR);
 
@@ -361,6 +379,7 @@ static irqreturn_t ad799x_event_handler(int irq, void *private)
 				       iio_get_time_ns());
 	}
 
+done:
 	return IRQ_HANDLED;
 }
 
@@ -442,374 +461,132 @@ static const struct iio_info ad7993_4_7_8_info = {
 	.read_event_value = &ad799x_read_event_value,
 	.write_event_value = &ad799x_write_event_value,
 	.driver_module = THIS_MODULE,
+	.update_scan_mode = ad7997_8_update_scan_mode,
 };
 
 #define AD799X_EV_MASK (IIO_EV_BIT(IIO_EV_TYPE_THRESH, IIO_EV_DIR_RISING) | \
 			IIO_EV_BIT(IIO_EV_TYPE_THRESH, IIO_EV_DIR_FALLING))
 
+#define AD799X_CHANNEL(_index, _realbits, _evmask) { \
+	.type = IIO_VOLTAGE, \
+	.indexed = 1, \
+	.channel = (_index), \
+	.info_mask_separate = BIT(IIO_CHAN_INFO_RAW), \
+	.info_mask_shared_by_type = BIT(IIO_CHAN_INFO_SCALE), \
+	.scan_index = (_index), \
+	.scan_type = IIO_ST('u', _realbits, 16, 12 - (_realbits)), \
+	.event_mask = (_evmask), \
+}
+
 static const struct ad799x_chip_info ad799x_chip_info_tbl[] = {
 	[ad7991] = {
 		.channel = {
-			[0] = {
-				.type = IIO_VOLTAGE,
-				.indexed = 1,
-				.channel = 0,
-				.scan_index = 0,
-				.scan_type = IIO_ST('u', 12, 16, 0),
-			},
-			[1] = {
-				.type = IIO_VOLTAGE,
-				.indexed = 1,
-				.channel = 1,
-				.scan_index = 1,
-				.scan_type = IIO_ST('u', 12, 16, 0),
-			},
-			[2] = {
-				.type = IIO_VOLTAGE,
-				.indexed = 1,
-				.channel = 2,
-				.scan_index = 2,
-				.scan_type = IIO_ST('u', 12, 16, 0),
-			},
-			[3] = {
-				.type = IIO_VOLTAGE,
-				.indexed = 1,
-				.channel = 3,
-				.scan_index = 3,
-				.scan_type = IIO_ST('u', 12, 16, 0),
-			},
-			[4] = IIO_CHAN_SOFT_TIMESTAMP(4),
+			AD799X_CHANNEL(0, 12, 0),
+			AD799X_CHANNEL(1, 12, 0),
+			AD799X_CHANNEL(2, 12, 0),
+			AD799X_CHANNEL(3, 12, 0),
+			IIO_CHAN_SOFT_TIMESTAMP(4),
 		},
 		.num_channels = 5,
-		.int_vref_mv = 4096,
 		.info = &ad7991_info,
 	},
 	[ad7995] = {
 		.channel = {
-			[0] = {
-				.type = IIO_VOLTAGE,
-				.indexed = 1,
-				.channel = 0,
-				.scan_index = 0,
-				.scan_type = IIO_ST('u', 10, 16, 2),
-			},
-			[1] = {
-				.type = IIO_VOLTAGE,
-				.indexed = 1,
-				.channel = 1,
-				.scan_index = 1,
-				.scan_type = IIO_ST('u', 10, 16, 2),
-			},
-			[2] = {
-				.type = IIO_VOLTAGE,
-				.indexed = 1,
-				.channel = 2,
-				.scan_index = 2,
-				.scan_type = IIO_ST('u', 10, 16, 2),
-			},
-			[3] = {
-				.type = IIO_VOLTAGE,
-				.indexed = 1,
-				.channel = 3,
-				.scan_index = 3,
-				.scan_type = IIO_ST('u', 10, 16, 2),
-			},
-			[4] = IIO_CHAN_SOFT_TIMESTAMP(4),
+			AD799X_CHANNEL(0, 10, 0),
+			AD799X_CHANNEL(1, 10, 0),
+			AD799X_CHANNEL(2, 10, 0),
+			AD799X_CHANNEL(3, 10, 0),
+			IIO_CHAN_SOFT_TIMESTAMP(4),
 		},
 		.num_channels = 5,
-		.int_vref_mv = 1024,
 		.info = &ad7991_info,
 	},
 	[ad7999] = {
 		.channel = {
-			[0] = {
-				.type = IIO_VOLTAGE,
-				.indexed = 1,
-				.channel = 0,
-				.scan_index = 0,
-				.scan_type = IIO_ST('u', 8, 16, 4),
-			},
-			[1] = {
-				.type = IIO_VOLTAGE,
-				.indexed = 1,
-				.channel = 1,
-				.scan_index = 1,
-				.scan_type = IIO_ST('u', 8, 16, 4),
-			},
-			[2] = {
-				.type = IIO_VOLTAGE,
-				.indexed = 1,
-				.channel = 2,
-				.scan_index = 2,
-				.scan_type = IIO_ST('u', 8, 16, 4),
-			},
-			[3] = {
-				.type = IIO_VOLTAGE,
-				.indexed = 1,
-				.channel = 3,
-				.scan_index = 3,
-				.scan_type = IIO_ST('u', 8, 16, 4),
-			},
-			[4] = IIO_CHAN_SOFT_TIMESTAMP(4),
+			AD799X_CHANNEL(0, 8, 0),
+			AD799X_CHANNEL(1, 8, 0),
+			AD799X_CHANNEL(2, 8, 0),
+			AD799X_CHANNEL(3, 8, 0),
+			IIO_CHAN_SOFT_TIMESTAMP(4),
 		},
 		.num_channels = 5,
-		.int_vref_mv = 1024,
 		.info = &ad7991_info,
 	},
 	[ad7992] = {
 		.channel = {
-			[0] = {
-				.type = IIO_VOLTAGE,
-				.indexed = 1,
-				.channel = 0,
-				.scan_index = 0,
-				.scan_type = IIO_ST('u', 12, 16, 0),
-				.event_mask = AD799X_EV_MASK,
-			},
-			[1] = {
-				.type = IIO_VOLTAGE,
-				.indexed = 1,
-				.channel = 1,
-				.scan_index = 1,
-				.scan_type = IIO_ST('u', 12, 16, 0),
-				.event_mask = AD799X_EV_MASK,
-			},
-			[2] = IIO_CHAN_SOFT_TIMESTAMP(2),
+			AD799X_CHANNEL(0, 12, AD799X_EV_MASK),
+			AD799X_CHANNEL(1, 12, AD799X_EV_MASK),
+			IIO_CHAN_SOFT_TIMESTAMP(3),
 		},
 		.num_channels = 3,
-		.int_vref_mv = 4096,
 		.default_config = AD7998_ALERT_EN,
 		.info = &ad7992_info,
 	},
 	[ad7993] = {
 		.channel = {
-			[0] = {
-				.type = IIO_VOLTAGE,
-				.indexed = 1,
-				.channel = 0,
-				.scan_index = 0,
-				.scan_type = IIO_ST('u', 10, 16, 2),
-				.event_mask = AD799X_EV_MASK,
-			},
-			[1] = {
-				.type = IIO_VOLTAGE,
-				.indexed = 1,
-				.channel = 1,
-				.scan_index = 1,
-				.scan_type = IIO_ST('u', 10, 16, 2),
-				.event_mask = AD799X_EV_MASK,
-			},
-			[2] = {
-				.type = IIO_VOLTAGE,
-				.indexed = 1,
-				.channel = 2,
-				.scan_index = 2,
-				.scan_type = IIO_ST('u', 10, 16, 2),
-				.event_mask = AD799X_EV_MASK,
-			},
-			[3] = {
-				.type = IIO_VOLTAGE,
-				.indexed = 1,
-				.channel = 3,
-				.scan_index = 3,
-				.scan_type = IIO_ST('u', 10, 16, 2),
-				.event_mask = AD799X_EV_MASK,
-			},
-			[4] = IIO_CHAN_SOFT_TIMESTAMP(4),
+			AD799X_CHANNEL(0, 10, AD799X_EV_MASK),
+			AD799X_CHANNEL(1, 10, AD799X_EV_MASK),
+			AD799X_CHANNEL(2, 10, AD799X_EV_MASK),
+			AD799X_CHANNEL(3, 10, AD799X_EV_MASK),
+			IIO_CHAN_SOFT_TIMESTAMP(4),
 		},
 		.num_channels = 5,
-		.int_vref_mv = 1024,
 		.default_config = AD7998_ALERT_EN,
 		.info = &ad7993_4_7_8_info,
 	},
 	[ad7994] = {
 		.channel = {
-			[0] = {
-				.type = IIO_VOLTAGE,
-				.indexed = 1,
-				.channel = 0,
-				.scan_index = 0,
-				.scan_type = IIO_ST('u', 12, 16, 0),
-				.event_mask = AD799X_EV_MASK,
-			},
-			[1] = {
-				.type = IIO_VOLTAGE,
-				.indexed = 1,
-				.channel = 1,
-				.scan_index = 1,
-				.scan_type = IIO_ST('u', 12, 16, 0),
-				.event_mask = AD799X_EV_MASK,
-			},
-			[2] = {
-				.type = IIO_VOLTAGE,
-				.indexed = 1,
-				.channel = 2,
-				.scan_index = 2,
-				.scan_type = IIO_ST('u', 12, 16, 0),
-				.event_mask = AD799X_EV_MASK,
-			},
-			[3] = {
-				.type = IIO_VOLTAGE,
-				.indexed = 1,
-				.channel = 3,
-				.scan_index = 3,
-				.scan_type = IIO_ST('u', 12, 16, 0),
-				.event_mask = AD799X_EV_MASK,
-			},
-			[4] = IIO_CHAN_SOFT_TIMESTAMP(4),
+			AD799X_CHANNEL(0, 12, AD799X_EV_MASK),
+			AD799X_CHANNEL(1, 12, AD799X_EV_MASK),
+			AD799X_CHANNEL(2, 12, AD799X_EV_MASK),
+			AD799X_CHANNEL(3, 12, AD799X_EV_MASK),
+			IIO_CHAN_SOFT_TIMESTAMP(4),
 		},
 		.num_channels = 5,
-		.int_vref_mv = 4096,
 		.default_config = AD7998_ALERT_EN,
 		.info = &ad7993_4_7_8_info,
 	},
 	[ad7997] = {
 		.channel = {
-			[0] = {
-				.type = IIO_VOLTAGE,
-				.indexed = 1,
-				.channel = 0,
-				.scan_index = 0,
-				.scan_type = IIO_ST('u', 10, 16, 2),
-				.event_mask = AD799X_EV_MASK,
-			},
-			[1] = {
-				.type = IIO_VOLTAGE,
-				.indexed = 1,
-				.channel = 1,
-				.scan_index = 1,
-				.scan_type = IIO_ST('u', 10, 16, 2),
-				.event_mask = AD799X_EV_MASK,
-			},
-			[2] = {
-				.type = IIO_VOLTAGE,
-				.indexed = 1,
-				.channel = 2,
-				.scan_index = 2,
-				.scan_type = IIO_ST('u', 10, 16, 2),
-				.event_mask = AD799X_EV_MASK,
-			},
-			[3] = {
-				.type = IIO_VOLTAGE,
-				.indexed = 1,
-				.channel = 3,
-				.scan_index = 3,
-				.scan_type = IIO_ST('u', 10, 16, 2),
-				.event_mask = AD799X_EV_MASK,
-			},
-			[4] = {
-				.type = IIO_VOLTAGE,
-				.indexed = 1,
-				.channel = 4,
-				.scan_index = 4,
-				.scan_type = IIO_ST('u', 10, 16, 2),
-			},
-			[5] = {
-				.type = IIO_VOLTAGE,
-				.indexed = 1,
-				.channel = 5,
-				.scan_index = 5,
-				.scan_type = IIO_ST('u', 10, 16, 2),
-			},
-			[6] = {
-				.type = IIO_VOLTAGE,
-				.indexed = 1,
-				.channel = 6,
-				.scan_index = 6,
-				.scan_type = IIO_ST('u', 10, 16, 2),
-			},
-			[7] = {
-				.type = IIO_VOLTAGE,
-				.indexed = 1,
-				.channel = 7,
-				.scan_index = 7,
-				.scan_type = IIO_ST('u', 10, 16, 2),
-			},
-			[8] = IIO_CHAN_SOFT_TIMESTAMP(8),
+			AD799X_CHANNEL(0, 10, AD799X_EV_MASK),
+			AD799X_CHANNEL(1, 10, AD799X_EV_MASK),
+			AD799X_CHANNEL(2, 10, AD799X_EV_MASK),
+			AD799X_CHANNEL(3, 10, AD799X_EV_MASK),
+			AD799X_CHANNEL(4, 10, 0),
+			AD799X_CHANNEL(5, 10, 0),
+			AD799X_CHANNEL(6, 10, 0),
+			AD799X_CHANNEL(7, 10, 0),
+			IIO_CHAN_SOFT_TIMESTAMP(8),
 		},
 		.num_channels = 9,
-		.int_vref_mv = 1024,
 		.default_config = AD7998_ALERT_EN,
 		.info = &ad7993_4_7_8_info,
 	},
 	[ad7998] = {
 		.channel = {
-			[0] = {
-				.type = IIO_VOLTAGE,
-				.indexed = 1,
-				.channel = 0,
-				.scan_index = 0,
-				.scan_type = IIO_ST('u', 12, 16, 0),
-				.event_mask = AD799X_EV_MASK,
-			},
-			[1] = {
-				.type = IIO_VOLTAGE,
-				.indexed = 1,
-				.channel = 1,
-				.scan_index = 1,
-				.scan_type = IIO_ST('u', 12, 16, 0),
-				.event_mask = AD799X_EV_MASK,
-			},
-			[2] = {
-				.type = IIO_VOLTAGE,
-				.indexed = 1,
-				.channel = 2,
-				.scan_index = 2,
-				.scan_type = IIO_ST('u', 12, 16, 0),
-				.event_mask = AD799X_EV_MASK,
-			},
-			[3] = {
-				.type = IIO_VOLTAGE,
-				.indexed = 1,
-				.channel = 3,
-				.scan_index = 3,
-				.scan_type = IIO_ST('u', 12, 16, 0),
-				.event_mask = AD799X_EV_MASK,
-			},
-			[4] = {
-				.type = IIO_VOLTAGE,
-				.indexed = 1,
-				.channel = 4,
-				.scan_index = 4,
-				.scan_type = IIO_ST('u', 12, 16, 0),
-			},
-			[5] = {
-				.type = IIO_VOLTAGE,
-				.indexed = 1,
-				.channel = 5,
-				.scan_index = 5,
-				.scan_type = IIO_ST('u', 12, 16, 0),
-			},
-			[6] = {
-				.type = IIO_VOLTAGE,
-				.indexed = 1,
-				.channel = 6,
-				.scan_index = 6,
-				.scan_type = IIO_ST('u', 12, 16, 0),
-			},
-			[7] = {
-				.type = IIO_VOLTAGE,
-				.indexed = 1,
-				.channel = 7,
-				.scan_index = 7,
-				.scan_type = IIO_ST('u', 12, 16, 0),
-			},
-			[8] = IIO_CHAN_SOFT_TIMESTAMP(8),
+			AD799X_CHANNEL(0, 12, AD799X_EV_MASK),
+			AD799X_CHANNEL(1, 12, AD799X_EV_MASK),
+			AD799X_CHANNEL(2, 12, AD799X_EV_MASK),
+			AD799X_CHANNEL(3, 12, AD799X_EV_MASK),
+			AD799X_CHANNEL(4, 12, 0),
+			AD799X_CHANNEL(5, 12, 0),
+			AD799X_CHANNEL(6, 12, 0),
+			AD799X_CHANNEL(7, 12, 0),
+			IIO_CHAN_SOFT_TIMESTAMP(8),
 		},
 		.num_channels = 9,
-		.int_vref_mv = 4096,
 		.default_config = AD7998_ALERT_EN,
 		.info = &ad7993_4_7_8_info,
 	},
 };
 
-static int __devinit ad799x_probe(struct i2c_client *client,
+static int ad799x_probe(struct i2c_client *client,
 				   const struct i2c_device_id *id)
 {
 	int ret;
 	struct ad799x_platform_data *pdata = client->dev.platform_data;
 	struct ad799x_state *st;
-	struct iio_dev *indio_dev = iio_allocate_device(sizeof(*st));
+	struct iio_dev *indio_dev = iio_device_alloc(sizeof(*st));
 
 	if (indio_dev == NULL)
 		return -ENOMEM;
@@ -824,10 +601,10 @@ static int __devinit ad799x_probe(struct i2c_client *client,
 
 	/* TODO: Add pdata options for filtering and bit delay */
 
-	if (pdata)
-		st->int_vref_mv = pdata->vref_mv;
-	else
-		st->int_vref_mv = st->chip_info->int_vref_mv;
+	if (!pdata)
+		return -EINVAL;
+
+	st->int_vref_mv = pdata->vref_mv;
 
 	st->reg = regulator_get(&client->dev, "vcc");
 	if (!IS_ERR(st->reg)) {
@@ -848,12 +625,6 @@ static int __devinit ad799x_probe(struct i2c_client *client,
 	ret = ad799x_register_ring_funcs_and_init(indio_dev);
 	if (ret)
 		goto error_disable_reg;
-
-	ret = iio_buffer_register(indio_dev,
-				  indio_dev->channels,
-				  indio_dev->num_channels);
-	if (ret)
-		goto error_cleanup_ring;
 
 	if (client->irq > 0) {
 		ret = request_threaded_irq(client->irq,
@@ -882,12 +653,12 @@ error_disable_reg:
 error_put_reg:
 	if (!IS_ERR(st->reg))
 		regulator_put(st->reg);
-	iio_free_device(indio_dev);
+	iio_device_free(indio_dev);
 
 	return ret;
 }
 
-static __devexit int ad799x_remove(struct i2c_client *client)
+static int ad799x_remove(struct i2c_client *client)
 {
 	struct iio_dev *indio_dev = i2c_get_clientdata(client);
 	struct ad799x_state *st = iio_priv(indio_dev);
@@ -896,13 +667,13 @@ static __devexit int ad799x_remove(struct i2c_client *client)
 	if (client->irq > 0)
 		free_irq(client->irq, indio_dev);
 
-	iio_buffer_unregister(indio_dev);
 	ad799x_ring_cleanup(indio_dev);
 	if (!IS_ERR(st->reg)) {
 		regulator_disable(st->reg);
 		regulator_put(st->reg);
 	}
-	iio_free_device(indio_dev);
+	kfree(st->rx_buf);
+	iio_device_free(indio_dev);
 
 	return 0;
 }
@@ -926,7 +697,7 @@ static struct i2c_driver ad799x_driver = {
 		.name = "ad799x",
 	},
 	.probe = ad799x_probe,
-	.remove = __devexit_p(ad799x_remove),
+	.remove = ad799x_remove,
 	.id_table = ad799x_id,
 };
 module_i2c_driver(ad799x_driver);

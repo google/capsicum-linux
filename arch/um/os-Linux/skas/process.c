@@ -11,17 +11,17 @@
 #include <sys/mman.h>
 #include <sys/wait.h>
 #include <asm/unistd.h>
-#include "as-layout.h"
-#include "init.h"
-#include "kern_util.h"
-#include "mem.h"
-#include "os.h"
-#include "proc_mm.h"
-#include "ptrace_user.h"
-#include "registers.h"
-#include "skas.h"
-#include "skas_ptrace.h"
-#include "sysdep/stub.h"
+#include <as-layout.h>
+#include <init.h>
+#include <kern_util.h>
+#include <mem.h>
+#include <os.h>
+#include <proc_mm.h>
+#include <ptrace_user.h>
+#include <registers.h>
+#include <skas.h>
+#include <skas_ptrace.h>
+#include <sysdep/stub.h>
 
 int is_skas_winch(int pid, int fd, void *data)
 {
@@ -54,7 +54,7 @@ static int ptrace_dump_regs(int pid)
 
 void wait_stub_done(int pid)
 {
-	int n, status, err;
+	int n, status, err, bad_stop = 0;
 
 	while (1) {
 		CATCH_EINTR(n = waitpid(pid, &status, WUNTRACED | __WALL));
@@ -74,6 +74,8 @@ void wait_stub_done(int pid)
 
 	if (((1 << WSTOPSIG(status)) & STUB_DONE_MASK) != 0)
 		return;
+	else
+		bad_stop = 1;
 
 bad_wait:
 	err = ptrace_dump_regs(pid);
@@ -83,7 +85,10 @@ bad_wait:
 	printk(UM_KERN_ERR "wait_stub_done : failed to wait for SIGTRAP, "
 	       "pid = %d, n = %d, errno = %d, status = 0x%x\n", pid, n, errno,
 	       status);
-	fatal_sigsegv();
+	if (bad_stop)
+		kill(pid, SIGKILL);
+	else
+		fatal_sigsegv();
 }
 
 extern unsigned long current_stub_stack(void);
@@ -346,6 +351,10 @@ void userspace(struct uml_pt_regs *regs)
 	int err, status, op, pid = userspace_pid[0];
 	/* To prevent races if using_sysemu changes under us.*/
 	int local_using_sysemu;
+	siginfo_t si;
+
+	/* Handle any immediate reschedules or signals */
+	interrupt_end();
 
 	if (getitimer(ITIMER_VIRTUAL, &timer))
 		printk(UM_KERN_ERR "Failed to get itimer, errno = %d\n", errno);
@@ -404,13 +413,17 @@ void userspace(struct uml_pt_regs *regs)
 
 		if (WIFSTOPPED(status)) {
 			int sig = WSTOPSIG(status);
+
+			ptrace(PTRACE_GETSIGINFO, pid, 0, (struct siginfo *)&si);
+
 			switch (sig) {
 			case SIGSEGV:
 				if (PTRACE_FULL_FAULTINFO ||
 				    !ptrace_faultinfo) {
 					get_skas_faultinfo(pid,
 							   &regs->faultinfo);
-					(*sig_info[SIGSEGV])(SIGSEGV, regs);
+					(*sig_info[SIGSEGV])(SIGSEGV, (struct siginfo *)&si,
+							     regs);
 				}
 				else handle_segv(pid, regs);
 				break;
@@ -418,14 +431,14 @@ void userspace(struct uml_pt_regs *regs)
 			        handle_trap(pid, regs, local_using_sysemu);
 				break;
 			case SIGTRAP:
-				relay_signal(SIGTRAP, regs);
+				relay_signal(SIGTRAP, (struct siginfo *)&si, regs);
 				break;
 			case SIGVTALRM:
 				now = os_nsecs();
 				if (now < nsecs)
 					break;
 				block_signals();
-				(*sig_info[sig])(sig, regs);
+				(*sig_info[sig])(sig, (struct siginfo *)&si, regs);
 				unblock_signals();
 				nsecs = timer.it_value.tv_sec *
 					UM_NSEC_PER_SEC +
@@ -439,7 +452,7 @@ void userspace(struct uml_pt_regs *regs)
 			case SIGFPE:
 			case SIGWINCH:
 				block_signals();
-				(*sig_info[sig])(sig, regs);
+				(*sig_info[sig])(sig, (struct siginfo *)&si, regs);
 				unblock_signals();
 				break;
 			default:

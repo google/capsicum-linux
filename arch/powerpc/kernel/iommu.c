@@ -33,6 +33,11 @@
 #include <linux/bitmap.h>
 #include <linux/iommu-helper.h>
 #include <linux/crash_dump.h>
+#include <linux/hash.h>
+#include <linux/fault-inject.h>
+#include <linux/pci.h>
+#include <linux/iommu.h>
+#include <linux/sched.h>
 #include <asm/io.h>
 #include <asm/prom.h>
 #include <asm/iommu.h>
@@ -40,6 +45,8 @@
 #include <asm/machdep.h>
 #include <asm/kdump.h>
 #include <asm/fadump.h>
+#include <asm/vio.h>
+#include <asm/tce.h>
 
 #define DBG(...)
 
@@ -58,6 +65,114 @@ static int __init setup_iommu(char *str)
 
 __setup("iommu=", setup_iommu);
 
+static DEFINE_PER_CPU(unsigned int, iommu_pool_hash);
+
+/*
+ * We precalculate the hash to avoid doing it on every allocation.
+ *
+ * The hash is important to spread CPUs across all the pools. For example,
+ * on a POWER7 with 4 way SMT we want interrupts on the primary threads and
+ * with 4 pools all primary threads would map to the same pool.
+ */
+static int __init setup_iommu_pool_hash(void)
+{
+	unsigned int i;
+
+	for_each_possible_cpu(i)
+		per_cpu(iommu_pool_hash, i) = hash_32(i, IOMMU_POOL_HASHBITS);
+
+	return 0;
+}
+subsys_initcall(setup_iommu_pool_hash);
+
+#ifdef CONFIG_FAIL_IOMMU
+
+static DECLARE_FAULT_ATTR(fail_iommu);
+
+static int __init setup_fail_iommu(char *str)
+{
+	return setup_fault_attr(&fail_iommu, str);
+}
+__setup("fail_iommu=", setup_fail_iommu);
+
+static bool should_fail_iommu(struct device *dev)
+{
+	return dev->archdata.fail_iommu && should_fail(&fail_iommu, 1);
+}
+
+static int __init fail_iommu_debugfs(void)
+{
+	struct dentry *dir = fault_create_debugfs_attr("fail_iommu",
+						       NULL, &fail_iommu);
+
+	return PTR_RET(dir);
+}
+late_initcall(fail_iommu_debugfs);
+
+static ssize_t fail_iommu_show(struct device *dev,
+			       struct device_attribute *attr, char *buf)
+{
+	return sprintf(buf, "%d\n", dev->archdata.fail_iommu);
+}
+
+static ssize_t fail_iommu_store(struct device *dev,
+				struct device_attribute *attr, const char *buf,
+				size_t count)
+{
+	int i;
+
+	if (count > 0 && sscanf(buf, "%d", &i) > 0)
+		dev->archdata.fail_iommu = (i == 0) ? 0 : 1;
+
+	return count;
+}
+
+static DEVICE_ATTR(fail_iommu, S_IRUGO|S_IWUSR, fail_iommu_show,
+		   fail_iommu_store);
+
+static int fail_iommu_bus_notify(struct notifier_block *nb,
+				 unsigned long action, void *data)
+{
+	struct device *dev = data;
+
+	if (action == BUS_NOTIFY_ADD_DEVICE) {
+		if (device_create_file(dev, &dev_attr_fail_iommu))
+			pr_warn("Unable to create IOMMU fault injection sysfs "
+				"entries\n");
+	} else if (action == BUS_NOTIFY_DEL_DEVICE) {
+		device_remove_file(dev, &dev_attr_fail_iommu);
+	}
+
+	return 0;
+}
+
+static struct notifier_block fail_iommu_bus_notifier = {
+	.notifier_call = fail_iommu_bus_notify
+};
+
+static int __init fail_iommu_setup(void)
+{
+#ifdef CONFIG_PCI
+	bus_register_notifier(&pci_bus_type, &fail_iommu_bus_notifier);
+#endif
+#ifdef CONFIG_IBMVIO
+	bus_register_notifier(&vio_bus_type, &fail_iommu_bus_notifier);
+#endif
+
+	return 0;
+}
+/*
+ * Must execute after PCI and VIO subsystem have initialised but before
+ * devices are probed.
+ */
+arch_initcall(fail_iommu_setup);
+#else
+static inline bool should_fail_iommu(struct device *dev)
+{
+	return false;
+}
+#endif
+
 static unsigned long iommu_range_alloc(struct device *dev,
 				       struct iommu_table *tbl,
                                        unsigned long npages,
@@ -71,6 +186,9 @@ static unsigned long iommu_range_alloc(struct device *dev,
 	int pass = 0;
 	unsigned long align_mask;
 	unsigned long boundary_size;
+	unsigned long flags;
+	unsigned int pool_nr;
+	struct iommu_pool *pool;
 
 	align_mask = 0xffffffffffffffffl >> (64 - align_order);
 
@@ -83,36 +201,52 @@ static unsigned long iommu_range_alloc(struct device *dev,
 		return DMA_ERROR_CODE;
 	}
 
-	if (handle && *handle)
+	if (should_fail_iommu(dev))
+		return DMA_ERROR_CODE;
+
+	/*
+	 * We don't need to disable preemption here because any CPU can
+	 * safely use any IOMMU pool.
+	 */
+	pool_nr = __raw_get_cpu_var(iommu_pool_hash) & (tbl->nr_pools - 1);
+
+	if (largealloc)
+		pool = &(tbl->large_pool);
+	else
+		pool = &(tbl->pools[pool_nr]);
+
+	spin_lock_irqsave(&(pool->lock), flags);
+
+again:
+	if ((pass == 0) && handle && *handle &&
+	    (*handle >= pool->start) && (*handle < pool->end))
 		start = *handle;
 	else
-		start = largealloc ? tbl->it_largehint : tbl->it_hint;
+		start = pool->hint;
 
-	/* Use only half of the table for small allocs (15 pages or less) */
-	limit = largealloc ? tbl->it_size : tbl->it_halfpoint;
-
-	if (largealloc && start < tbl->it_halfpoint)
-		start = tbl->it_halfpoint;
+	limit = pool->end;
 
 	/* The case below can happen if we have a small segment appended
 	 * to a large, or when the previous alloc was at the very end of
 	 * the available space. If so, go back to the initial start.
 	 */
 	if (start >= limit)
-		start = largealloc ? tbl->it_largehint : tbl->it_hint;
-
- again:
+		start = pool->start;
 
 	if (limit + tbl->it_offset > mask) {
 		limit = mask - tbl->it_offset + 1;
 		/* If we're constrained on address range, first try
 		 * at the masked hint to avoid O(n) search complexity,
-		 * but on second pass, start at 0.
+		 * but on second pass, start at 0 in pool 0.
 		 */
-		if ((start & mask) >= limit || pass > 0)
-			start = 0;
-		else
+		if ((start & mask) >= limit || pass > 0) {
+			spin_unlock(&(pool->lock));
+			pool = &(tbl->pools[0]);
+			spin_lock(&(pool->lock));
+			start = pool->start;
+		} else {
 			start &= mask;
+		}
 	}
 
 	if (dev)
@@ -126,16 +260,25 @@ static unsigned long iommu_range_alloc(struct device *dev,
 			     tbl->it_offset, boundary_size >> IOMMU_PAGE_SHIFT,
 			     align_mask);
 	if (n == -1) {
-		if (likely(pass < 2)) {
-			/* First failure, just rescan the half of the table.
-			 * Second failure, rescan the other half of the table.
-			 */
-			start = (largealloc ^ pass) ? tbl->it_halfpoint : 0;
-			limit = pass ? tbl->it_size : limit;
+		if (likely(pass == 0)) {
+			/* First try the pool from the start */
+			pool->hint = pool->start;
 			pass++;
 			goto again;
+
+		} else if (pass <= tbl->nr_pools) {
+			/* Now try scanning all the other pools */
+			spin_unlock(&(pool->lock));
+			pool_nr = (pool_nr + 1) & (tbl->nr_pools - 1);
+			pool = &tbl->pools[pool_nr];
+			spin_lock(&(pool->lock));
+			pool->hint = pool->start;
+			pass++;
+			goto again;
+
 		} else {
-			/* Third failure, give up */
+			/* Give up */
+			spin_unlock_irqrestore(&(pool->lock), flags);
 			return DMA_ERROR_CODE;
 		}
 	}
@@ -145,16 +288,18 @@ static unsigned long iommu_range_alloc(struct device *dev,
 	/* Bump the hint to a new block for small allocs. */
 	if (largealloc) {
 		/* Don't bump to new block to avoid fragmentation */
-		tbl->it_largehint = end;
+		pool->hint = end;
 	} else {
 		/* Overflow will be taken care of at the next allocation */
-		tbl->it_hint = (end + tbl->it_blocksize - 1) &
+		pool->hint = (end + tbl->it_blocksize - 1) &
 		                ~(tbl->it_blocksize - 1);
 	}
 
 	/* Update handle for SG allocations */
 	if (handle)
 		*handle = end;
+
+	spin_unlock_irqrestore(&(pool->lock), flags);
 
 	return n;
 }
@@ -165,18 +310,14 @@ static dma_addr_t iommu_alloc(struct device *dev, struct iommu_table *tbl,
 			      unsigned long mask, unsigned int align_order,
 			      struct dma_attrs *attrs)
 {
-	unsigned long entry, flags;
+	unsigned long entry;
 	dma_addr_t ret = DMA_ERROR_CODE;
 	int build_fail;
 
-	spin_lock_irqsave(&(tbl->it_lock), flags);
-
 	entry = iommu_range_alloc(dev, tbl, npages, NULL, mask, align_order);
 
-	if (unlikely(entry == DMA_ERROR_CODE)) {
-		spin_unlock_irqrestore(&(tbl->it_lock), flags);
+	if (unlikely(entry == DMA_ERROR_CODE))
 		return DMA_ERROR_CODE;
-	}
 
 	entry += tbl->it_offset;	/* Offset into real TCE table */
 	ret = entry << IOMMU_PAGE_SHIFT;	/* Set the return dma address */
@@ -193,8 +334,6 @@ static dma_addr_t iommu_alloc(struct device *dev, struct iommu_table *tbl,
 	 */
 	if (unlikely(build_fail)) {
 		__iommu_free(tbl, ret, npages);
-
-		spin_unlock_irqrestore(&(tbl->it_lock), flags);
 		return DMA_ERROR_CODE;
 	}
 
@@ -202,16 +341,14 @@ static dma_addr_t iommu_alloc(struct device *dev, struct iommu_table *tbl,
 	if (ppc_md.tce_flush)
 		ppc_md.tce_flush(tbl);
 
-	spin_unlock_irqrestore(&(tbl->it_lock), flags);
-
 	/* Make sure updates are seen by hardware */
 	mb();
 
 	return ret;
 }
 
-static void __iommu_free(struct iommu_table *tbl, dma_addr_t dma_addr, 
-			 unsigned int npages)
+static bool iommu_free_check(struct iommu_table *tbl, dma_addr_t dma_addr,
+			     unsigned int npages)
 {
 	unsigned long entry, free_entry;
 
@@ -231,20 +368,57 @@ static void __iommu_free(struct iommu_table *tbl, dma_addr_t dma_addr,
 			printk(KERN_INFO "\tindex     = 0x%llx\n", (u64)tbl->it_index);
 			WARN_ON(1);
 		}
-		return;
+
+		return false;
 	}
 
+	return true;
+}
+
+static struct iommu_pool *get_pool(struct iommu_table *tbl,
+				   unsigned long entry)
+{
+	struct iommu_pool *p;
+	unsigned long largepool_start = tbl->large_pool.start;
+
+	/* The large pool is the last pool at the top of the table */
+	if (entry >= largepool_start) {
+		p = &tbl->large_pool;
+	} else {
+		unsigned int pool_nr = entry / tbl->poolsize;
+
+		BUG_ON(pool_nr > tbl->nr_pools);
+		p = &tbl->pools[pool_nr];
+	}
+
+	return p;
+}
+
+static void __iommu_free(struct iommu_table *tbl, dma_addr_t dma_addr,
+			 unsigned int npages)
+{
+	unsigned long entry, free_entry;
+	unsigned long flags;
+	struct iommu_pool *pool;
+
+	entry = dma_addr >> IOMMU_PAGE_SHIFT;
+	free_entry = entry - tbl->it_offset;
+
+	pool = get_pool(tbl, free_entry);
+
+	if (!iommu_free_check(tbl, dma_addr, npages))
+		return;
+
 	ppc_md.tce_free(tbl, entry, npages);
+
+	spin_lock_irqsave(&(pool->lock), flags);
 	bitmap_clear(tbl->it_map, free_entry, npages);
+	spin_unlock_irqrestore(&(pool->lock), flags);
 }
 
 static void iommu_free(struct iommu_table *tbl, dma_addr_t dma_addr,
 		unsigned int npages)
 {
-	unsigned long flags;
-
-	spin_lock_irqsave(&(tbl->it_lock), flags);
-
 	__iommu_free(tbl, dma_addr, npages);
 
 	/* Make sure TLB cache is flushed if the HW needs it. We do
@@ -253,8 +427,6 @@ static void iommu_free(struct iommu_table *tbl, dma_addr_t dma_addr,
 	 */
 	if (ppc_md.tce_flush)
 		ppc_md.tce_flush(tbl);
-
-	spin_unlock_irqrestore(&(tbl->it_lock), flags);
 }
 
 int iommu_map_sg(struct device *dev, struct iommu_table *tbl,
@@ -263,7 +435,6 @@ int iommu_map_sg(struct device *dev, struct iommu_table *tbl,
 		 struct dma_attrs *attrs)
 {
 	dma_addr_t dma_next = 0, dma_addr;
-	unsigned long flags;
 	struct scatterlist *s, *outs, *segstart;
 	int outcount, incount, i, build_fail = 0;
 	unsigned int align;
@@ -284,8 +455,6 @@ int iommu_map_sg(struct device *dev, struct iommu_table *tbl,
 	outs->dma_length = 0;
 
 	DBG("sg mapping %d elements:\n", nelems);
-
-	spin_lock_irqsave(&(tbl->it_lock), flags);
 
 	max_seg_size = dma_get_max_seg_size(dev);
 	for_each_sg(sglist, s, nelems, i) {
@@ -369,8 +538,6 @@ int iommu_map_sg(struct device *dev, struct iommu_table *tbl,
 	if (ppc_md.tce_flush)
 		ppc_md.tce_flush(tbl);
 
-	spin_unlock_irqrestore(&(tbl->it_lock), flags);
-
 	DBG("mapped %d elements:\n", outcount);
 
 	/* For the sake of iommu_unmap_sg, we clear out the length in the
@@ -402,7 +569,6 @@ int iommu_map_sg(struct device *dev, struct iommu_table *tbl,
 		if (s == outs)
 			break;
 	}
-	spin_unlock_irqrestore(&(tbl->it_lock), flags);
 	return 0;
 }
 
@@ -412,14 +578,11 @@ void iommu_unmap_sg(struct iommu_table *tbl, struct scatterlist *sglist,
 		struct dma_attrs *attrs)
 {
 	struct scatterlist *sg;
-	unsigned long flags;
 
 	BUG_ON(direction == DMA_NONE);
 
 	if (!tbl)
 		return;
-
-	spin_lock_irqsave(&(tbl->it_lock), flags);
 
 	sg = sglist;
 	while (nelems--) {
@@ -440,8 +603,6 @@ void iommu_unmap_sg(struct iommu_table *tbl, struct scatterlist *sglist,
 	 */
 	if (ppc_md.tce_flush)
 		ppc_md.tce_flush(tbl);
-
-	spin_unlock_irqrestore(&(tbl->it_lock), flags);
 }
 
 static void iommu_table_clear(struct iommu_table *tbl)
@@ -494,12 +655,11 @@ struct iommu_table *iommu_init_table(struct iommu_table *tbl, int nid)
 	unsigned long sz;
 	static int welcomed = 0;
 	struct page *page;
-
-	/* Set aside 1/4 of the table for large allocations. */
-	tbl->it_halfpoint = tbl->it_size * 3 / 4;
+	unsigned int i;
+	struct iommu_pool *p;
 
 	/* number of bytes needed for the bitmap */
-	sz = (tbl->it_size + 7) >> 3;
+	sz = BITS_TO_LONGS(tbl->it_size) * sizeof(unsigned long);
 
 	page = alloc_pages_node(nid, GFP_ATOMIC, get_order(sz));
 	if (!page)
@@ -515,9 +675,28 @@ struct iommu_table *iommu_init_table(struct iommu_table *tbl, int nid)
 	if (tbl->it_offset == 0)
 		set_bit(0, tbl->it_map);
 
-	tbl->it_hint = 0;
-	tbl->it_largehint = tbl->it_halfpoint;
-	spin_lock_init(&tbl->it_lock);
+	/* We only split the IOMMU table if we have 1GB or more of space */
+	if ((tbl->it_size << IOMMU_PAGE_SHIFT) >= (1UL * 1024 * 1024 * 1024))
+		tbl->nr_pools = IOMMU_NR_POOLS;
+	else
+		tbl->nr_pools = 1;
+
+	/* We reserve the top 1/4 of the table for large allocations */
+	tbl->poolsize = (tbl->it_size * 3 / 4) / tbl->nr_pools;
+
+	for (i = 0; i < tbl->nr_pools; i++) {
+		p = &tbl->pools[i];
+		spin_lock_init(&(p->lock));
+		p->start = tbl->poolsize * i;
+		p->hint = p->start;
+		p->end = p->start + tbl->poolsize;
+	}
+
+	p = &tbl->large_pool;
+	spin_lock_init(&(p->lock));
+	p->start = tbl->poolsize * i;
+	p->hint = p->start;
+	p->end = tbl->it_size;
 
 	iommu_table_clear(tbl);
 
@@ -532,7 +711,7 @@ struct iommu_table *iommu_init_table(struct iommu_table *tbl, int nid)
 
 void iommu_free_table(struct iommu_table *tbl, const char *node_name)
 {
-	unsigned long bitmap_sz, i;
+	unsigned long bitmap_sz;
 	unsigned int order;
 
 	if (!tbl || !tbl->it_map) {
@@ -541,18 +720,26 @@ void iommu_free_table(struct iommu_table *tbl, const char *node_name)
 		return;
 	}
 
-	/* verify that table contains no entries */
-	/* it_size is in entries, and we're examining 64 at a time */
-	for (i = 0; i < (tbl->it_size/64); i++) {
-		if (tbl->it_map[i] != 0) {
-			printk(KERN_WARNING "%s: Unexpected TCEs for %s\n",
-				__func__, node_name);
-			break;
-		}
+	/*
+	 * In case we have reserved the first bit, we should not emit
+	 * the warning below.
+	 */
+	if (tbl->it_offset == 0)
+		clear_bit(0, tbl->it_map);
+
+#ifdef CONFIG_IOMMU_API
+	if (tbl->it_group) {
+		iommu_group_put(tbl->it_group);
+		BUG_ON(tbl->it_group);
 	}
+#endif
+
+	/* verify that table contains no entries */
+	if (!bitmap_empty(tbl->it_map, tbl->it_size))
+		pr_warn("%s: Unexpected TCEs for %s\n", __func__, node_name);
 
 	/* calculate bitmap size in bytes */
-	bitmap_sz = (tbl->it_size + 7) / 8;
+	bitmap_sz = BITS_TO_LONGS(tbl->it_size) * sizeof(unsigned long);
 
 	/* free bitmap */
 	order = get_order(bitmap_sz);
@@ -683,3 +870,316 @@ void iommu_free_coherent(struct iommu_table *tbl, size_t size,
 		free_pages((unsigned long)vaddr, get_order(size));
 	}
 }
+
+#ifdef CONFIG_IOMMU_API
+/*
+ * SPAPR TCE API
+ */
+static void group_release(void *iommu_data)
+{
+	struct iommu_table *tbl = iommu_data;
+	tbl->it_group = NULL;
+}
+
+void iommu_register_group(struct iommu_table *tbl,
+		int pci_domain_number, unsigned long pe_num)
+{
+	struct iommu_group *grp;
+	char *name;
+
+	grp = iommu_group_alloc();
+	if (IS_ERR(grp)) {
+		pr_warn("powerpc iommu api: cannot create new group, err=%ld\n",
+				PTR_ERR(grp));
+		return;
+	}
+	tbl->it_group = grp;
+	iommu_group_set_iommudata(grp, tbl, group_release);
+	name = kasprintf(GFP_KERNEL, "domain%d-pe%lx",
+			pci_domain_number, pe_num);
+	if (!name)
+		return;
+	iommu_group_set_name(grp, name);
+	kfree(name);
+}
+
+enum dma_data_direction iommu_tce_direction(unsigned long tce)
+{
+	if ((tce & TCE_PCI_READ) && (tce & TCE_PCI_WRITE))
+		return DMA_BIDIRECTIONAL;
+	else if (tce & TCE_PCI_READ)
+		return DMA_TO_DEVICE;
+	else if (tce & TCE_PCI_WRITE)
+		return DMA_FROM_DEVICE;
+	else
+		return DMA_NONE;
+}
+EXPORT_SYMBOL_GPL(iommu_tce_direction);
+
+void iommu_flush_tce(struct iommu_table *tbl)
+{
+	/* Flush/invalidate TLB caches if necessary */
+	if (ppc_md.tce_flush)
+		ppc_md.tce_flush(tbl);
+
+	/* Make sure updates are seen by hardware */
+	mb();
+}
+EXPORT_SYMBOL_GPL(iommu_flush_tce);
+
+int iommu_tce_clear_param_check(struct iommu_table *tbl,
+		unsigned long ioba, unsigned long tce_value,
+		unsigned long npages)
+{
+	/* ppc_md.tce_free() does not support any value but 0 */
+	if (tce_value)
+		return -EINVAL;
+
+	if (ioba & ~IOMMU_PAGE_MASK)
+		return -EINVAL;
+
+	ioba >>= IOMMU_PAGE_SHIFT;
+	if (ioba < tbl->it_offset)
+		return -EINVAL;
+
+	if ((ioba + npages) > (tbl->it_offset + tbl->it_size))
+		return -EINVAL;
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(iommu_tce_clear_param_check);
+
+int iommu_tce_put_param_check(struct iommu_table *tbl,
+		unsigned long ioba, unsigned long tce)
+{
+	if (!(tce & (TCE_PCI_WRITE | TCE_PCI_READ)))
+		return -EINVAL;
+
+	if (tce & ~(IOMMU_PAGE_MASK | TCE_PCI_WRITE | TCE_PCI_READ))
+		return -EINVAL;
+
+	if (ioba & ~IOMMU_PAGE_MASK)
+		return -EINVAL;
+
+	ioba >>= IOMMU_PAGE_SHIFT;
+	if (ioba < tbl->it_offset)
+		return -EINVAL;
+
+	if ((ioba + 1) > (tbl->it_offset + tbl->it_size))
+		return -EINVAL;
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(iommu_tce_put_param_check);
+
+unsigned long iommu_clear_tce(struct iommu_table *tbl, unsigned long entry)
+{
+	unsigned long oldtce;
+	struct iommu_pool *pool = get_pool(tbl, entry);
+
+	spin_lock(&(pool->lock));
+
+	oldtce = ppc_md.tce_get(tbl, entry);
+	if (oldtce & (TCE_PCI_WRITE | TCE_PCI_READ))
+		ppc_md.tce_free(tbl, entry, 1);
+	else
+		oldtce = 0;
+
+	spin_unlock(&(pool->lock));
+
+	return oldtce;
+}
+EXPORT_SYMBOL_GPL(iommu_clear_tce);
+
+int iommu_clear_tces_and_put_pages(struct iommu_table *tbl,
+		unsigned long entry, unsigned long pages)
+{
+	unsigned long oldtce;
+	struct page *page;
+
+	for ( ; pages; --pages, ++entry) {
+		oldtce = iommu_clear_tce(tbl, entry);
+		if (!oldtce)
+			continue;
+
+		page = pfn_to_page(oldtce >> PAGE_SHIFT);
+		WARN_ON(!page);
+		if (page) {
+			if (oldtce & TCE_PCI_WRITE)
+				SetPageDirty(page);
+			put_page(page);
+		}
+	}
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(iommu_clear_tces_and_put_pages);
+
+/*
+ * hwaddr is a kernel virtual address here (0xc... bazillion),
+ * tce_build converts it to a physical address.
+ */
+int iommu_tce_build(struct iommu_table *tbl, unsigned long entry,
+		unsigned long hwaddr, enum dma_data_direction direction)
+{
+	int ret = -EBUSY;
+	unsigned long oldtce;
+	struct iommu_pool *pool = get_pool(tbl, entry);
+
+	spin_lock(&(pool->lock));
+
+	oldtce = ppc_md.tce_get(tbl, entry);
+	/* Add new entry if it is not busy */
+	if (!(oldtce & (TCE_PCI_WRITE | TCE_PCI_READ)))
+		ret = ppc_md.tce_build(tbl, entry, 1, hwaddr, direction, NULL);
+
+	spin_unlock(&(pool->lock));
+
+	/* if (unlikely(ret))
+		pr_err("iommu_tce: %s failed on hwaddr=%lx ioba=%lx kva=%lx ret=%d\n",
+				__func__, hwaddr, entry << IOMMU_PAGE_SHIFT,
+				hwaddr, ret); */
+
+	return ret;
+}
+EXPORT_SYMBOL_GPL(iommu_tce_build);
+
+int iommu_put_tce_user_mode(struct iommu_table *tbl, unsigned long entry,
+		unsigned long tce)
+{
+	int ret;
+	struct page *page = NULL;
+	unsigned long hwaddr, offset = tce & IOMMU_PAGE_MASK & ~PAGE_MASK;
+	enum dma_data_direction direction = iommu_tce_direction(tce);
+
+	ret = get_user_pages_fast(tce & PAGE_MASK, 1,
+			direction != DMA_TO_DEVICE, &page);
+	if (unlikely(ret != 1)) {
+		/* pr_err("iommu_tce: get_user_pages_fast failed tce=%lx ioba=%lx ret=%d\n",
+				tce, entry << IOMMU_PAGE_SHIFT, ret); */
+		return -EFAULT;
+	}
+	hwaddr = (unsigned long) page_address(page) + offset;
+
+	ret = iommu_tce_build(tbl, entry, hwaddr, direction);
+	if (ret)
+		put_page(page);
+
+	if (ret < 0)
+		pr_err("iommu_tce: %s failed ioba=%lx, tce=%lx, ret=%d\n",
+				__func__, entry << IOMMU_PAGE_SHIFT, tce, ret);
+
+	return ret;
+}
+EXPORT_SYMBOL_GPL(iommu_put_tce_user_mode);
+
+int iommu_take_ownership(struct iommu_table *tbl)
+{
+	unsigned long sz = (tbl->it_size + 7) >> 3;
+
+	if (tbl->it_offset == 0)
+		clear_bit(0, tbl->it_map);
+
+	if (!bitmap_empty(tbl->it_map, tbl->it_size)) {
+		pr_err("iommu_tce: it_map is not empty");
+		return -EBUSY;
+	}
+
+	memset(tbl->it_map, 0xff, sz);
+	iommu_clear_tces_and_put_pages(tbl, tbl->it_offset, tbl->it_size);
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(iommu_take_ownership);
+
+void iommu_release_ownership(struct iommu_table *tbl)
+{
+	unsigned long sz = (tbl->it_size + 7) >> 3;
+
+	iommu_clear_tces_and_put_pages(tbl, tbl->it_offset, tbl->it_size);
+	memset(tbl->it_map, 0, sz);
+
+	/* Restore bit#0 set by iommu_init_table() */
+	if (tbl->it_offset == 0)
+		set_bit(0, tbl->it_map);
+}
+EXPORT_SYMBOL_GPL(iommu_release_ownership);
+
+static int iommu_add_device(struct device *dev)
+{
+	struct iommu_table *tbl;
+	int ret = 0;
+
+	if (WARN_ON(dev->iommu_group)) {
+		pr_warn("iommu_tce: device %s is already in iommu group %d, skipping\n",
+				dev_name(dev),
+				iommu_group_id(dev->iommu_group));
+		return -EBUSY;
+	}
+
+	tbl = get_iommu_table_base(dev);
+	if (!tbl || !tbl->it_group) {
+		pr_debug("iommu_tce: skipping device %s with no tbl\n",
+				dev_name(dev));
+		return 0;
+	}
+
+	pr_debug("iommu_tce: adding %s to iommu group %d\n",
+			dev_name(dev), iommu_group_id(tbl->it_group));
+
+	ret = iommu_group_add_device(tbl->it_group, dev);
+	if (ret < 0)
+		pr_err("iommu_tce: %s has not been added, ret=%d\n",
+				dev_name(dev), ret);
+
+	return ret;
+}
+
+static void iommu_del_device(struct device *dev)
+{
+	iommu_group_remove_device(dev);
+}
+
+static int iommu_bus_notifier(struct notifier_block *nb,
+			      unsigned long action, void *data)
+{
+	struct device *dev = data;
+
+	switch (action) {
+	case BUS_NOTIFY_ADD_DEVICE:
+		return iommu_add_device(dev);
+	case BUS_NOTIFY_DEL_DEVICE:
+		iommu_del_device(dev);
+		return 0;
+	default:
+		return 0;
+	}
+}
+
+static struct notifier_block tce_iommu_bus_nb = {
+	.notifier_call = iommu_bus_notifier,
+};
+
+static int __init tce_iommu_init(void)
+{
+	struct pci_dev *pdev = NULL;
+
+	BUILD_BUG_ON(PAGE_SIZE < IOMMU_PAGE_SIZE);
+
+	for_each_pci_dev(pdev)
+		iommu_add_device(&pdev->dev);
+
+	bus_register_notifier(&pci_bus_type, &tce_iommu_bus_nb);
+	return 0;
+}
+
+subsys_initcall_sync(tce_iommu_init);
+
+#else
+
+void iommu_register_group(struct iommu_table *tbl,
+		int pci_domain_number, unsigned long pe_num)
+{
+}
+
+#endif /* CONFIG_IOMMU_API */

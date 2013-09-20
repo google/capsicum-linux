@@ -381,7 +381,7 @@ static void b44_set_flow_ctrl(struct b44 *bp, u32 local, u32 remote)
 }
 
 #ifdef CONFIG_BCM47XX
-#include <asm/mach-bcm47xx/nvram.h>
+#include <bcm47xx_nvram.h>
 static void b44_wap54g10_workaround(struct b44 *bp)
 {
 	char buf[20];
@@ -393,7 +393,7 @@ static void b44_wap54g10_workaround(struct b44 *bp)
 	 * see https://dev.openwrt.org/ticket/146
 	 * check and reset bit "isolate"
 	 */
-	if (nvram_getenv("boardnum", buf, sizeof(buf)) < 0)
+	if (bcm47xx_nvram_getenv("boardnum", buf, sizeof(buf)) < 0)
 		return;
 	if (simple_strtoul(buf, NULL, 0) == 2) {
 		err = __b44_readphy(bp, 0, MII_BMCR, &val);
@@ -483,9 +483,11 @@ out:
 static void b44_stats_update(struct b44 *bp)
 {
 	unsigned long reg;
-	u32 *val;
+	u64 *val;
 
 	val = &bp->hw_stats.tx_good_octets;
+	u64_stats_update_begin(&bp->hw_stats.syncp);
+
 	for (reg = B44_TX_GOOD_O; reg <= B44_TX_PAUSE; reg += 4UL) {
 		*val++ += br32(bp, reg);
 	}
@@ -496,6 +498,8 @@ static void b44_stats_update(struct b44 *bp)
 	for (reg = B44_RX_GOOD_O; reg <= B44_RX_NPAUSE; reg += 4UL) {
 		*val++ += br32(bp, reg);
 	}
+
+	u64_stats_update_end(&bp->hw_stats.syncp);
 }
 
 static void b44_link_report(struct b44 *bp)
@@ -656,7 +660,7 @@ static int b44_alloc_rx_skb(struct b44 *bp, int src_idx, u32 dest_idx_unmasked)
 			dma_unmap_single(bp->sdev->dma_dev, mapping,
 					     RX_PKT_BUF_SZ, DMA_FROM_DEVICE);
 		dev_kfree_skb_any(skb);
-		skb = __netdev_alloc_skb(bp->dev, RX_PKT_BUF_SZ, GFP_ATOMIC|GFP_DMA);
+		skb = alloc_skb(RX_PKT_BUF_SZ, GFP_ATOMIC | GFP_DMA);
 		if (skb == NULL)
 			return -ENOMEM;
 		mapping = dma_map_single(bp->sdev->dma_dev, skb->data,
@@ -805,11 +809,10 @@ static int b44_rx(struct b44 *bp, int budget)
 			struct sk_buff *copy_skb;
 
 			b44_recycle_rx(bp, cons, bp->rx_prod);
-			copy_skb = netdev_alloc_skb(bp->dev, len + 2);
+			copy_skb = netdev_alloc_skb_ip_align(bp->dev, len);
 			if (copy_skb == NULL)
 				goto drop_it_no_recycle;
 
-			skb_reserve(copy_skb, 2);
 			skb_put(copy_skb, len);
 			/* DMA sync done above, copy just the actual packet */
 			skb_copy_from_linear_data_offset(skb, RX_PKT_OFFSET,
@@ -967,7 +970,7 @@ static netdev_tx_t b44_start_xmit(struct sk_buff *skb, struct net_device *dev)
 			dma_unmap_single(bp->sdev->dma_dev, mapping, len,
 					     DMA_TO_DEVICE);
 
-		bounce_skb = __netdev_alloc_skb(dev, len, GFP_ATOMIC | GFP_DMA);
+		bounce_skb = alloc_skb(len, GFP_ATOMIC | GFP_DMA);
 		if (!bounce_skb)
 			goto err_out;
 
@@ -1514,10 +1517,8 @@ static void b44_setup_pseudo_magicp(struct b44 *bp)
 	u8 pwol_mask[B44_PMASK_SIZE];
 
 	pwol_pattern = kzalloc(B44_PATTERN_SIZE, GFP_KERNEL);
-	if (!pwol_pattern) {
-		pr_err("Memory not available for WOL\n");
+	if (!pwol_pattern)
 		return;
-	}
 
 	/* Ipv4 magic packet pattern - pattern 0.*/
 	memset(pwol_mask, 0, B44_PMASK_SIZE);
@@ -1635,44 +1636,49 @@ static int b44_close(struct net_device *dev)
 	return 0;
 }
 
-static struct net_device_stats *b44_get_stats(struct net_device *dev)
+static struct rtnl_link_stats64 *b44_get_stats64(struct net_device *dev,
+					struct rtnl_link_stats64 *nstat)
 {
 	struct b44 *bp = netdev_priv(dev);
-	struct net_device_stats *nstat = &dev->stats;
 	struct b44_hw_stats *hwstat = &bp->hw_stats;
+	unsigned int start;
 
-	/* Convert HW stats into netdevice stats. */
-	nstat->rx_packets = hwstat->rx_pkts;
-	nstat->tx_packets = hwstat->tx_pkts;
-	nstat->rx_bytes   = hwstat->rx_octets;
-	nstat->tx_bytes   = hwstat->tx_octets;
-	nstat->tx_errors  = (hwstat->tx_jabber_pkts +
-			     hwstat->tx_oversize_pkts +
-			     hwstat->tx_underruns +
-			     hwstat->tx_excessive_cols +
-			     hwstat->tx_late_cols);
-	nstat->multicast  = hwstat->tx_multicast_pkts;
-	nstat->collisions = hwstat->tx_total_cols;
+	do {
+		start = u64_stats_fetch_begin_bh(&hwstat->syncp);
 
-	nstat->rx_length_errors = (hwstat->rx_oversize_pkts +
-				   hwstat->rx_undersize);
-	nstat->rx_over_errors   = hwstat->rx_missed_pkts;
-	nstat->rx_frame_errors  = hwstat->rx_align_errs;
-	nstat->rx_crc_errors    = hwstat->rx_crc_errs;
-	nstat->rx_errors        = (hwstat->rx_jabber_pkts +
-				   hwstat->rx_oversize_pkts +
-				   hwstat->rx_missed_pkts +
-				   hwstat->rx_crc_align_errs +
-				   hwstat->rx_undersize +
-				   hwstat->rx_crc_errs +
-				   hwstat->rx_align_errs +
-				   hwstat->rx_symbol_errs);
+		/* Convert HW stats into rtnl_link_stats64 stats. */
+		nstat->rx_packets = hwstat->rx_pkts;
+		nstat->tx_packets = hwstat->tx_pkts;
+		nstat->rx_bytes   = hwstat->rx_octets;
+		nstat->tx_bytes   = hwstat->tx_octets;
+		nstat->tx_errors  = (hwstat->tx_jabber_pkts +
+				     hwstat->tx_oversize_pkts +
+				     hwstat->tx_underruns +
+				     hwstat->tx_excessive_cols +
+				     hwstat->tx_late_cols);
+		nstat->multicast  = hwstat->tx_multicast_pkts;
+		nstat->collisions = hwstat->tx_total_cols;
 
-	nstat->tx_aborted_errors = hwstat->tx_underruns;
+		nstat->rx_length_errors = (hwstat->rx_oversize_pkts +
+					   hwstat->rx_undersize);
+		nstat->rx_over_errors   = hwstat->rx_missed_pkts;
+		nstat->rx_frame_errors  = hwstat->rx_align_errs;
+		nstat->rx_crc_errors    = hwstat->rx_crc_errs;
+		nstat->rx_errors        = (hwstat->rx_jabber_pkts +
+					   hwstat->rx_oversize_pkts +
+					   hwstat->rx_missed_pkts +
+					   hwstat->rx_crc_align_errs +
+					   hwstat->rx_undersize +
+					   hwstat->rx_crc_errs +
+					   hwstat->rx_align_errs +
+					   hwstat->rx_symbol_errs);
+
+		nstat->tx_aborted_errors = hwstat->tx_underruns;
 #if 0
-	/* Carrier lost counter seems to be broken for some devices */
-	nstat->tx_carrier_errors = hwstat->tx_carrier_lost;
+		/* Carrier lost counter seems to be broken for some devices */
+		nstat->tx_carrier_errors = hwstat->tx_carrier_lost;
 #endif
+	} while (u64_stats_fetch_retry_bh(&hwstat->syncp, start));
 
 	return nstat;
 }
@@ -1993,17 +1999,24 @@ static void b44_get_ethtool_stats(struct net_device *dev,
 				  struct ethtool_stats *stats, u64 *data)
 {
 	struct b44 *bp = netdev_priv(dev);
-	u32 *val = &bp->hw_stats.tx_good_octets;
+	struct b44_hw_stats *hwstat = &bp->hw_stats;
+	u64 *data_src, *data_dst;
+	unsigned int start;
 	u32 i;
 
 	spin_lock_irq(&bp->lock);
-
 	b44_stats_update(bp);
-
-	for (i = 0; i < ARRAY_SIZE(b44_gstrings); i++)
-		*data++ = *val++;
-
 	spin_unlock_irq(&bp->lock);
+
+	do {
+		data_src = &hwstat->tx_good_octets;
+		data_dst = data;
+		start = u64_stats_fetch_begin_bh(&hwstat->syncp);
+
+		for (i = 0; i < ARRAY_SIZE(b44_gstrings); i++)
+			*data_dst++ = *data_src++;
+
+	} while (u64_stats_fetch_retry_bh(&hwstat->syncp, start));
 }
 
 static void b44_get_wol(struct net_device *dev, struct ethtool_wolinfo *wol)
@@ -2067,7 +2080,7 @@ out:
 	return err;
 }
 
-static int __devinit b44_get_invariants(struct b44 *bp)
+static int b44_get_invariants(struct b44 *bp)
 {
 	struct ssb_device *sdev = bp->sdev;
 	int err = 0;
@@ -2095,8 +2108,6 @@ static int __devinit b44_get_invariants(struct b44 *bp)
 		return -EINVAL;
 	}
 
-	memcpy(bp->dev->perm_addr, bp->dev->dev_addr, bp->dev->addr_len);
-
 	bp->imask = IMASK_DEF;
 
 	/* XXX - really required?
@@ -2113,7 +2124,7 @@ static const struct net_device_ops b44_netdev_ops = {
 	.ndo_open		= b44_open,
 	.ndo_stop		= b44_close,
 	.ndo_start_xmit		= b44_start_xmit,
-	.ndo_get_stats		= b44_get_stats,
+	.ndo_get_stats64	= b44_get_stats64,
 	.ndo_set_rx_mode	= b44_set_rx_mode,
 	.ndo_set_mac_address	= b44_set_mac_addr,
 	.ndo_validate_addr	= eth_validate_addr,
@@ -2125,8 +2136,8 @@ static const struct net_device_ops b44_netdev_ops = {
 #endif
 };
 
-static int __devinit b44_init_one(struct ssb_device *sdev,
-				  const struct ssb_device_id *ent)
+static int b44_init_one(struct ssb_device *sdev,
+			const struct ssb_device_id *ent)
 {
 	struct net_device *dev;
 	struct b44 *bp;
@@ -2233,7 +2244,7 @@ out:
 	return err;
 }
 
-static void __devexit b44_remove_one(struct ssb_device *sdev)
+static void b44_remove_one(struct ssb_device *sdev)
 {
 	struct net_device *dev = ssb_get_drvdata(sdev);
 
@@ -2324,7 +2335,7 @@ static struct ssb_driver b44_ssb_driver = {
 	.name		= DRV_MODULE_NAME,
 	.id_table	= b44_ssb_tbl,
 	.probe		= b44_init_one,
-	.remove		= __devexit_p(b44_remove_one),
+	.remove		= b44_remove_one,
 	.suspend	= b44_suspend,
 	.resume		= b44_resume,
 };

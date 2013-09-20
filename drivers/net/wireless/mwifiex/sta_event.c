@@ -41,7 +41,7 @@
  *      - Sends a disconnect event to upper layers/applications.
  */
 void
-mwifiex_reset_connect_state(struct mwifiex_private *priv)
+mwifiex_reset_connect_state(struct mwifiex_private *priv, u16 reason_code)
 {
 	struct mwifiex_adapter *adapter = priv->adapter;
 
@@ -117,20 +117,16 @@ mwifiex_reset_connect_state(struct mwifiex_private *priv)
 	priv->media_connected = false;
 	dev_dbg(adapter->dev,
 		"info: successfully disconnected from %pM: reason code %d\n",
-		priv->cfg_bssid, WLAN_REASON_DEAUTH_LEAVING);
+		priv->cfg_bssid, reason_code);
 	if (priv->bss_mode == NL80211_IFTYPE_STATION) {
-		cfg80211_disconnected(priv->netdev, WLAN_REASON_DEAUTH_LEAVING,
-				      NULL, 0, GFP_KERNEL);
+		cfg80211_disconnected(priv->netdev, reason_code, NULL, 0,
+				      GFP_KERNEL);
 	}
 	memset(priv->cfg_bssid, 0, ETH_ALEN);
 
-	if (!netif_queue_stopped(priv->netdev))
-		mwifiex_stop_net_dev_queue(priv->netdev, adapter);
+	mwifiex_stop_net_dev_queue(priv->netdev, adapter);
 	if (netif_carrier_ok(priv->netdev))
 		netif_carrier_off(priv->netdev);
-	/* Reset wireless stats signal info */
-	priv->qual_level = 0;
-	priv->qual_noise = 0;
 }
 
 /*
@@ -189,6 +185,7 @@ int mwifiex_process_sta_event(struct mwifiex_private *priv)
 	struct mwifiex_adapter *adapter = priv->adapter;
 	int ret = 0;
 	u32 eventcause = adapter->event_cause;
+	u16 ctrl, reason_code;
 
 	switch (eventcause) {
 	case EVENT_DUMMY_HOST_WAKEUP_SIGNAL:
@@ -199,29 +196,37 @@ int mwifiex_process_sta_event(struct mwifiex_private *priv)
 		dev_dbg(adapter->dev, "event: LINK_SENSED\n");
 		if (!netif_carrier_ok(priv->netdev))
 			netif_carrier_on(priv->netdev);
-		if (netif_queue_stopped(priv->netdev))
-			mwifiex_wake_up_net_dev_queue(priv->netdev, adapter);
+		mwifiex_wake_up_net_dev_queue(priv->netdev, adapter);
 		break;
 
 	case EVENT_DEAUTHENTICATED:
 		dev_dbg(adapter->dev, "event: Deauthenticated\n");
 		adapter->dbg.num_event_deauth++;
-		if (priv->media_connected)
-			mwifiex_reset_connect_state(priv);
+		if (priv->media_connected) {
+			reason_code =
+				le16_to_cpu(*(__le16 *)adapter->event_body);
+			mwifiex_reset_connect_state(priv, reason_code);
+		}
 		break;
 
 	case EVENT_DISASSOCIATED:
 		dev_dbg(adapter->dev, "event: Disassociated\n");
 		adapter->dbg.num_event_disassoc++;
-		if (priv->media_connected)
-			mwifiex_reset_connect_state(priv);
+		if (priv->media_connected) {
+			reason_code =
+				le16_to_cpu(*(__le16 *)adapter->event_body);
+			mwifiex_reset_connect_state(priv, reason_code);
+		}
 		break;
 
 	case EVENT_LINK_LOST:
 		dev_dbg(adapter->dev, "event: Link lost\n");
 		adapter->dbg.num_event_link_lost++;
-		if (priv->media_connected)
-			mwifiex_reset_connect_state(priv);
+		if (priv->media_connected) {
+			reason_code =
+				le16_to_cpu(*(__le16 *)adapter->event_body);
+			mwifiex_reset_connect_state(priv, reason_code);
+		}
 		break;
 
 	case EVENT_PS_SLEEP:
@@ -280,10 +285,16 @@ int mwifiex_process_sta_event(struct mwifiex_private *priv)
 
 	case EVENT_MIC_ERR_UNICAST:
 		dev_dbg(adapter->dev, "event: UNICAST MIC ERROR\n");
+		cfg80211_michael_mic_failure(priv->netdev, priv->cfg_bssid,
+					     NL80211_KEYTYPE_PAIRWISE,
+					     -1, NULL, GFP_KERNEL);
 		break;
 
 	case EVENT_MIC_ERR_MULTICAST:
 		dev_dbg(adapter->dev, "event: MULTICAST MIC ERROR\n");
+		cfg80211_michael_mic_failure(priv->netdev, priv->cfg_bssid,
+					     NL80211_KEYTYPE_GROUP,
+					     -1, NULL, GFP_KERNEL);
 		break;
 	case EVENT_MIB_CHANGED:
 	case EVENT_INIT_DONE:
@@ -293,8 +304,7 @@ int mwifiex_process_sta_event(struct mwifiex_private *priv)
 		dev_dbg(adapter->dev, "event: ADHOC_BCN_LOST\n");
 		priv->adhoc_is_link_sensed = false;
 		mwifiex_clean_txrx(priv);
-		if (!netif_queue_stopped(priv->netdev))
-			mwifiex_stop_net_dev_queue(priv->netdev, adapter);
+		mwifiex_stop_net_dev_queue(priv->netdev, adapter);
 		if (netif_carrier_ok(priv->netdev))
 			netif_carrier_off(priv->netdev);
 		break;
@@ -317,6 +327,12 @@ int mwifiex_process_sta_event(struct mwifiex_private *priv)
 		break;
 
 	case EVENT_RSSI_LOW:
+		cfg80211_cqm_rssi_notify(priv->netdev,
+					 NL80211_CQM_RSSI_THRESHOLD_EVENT_LOW,
+					 GFP_KERNEL);
+		mwifiex_send_cmd_async(priv, HostCmd_CMD_RSSI_INFO,
+				       HostCmd_ACT_GEN_GET, 0, NULL);
+		priv->subsc_evt_rssi_state = RSSI_LOW_RECVD;
 		dev_dbg(adapter->dev, "event: Beacon RSSI_LOW\n");
 		break;
 	case EVENT_SNR_LOW:
@@ -326,6 +342,12 @@ int mwifiex_process_sta_event(struct mwifiex_private *priv)
 		dev_dbg(adapter->dev, "event: MAX_FAIL\n");
 		break;
 	case EVENT_RSSI_HIGH:
+		cfg80211_cqm_rssi_notify(priv->netdev,
+					 NL80211_CQM_RSSI_THRESHOLD_EVENT_HIGH,
+					 GFP_KERNEL);
+		mwifiex_send_cmd_async(priv, HostCmd_CMD_RSSI_INFO,
+				       HostCmd_ACT_GEN_GET, 0, NULL);
+		priv->subsc_evt_rssi_state = RSSI_HIGH_RECVD;
 		dev_dbg(adapter->dev, "event: Beacon RSSI_HIGH\n");
 		break;
 	case EVENT_SNR_HIGH:
@@ -373,11 +395,11 @@ int mwifiex_process_sta_event(struct mwifiex_private *priv)
 					      adapter->event_body);
 		break;
 	case EVENT_AMSDU_AGGR_CTRL:
-		dev_dbg(adapter->dev, "event:  AMSDU_AGGR_CTRL %d\n",
-			*(u16 *) adapter->event_body);
+		ctrl = le16_to_cpu(*(__le16 *)adapter->event_body);
+		dev_dbg(adapter->dev, "event: AMSDU_AGGR_CTRL %d\n", ctrl);
+
 		adapter->tx_buf_size =
-			min(adapter->curr_tx_buf_size,
-			    le16_to_cpu(*(__le16 *) adapter->event_body));
+				min_t(u16, adapter->curr_tx_buf_size, ctrl);
 		dev_dbg(adapter->dev, "event: tx_buf_size %d\n",
 			adapter->tx_buf_size);
 		break;
@@ -393,6 +415,29 @@ int mwifiex_process_sta_event(struct mwifiex_private *priv)
 	case EVENT_HOSTWAKE_STAIE:
 		dev_dbg(adapter->dev, "event: HOSTWAKE_STAIE %d\n", eventcause);
 		break;
+
+	case EVENT_REMAIN_ON_CHAN_EXPIRED:
+		dev_dbg(adapter->dev, "event: Remain on channel expired\n");
+		cfg80211_remain_on_channel_expired(priv->wdev,
+						   priv->roc_cfg.cookie,
+						   &priv->roc_cfg.chan,
+						   GFP_ATOMIC);
+
+		memset(&priv->roc_cfg, 0x00, sizeof(struct mwifiex_roc_cfg));
+
+		break;
+
+	case EVENT_CHANNEL_SWITCH_ANN:
+		dev_dbg(adapter->dev, "event: Channel Switch Announcement\n");
+		priv->csa_expire_time =
+				jiffies + msecs_to_jiffies(DFS_CHAN_MOVE_TIME);
+		priv->csa_chan = priv->curr_bss_params.bss_descriptor.channel;
+		ret = mwifiex_send_cmd_async(priv,
+			HostCmd_CMD_802_11_DEAUTHENTICATE,
+			HostCmd_ACT_GEN_SET, 0,
+			priv->curr_bss_params.bss_descriptor.mac_address);
+		break;
+
 	default:
 		dev_dbg(adapter->dev, "event: unknown event id: %#x\n",
 			eventcause);

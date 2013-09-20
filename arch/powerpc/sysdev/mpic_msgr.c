@@ -14,6 +14,9 @@
 #include <linux/list.h>
 #include <linux/of_platform.h>
 #include <linux/errno.h>
+#include <linux/err.h>
+#include <linux/export.h>
+#include <linux/slab.h>
 #include <asm/prom.h>
 #include <asm/hw_irq.h>
 #include <asm/ppc-pci.h>
@@ -157,7 +160,7 @@ static int mpic_msgr_block_number(struct device_node *node)
 
 /* The probe function for a single message register block.
  */
-static __devinit int mpic_msgr_probe(struct platform_device *dev)
+static int mpic_msgr_probe(struct platform_device *dev)
 {
 	void __iomem *msgr_block_addr;
 	int block_number;

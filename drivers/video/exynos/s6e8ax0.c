@@ -293,9 +293,20 @@ static void s6e8ax0_panel_cond(struct s6e8ax0 *lcd)
 		0x6e, 0x00, 0x00, 0x00, 0x02, 0x08, 0x08, 0x23, 0x23, 0xc0,
 		0xc8, 0x08, 0x48, 0xc1, 0x00, 0xc1, 0xff, 0xff, 0xc8
 	};
+	static const unsigned char data_to_send_panel_reverse[] = {
+		0xf8, 0x19, 0x35, 0x00, 0x00, 0x00, 0x93, 0x00, 0x3c, 0x7d,
+		0x08, 0x27, 0x7d, 0x3f, 0x00, 0x00, 0x00, 0x20, 0x04, 0x08,
+		0x6e, 0x00, 0x00, 0x00, 0x02, 0x08, 0x08, 0x23, 0x23, 0xc0,
+		0xc1, 0x01, 0x41, 0xc1, 0x00, 0xc1, 0xf6, 0xf6, 0xc1
+	};
 
-	ops->cmd_write(lcd_to_master(lcd), MIPI_DSI_DCS_LONG_WRITE,
-		data_to_send, ARRAY_SIZE(data_to_send));
+	if (lcd->dsim_dev->panel_reverse)
+		ops->cmd_write(lcd_to_master(lcd), MIPI_DSI_DCS_LONG_WRITE,
+				data_to_send_panel_reverse,
+				ARRAY_SIZE(data_to_send_panel_reverse));
+	else
+		ops->cmd_write(lcd_to_master(lcd), MIPI_DSI_DCS_LONG_WRITE,
+				data_to_send, ARRAY_SIZE(data_to_send));
 }
 
 static void s6e8ax0_display_cond(struct s6e8ax0 *lcd)
@@ -765,7 +776,7 @@ static int s6e8ax0_probe(struct mipi_dsim_lcd_device *dsim_dev)
 	int ret;
 	u8 mtp_id[3] = {0, };
 
-	lcd = kzalloc(sizeof(struct s6e8ax0), GFP_KERNEL);
+	lcd = devm_kzalloc(&dsim_dev->dev, sizeof(struct s6e8ax0), GFP_KERNEL);
 	if (!lcd) {
 		dev_err(&dsim_dev->dev, "failed to allocate s6e8ax0 structure.\n");
 		return -ENOMEM;
@@ -777,18 +788,17 @@ static int s6e8ax0_probe(struct mipi_dsim_lcd_device *dsim_dev)
 
 	mutex_init(&lcd->lock);
 
-	ret = regulator_bulk_get(lcd->dev, ARRAY_SIZE(supplies), supplies);
+	ret = devm_regulator_bulk_get(lcd->dev, ARRAY_SIZE(supplies), supplies);
 	if (ret) {
 		dev_err(lcd->dev, "Failed to get regulators: %d\n", ret);
-		goto err_lcd_register;
+		return ret;
 	}
 
 	lcd->ld = lcd_device_register("s6e8ax0", lcd->dev, lcd,
 			&s6e8ax0_lcd_ops);
 	if (IS_ERR(lcd->ld)) {
 		dev_err(lcd->dev, "failed to register lcd ops.\n");
-		ret = PTR_ERR(lcd->ld);
-		goto err_lcd_register;
+		return PTR_ERR(lcd->ld);
 	}
 
 	lcd->bd = backlight_device_register("s6e8ax0-bl", lcd->dev, lcd,
@@ -827,11 +837,6 @@ static int s6e8ax0_probe(struct mipi_dsim_lcd_device *dsim_dev)
 
 err_backlight_register:
 	lcd_device_unregister(lcd->ld);
-
-err_lcd_register:
-	regulator_bulk_free(ARRAY_SIZE(supplies), supplies);
-	kfree(lcd);
-
 	return ret;
 }
 

@@ -140,7 +140,6 @@ static struct device_attribute mISDN_dev_attrs[] = {
 	{}
 };
 
-#ifdef CONFIG_HOTPLUG
 static int mISDN_uevent(struct device *dev, struct kobj_uevent_env *env)
 {
 	struct mISDNdevice *mdev = dev_to_mISDN(dev);
@@ -153,7 +152,6 @@ static int mISDN_uevent(struct device *dev, struct kobj_uevent_env *env)
 
 	return 0;
 }
-#endif
 
 static void mISDN_class_release(struct class *cls)
 {
@@ -163,22 +161,20 @@ static void mISDN_class_release(struct class *cls)
 static struct class mISDN_class = {
 	.name = "mISDN",
 	.owner = THIS_MODULE,
-#ifdef CONFIG_HOTPLUG
 	.dev_uevent = mISDN_uevent,
-#endif
 	.dev_attrs = mISDN_dev_attrs,
 	.dev_release = mISDN_dev_release,
 	.class_release = mISDN_class_release,
 };
 
 static int
-_get_mdevice(struct device *dev, void *id)
+_get_mdevice(struct device *dev, const void *id)
 {
 	struct mISDNdevice *mdev = dev_to_mISDN(dev);
 
 	if (!mdev)
 		return 0;
-	if (mdev->id != *(u_int *)id)
+	if (mdev->id != *(const u_int *)id)
 		return 0;
 	return 1;
 }
@@ -354,6 +350,22 @@ mISDN_unregister_Bprotocol(struct Bprotocol *bp)
 	write_unlock_irqrestore(&bp_lock, flags);
 }
 EXPORT_SYMBOL(mISDN_unregister_Bprotocol);
+
+static const char *msg_no_channel = "<no channel>";
+static const char *msg_no_stack = "<no stack>";
+static const char *msg_no_stackdev = "<no stack device>";
+
+const char *mISDNDevName4ch(struct mISDNchannel *ch)
+{
+	if (!ch)
+		return msg_no_channel;
+	if (!ch->st)
+		return msg_no_stack;
+	if (!ch->st->dev)
+		return msg_no_stackdev;
+	return dev_name(&ch->st->dev->dev);
+};
+EXPORT_SYMBOL(mISDNDevName4ch);
 
 static int
 mISDNInit(void)

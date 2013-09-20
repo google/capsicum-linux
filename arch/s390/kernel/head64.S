@@ -1,7 +1,5 @@
 /*
- * arch/s390/kernel/head64.S
- *
- * Copyright (C) IBM Corp. 1999,2010
+ * Copyright IBM Corp. 1999, 2010
  *
  *   Author(s):	Hartmut Penner <hp@de.ibm.com>
  *		Martin Schwidefsky <schwidefsky@de.ibm.com>
@@ -78,10 +76,7 @@ ENTRY(startup_continue)
 
 ENTRY(_ehead)
 
-#ifdef CONFIG_SHARED_KERNEL
 	.org	0x100000 - 0x11000	# head.o ends at 0x11000
-#endif
-
 #
 # startup-code, running in absolute addressing mode
 #

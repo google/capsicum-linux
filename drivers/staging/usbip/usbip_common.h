@@ -292,6 +292,23 @@ struct usbip_device {
 	} eh_ops;
 };
 
+#define kthread_get_run(threadfn, data, namefmt, ...)			   \
+({									   \
+	struct task_struct *__k						   \
+		= kthread_create(threadfn, data, namefmt, ## __VA_ARGS__); \
+	if (!IS_ERR(__k)) {						   \
+		get_task_struct(__k);					   \
+		wake_up_process(__k);					   \
+	}								   \
+	__k;								   \
+})
+
+#define kthread_stop_put(k)		\
+	do {				\
+		kthread_stop(k);	\
+		put_task_struct(k);	\
+	} while (0)
+
 /* usbip_common.c */
 void usbip_dump_urb(struct urb *purb);
 void usbip_dump_header(struct usbip_header *pdu);
@@ -303,7 +320,9 @@ void usbip_pack_pdu(struct usbip_header *pdu, struct urb *urb, int cmd,
 		    int pack);
 void usbip_header_correct_endian(struct usbip_header *pdu, int send);
 
-void *usbip_alloc_iso_desc_pdu(struct urb *urb, ssize_t *bufflen);
+struct usbip_iso_packet_descriptor*
+usbip_alloc_iso_desc_pdu(struct urb *urb, ssize_t *bufflen);
+
 /* some members of urb must be substituted before. */
 int usbip_recv_iso(struct usbip_device *ud, struct urb *urb);
 void usbip_pad_iso(struct usbip_device *ud, struct urb *urb);

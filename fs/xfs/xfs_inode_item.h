@@ -148,10 +148,6 @@ typedef struct xfs_inode_log_item {
 						      data exts */
 	struct xfs_bmbt_rec	*ili_aextents_buf; /* array of logged
 						      attr exts */
-#ifdef XFS_TRANS_DEBUG
-	int			ili_root_size;
-	char			*ili_orig_root;
-#endif
 	xfs_inode_log_format_t	ili_format;	   /* logged structure */
 } xfs_inode_log_item_t;
 
@@ -165,7 +161,7 @@ extern void xfs_inode_item_init(struct xfs_inode *, struct xfs_mount *);
 extern void xfs_inode_item_destroy(struct xfs_inode *);
 extern void xfs_iflush_done(struct xfs_buf *, struct xfs_log_item *);
 extern void xfs_istale_done(struct xfs_buf *, struct xfs_log_item *);
-extern void xfs_iflush_abort(struct xfs_inode *);
+extern void xfs_iflush_abort(struct xfs_inode *, bool);
 extern int xfs_inode_item_format_convert(xfs_log_iovec_t *,
 					 xfs_inode_log_format_t *);
 

@@ -4,7 +4,7 @@
  * idle-task scheduling class.
  *
  * (NOTE: these are not related to SCHED_IDLE tasks which are
- *  handled in sched_fair.c)
+ *  handled in sched/fair.c)
  */
 
 #ifdef CONFIG_SMP
@@ -12,6 +12,17 @@ static int
 select_task_rq_idle(struct task_struct *p, int sd_flag, int flags)
 {
 	return task_cpu(p); /* IDLE tasks as never migrated */
+}
+
+static void pre_schedule_idle(struct rq *rq, struct task_struct *prev)
+{
+	idle_exit_fair(rq);
+	rq_last_tick_reset(rq);
+}
+
+static void post_schedule_idle(struct rq *rq)
+{
+	idle_enter_fair(rq);
 }
 #endif /* CONFIG_SMP */
 /*
@@ -25,7 +36,10 @@ static void check_preempt_curr_idle(struct rq *rq, struct task_struct *p, int fl
 static struct task_struct *pick_next_task_idle(struct rq *rq)
 {
 	schedstat_inc(rq, sched_goidle);
-	calc_load_account_idle(rq);
+#ifdef CONFIG_SMP
+	/* Trigger the post schedule to do an idle_enter for CFS */
+	rq->post_schedule = 1;
+#endif
 	return rq->idle;
 }
 
@@ -87,6 +101,8 @@ const struct sched_class idle_sched_class = {
 
 #ifdef CONFIG_SMP
 	.select_task_rq		= select_task_rq_idle,
+	.pre_schedule		= pre_schedule_idle,
+	.post_schedule		= post_schedule_idle,
 #endif
 
 	.set_curr_task          = set_curr_task_idle,

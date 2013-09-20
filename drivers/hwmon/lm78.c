@@ -85,7 +85,7 @@ enum chips { lm78, lm79 };
  */
 static inline u8 IN_TO_REG(unsigned long val)
 {
-	unsigned long nval = SENSORS_LIMIT(val, 0, 4080);
+	unsigned long nval = clamp_val(val, 0, 4080);
 	return (nval + 8) / 16;
 }
 #define IN_FROM_REG(val) ((val) *  16)
@@ -94,7 +94,7 @@ static inline u8 FAN_TO_REG(long rpm, int div)
 {
 	if (rpm <= 0)
 		return 255;
-	return SENSORS_LIMIT((1350000 + rpm * div / 2) / (rpm * div), 1, 254);
+	return clamp_val((1350000 + rpm * div / 2) / (rpm * div), 1, 254);
 }
 
 static inline int FAN_FROM_REG(u8 val, int div)
@@ -108,7 +108,7 @@ static inline int FAN_FROM_REG(u8 val, int div)
  */
 static inline s8 TEMP_TO_REG(int val)
 {
-	int nval = SENSORS_LIMIT(val, -128000, 127000) ;
+	int nval = clamp_val(val, -128000, 127000) ;
 	return nval < 0 ? (nval - 500) / 1000 : (nval + 500) / 1000;
 }
 
@@ -386,8 +386,9 @@ static ssize_t set_fan_div(struct device *dev, struct device_attribute *da,
 		data->fan_div[nr] = 3;
 		break;
 	default:
-		dev_err(dev, "fan_div value %ld not "
-			"supported. Choose one of 1, 2, 4 or 8!\n", val);
+		dev_err(dev,
+			"fan_div value %ld not supported. Choose one of 1, 2, 4 or 8!\n",
+			val);
 		mutex_unlock(&data->update_lock);
 		return -EINVAL;
 	}
@@ -636,8 +637,9 @@ static int lm78_i2c_detect(struct i2c_client *client,
 		goto err_nodev;
 
 	if (lm78_alias_detect(client, i)) {
-		dev_dbg(&adapter->dev, "Device at 0x%02x appears to "
-			"be the same as ISA device\n", address);
+		dev_dbg(&adapter->dev,
+			"Device at 0x%02x appears to be the same as ISA device\n",
+			address);
 		goto err_nodev;
 	}
 
@@ -660,7 +662,7 @@ static int lm78_i2c_probe(struct i2c_client *client,
 	struct lm78_data *data;
 	int err;
 
-	data = kzalloc(sizeof(struct lm78_data), GFP_KERNEL);
+	data = devm_kzalloc(&client->dev, sizeof(struct lm78_data), GFP_KERNEL);
 	if (!data)
 		return -ENOMEM;
 
@@ -674,20 +676,18 @@ static int lm78_i2c_probe(struct i2c_client *client,
 	/* Register sysfs hooks */
 	err = sysfs_create_group(&client->dev.kobj, &lm78_group);
 	if (err)
-		goto ERROR3;
+		return err;
 
 	data->hwmon_dev = hwmon_device_register(&client->dev);
 	if (IS_ERR(data->hwmon_dev)) {
 		err = PTR_ERR(data->hwmon_dev);
-		goto ERROR4;
+		goto error;
 	}
 
 	return 0;
 
-ERROR4:
+error:
 	sysfs_remove_group(&client->dev.kobj, &lm78_group);
-ERROR3:
-	kfree(data);
 	return err;
 }
 
@@ -697,7 +697,6 @@ static int lm78_i2c_remove(struct i2c_client *client)
 
 	hwmon_device_unregister(data->hwmon_dev);
 	sysfs_remove_group(&client->dev.kobj, &lm78_group);
-	kfree(data);
 
 	return 0;
 }
@@ -836,7 +835,7 @@ static struct lm78_data *lm78_update_device(struct device *dev)
 }
 
 #ifdef CONFIG_ISA
-static int __devinit lm78_isa_probe(struct platform_device *pdev)
+static int lm78_isa_probe(struct platform_device *pdev)
 {
 	int err;
 	struct lm78_data *data;
@@ -844,16 +843,14 @@ static int __devinit lm78_isa_probe(struct platform_device *pdev)
 
 	/* Reserve the ISA region */
 	res = platform_get_resource(pdev, IORESOURCE_IO, 0);
-	if (!request_region(res->start + LM78_ADDR_REG_OFFSET, 2, "lm78")) {
-		err = -EBUSY;
-		goto exit;
-	}
+	if (!devm_request_region(&pdev->dev, res->start + LM78_ADDR_REG_OFFSET,
+				 2, "lm78"))
+		return -EBUSY;
 
-	data = kzalloc(sizeof(struct lm78_data), GFP_KERNEL);
-	if (!data) {
-		err = -ENOMEM;
-		goto exit_release_region;
-	}
+	data = devm_kzalloc(&pdev->dev, sizeof(struct lm78_data), GFP_KERNEL);
+	if (!data)
+		return -ENOMEM;
+
 	mutex_init(&data->lock);
 	data->isa_addr = res->start;
 	platform_set_drvdata(pdev, data);
@@ -888,25 +885,16 @@ static int __devinit lm78_isa_probe(struct platform_device *pdev)
  exit_remove_files:
 	sysfs_remove_group(&pdev->dev.kobj, &lm78_group);
 	device_remove_file(&pdev->dev, &dev_attr_name);
-	kfree(data);
- exit_release_region:
-	release_region(res->start + LM78_ADDR_REG_OFFSET, 2);
- exit:
 	return err;
 }
 
-static int __devexit lm78_isa_remove(struct platform_device *pdev)
+static int lm78_isa_remove(struct platform_device *pdev)
 {
 	struct lm78_data *data = platform_get_drvdata(pdev);
-	struct resource *res;
 
 	hwmon_device_unregister(data->hwmon_dev);
 	sysfs_remove_group(&pdev->dev.kobj, &lm78_group);
 	device_remove_file(&pdev->dev, &dev_attr_name);
-	kfree(data);
-
-	res = platform_get_resource(pdev, IORESOURCE_IO, 0);
-	release_region(res->start + LM78_ADDR_REG_OFFSET, 2);
 
 	return 0;
 }
@@ -917,7 +905,7 @@ static struct platform_driver lm78_isa_driver = {
 		.name	= "lm78",
 	},
 	.probe		= lm78_isa_probe,
-	.remove		= __devexit_p(lm78_isa_remove),
+	.remove		= lm78_isa_remove,
 };
 
 /* return 1 if a supported chip is found, 0 otherwise */

@@ -48,7 +48,13 @@ static ssize_t pcm_set_impulse_volume(struct device *dev,
 				      const char *buf, size_t count)
 {
 	struct snd_line6_pcm *line6pcm = dev2pcm(dev);
-	int value = simple_strtoul(buf, NULL, 10);
+	int value;
+	int ret;
+
+	ret = kstrtoint(buf, 10, &value);
+	if (ret < 0)
+		return ret;
+
 	line6pcm->impulse_volume = value;
 
 	if (value > 0)
@@ -75,7 +81,14 @@ static ssize_t pcm_set_impulse_period(struct device *dev,
 				      struct device_attribute *attr,
 				      const char *buf, size_t count)
 {
-	dev2pcm(dev)->impulse_period = simple_strtoul(buf, NULL, 10);
+	int value;
+	int ret;
+
+	ret = kstrtoint(buf, 10, &value);
+	if (ret < 0)
+		return ret;
+
+	dev2pcm(dev)->impulse_period = value;
 	return count;
 }
 
@@ -94,24 +107,25 @@ static bool test_flags(unsigned long flags0, unsigned long flags1,
 
 int line6_pcm_acquire(struct snd_line6_pcm *line6pcm, int channels)
 {
-	unsigned long flags_old =
-	    __sync_fetch_and_or(&line6pcm->flags, channels);
-	unsigned long flags_new = flags_old | channels;
-	unsigned long flags_final = flags_old;
-	int err = 0;
-	
+	unsigned long flags_old, flags_new, flags_final;
+	int err;
+
+	do {
+		flags_old = ACCESS_ONCE(line6pcm->flags);
+		flags_new = flags_old | channels;
+	} while (cmpxchg(&line6pcm->flags, flags_old, flags_new) != flags_old);
+
+	flags_final = flags_old;
+
 	line6pcm->prev_fbuf = NULL;
 
 	if (test_flags(flags_old, flags_new, LINE6_BITS_CAPTURE_BUFFER)) {
-		/* We may be invoked multiple times in a row so allocate once only */
+		/* Invoked multiple times in a row so allocate once only */
 		if (!line6pcm->buffer_in) {
 			line6pcm->buffer_in =
 				kmalloc(LINE6_ISO_BUFFERS * LINE6_ISO_PACKETS *
 					line6pcm->max_packet_size, GFP_KERNEL);
-
 			if (!line6pcm->buffer_in) {
-				dev_err(line6pcm->line6->ifcdev,
-					"cannot malloc capture buffer\n");
 				err = -ENOMEM;
 				goto pcm_acquire_error;
 			}
@@ -142,15 +156,12 @@ int line6_pcm_acquire(struct snd_line6_pcm *line6pcm, int channels)
 	}
 
 	if (test_flags(flags_old, flags_new, LINE6_BITS_PLAYBACK_BUFFER)) {
-		/* We may be invoked multiple times in a row so allocate once only */
+		/* Invoked multiple times in a row so allocate once only */
 		if (!line6pcm->buffer_out) {
 			line6pcm->buffer_out =
 				kmalloc(LINE6_ISO_BUFFERS * LINE6_ISO_PACKETS *
 					line6pcm->max_packet_size, GFP_KERNEL);
-
 			if (!line6pcm->buffer_out) {
-				dev_err(line6pcm->line6->ifcdev,
-					"cannot malloc playback buffer\n");
 				err = -ENOMEM;
 				goto pcm_acquire_error;
 			}
@@ -190,9 +201,12 @@ pcm_acquire_error:
 
 int line6_pcm_release(struct snd_line6_pcm *line6pcm, int channels)
 {
-	unsigned long flags_old =
-	    __sync_fetch_and_and(&line6pcm->flags, ~channels);
-	unsigned long flags_new = flags_old & ~channels;
+	unsigned long flags_old, flags_new;
+
+	do {
+		flags_old = ACCESS_ONCE(line6pcm->flags);
+		flags_new = flags_old & ~channels;
+	} while (cmpxchg(&line6pcm->flags, flags_old, flags_new) != flags_old);
 
 	if (test_flags(flags_new, flags_old, LINE6_BITS_CAPTURE_STREAM))
 		line6_unlink_audio_in_urbs(line6pcm);
@@ -378,8 +392,11 @@ static int snd_line6_pcm_free(struct snd_device *device)
 */
 static void pcm_disconnect_substream(struct snd_pcm_substream *substream)
 {
-	if (substream->runtime && snd_pcm_running(substream))
+	if (substream->runtime && snd_pcm_running(substream)) {
+		snd_pcm_stream_lock_irq(substream);
 		snd_pcm_stop(substream, SNDRV_PCM_STATE_DISCONNECTED);
+		snd_pcm_stream_unlock_irq(substream);
+	}
 }
 
 /*
@@ -449,13 +466,12 @@ int line6_init_pcm(struct usb_line6 *line6,
 		ep_write = 0x01;
 		break;
 
-		/* this is for interface_number == 1:
-		   case LINE6_DEVID_TONEPORT_UX2:
-		   case LINE6_DEVID_PODSTUDIO_UX2:
-		   ep_read  = 0x87;
-		   ep_write = 0x00;
-		   break;
-		 */
+	/* this is for interface_number == 1:
+	case LINE6_DEVID_TONEPORT_UX2:
+	case LINE6_DEVID_PODSTUDIO_UX2:
+		ep_read  = 0x87;
+		ep_write = 0x00;
+		break; */
 
 	default:
 		MISSING_CASE;

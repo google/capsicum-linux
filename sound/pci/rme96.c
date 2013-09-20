@@ -270,8 +270,7 @@ snd_rme96_playback_pointer(struct snd_pcm_substream *substream);
 static snd_pcm_uframes_t
 snd_rme96_capture_pointer(struct snd_pcm_substream *substream);
 
-static void __devinit 
-snd_rme96_proc_init(struct rme96 *rme96);
+static void snd_rme96_proc_init(struct rme96 *rme96);
 
 static int
 snd_rme96_create_switches(struct snd_card *card,
@@ -1538,7 +1537,7 @@ snd_rme96_free_adat_pcm(struct snd_pcm *pcm)
 	rme96->adat_pcm = NULL;
 }
 
-static int __devinit
+static int
 snd_rme96_create(struct rme96 *rme96)
 {
 	struct pci_dev *pci = rme96->pci;
@@ -1786,8 +1785,7 @@ snd_rme96_proc_read(struct snd_info_entry *entry, struct snd_info_buffer *buffer
 	}
 }
 
-static void __devinit 
-snd_rme96_proc_init(struct rme96 *rme96)
+static void snd_rme96_proc_init(struct rme96 *rme96)
 {
 	struct snd_info_entry *entry;
 
@@ -2326,7 +2324,7 @@ static void snd_rme96_card_free(struct snd_card *card)
 	snd_rme96_free(card->private_data);
 }
 
-static int __devinit
+static int
 snd_rme96_probe(struct pci_dev *pci,
 		const struct pci_device_id *pci_id)
 {
@@ -2389,28 +2387,16 @@ snd_rme96_probe(struct pci_dev *pci,
 	return 0;
 }
 
-static void __devexit snd_rme96_remove(struct pci_dev *pci)
+static void snd_rme96_remove(struct pci_dev *pci)
 {
 	snd_card_free(pci_get_drvdata(pci));
-	pci_set_drvdata(pci, NULL);
 }
 
-static struct pci_driver driver = {
+static struct pci_driver rme96_driver = {
 	.name = KBUILD_MODNAME,
 	.id_table = snd_rme96_ids,
 	.probe = snd_rme96_probe,
-	.remove = __devexit_p(snd_rme96_remove),
+	.remove = snd_rme96_remove,
 };
 
-static int __init alsa_card_rme96_init(void)
-{
-	return pci_register_driver(&driver);
-}
-
-static void __exit alsa_card_rme96_exit(void)
-{
-	pci_unregister_driver(&driver);
-}
-
-module_init(alsa_card_rme96_init)
-module_exit(alsa_card_rme96_exit)
+module_pci_driver(rme96_driver);

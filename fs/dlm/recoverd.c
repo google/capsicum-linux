@@ -41,6 +41,7 @@ static int enable_locking(struct dlm_ls *ls, uint64_t seq)
 		set_bit(LSFL_RUNNING, &ls->ls_flags);
 		/* unblocks processes waiting to enter the dlm */
 		up_write(&ls->ls_in_recovery);
+		clear_bit(LSFL_RECOVER_LOCK, &ls->ls_flags);
 		error = 0;
 	}
 	spin_unlock(&ls->ls_recover_lock);
@@ -54,18 +55,13 @@ static int ls_recover(struct dlm_ls *ls, struct dlm_recover *rv)
 	unsigned long start;
 	int error, neg = 0;
 
-	log_debug(ls, "dlm_recover %llx", (unsigned long long)rv->seq);
+	log_debug(ls, "dlm_recover %llu", (unsigned long long)rv->seq);
 
 	mutex_lock(&ls->ls_recoverd_active);
 
 	dlm_callback_suspend(ls);
 
-	/*
-	 * Free non-master tossed rsb's.  Master rsb's are kept on toss
-	 * list and put on root list to be included in resdir recovery.
-	 */
-
-	dlm_clear_toss_list(ls);
+	dlm_clear_toss(ls);
 
 	/*
 	 * This list of root rsb's will be the basis of most of the recovery
@@ -83,6 +79,12 @@ static int ls_recover(struct dlm_ls *ls, struct dlm_recover *rv)
 		log_debug(ls, "dlm_recover_members error %d", error);
 		goto fail;
 	}
+
+	dlm_recover_dir_nodeid(ls);
+
+	ls->ls_recover_dir_sent_res = 0;
+	ls->ls_recover_dir_sent_msg = 0;
+	ls->ls_recover_locks_in = 0;
 
 	dlm_set_recover_status(ls, DLM_RS_NODES);
 
@@ -113,6 +115,9 @@ static int ls_recover(struct dlm_ls *ls, struct dlm_recover *rv)
 		goto fail;
 	}
 
+	log_debug(ls, "dlm_recover_directory %u out %u messages",
+		  ls->ls_recover_dir_sent_res, ls->ls_recover_dir_sent_msg);
+
 	/*
 	 * We may have outstanding operations that are waiting for a reply from
 	 * a failed node.  Mark these to be resent after recovery.  Unlock and
@@ -130,7 +135,7 @@ static int ls_recover(struct dlm_ls *ls, struct dlm_recover *rv)
 		 * Clear lkb's for departed nodes.
 		 */
 
-		dlm_purge_locks(ls);
+		dlm_recover_purge(ls);
 
 		/*
 		 * Get new master nodeid's for rsb's that were mastered on
@@ -160,6 +165,9 @@ static int ls_recover(struct dlm_ls *ls, struct dlm_recover *rv)
 			log_debug(ls, "dlm_recover_locks_wait error %d", error);
 			goto fail;
 		}
+
+		log_debug(ls, "dlm_recover_locks %u in",
+			  ls->ls_recover_locks_in);
 
 		/*
 		 * Finalize state in master rsb's now that all locks can be
@@ -225,9 +233,9 @@ static int ls_recover(struct dlm_ls *ls, struct dlm_recover *rv)
 		goto fail;
 	}
 
-	dlm_grant_after_purge(ls);
+	dlm_recover_grant(ls);
 
-	log_debug(ls, "dlm_recover %llx generation %u done: %u ms",
+	log_debug(ls, "dlm_recover %llu generation %u done: %u ms",
 		  (unsigned long long)rv->seq, ls->ls_generation,
 		  jiffies_to_msecs(jiffies - start));
 	mutex_unlock(&ls->ls_recoverd_active);
@@ -237,7 +245,7 @@ static int ls_recover(struct dlm_ls *ls, struct dlm_recover *rv)
 
  fail:
 	dlm_release_root_list(ls);
-	log_debug(ls, "dlm_recover %llx error %d",
+	log_debug(ls, "dlm_recover %llu error %d",
 		  (unsigned long long)rv->seq, error);
 	mutex_unlock(&ls->ls_recoverd_active);
 	return error;
@@ -255,7 +263,7 @@ static void do_ls_recovery(struct dlm_ls *ls)
 	rv = ls->ls_recover_args;
 	ls->ls_recover_args = NULL;
 	if (rv && ls->ls_recover_seq == rv->seq)
-		clear_bit(LSFL_RECOVERY_STOP, &ls->ls_flags);
+		clear_bit(LSFL_RECOVER_STOP, &ls->ls_flags);
 	spin_unlock(&ls->ls_recover_lock);
 
 	if (rv) {
@@ -275,24 +283,32 @@ static int dlm_recoverd(void *arg)
 		return -1;
 	}
 
+	down_write(&ls->ls_in_recovery);
+	set_bit(LSFL_RECOVER_LOCK, &ls->ls_flags);
+	wake_up(&ls->ls_recover_lock_wait);
+
 	while (!kthread_should_stop()) {
 		set_current_state(TASK_INTERRUPTIBLE);
-		if (!test_bit(LSFL_WORK, &ls->ls_flags))
+		if (!test_bit(LSFL_RECOVER_WORK, &ls->ls_flags) &&
+		    !test_bit(LSFL_RECOVER_DOWN, &ls->ls_flags))
 			schedule();
 		set_current_state(TASK_RUNNING);
 
-		if (test_and_clear_bit(LSFL_WORK, &ls->ls_flags))
+		if (test_and_clear_bit(LSFL_RECOVER_DOWN, &ls->ls_flags)) {
+			down_write(&ls->ls_in_recovery);
+			set_bit(LSFL_RECOVER_LOCK, &ls->ls_flags);
+			wake_up(&ls->ls_recover_lock_wait);
+		}
+
+		if (test_and_clear_bit(LSFL_RECOVER_WORK, &ls->ls_flags))
 			do_ls_recovery(ls);
 	}
 
+	if (test_bit(LSFL_RECOVER_LOCK, &ls->ls_flags))
+		up_write(&ls->ls_in_recovery);
+
 	dlm_put_lockspace(ls);
 	return 0;
-}
-
-void dlm_recoverd_kick(struct dlm_ls *ls)
-{
-	set_bit(LSFL_WORK, &ls->ls_flags);
-	wake_up_process(ls->ls_recoverd_task);
 }
 
 int dlm_recoverd_start(struct dlm_ls *ls)

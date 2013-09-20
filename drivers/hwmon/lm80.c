@@ -72,15 +72,15 @@ static const unsigned short normal_i2c[] = { 0x28, 0x29, 0x2a, 0x2b, 0x2c, 0x2d,
  * Fixing this is just not worth it.
  */
 
-#define IN_TO_REG(val)		(SENSORS_LIMIT(((val) + 5) / 10, 0, 255))
+#define IN_TO_REG(val)		(clamp_val(((val) + 5) / 10, 0, 255))
 #define IN_FROM_REG(val)	((val) * 10)
 
 static inline unsigned char FAN_TO_REG(unsigned rpm, unsigned div)
 {
 	if (rpm == 0)
 		return 255;
-	rpm = SENSORS_LIMIT(rpm, 1, 1000000);
-	return SENSORS_LIMIT((1350000 + rpm * div / 2) / (rpm * div), 1, 254);
+	rpm = clamp_val(rpm, 1, 1000000);
+	return clamp_val((1350000 + rpm * div / 2) / (rpm * div), 1, 254);
 }
 
 #define FAN_FROM_REG(val, div)	((val) == 0 ? -1 : \
@@ -102,7 +102,7 @@ static inline long TEMP_FROM_REG(u16 temp)
 #define TEMP_LIMIT_FROM_REG(val)	(((val) > 0x80 ? \
 	(val) - 0x100 : (val)) * 1000)
 
-#define TEMP_LIMIT_TO_REG(val)		SENSORS_LIMIT((val) < 0 ? \
+#define TEMP_LIMIT_TO_REG(val)		clamp_val((val) < 0 ? \
 	((val) - 500) / 1000 : ((val) + 500) / 1000, 0, 255)
 
 #define DIV_FROM_REG(val)		(1 << (val))
@@ -286,8 +286,9 @@ static ssize_t set_fan_div(struct device *dev, struct device_attribute *attr,
 		data->fan_div[nr] = 3;
 		break;
 	default:
-		dev_err(&client->dev, "fan_div value %ld not "
-			"supported. Choose one of 1, 2, 4 or 8!\n", val);
+		dev_err(&client->dev,
+			"fan_div value %ld not supported. Choose one of 1, 2, 4 or 8!\n",
+			val);
 		mutex_unlock(&data->update_lock);
 		return -EINVAL;
 	}
@@ -543,11 +544,9 @@ static int lm80_probe(struct i2c_client *client,
 	struct lm80_data *data;
 	int err;
 
-	data = kzalloc(sizeof(struct lm80_data), GFP_KERNEL);
-	if (!data) {
-		err = -ENOMEM;
-		goto exit;
-	}
+	data = devm_kzalloc(&client->dev, sizeof(struct lm80_data), GFP_KERNEL);
+	if (!data)
+		return -ENOMEM;
 
 	i2c_set_clientdata(client, data);
 	mutex_init(&data->update_lock);
@@ -562,7 +561,7 @@ static int lm80_probe(struct i2c_client *client,
 	/* Register sysfs hooks */
 	err = sysfs_create_group(&client->dev.kobj, &lm80_group);
 	if (err)
-		goto error_free;
+		return err;
 
 	data->hwmon_dev = hwmon_device_register(&client->dev);
 	if (IS_ERR(data->hwmon_dev)) {
@@ -574,9 +573,6 @@ static int lm80_probe(struct i2c_client *client,
 
 error_remove:
 	sysfs_remove_group(&client->dev.kobj, &lm80_group);
-error_free:
-	kfree(data);
-exit:
 	return err;
 }
 
@@ -587,7 +583,6 @@ static int lm80_remove(struct i2c_client *client)
 	hwmon_device_unregister(data->hwmon_dev);
 	sysfs_remove_group(&client->dev.kobj, &lm80_group);
 
-	kfree(data);
 	return 0;
 }
 

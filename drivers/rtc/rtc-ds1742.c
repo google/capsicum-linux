@@ -159,7 +159,7 @@ static ssize_t ds1742_nvram_write(struct file *filp, struct kobject *kobj,
 	return count;
 }
 
-static int __devinit ds1742_rtc_probe(struct platform_device *pdev)
+static int ds1742_rtc_probe(struct platform_device *pdev)
 {
 	struct rtc_device *rtc;
 	struct resource *res;
@@ -208,32 +208,28 @@ static int __devinit ds1742_rtc_probe(struct platform_device *pdev)
 
 	pdata->last_jiffies = jiffies;
 	platform_set_drvdata(pdev, pdata);
-	rtc = rtc_device_register(pdev->name, &pdev->dev,
+	rtc = devm_rtc_device_register(&pdev->dev, pdev->name,
 				  &ds1742_rtc_ops, THIS_MODULE);
 	if (IS_ERR(rtc))
 		return PTR_ERR(rtc);
 	pdata->rtc = rtc;
 
 	ret = sysfs_create_bin_file(&pdev->dev.kobj, &pdata->nvram_attr);
-	if (ret) {
-		dev_err(&pdev->dev, "creating nvram file in sysfs failed\n");
-		rtc_device_unregister(rtc);
-	}
+
 	return ret;
 }
 
-static int __devexit ds1742_rtc_remove(struct platform_device *pdev)
+static int ds1742_rtc_remove(struct platform_device *pdev)
 {
 	struct rtc_plat_data *pdata = platform_get_drvdata(pdev);
 
 	sysfs_remove_bin_file(&pdev->dev.kobj, &pdata->nvram_attr);
-	rtc_device_unregister(pdata->rtc);
 	return 0;
 }
 
 static struct platform_driver ds1742_rtc_driver = {
 	.probe		= ds1742_rtc_probe,
-	.remove		= __devexit_p(ds1742_rtc_remove),
+	.remove		= ds1742_rtc_remove,
 	.driver		= {
 		.name	= "rtc-ds1742",
 		.owner	= THIS_MODULE,

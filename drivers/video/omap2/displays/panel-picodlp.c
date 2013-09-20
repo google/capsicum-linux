@@ -31,7 +31,7 @@
 #include <linux/gpio.h>
 
 #include <video/omapdss.h>
-#include <video/omap-panel-picodlp.h>
+#include <video/omap-panel-data.h>
 
 #include "panel-picodlp.h"
 
@@ -50,6 +50,7 @@ struct picodlp_i2c_data {
 
 static struct i2c_device_id picodlp_i2c_id[] = {
 	{ "picodlp_i2c_driver", 0 },
+	{ }
 };
 
 struct picodlp_i2c_command {
@@ -69,6 +70,12 @@ static struct omap_video_timings pico_ls_timings = {
 	.vsw		= 2,
 	.vfp		= 3,
 	.vbp		= 14,
+
+	.vsync_level	= OMAPDSS_SIG_ACTIVE_LOW,
+	.hsync_level	= OMAPDSS_SIG_ACTIVE_LOW,
+	.data_pclk_edge	= OMAPDSS_DRIVE_SIG_RISING_EDGE,
+	.de_level	= OMAPDSS_SIG_ACTIVE_HIGH,
+	.sync_pclk_edge	= OMAPDSS_DRIVE_SIG_FALLING_EDGE,
 };
 
 static inline struct picodlp_panel_data
@@ -344,14 +351,8 @@ static struct i2c_driver picodlp_i2c_driver = {
 static int picodlp_panel_power_on(struct omap_dss_device *dssdev)
 {
 	int r, trial = 100;
-	struct picodlp_data *picod = dev_get_drvdata(&dssdev->dev);
+	struct picodlp_data *picod = dev_get_drvdata(dssdev->dev);
 	struct picodlp_panel_data *picodlp_pdata = get_panel_data(dssdev);
-
-	if (dssdev->platform_enable) {
-		r = dssdev->platform_enable(dssdev);
-		if (r)
-			return r;
-	}
 
 	gpio_set_value(picodlp_pdata->pwrgood_gpio, 0);
 	msleep(1);
@@ -359,7 +360,7 @@ static int picodlp_panel_power_on(struct omap_dss_device *dssdev)
 
 	while (!gpio_get_value(picodlp_pdata->emu_done_gpio)) {
 		if (!trial--) {
-			dev_err(&dssdev->dev, "emu_done signal not"
+			dev_err(dssdev->dev, "emu_done signal not"
 						" going high\n");
 			return -ETIMEDOUT;
 		}
@@ -371,9 +372,13 @@ static int picodlp_panel_power_on(struct omap_dss_device *dssdev)
 	 * then only i2c commands can be successfully sent to dpp2600
 	 */
 	msleep(1000);
+
+	omapdss_dpi_set_timings(dssdev, &dssdev->panel.timings);
+	omapdss_dpi_set_data_lines(dssdev, dssdev->phy.dpi.data_lines);
+
 	r = omapdss_dpi_display_enable(dssdev);
 	if (r) {
-		dev_err(&dssdev->dev, "failed to enable DPI\n");
+		dev_err(dssdev->dev, "failed to enable DPI\n");
 		goto err1;
 	}
 
@@ -387,9 +392,6 @@ static int picodlp_panel_power_on(struct omap_dss_device *dssdev)
 err:
 	omapdss_dpi_display_disable(dssdev);
 err1:
-	if (dssdev->platform_disable)
-		dssdev->platform_disable(dssdev);
-
 	return r;
 }
 
@@ -401,9 +403,6 @@ static void picodlp_panel_power_off(struct omap_dss_device *dssdev)
 
 	gpio_set_value(picodlp_pdata->emu_done_gpio, 0);
 	gpio_set_value(picodlp_pdata->pwrgood_gpio, 0);
-
-	if (dssdev->platform_disable)
-		dssdev->platform_disable(dssdev);
 }
 
 static int picodlp_panel_probe(struct omap_dss_device *dssdev)
@@ -412,14 +411,14 @@ static int picodlp_panel_probe(struct omap_dss_device *dssdev)
 	struct picodlp_panel_data *picodlp_pdata = get_panel_data(dssdev);
 	struct i2c_adapter *adapter;
 	struct i2c_client *picodlp_i2c_client;
-	int r = 0, picodlp_adapter_id;
+	int r, picodlp_adapter_id;
 
-	dssdev->panel.config = OMAP_DSS_LCD_TFT | OMAP_DSS_LCD_ONOFF |
-				OMAP_DSS_LCD_IHS | OMAP_DSS_LCD_IVS;
-	dssdev->panel.acb = 0x0;
 	dssdev->panel.timings = pico_ls_timings;
 
-	picod =  kzalloc(sizeof(struct picodlp_data), GFP_KERNEL);
+	if (!picodlp_pdata)
+		return -EINVAL;
+
+	picod = devm_kzalloc(dssdev->dev, sizeof(*picod), GFP_KERNEL);
 	if (!picod)
 		return -ENOMEM;
 
@@ -429,45 +428,55 @@ static int picodlp_panel_probe(struct omap_dss_device *dssdev)
 
 	adapter = i2c_get_adapter(picodlp_adapter_id);
 	if (!adapter) {
-		dev_err(&dssdev->dev, "can't get i2c adapter\n");
-		r = -ENODEV;
-		goto err;
+		dev_err(dssdev->dev, "can't get i2c adapter\n");
+		return -ENODEV;
 	}
 
 	picodlp_i2c_client = i2c_new_device(adapter, &picodlp_i2c_board_info);
 	if (!picodlp_i2c_client) {
-		dev_err(&dssdev->dev, "can't add i2c device::"
+		dev_err(dssdev->dev, "can't add i2c device::"
 					 " picodlp_i2c_client is NULL\n");
-		r = -ENODEV;
-		goto err;
+		return -ENODEV;
 	}
 
 	picod->picodlp_i2c_client = picodlp_i2c_client;
 
-	dev_set_drvdata(&dssdev->dev, picod);
-	return r;
-err:
-	kfree(picod);
-	return r;
+	dev_set_drvdata(dssdev->dev, picod);
+
+	if (gpio_is_valid(picodlp_pdata->emu_done_gpio)) {
+		r = devm_gpio_request_one(dssdev->dev,
+				picodlp_pdata->emu_done_gpio,
+				GPIOF_IN, "DLP EMU DONE");
+		if (r)
+			return r;
+	}
+
+	if (gpio_is_valid(picodlp_pdata->pwrgood_gpio)) {
+		r = devm_gpio_request_one(dssdev->dev,
+				picodlp_pdata->pwrgood_gpio,
+				GPIOF_OUT_INIT_LOW, "DLP PWRGOOD");
+		if (r)
+			return r;
+	}
+
+	return 0;
 }
 
 static void picodlp_panel_remove(struct omap_dss_device *dssdev)
 {
-	struct picodlp_data *picod = dev_get_drvdata(&dssdev->dev);
+	struct picodlp_data *picod = dev_get_drvdata(dssdev->dev);
 
 	i2c_unregister_device(picod->picodlp_i2c_client);
-	dev_set_drvdata(&dssdev->dev, NULL);
-	dev_dbg(&dssdev->dev, "removing picodlp panel\n");
-
-	kfree(picod);
+	dev_set_drvdata(dssdev->dev, NULL);
+	dev_dbg(dssdev->dev, "removing picodlp panel\n");
 }
 
 static int picodlp_panel_enable(struct omap_dss_device *dssdev)
 {
-	struct picodlp_data *picod = dev_get_drvdata(&dssdev->dev);
+	struct picodlp_data *picod = dev_get_drvdata(dssdev->dev);
 	int r;
 
-	dev_dbg(&dssdev->dev, "enabling picodlp panel\n");
+	dev_dbg(dssdev->dev, "enabling picodlp panel\n");
 
 	mutex_lock(&picod->lock);
 	if (dssdev->state != OMAP_DSS_DISPLAY_DISABLED) {
@@ -483,7 +492,7 @@ static int picodlp_panel_enable(struct omap_dss_device *dssdev)
 
 static void picodlp_panel_disable(struct omap_dss_device *dssdev)
 {
-	struct picodlp_data *picod = dev_get_drvdata(&dssdev->dev);
+	struct picodlp_data *picod = dev_get_drvdata(dssdev->dev);
 
 	mutex_lock(&picod->lock);
 	/* Turn off DLP Power */
@@ -493,48 +502,7 @@ static void picodlp_panel_disable(struct omap_dss_device *dssdev)
 	dssdev->state = OMAP_DSS_DISPLAY_DISABLED;
 	mutex_unlock(&picod->lock);
 
-	dev_dbg(&dssdev->dev, "disabling picodlp panel\n");
-}
-
-static int picodlp_panel_suspend(struct omap_dss_device *dssdev)
-{
-	struct picodlp_data *picod = dev_get_drvdata(&dssdev->dev);
-
-	mutex_lock(&picod->lock);
-	/* Turn off DLP Power */
-	if (dssdev->state != OMAP_DSS_DISPLAY_ACTIVE) {
-		mutex_unlock(&picod->lock);
-		dev_err(&dssdev->dev, "unable to suspend picodlp panel,"
-					" panel is not ACTIVE\n");
-		return -EINVAL;
-	}
-
-	picodlp_panel_power_off(dssdev);
-
-	dssdev->state = OMAP_DSS_DISPLAY_SUSPENDED;
-	mutex_unlock(&picod->lock);
-
-	dev_dbg(&dssdev->dev, "suspending picodlp panel\n");
-	return 0;
-}
-
-static int picodlp_panel_resume(struct omap_dss_device *dssdev)
-{
-	struct picodlp_data *picod = dev_get_drvdata(&dssdev->dev);
-	int r;
-
-	mutex_lock(&picod->lock);
-	if (dssdev->state != OMAP_DSS_DISPLAY_SUSPENDED) {
-		mutex_unlock(&picod->lock);
-		dev_err(&dssdev->dev, "unable to resume picodlp panel,"
-			" panel is not ACTIVE\n");
-		return -EINVAL;
-	}
-
-	r = picodlp_panel_power_on(dssdev);
-	mutex_unlock(&picod->lock);
-	dev_dbg(&dssdev->dev, "resuming picodlp panel\n");
-	return r;
+	dev_dbg(dssdev->dev, "disabling picodlp panel\n");
 }
 
 static void picodlp_get_resolution(struct omap_dss_device *dssdev,
@@ -552,9 +520,6 @@ static struct omap_dss_driver picodlp_driver = {
 	.disable	= picodlp_panel_disable,
 
 	.get_resolution	= picodlp_get_resolution,
-
-	.suspend	= picodlp_panel_suspend,
-	.resume		= picodlp_panel_resume,
 
 	.driver		= {
 		.name	= "picodlp_panel",

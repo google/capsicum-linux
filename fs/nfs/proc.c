@@ -47,39 +47,6 @@
 #define NFSDBG_FACILITY		NFSDBG_PROC
 
 /*
- * wrapper to handle the -EKEYEXPIRED error message. This should generally
- * only happen if using krb5 auth and a user's TGT expires. NFSv2 doesn't
- * support the NFSERR_JUKEBOX error code, but we handle this situation in the
- * same way that we handle that error with NFSv3.
- */
-static int
-nfs_rpc_wrapper(struct rpc_clnt *clnt, struct rpc_message *msg, int flags)
-{
-	int res;
-	do {
-		res = rpc_call_sync(clnt, msg, flags);
-		if (res != -EKEYEXPIRED)
-			break;
-		freezable_schedule_timeout_killable(NFS_JUKEBOX_RETRY_TIME);
-		res = -ERESTARTSYS;
-	} while (!fatal_signal_pending(current));
-	return res;
-}
-
-#define rpc_call_sync(clnt, msg, flags)	nfs_rpc_wrapper(clnt, msg, flags)
-
-static int
-nfs_async_handle_expired_key(struct rpc_task *task)
-{
-	if (task->tk_status != -EKEYEXPIRED)
-		return 0;
-	task->tk_status = 0;
-	rpc_restart_call(task);
-	rpc_delay(task, NFS_JUKEBOX_RETRY_TIME);
-	return 1;
-}
-
-/*
  * Bare-bones access to getattr: this is for nfs_read_super.
  */
 static int
@@ -131,7 +98,7 @@ nfs_proc_get_root(struct nfs_server *server, struct nfs_fh *fhandle,
  */
 static int
 nfs_proc_getattr(struct nfs_server *server, struct nfs_fh *fhandle,
-		struct nfs_fattr *fattr)
+		struct nfs_fattr *fattr, struct nfs4_label *label)
 {
 	struct rpc_message msg = {
 		.rpc_proc	= &nfs_procedures[NFSPROC_GETATTR],
@@ -178,8 +145,9 @@ nfs_proc_setattr(struct dentry *dentry, struct nfs_fattr *fattr,
 }
 
 static int
-nfs_proc_lookup(struct rpc_clnt *clnt, struct inode *dir, struct qstr *name,
-		struct nfs_fh *fhandle, struct nfs_fattr *fattr)
+nfs_proc_lookup(struct inode *dir, struct qstr *name,
+		struct nfs_fh *fhandle, struct nfs_fattr *fattr,
+		struct nfs4_label *label)
 {
 	struct nfs_diropargs	arg = {
 		.fh		= NFS_FH(dir),
@@ -259,7 +227,7 @@ static void nfs_free_createdata(const struct nfs_createdata *data)
 
 static int
 nfs_proc_create(struct inode *dir, struct dentry *dentry, struct iattr *sattr,
-		int flags, struct nfs_open_context *ctx)
+		int flags)
 {
 	struct nfs_createdata *data;
 	struct rpc_message msg = {
@@ -276,7 +244,7 @@ nfs_proc_create(struct inode *dir, struct dentry *dentry, struct iattr *sattr,
 	status = rpc_call_sync(NFS_CLIENT(dir), &msg, 0);
 	nfs_mark_for_revalidate(dir);
 	if (status == 0)
-		status = nfs_instantiate(dentry, data->res.fh, data->res.fattr);
+		status = nfs_instantiate(dentry, data->res.fh, data->res.fattr, NULL);
 	nfs_free_createdata(data);
 out:
 	dprintk("NFS reply create: %d\n", status);
@@ -323,7 +291,7 @@ nfs_proc_mknod(struct inode *dir, struct dentry *dentry, struct iattr *sattr,
 		status = rpc_call_sync(NFS_CLIENT(dir), &msg, 0);
 	}
 	if (status == 0)
-		status = nfs_instantiate(dentry, data->res.fh, data->res.fattr);
+		status = nfs_instantiate(dentry, data->res.fh, data->res.fattr, NULL);
 	nfs_free_createdata(data);
 out:
 	dprintk("NFS reply mknod: %d\n", status);
@@ -335,8 +303,7 @@ nfs_proc_remove(struct inode *dir, struct qstr *name)
 {
 	struct nfs_removeargs arg = {
 		.fh = NFS_FH(dir),
-		.name.len = name->len,
-		.name.name = name->name,
+		.name = *name,
 	};
 	struct rpc_message msg = { 
 		.rpc_proc = &nfs_procedures[NFSPROC_REMOVE],
@@ -365,8 +332,6 @@ static void nfs_proc_unlink_rpc_prepare(struct rpc_task *task, struct nfs_unlink
 
 static int nfs_proc_unlink_done(struct rpc_task *task, struct inode *dir)
 {
-	if (nfs_async_handle_expired_key(task))
-		return 0;
 	nfs_mark_for_revalidate(dir);
 	return 1;
 }
@@ -386,8 +351,6 @@ static int
 nfs_proc_rename_done(struct rpc_task *task, struct inode *old_dir,
 		     struct inode *new_dir)
 {
-	if (nfs_async_handle_expired_key(task))
-		return 0;
 	nfs_mark_for_revalidate(old_dir);
 	nfs_mark_for_revalidate(new_dir);
 	return 1;
@@ -480,7 +443,7 @@ nfs_proc_symlink(struct inode *dir, struct dentry *dentry, struct page *page,
 	 * should fill in the data with a LOOKUP call on the wire.
 	 */
 	if (status == 0)
-		status = nfs_instantiate(dentry, fh, fattr);
+		status = nfs_instantiate(dentry, fh, fattr, NULL);
 
 out_free:
 	nfs_free_fattr(fattr);
@@ -509,7 +472,7 @@ nfs_proc_mkdir(struct inode *dir, struct dentry *dentry, struct iattr *sattr)
 	status = rpc_call_sync(NFS_CLIENT(dir), &msg, 0);
 	nfs_mark_for_revalidate(dir);
 	if (status == 0)
-		status = nfs_instantiate(dentry, data->res.fh, data->res.fattr);
+		status = nfs_instantiate(dentry, data->res.fh, data->res.fattr, NULL);
 	nfs_free_createdata(data);
 out:
 	dprintk("NFS reply mkdir: %d\n", status);
@@ -641,16 +604,15 @@ nfs_proc_pathconf(struct nfs_server *server, struct nfs_fh *fhandle,
 
 static int nfs_read_done(struct rpc_task *task, struct nfs_read_data *data)
 {
-	if (nfs_async_handle_expired_key(task))
-		return -EAGAIN;
+	struct inode *inode = data->header->inode;
 
-	nfs_invalidate_atime(data->inode);
+	nfs_invalidate_atime(inode);
 	if (task->tk_status >= 0) {
-		nfs_refresh_inode(data->inode, data->res.fattr);
+		nfs_refresh_inode(inode, data->res.fattr);
 		/* Emulate the eof flag, which isn't normally needed in NFSv2
 		 * as it is guaranteed to always return the file attributes
 		 */
-		if (data->args.offset + data->args.count >= data->res.fattr->size)
+		if (data->args.offset + data->res.count >= data->res.fattr->size)
 			data->res.eof = 1;
 	}
 	return 0;
@@ -668,11 +630,10 @@ static void nfs_proc_read_rpc_prepare(struct rpc_task *task, struct nfs_read_dat
 
 static int nfs_write_done(struct rpc_task *task, struct nfs_write_data *data)
 {
-	if (nfs_async_handle_expired_key(task))
-		return -EAGAIN;
+	struct inode *inode = data->header->inode;
 
 	if (task->tk_status >= 0)
-		nfs_post_op_update_inode_force_wcc(data->inode, data->res.fattr);
+		nfs_post_op_update_inode_force_wcc(inode, data->res.fattr);
 	return 0;
 }
 
@@ -688,8 +649,13 @@ static void nfs_proc_write_rpc_prepare(struct rpc_task *task, struct nfs_write_d
 	rpc_call_start(task);
 }
 
+static void nfs_proc_commit_rpc_prepare(struct rpc_task *task, struct nfs_commit_data *data)
+{
+	BUG();
+}
+
 static void
-nfs_proc_commit_setup(struct nfs_write_data *data, struct rpc_message *msg)
+nfs_proc_commit_setup(struct nfs_commit_data *data, struct rpc_message *msg)
 {
 	BUG();
 }
@@ -697,7 +663,7 @@ nfs_proc_commit_setup(struct nfs_write_data *data, struct rpc_message *msg)
 static int
 nfs_proc_lock(struct file *filp, int cmd, struct file_lock *fl)
 {
-	struct inode *inode = filp->f_path.dentry->d_inode;
+	struct inode *inode = file_inode(filp);
 
 	return nlmclnt_proc(NFS_SERVER(inode)->nlm_host, cmd, fl);
 }
@@ -726,6 +692,38 @@ out_einval:
 	return -EINVAL;
 }
 
+static int nfs_have_delegation(struct inode *inode, fmode_t flags)
+{
+	return 0;
+}
+
+static int nfs_return_delegation(struct inode *inode)
+{
+	nfs_wb_all(inode);
+	return 0;
+}
+
+static const struct inode_operations nfs_dir_inode_operations = {
+	.create		= nfs_create,
+	.lookup		= nfs_lookup,
+	.link		= nfs_link,
+	.unlink		= nfs_unlink,
+	.symlink	= nfs_symlink,
+	.mkdir		= nfs_mkdir,
+	.rmdir		= nfs_rmdir,
+	.mknod		= nfs_mknod,
+	.rename		= nfs_rename,
+	.permission	= nfs_permission,
+	.getattr	= nfs_getattr,
+	.setattr	= nfs_setattr,
+};
+
+static const struct inode_operations nfs_file_inode_operations = {
+	.permission	= nfs_permission,
+	.getattr	= nfs_getattr,
+	.setattr	= nfs_setattr,
+};
+
 const struct nfs_rpc_ops nfs_v2_clientops = {
 	.version	= 2,		       /* protocol version */
 	.dentry_ops	= &nfs_dentry_operations,
@@ -733,6 +731,8 @@ const struct nfs_rpc_ops nfs_v2_clientops = {
 	.file_inode_ops	= &nfs_file_inode_operations,
 	.file_ops	= &nfs_file_operations,
 	.getroot	= nfs_proc_get_root,
+	.submount	= nfs_submount,
+	.try_mount	= nfs_try_mount,
 	.getattr	= nfs_proc_getattr,
 	.setattr	= nfs_proc_setattr,
 	.lookup		= nfs_proc_lookup,
@@ -758,14 +758,23 @@ const struct nfs_rpc_ops nfs_v2_clientops = {
 	.pathconf	= nfs_proc_pathconf,
 	.decode_dirent	= nfs2_decode_dirent,
 	.read_setup	= nfs_proc_read_setup,
+	.read_pageio_init = nfs_pageio_init_read,
 	.read_rpc_prepare = nfs_proc_read_rpc_prepare,
 	.read_done	= nfs_read_done,
 	.write_setup	= nfs_proc_write_setup,
+	.write_pageio_init = nfs_pageio_init_write,
 	.write_rpc_prepare = nfs_proc_write_rpc_prepare,
 	.write_done	= nfs_write_done,
 	.commit_setup	= nfs_proc_commit_setup,
+	.commit_rpc_prepare = nfs_proc_commit_rpc_prepare,
 	.lock		= nfs_proc_lock,
 	.lock_check_bounds = nfs_lock_check_bounds,
 	.close_context	= nfs_close_context,
+	.have_delegation = nfs_have_delegation,
+	.return_delegation = nfs_return_delegation,
+	.alloc_client	= nfs_alloc_client,
 	.init_client	= nfs_init_client,
+	.free_client	= nfs_free_client,
+	.create_server	= nfs_create_server,
+	.clone_server	= nfs_clone_server,
 };

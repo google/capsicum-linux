@@ -55,6 +55,7 @@ static struct iowa_bus *iowa_pci_find(unsigned long vaddr, unsigned long paddr)
 
 struct iowa_bus *iowa_mem_find_bus(const PCI_IO_ADDR addr)
 {
+	unsigned hugepage_shift;
 	struct iowa_bus *bus;
 	int token;
 
@@ -70,11 +71,17 @@ struct iowa_bus *iowa_mem_find_bus(const PCI_IO_ADDR addr)
 		if (vaddr < PHB_IO_BASE || vaddr >= PHB_IO_END)
 			return NULL;
 
-		ptep = find_linux_pte(init_mm.pgd, vaddr);
+		ptep = find_linux_pte_or_hugepte(init_mm.pgd, vaddr,
+						 &hugepage_shift);
 		if (ptep == NULL)
 			paddr = 0;
-		else
+		else {
+			/*
+			 * we don't have hugepages backing iomem
+			 */
+			WARN_ON(hugepage_shift);
 			paddr = pte_pfn(*ptep) << PAGE_SHIFT;
+		}
 		bus = iowa_pci_find(vaddr, paddr);
 
 		if (bus == NULL)
@@ -118,7 +125,7 @@ static void iowa_##name at					\
 #undef DEF_PCI_AC_RET
 #undef DEF_PCI_AC_NORET
 
-static const struct ppc_pci_io __devinitconst iowa_pci_io = {
+static const struct ppc_pci_io iowa_pci_io = {
 
 #define DEF_PCI_AC_RET(name, ret, at, al, space, aa)	.name = iowa_##name,
 #define DEF_PCI_AC_NORET(name, at, al, space, aa)	.name = iowa_##name,
@@ -146,7 +153,7 @@ static void __iomem *iowa_ioremap(phys_addr_t addr, unsigned long size,
 }
 
 /* Enable IO workaround */
-static void __devinit io_workaround_init(void)
+static void io_workaround_init(void)
 {
 	static int io_workaround_inited;
 
@@ -158,9 +165,8 @@ static void __devinit io_workaround_init(void)
 }
 
 /* Register new bus to support workaround */
-void __devinit iowa_register_bus(struct pci_controller *phb,
-			struct ppc_pci_io *ops,
-			int (*initfunc)(struct iowa_bus *, void *), void *data)
+void iowa_register_bus(struct pci_controller *phb, struct ppc_pci_io *ops,
+		       int (*initfunc)(struct iowa_bus *, void *), void *data)
 {
 	struct iowa_bus *bus;
 	struct device_node *np = phb->dn;

@@ -52,8 +52,8 @@ struct isofs_sb_info {
 
 	umode_t s_fmode;
 	umode_t s_dmode;
-	gid_t s_gid;
-	uid_t s_uid;
+	kgid_t s_gid;
+	kuid_t s_uid;
 	struct nls_table *s_nls_iocharset; /* Native language support table */
 };
 
@@ -114,7 +114,7 @@ extern int isofs_name_translate(struct iso_directory_record *, char *, struct in
 int get_joliet_filename(struct iso_directory_record *, unsigned char *, struct inode *);
 int get_acorn_filename(struct iso_directory_record *, char *, struct inode *);
 
-extern struct dentry *isofs_lookup(struct inode *, struct dentry *, struct nameidata *);
+extern struct dentry *isofs_lookup(struct inode *, struct dentry *, unsigned int flags);
 extern struct buffer_head *isofs_bread(struct inode *, sector_t);
 extern int isofs_get_blocks(struct inode *, sector_t, struct buffer_head **, unsigned long);
 

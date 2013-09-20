@@ -49,6 +49,7 @@
 
 #define PHY_HAS_INTERRUPT	0x00000001
 #define PHY_HAS_MAGICANEG	0x00000002
+#define PHY_IS_INTERNAL		0x00000004
 
 /* Interface Mode definitions */
 typedef enum {
@@ -57,6 +58,7 @@ typedef enum {
 	PHY_INTERFACE_MODE_GMII,
 	PHY_INTERFACE_MODE_SGMII,
 	PHY_INTERFACE_MODE_TBI,
+	PHY_INTERFACE_MODE_REVMII,
 	PHY_INTERFACE_MODE_RMII,
 	PHY_INTERFACE_MODE_RGMII,
 	PHY_INTERFACE_MODE_RGMII_ID,
@@ -243,6 +245,15 @@ enum phy_state {
 	PHY_RESUMING
 };
 
+/**
+ * struct phy_c45_device_ids - 802.3-c45 Device Identifiers
+ * @devices_in_package: Bit vector of devices present.
+ * @device_ids: The device identifer for each present device.
+ */
+struct phy_c45_device_ids {
+	u32 devices_in_package;
+	u32 device_ids[8];
+};
 
 /* phy_device: An instance of a PHY
  *
@@ -250,6 +261,9 @@ enum phy_state {
  * bus: Pointer to the bus this PHY is on
  * dev: driver model device structure for this PHY
  * phy_id: UID for this device found during discovery
+ * c45_ids: 802.3-c45 Device Identifers if is_c45.
+ * is_c45:  Set to true if this phy uses clause 45 addressing.
+ * is_internal: Set to true if this phy is internal to a MAC.
  * state: state of the PHY for management purposes
  * dev_flags: Device-specific flags used by the PHY driver.
  * addr: Bus address of PHY
@@ -284,6 +298,10 @@ struct phy_device {
 	struct device dev;
 
 	u32 phy_id;
+
+	struct phy_c45_device_ids c45_ids;
+	bool is_c45;
+	bool is_internal;
 
 	enum phy_state state;
 
@@ -412,6 +430,15 @@ struct phy_driver {
 	/* Clears up any memory if needed */
 	void (*remove)(struct phy_device *phydev);
 
+	/* Returns true if this is a suitable driver for the given
+	 * phydev.  If NULL, matching is based on phy_id and
+	 * phy_id_mask.
+	 */
+	int (*match_phy_device)(struct phy_device *phydev);
+
+	/* Handles ethtool queries for hardware time stamping. */
+	int (*ts_info)(struct phy_device *phydev, struct ethtool_ts_info *ti);
+
 	/* Handles SIOCSHWTSTAMP ioctl for hardware time stamping. */
 	int  (*hwtstamp)(struct phy_device *phydev, struct ifreq *ifr);
 
@@ -431,6 +458,14 @@ struct phy_driver {
 	 * is passed in 'type'.
 	 */
 	void (*txtstamp)(struct phy_device *dev, struct sk_buff *skb, int type);
+
+	/* Some devices (e.g. qnap TS-119P II) require PHY register changes to
+	 * enable Wake on LAN, so set_wol is provided to be called in the
+	 * ethernet driver's set_wol function. */
+	int (*set_wol)(struct phy_device *dev, struct ethtool_wolinfo *wol);
+
+	/* See set_wol, but for checking whether Wake on LAN is enabled. */
+	void (*get_wol)(struct phy_device *dev, struct ethtool_wolinfo *wol);
 
 	struct device_driver driver;
 };
@@ -477,18 +512,40 @@ static inline int phy_write(struct phy_device *phydev, u32 regnum, u16 val)
 	return mdiobus_write(phydev->bus, phydev->addr, regnum, val);
 }
 
-int get_phy_id(struct mii_bus *bus, int addr, u32 *phy_id);
-struct phy_device* get_phy_device(struct mii_bus *bus, int addr);
+/**
+ * phy_interrupt_is_valid - Convenience function for testing a given PHY irq
+ * @phydev: the phy_device struct
+ *
+ * NOTE: must be kept in sync with addition/removal of PHY_POLL and
+ * PHY_IGNORE_INTERRUPT
+ */
+static inline bool phy_interrupt_is_valid(struct phy_device *phydev)
+{
+	return phydev->irq != PHY_POLL && phydev->irq != PHY_IGNORE_INTERRUPT;
+}
+
+/**
+ * phy_is_internal - Convenience function for testing if a PHY is internal
+ * @phydev: the phy_device struct
+ */
+static inline bool phy_is_internal(struct phy_device *phydev)
+{
+	return phydev->is_internal;
+}
+
+struct phy_device *phy_device_create(struct mii_bus *bus, int addr, int phy_id,
+		bool is_c45, struct phy_c45_device_ids *c45_ids);
+struct phy_device *get_phy_device(struct mii_bus *bus, int addr, bool is_c45);
 int phy_device_register(struct phy_device *phy);
 int phy_init_hw(struct phy_device *phydev);
 struct phy_device * phy_attach(struct net_device *dev,
-		const char *bus_id, u32 flags, phy_interface_t interface);
+		const char *bus_id, phy_interface_t interface);
 struct phy_device *phy_find_first(struct mii_bus *bus);
 int phy_connect_direct(struct net_device *dev, struct phy_device *phydev,
-		void (*handler)(struct net_device *), u32 flags,
+		void (*handler)(struct net_device *),
 		phy_interface_t interface);
 struct phy_device * phy_connect(struct net_device *dev, const char *bus_id,
-		void (*handler)(struct net_device *), u32 flags,
+		void (*handler)(struct net_device *),
 		phy_interface_t interface);
 void phy_disconnect(struct phy_device *phydev);
 void phy_detach(struct phy_device *phydev);
@@ -509,8 +566,12 @@ int genphy_read_status(struct phy_device *phydev);
 int genphy_suspend(struct phy_device *phydev);
 int genphy_resume(struct phy_device *phydev);
 void phy_driver_unregister(struct phy_driver *drv);
+void phy_drivers_unregister(struct phy_driver *drv, int n);
 int phy_driver_register(struct phy_driver *new_driver);
+int phy_drivers_register(struct phy_driver *new_driver, int n);
 void phy_state_machine(struct work_struct *work);
+void phy_change(struct work_struct *work);
+void phy_mac_interrupt(struct phy_device *phydev, int new_link);
 void phy_start_machine(struct phy_device *phydev,
 		void (*handler)(struct net_device *));
 void phy_stop_machine(struct phy_device *phydev);
@@ -529,6 +590,13 @@ int phy_register_fixup_for_id(const char *bus_id,
 int phy_register_fixup_for_uid(u32 phy_uid, u32 phy_uid_mask,
 		int (*run)(struct phy_device *));
 int phy_scan_fixups(struct phy_device *phydev);
+
+int phy_init_eee(struct phy_device *phydev, bool clk_stop_enable);
+int phy_get_eee_err(struct phy_device *phydev);
+int phy_ethtool_set_eee(struct phy_device *phydev, struct ethtool_eee *data);
+int phy_ethtool_get_eee(struct phy_device *phydev, struct ethtool_eee *data);
+int phy_ethtool_set_wol(struct phy_device *phydev, struct ethtool_wolinfo *wol);
+void phy_ethtool_get_wol(struct phy_device *phydev, struct ethtool_wolinfo *wol);
 
 int __init mdio_bus_init(void);
 void mdio_bus_exit(void);

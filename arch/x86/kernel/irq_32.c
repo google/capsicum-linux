@@ -119,7 +119,7 @@ execute_on_irq_stack(int overflow, struct irq_desc *desc, int irq)
 /*
  * allocate per-cpu stacks for hardirq and for softirq processing
  */
-void __cpuinit irq_ctx_init(int cpu)
+void irq_ctx_init(int cpu)
 {
 	union irq_ctx *irqctx;
 
@@ -127,8 +127,8 @@ void __cpuinit irq_ctx_init(int cpu)
 		return;
 
 	irqctx = page_address(alloc_pages_node(cpu_to_node(cpu),
-					       THREAD_FLAGS,
-					       THREAD_ORDER));
+					       THREADINFO_GFP,
+					       THREAD_SIZE_ORDER));
 	memset(&irqctx->tinfo, 0, sizeof(struct thread_info));
 	irqctx->tinfo.cpu		= cpu;
 	irqctx->tinfo.preempt_count	= HARDIRQ_OFFSET;
@@ -137,8 +137,8 @@ void __cpuinit irq_ctx_init(int cpu)
 	per_cpu(hardirq_ctx, cpu) = irqctx;
 
 	irqctx = page_address(alloc_pages_node(cpu_to_node(cpu),
-					       THREAD_FLAGS,
-					       THREAD_ORDER));
+					       THREADINFO_GFP,
+					       THREAD_SIZE_ORDER));
 	memset(&irqctx->tinfo, 0, sizeof(struct thread_info));
 	irqctx->tinfo.cpu		= cpu;
 	irqctx->tinfo.addr_limit	= MAKE_MM_SEG(0);

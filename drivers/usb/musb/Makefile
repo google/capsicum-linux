@@ -6,13 +6,14 @@ obj-$(CONFIG_USB_MUSB_HDRC) += musb_hdrc.o
 
 musb_hdrc-y := musb_core.o
 
-musb_hdrc-y					+= musb_gadget_ep0.o musb_gadget.o
-musb_hdrc-y					+= musb_virthub.o musb_host.o
+musb_hdrc-$(CONFIG_USB_MUSB_HOST)$(CONFIG_USB_MUSB_DUAL_ROLE) += musb_virthub.o musb_host.o
+musb_hdrc-$(CONFIG_USB_MUSB_GADGET)$(CONFIG_USB_MUSB_DUAL_ROLE) += musb_gadget_ep0.o musb_gadget.o
 musb_hdrc-$(CONFIG_DEBUG_FS)			+= musb_debugfs.o
 
 # Hardware Glue Layer
 obj-$(CONFIG_USB_MUSB_OMAP2PLUS)		+= omap2430.o
 obj-$(CONFIG_USB_MUSB_AM35X)			+= am35x.o
+obj-$(CONFIG_USB_MUSB_DSPS)			+= musb_dsps.o
 obj-$(CONFIG_USB_MUSB_TUSB6010)			+= tusb6010.o
 obj-$(CONFIG_USB_MUSB_DAVINCI)			+= davinci.o
 obj-$(CONFIG_USB_MUSB_DA8XX)			+= da8xx.o

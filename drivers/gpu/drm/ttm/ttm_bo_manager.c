@@ -28,10 +28,10 @@
  * Authors: Thomas Hellstrom <thellstrom-at-vmware-dot-com>
  */
 
-#include "ttm/ttm_module.h"
-#include "ttm/ttm_bo_driver.h"
-#include "ttm/ttm_placement.h"
-#include "drm_mm.h"
+#include <drm/ttm/ttm_module.h>
+#include <drm/ttm/ttm_bo_driver.h>
+#include <drm/ttm/ttm_placement.h>
+#include <drm/drm_mm.h>
 #include <linux/slab.h>
 #include <linux/spinlock.h>
 #include <linux/module.h>
@@ -103,18 +103,12 @@ static int ttm_bo_man_init(struct ttm_mem_type_manager *man,
 			   unsigned long p_size)
 {
 	struct ttm_range_manager *rman;
-	int ret;
 
 	rman = kzalloc(sizeof(*rman), GFP_KERNEL);
 	if (!rman)
 		return -ENOMEM;
 
-	ret = drm_mm_init(&rman->mm, 0, p_size);
-	if (ret) {
-		kfree(rman);
-		return ret;
-	}
-
+	drm_mm_init(&rman->mm, 0, p_size);
 	spin_lock_init(&rman->lock);
 	man->priv = rman;
 	return 0;

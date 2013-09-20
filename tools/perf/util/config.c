@@ -120,7 +120,7 @@ static char *parse_value(void)
 
 static inline int iskeychar(int c)
 {
-	return isalnum(c) || c == '-';
+	return isalnum(c) || c == '-' || c == '_';
 }
 
 static int get_value(config_fn_t fn, void *data, char *name, unsigned int len)
@@ -342,13 +342,15 @@ const char *perf_config_dirname(const char *name, const char *value)
 	return value;
 }
 
-static int perf_default_core_config(const char *var __used, const char *value __used)
+static int perf_default_core_config(const char *var __maybe_unused,
+				    const char *value __maybe_unused)
 {
 	/* Add other config variables here. */
 	return 0;
 }
 
-int perf_default_config(const char *var, const char *value, void *dummy __used)
+int perf_default_config(const char *var, const char *value,
+			void *dummy __maybe_unused)
 {
 	if (!prefixcmp(var, "core."))
 		return perf_default_core_config(var, value);

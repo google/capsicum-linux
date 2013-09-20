@@ -57,9 +57,9 @@ static void sctp_ulpevent_release_frag_data(struct sctp_ulpevent *event);
 
 
 /* Initialize an ULP event from an given skb.  */
-SCTP_STATIC void sctp_ulpevent_init(struct sctp_ulpevent *event,
-				    int msg_flags,
-				    unsigned int len)
+static void sctp_ulpevent_init(struct sctp_ulpevent *event,
+			       int msg_flags,
+			       unsigned int len)
 {
 	memset(event, 0, sizeof(struct sctp_ulpevent));
 	event->msg_flags = msg_flags;
@@ -67,8 +67,8 @@ SCTP_STATIC void sctp_ulpevent_init(struct sctp_ulpevent *event,
 }
 
 /* Create a new sctp_ulpevent.  */
-SCTP_STATIC struct sctp_ulpevent *sctp_ulpevent_new(int size, int msg_flags,
-						    gfp_t gfp)
+static struct sctp_ulpevent *sctp_ulpevent_new(int size, int msg_flags,
+					       gfp_t gfp)
 {
 	struct sctp_ulpevent *event;
 	struct sk_buff *skb;
@@ -702,7 +702,8 @@ struct sctp_ulpevent *sctp_ulpevent_make_rcvmsg(struct sctp_association *asoc,
 	if (rx_count >= asoc->base.sk->sk_rcvbuf) {
 
 		if ((asoc->base.sk->sk_userlocks & SOCK_RCVBUF_LOCK) ||
-		    (!sk_rmem_schedule(asoc->base.sk, chunk->skb->truesize)))
+		    (!sk_rmem_schedule(asoc->base.sk, chunk->skb,
+				       chunk->skb->truesize)))
 			goto fail;
 	}
 
@@ -715,7 +716,8 @@ struct sctp_ulpevent *sctp_ulpevent_make_rcvmsg(struct sctp_association *asoc,
 	 * can mark it as received so the tsn_map is updated correctly.
 	 */
 	if (sctp_tsnmap_mark(&asoc->peer.tsn_map,
-			     ntohl(chunk->subh.data_hdr->tsn)))
+			     ntohl(chunk->subh.data_hdr->tsn),
+			     chunk->transport))
 		goto fail_mark;
 
 	/* First calculate the padding, so we don't inadvertently

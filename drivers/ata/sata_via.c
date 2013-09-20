@@ -1,7 +1,7 @@
 /*
  *  sata_via.c - VIA Serial ATA controllers
  *
- *  Maintained by:  Jeff Garzik <jgarzik@pobox.com>
+ *  Maintained by:  Tejun Heo <tj@kernel.org>
  * 		   Please ALWAYS copy linux-ide@vger.kernel.org
  *		   on emails.
  *
@@ -655,15 +655,4 @@ static int svia_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 				 IRQF_SHARED, &svia_sht);
 }
 
-static int __init svia_init(void)
-{
-	return pci_register_driver(&svia_pci_driver);
-}
-
-static void __exit svia_exit(void)
-{
-	pci_unregister_driver(&svia_pci_driver);
-}
-
-module_init(svia_init);
-module_exit(svia_exit);
+module_pci_driver(svia_pci_driver);

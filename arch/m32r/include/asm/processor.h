@@ -118,13 +118,6 @@ struct mm_struct;
 /* Free all resources held by a thread. */
 extern void release_thread(struct task_struct *);
 
-#define prepare_to_copy(tsk)	do { } while (0)
-
-/*
- * create a kernel thread without removing it from tasklists
- */
-extern int kernel_thread(int (*fn)(void *), void * arg, unsigned long flags);
-
 /* Copy and release all segment info associated with a VM */
 extern void copy_segments(struct task_struct *p, struct mm_struct * mm);
 extern void release_segments(struct mm_struct * mm);

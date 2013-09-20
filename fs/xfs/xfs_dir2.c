@@ -18,7 +18,6 @@
 #include "xfs.h"
 #include "xfs_fs.h"
 #include "xfs_types.h"
-#include "xfs_bit.h"
 #include "xfs_log.h"
 #include "xfs_inum.h"
 #include "xfs_trans.h"
@@ -369,10 +368,8 @@ xfs_dir_removename(
 int
 xfs_readdir(
 	xfs_inode_t	*dp,
-	void		*dirent,
-	size_t		bufsize,
-	xfs_off_t	*offset,
-	filldir_t	filldir)
+	struct dir_context *ctx,
+	size_t		bufsize)
 {
 	int		rval;		/* return value */
 	int		v;		/* type-checking value */
@@ -386,14 +383,13 @@ xfs_readdir(
 	XFS_STATS_INC(xs_dir_getdents);
 
 	if (dp->i_d.di_format == XFS_DINODE_FMT_LOCAL)
-		rval = xfs_dir2_sf_getdents(dp, dirent, offset, filldir);
+		rval = xfs_dir2_sf_getdents(dp, ctx);
 	else if ((rval = xfs_dir2_isblock(NULL, dp, &v)))
 		;
 	else if (v)
-		rval = xfs_dir2_block_getdents(dp, dirent, offset, filldir);
+		rval = xfs_dir2_block_getdents(dp, ctx);
 	else
-		rval = xfs_dir2_leaf_getdents(dp, dirent, bufsize, offset,
-					      filldir);
+		rval = xfs_dir2_leaf_getdents(dp, ctx, bufsize);
 	return rval;
 }
 
@@ -593,7 +589,7 @@ int
 xfs_dir2_shrink_inode(
 	xfs_da_args_t	*args,
 	xfs_dir2_db_t	db,
-	xfs_dabuf_t	*bp)
+	struct xfs_buf	*bp)
 {
 	xfs_fileoff_t	bno;		/* directory file offset */
 	xfs_dablk_t	da;		/* directory file offset */
@@ -635,7 +631,7 @@ xfs_dir2_shrink_inode(
 	/*
 	 * Invalidate the buffer from the transaction.
 	 */
-	xfs_da_binval(tp, bp);
+	xfs_trans_binval(tp, bp);
 	/*
 	 * If it's not a data block, we're done.
 	 */

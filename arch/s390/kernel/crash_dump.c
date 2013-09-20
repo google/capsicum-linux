@@ -13,12 +13,55 @@
 #include <linux/slab.h>
 #include <linux/bootmem.h>
 #include <linux/elf.h>
-#include <asm/ipl.h>
 #include <asm/os_info.h>
+#include <asm/elf.h>
+#include <asm/ipl.h>
 
 #define PTR_ADD(x, y) (((char *) (x)) + ((unsigned long) (y)))
 #define PTR_SUB(x, y) (((char *) (x)) - ((unsigned long) (y)))
 #define PTR_DIFF(x, y) ((unsigned long)(((char *) (x)) - ((unsigned long) (y))))
+
+
+/*
+ * Return physical address for virtual address
+ */
+static inline void *load_real_addr(void *addr)
+{
+	unsigned long real_addr;
+
+	asm volatile(
+		   "	lra     %0,0(%1)\n"
+		   "	jz	0f\n"
+		   "	la	%0,0\n"
+		   "0:"
+		   : "=a" (real_addr) : "a" (addr) : "cc");
+	return (void *)real_addr;
+}
+
+/*
+ * Copy up to one page to vmalloc or real memory
+ */
+static ssize_t copy_page_real(void *buf, void *src, size_t csize)
+{
+	size_t size;
+
+	if (is_vmalloc_addr(buf)) {
+		BUG_ON(csize >= PAGE_SIZE);
+		/* If buf is not page aligned, copy first part */
+		size = min(roundup(__pa(buf), PAGE_SIZE) - __pa(buf), csize);
+		if (size) {
+			if (memcpy_real(load_real_addr(buf), src, size))
+				return -EFAULT;
+			buf += size;
+			src += size;
+		}
+		/* Copy second part */
+		size = csize - size;
+		return (size) ? memcpy_real(load_real_addr(buf), src, size) : 0;
+	} else {
+		return memcpy_real(buf, src, csize);
+	}
+}
 
 /*
  * Copy one page from "oldmem"
@@ -31,6 +74,7 @@ ssize_t copy_oldmem_page(unsigned long pfn, char *buf,
 			 size_t csize, unsigned long offset, int userbuf)
 {
 	unsigned long src;
+	int rc;
 
 	if (!csize)
 		return 0;
@@ -42,11 +86,11 @@ ssize_t copy_oldmem_page(unsigned long pfn, char *buf,
 		 src < OLDMEM_BASE + OLDMEM_SIZE)
 		src -= OLDMEM_BASE;
 	if (userbuf)
-		copy_to_user_real((void __force __user *) buf, (void *) src,
-				  csize);
+		rc = copy_to_user_real((void __force __user *) buf,
+				       (void *) src, csize);
 	else
-		memcpy_real(buf, (void *) src, csize);
-	return csize;
+		rc = copy_page_real(buf, (void *) src, csize);
+	return (rc == 0) ? csize : rc;
 }
 
 /*
@@ -87,8 +131,8 @@ static struct mem_chunk *get_memory_layout(void)
 	struct mem_chunk *chunk_array;
 
 	chunk_array = kzalloc_panic(MEMORY_CHUNKS * sizeof(struct mem_chunk));
-	detect_memory_layout(chunk_array);
-	create_mem_hole(chunk_array, OLDMEM_BASE, OLDMEM_SIZE, CHUNK_CRASHK);
+	detect_memory_layout(chunk_array, 0);
+	create_mem_hole(chunk_array, OLDMEM_BASE, OLDMEM_SIZE);
 	return chunk_array;
 }
 
@@ -343,7 +387,7 @@ static int loads_init(Elf64_Phdr *phdr, u64 loads_offset)
 	for (i = 0; i < MEMORY_CHUNKS; i++) {
 		mem_chunk = &chunk_array[i];
 		if (mem_chunk->size == 0)
-			break;
+			continue;
 		if (chunk_array[i].type != CHUNK_READ_WRITE &&
 		    chunk_array[i].type != CHUNK_READ_ONLY)
 			continue;

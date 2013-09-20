@@ -131,6 +131,7 @@ extern struct list_head ft_lport_list;
 extern struct mutex ft_lport_lock;
 extern struct fc4_prov ft_prov;
 extern struct target_fabric_configfs *ft_configfs;
+extern unsigned int ft_debug_logging;
 
 /*
  * Fabric methods.
@@ -160,7 +161,7 @@ int ft_write_pending(struct se_cmd *);
 int ft_write_pending_status(struct se_cmd *);
 u32 ft_get_task_tag(struct se_cmd *);
 int ft_get_cmd_state(struct se_cmd *);
-int ft_queue_tm_resp(struct se_cmd *);
+void ft_queue_tm_resp(struct se_cmd *);
 
 /*
  * other internal functions.

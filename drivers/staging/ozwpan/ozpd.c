@@ -15,7 +15,6 @@
 #include "ozpd.h"
 #include "ozproto.h"
 #include "oztrace.h"
-#include "ozevent.h"
 #include "ozcdev.h"
 #include "ozusbsvc.h"
 #include <asm/unaligned.h>
@@ -24,18 +23,16 @@
 /*------------------------------------------------------------------------------
  */
 #define OZ_MAX_TX_POOL_SIZE	6
-/* Maximum number of uncompleted isoc frames that can be pending.
- */
-#define OZ_MAX_SUBMITTED_ISOC	16
 /*------------------------------------------------------------------------------
  */
 static struct oz_tx_frame *oz_tx_frame_alloc(struct oz_pd *pd);
 static void oz_tx_frame_free(struct oz_pd *pd, struct oz_tx_frame *f);
+static void oz_tx_isoc_free(struct oz_pd *pd, struct oz_tx_frame *f);
 static struct sk_buff *oz_build_frame(struct oz_pd *pd, struct oz_tx_frame *f);
 static int oz_send_isoc_frame(struct oz_pd *pd);
 static void oz_retire_frame(struct oz_pd *pd, struct oz_tx_frame *f);
 static void oz_isoc_stream_free(struct oz_isoc_stream *st);
-static int oz_send_next_queued_frame(struct oz_pd *pd, int *more_data);
+static int oz_send_next_queued_frame(struct oz_pd *pd, int more_data);
 static void oz_isoc_destructor(struct sk_buff *skb);
 static int oz_def_app_init(void);
 static void oz_def_app_term(void);
@@ -48,7 +45,7 @@ static void oz_def_app_rx(struct oz_pd *pd, struct oz_elt *elt);
 static atomic_t g_submitted_isoc = ATOMIC_INIT(0);
 /* Application handler functions.
  */
-static struct oz_app_if g_app_if[OZ_APPID_MAX] = {
+static const struct oz_app_if g_app_if[OZ_APPID_MAX] = {
 	{oz_usb_init,
 	oz_usb_term,
 	oz_usb_start,
@@ -63,8 +60,8 @@ static struct oz_app_if g_app_if[OZ_APPID_MAX] = {
 	oz_def_app_start,
 	oz_def_app_stop,
 	oz_def_app_rx,
-	0,
-	0,
+	NULL,
+	NULL,
 	OZ_APPID_UNUSED1},
 
 	{oz_def_app_init,
@@ -72,8 +69,8 @@ static struct oz_app_if g_app_if[OZ_APPID_MAX] = {
 	oz_def_app_start,
 	oz_def_app_stop,
 	oz_def_app_rx,
-	0,
-	0,
+	NULL,
+	NULL,
 	OZ_APPID_UNUSED2},
 
 	{oz_cdev_init,
@@ -81,8 +78,8 @@ static struct oz_app_if g_app_if[OZ_APPID_MAX] = {
 	oz_cdev_start,
 	oz_cdev_stop,
 	oz_cdev_rx,
-	0,
-	0,
+	NULL,
+	NULL,
 	OZ_APPID_SERIAL},
 };
 /*------------------------------------------------------------------------------
@@ -123,7 +120,6 @@ static void oz_def_app_rx(struct oz_pd *pd, struct oz_elt *elt)
 void oz_pd_set_state(struct oz_pd *pd, unsigned state)
 {
 	pd->state = state;
-	oz_event_log(OZ_EVT_PD_STATE, 0, 0, 0, state);
 #ifdef WANT_TRACE
 	switch (state) {
 	case OZ_PD_S_IDLE:
@@ -159,7 +155,7 @@ void oz_pd_put(struct oz_pd *pd)
 /*------------------------------------------------------------------------------
  * Context: softirq-serialized
  */
-struct oz_pd *oz_pd_alloc(u8 *mac_addr)
+struct oz_pd *oz_pd_alloc(const u8 *mac_addr)
 {
 	struct oz_pd *pd = kzalloc(sizeof(struct oz_pd), GFP_ATOMIC);
 	if (pd) {
@@ -173,7 +169,7 @@ struct oz_pd *oz_pd_alloc(u8 *mac_addr)
 		memcpy(pd->mac_addr, mac_addr, ETH_ALEN);
 		if (0 != oz_elt_buf_init(&pd->elt_buff)) {
 			kfree(pd);
-			pd = 0;
+			pd = NULL;
 		}
 		spin_lock_init(&pd->tx_frame_lock);
 		INIT_LIST_HEAD(&pd->tx_queue);
@@ -208,6 +204,8 @@ void oz_pd_destroy(struct oz_pd *pd)
 	while (e != &pd->tx_queue) {
 		f = container_of(e, struct oz_tx_frame, link);
 		e = e->next;
+		if (f->skb != NULL)
+			kfree_skb(f->skb);
 		oz_retire_frame(pd, f);
 	}
 	oz_elt_buf_term(&pd->elt_buff);
@@ -235,7 +233,7 @@ void oz_pd_destroy(struct oz_pd *pd)
  */
 int oz_services_start(struct oz_pd *pd, u16 apps, int resume)
 {
-	struct oz_app_if *ai;
+	const struct oz_app_if *ai;
 	int rc = 0;
 	oz_trace("oz_services_start(0x%x) resume(%d)\n", apps, resume);
 	for (ai = g_app_if; ai < &g_app_if[OZ_APPID_MAX]; ai++) {
@@ -260,7 +258,7 @@ int oz_services_start(struct oz_pd *pd, u16 apps, int resume)
  */
 void oz_services_stop(struct oz_pd *pd, u16 apps, int pause)
 {
-	struct oz_app_if *ai;
+	const struct oz_app_if *ai;
 	oz_trace("oz_stop_services(0x%x) pause(%d)\n", apps, pause);
 	for (ai = g_app_if; ai < &g_app_if[OZ_APPID_MAX]; ai++) {
 		if (apps & (1<<ai->app_id)) {
@@ -281,7 +279,7 @@ void oz_services_stop(struct oz_pd *pd, u16 apps, int pause)
  */
 void oz_pd_heartbeat(struct oz_pd *pd, u16 apps)
 {
-	struct oz_app_if *ai;
+	const struct oz_app_if *ai;
 	int more = 0;
 	for (ai = g_app_if; ai < &g_app_if[OZ_APPID_MAX]; ai++) {
 		if (ai->heartbeat && (apps & (1<<ai->app_id))) {
@@ -355,7 +353,7 @@ int oz_pd_sleep(struct oz_pd *pd)
  */
 static struct oz_tx_frame *oz_tx_frame_alloc(struct oz_pd *pd)
 {
-	struct oz_tx_frame *f = 0;
+	struct oz_tx_frame *f = NULL;
 	spin_lock_bh(&pd->tx_frame_lock);
 	if (pd->tx_pool) {
 		f = container_of(pd->tx_pool, struct oz_tx_frame, link);
@@ -363,7 +361,7 @@ static struct oz_tx_frame *oz_tx_frame_alloc(struct oz_pd *pd)
 		pd->tx_pool_count--;
 	}
 	spin_unlock_bh(&pd->tx_frame_lock);
-	if (f == 0)
+	if (f == NULL)
 		f = kmalloc(sizeof(struct oz_tx_frame), GFP_ATOMIC);
 	if (f) {
 		f->total_size = sizeof(struct oz_hdr);
@@ -375,6 +373,23 @@ static struct oz_tx_frame *oz_tx_frame_alloc(struct oz_pd *pd)
 /*------------------------------------------------------------------------------
  * Context: softirq or process
  */
+static void oz_tx_isoc_free(struct oz_pd *pd, struct oz_tx_frame *f)
+{
+	pd->nb_queued_isoc_frames--;
+	list_del_init(&f->link);
+	if (pd->tx_pool_count < OZ_MAX_TX_POOL_SIZE) {
+		f->link.next = pd->tx_pool;
+		pd->tx_pool = &f->link;
+		pd->tx_pool_count++;
+	} else {
+		kfree(f);
+	}
+	oz_trace2(OZ_TRACE_TX_FRAMES, "Releasing ISOC Frame isoc_nb= %d\n",
+						pd->nb_queued_isoc_frames);
+}
+/*------------------------------------------------------------------------------
+ * Context: softirq or process
+ */
 static void oz_tx_frame_free(struct oz_pd *pd, struct oz_tx_frame *f)
 {
 	spin_lock_bh(&pd->tx_frame_lock);
@@ -382,11 +397,26 @@ static void oz_tx_frame_free(struct oz_pd *pd, struct oz_tx_frame *f)
 		f->link.next = pd->tx_pool;
 		pd->tx_pool = &f->link;
 		pd->tx_pool_count++;
-		f = 0;
+		f = NULL;
 	}
 	spin_unlock_bh(&pd->tx_frame_lock);
-	if (f)
-		kfree(f);
+	kfree(f);
+}
+/*------------------------------------------------------------------------------
+ * Context: softirq-serialized
+ */
+static void oz_set_more_bit(struct sk_buff *skb)
+{
+	struct oz_hdr *oz_hdr = (struct oz_hdr *)skb_network_header(skb);
+	oz_hdr->control |= OZ_F_MORE_DATA;
+}
+/*------------------------------------------------------------------------------
+ * Context: softirq-serialized
+ */
+static void oz_set_last_pkt_nb(struct oz_pd *pd, struct sk_buff *skb)
+{
+	struct oz_hdr *oz_hdr = (struct oz_hdr *)skb_network_header(skb);
+	oz_hdr->last_pkt_num = pd->trigger_pkt_num & OZ_LAST_PN_MASK;
 }
 /*------------------------------------------------------------------------------
  * Context: softirq
@@ -401,8 +431,9 @@ int oz_prepare_frame(struct oz_pd *pd, int empty)
 	if (!empty && !oz_are_elts_available(&pd->elt_buff))
 		return -1;
 	f = oz_tx_frame_alloc(pd);
-	if (f == 0)
+	if (f == NULL)
 		return -1;
+	f->skb = NULL;
 	f->hdr.control =
 		(OZ_PROTOCOL_VERSION<<OZ_VERSION_SHIFT) | OZ_F_ACK_REQUESTED;
 	++pd->last_tx_pkt_num;
@@ -422,7 +453,7 @@ int oz_prepare_frame(struct oz_pd *pd, int empty)
  */
 static struct sk_buff *oz_build_frame(struct oz_pd *pd, struct oz_tx_frame *f)
 {
-	struct sk_buff *skb = 0;
+	struct sk_buff *skb;
 	struct net_device *dev = pd->net_dev;
 	struct oz_hdr *oz_hdr;
 	struct oz_elt *elt;
@@ -431,8 +462,8 @@ static struct sk_buff *oz_build_frame(struct oz_pd *pd, struct oz_tx_frame *f)
 	 * as the space we need.
 	 */
 	skb = alloc_skb(f->total_size + OZ_ALLOCATED_SPACE(dev), GFP_ATOMIC);
-	if (skb == 0)
-		return 0;
+	if (skb == NULL)
+		return NULL;
 	/* Reserve the head room for lower layers.
 	 */
 	skb_reserve(skb, LL_RESERVED_SPACE(dev));
@@ -459,7 +490,7 @@ static struct sk_buff *oz_build_frame(struct oz_pd *pd, struct oz_tx_frame *f)
 	return skb;
 fail:
 	kfree_skb(skb);
-	return 0;
+	return NULL;
 }
 /*------------------------------------------------------------------------------
  * Context: softirq or process
@@ -486,32 +517,55 @@ static void oz_retire_frame(struct oz_pd *pd, struct oz_tx_frame *f)
 /*------------------------------------------------------------------------------
  * Context: softirq-serialized
  */
-static int oz_send_next_queued_frame(struct oz_pd *pd, int *more_data)
+static int oz_send_next_queued_frame(struct oz_pd *pd, int more_data)
 {
 	struct sk_buff *skb;
 	struct oz_tx_frame *f;
 	struct list_head *e;
-	*more_data = 0;
 	spin_lock(&pd->tx_frame_lock);
 	e = pd->last_sent_frame->next;
 	if (e == &pd->tx_queue) {
 		spin_unlock(&pd->tx_frame_lock);
 		return -1;
 	}
-	pd->last_sent_frame = e;
-	if (e->next != &pd->tx_queue)
-		*more_data = 1;
 	f = container_of(e, struct oz_tx_frame, link);
+
+	if (f->skb != NULL) {
+		skb = f->skb;
+		oz_tx_isoc_free(pd, f);
+		spin_unlock(&pd->tx_frame_lock);
+		if (more_data)
+			oz_set_more_bit(skb);
+		oz_set_last_pkt_nb(pd, skb);
+		if ((int)atomic_read(&g_submitted_isoc) <
+							OZ_MAX_SUBMITTED_ISOC) {
+			if (dev_queue_xmit(skb) < 0) {
+				oz_trace2(OZ_TRACE_TX_FRAMES,
+						"Dropping ISOC Frame\n");
+				return -1;
+			}
+			atomic_inc(&g_submitted_isoc);
+			oz_trace2(OZ_TRACE_TX_FRAMES,
+					"Sending ISOC Frame, nb_isoc= %d\n",
+						pd->nb_queued_isoc_frames);
+			return 0;
+		} else {
+			kfree_skb(skb);
+			oz_trace2(OZ_TRACE_TX_FRAMES, "Dropping ISOC Frame>\n");
+			return -1;
+		}
+	}
+
+	pd->last_sent_frame = e;
 	skb = oz_build_frame(pd, f);
 	spin_unlock(&pd->tx_frame_lock);
+	if (more_data)
+		oz_set_more_bit(skb);
 	oz_trace2(OZ_TRACE_TX_FRAMES, "TX frame PN=0x%x\n", f->hdr.pkt_num);
 	if (skb) {
-		oz_event_log(OZ_EVT_TX_FRAME,
-			0,
-			(((u16)f->hdr.control)<<8)|f->hdr.last_pkt_num,
-			0, f->hdr.pkt_num);
 		if (dev_queue_xmit(skb) < 0)
 			return -1;
+
 	}
 	return 0;
 }
@@ -520,28 +574,45 @@ static int oz_send_next_queued_frame(struct oz_pd *pd, int *more_data)
  */
 void oz_send_queued_frames(struct oz_pd *pd, int backlog)
 {
-	int more;
-	if (backlog <  OZ_MAX_QUEUED_FRAMES) {
-		if (oz_send_next_queued_frame(pd, &more) >= 0) {
-			while (more && oz_send_next_queued_frame(pd, &more))
-				;
-		} else {
-			if (((pd->mode & OZ_F_ISOC_ANYTIME) == 0)
-				|| (pd->isoc_sent == 0)) {
-				if (oz_prepare_frame(pd, 1) >= 0)
-					oz_send_next_queued_frame(pd, &more);
-			}
+	while (oz_prepare_frame(pd, 0) >= 0)
+		backlog++;
+
+	switch (pd->mode & (OZ_F_ISOC_NO_ELTS | OZ_F_ISOC_ANYTIME)) {
+
+		case OZ_F_ISOC_NO_ELTS: {
+			backlog += pd->nb_queued_isoc_frames;
+			if (backlog <= 0)
+				goto out;
+			if (backlog > OZ_MAX_SUBMITTED_ISOC)
+				backlog = OZ_MAX_SUBMITTED_ISOC;
+			break;
 		}
-	} else {
-		oz_send_next_queued_frame(pd, &more);
+		case OZ_NO_ELTS_ANYTIME: {
+			if ((backlog <= 0) && (pd->isoc_sent == 0))
+				goto out;
+			break;
+		}
+		default: {
+			if (backlog <= 0)
+				goto out;
+			break;
+		}
 	}
+	while (backlog--) {
+		if (oz_send_next_queued_frame(pd, backlog) < 0)
+			break;
+	}
+	return;
+
+out:	oz_prepare_frame(pd, 1);
+	oz_send_next_queued_frame(pd, 0);
 }
 /*------------------------------------------------------------------------------
  * Context: softirq
  */
 static int oz_send_isoc_frame(struct oz_pd *pd)
 {
-	struct sk_buff *skb = 0;
+	struct sk_buff *skb;
 	struct net_device *dev = pd->net_dev;
 	struct oz_hdr *oz_hdr;
 	struct oz_elt *elt;
@@ -555,7 +626,7 @@ static int oz_send_isoc_frame(struct oz_pd *pd)
 	if (list.next == &list)
 		return 0;
 	skb = alloc_skb(total_size + OZ_ALLOCATED_SPACE(dev), GFP_ATOMIC);
-	if (skb == 0) {
+	if (skb == NULL) {
 		oz_trace("Cannot alloc skb\n");
 		oz_elt_info_free_chain(&pd->elt_buff, &list);
 		return -1;
@@ -580,7 +651,6 @@ static int oz_send_isoc_frame(struct oz_pd *pd)
 		memcpy(elt, ei->data, ei->length);
 		elt = oz_next_elt(elt);
 	}
-	oz_event_log(OZ_EVT_TX_ISOC, 0, 0, 0, 0);
 	dev_queue_xmit(skb);
 	oz_elt_info_free_chain(&pd->elt_buff, &list);
 	return 0;
@@ -592,8 +662,8 @@ void oz_retire_tx_frames(struct oz_pd *pd, u8 lpn)
 {
 	struct list_head *e;
 	struct oz_tx_frame *f;
-	struct list_head *first = 0;
-	struct list_head *last = 0;
+	struct list_head *first = NULL;
+	struct list_head *last = NULL;
 	u8 diff;
 	u32 pkt_num;
 
@@ -603,9 +673,11 @@ void oz_retire_tx_frames(struct oz_pd *pd, u8 lpn)
 		f = container_of(e, struct oz_tx_frame, link);
 		pkt_num = le32_to_cpu(get_unaligned(&f->hdr.pkt_num));
 		diff = (lpn - (pkt_num & OZ_LAST_PN_MASK)) & OZ_LAST_PN_MASK;
-		if (diff > OZ_LAST_PN_HALF_CYCLE)
+		if ((diff > OZ_LAST_PN_HALF_CYCLE) || (pkt_num == 0))
 			break;
-		if (first == 0)
+		oz_trace2(OZ_TRACE_TX_FRAMES, "Releasing pkt_num= %u, nb= %d\n",
+						 pkt_num, pd->nb_queued_frames);
+		if (first == NULL)
 			first = e;
 		last = e;
 		e = e->next;
@@ -614,7 +686,7 @@ void oz_retire_tx_frames(struct oz_pd *pd, u8 lpn)
 	if (first) {
 		last->next->prev = &pd->tx_queue;
 		pd->tx_queue.next = last->next;
-		last->next = 0;
+		last->next = NULL;
 	}
 	pd->last_sent_frame = &pd->tx_queue;
 	spin_unlock(&pd->tx_frame_lock);
@@ -637,7 +709,7 @@ static struct oz_isoc_stream *pd_stream_find(struct oz_pd *pd, u8 ep_num)
 		if (st->ep_num == ep_num)
 			return st;
 	}
-	return 0;
+	return NULL;
 }
 /*------------------------------------------------------------------------------
  * Context: softirq
@@ -652,11 +724,10 @@ int oz_isoc_stream_create(struct oz_pd *pd, u8 ep_num)
 	spin_lock_bh(&pd->stream_lock);
 	if (!pd_stream_find(pd, ep_num)) {
 		list_add(&st->link, &pd->stream_list);
-		st = 0;
+		st = NULL;
 	}
 	spin_unlock_bh(&pd->stream_lock);
-	if (st)
-		kfree(st);
+	kfree(st);
 	return 0;
 }
 /*------------------------------------------------------------------------------
@@ -664,8 +735,7 @@ int oz_isoc_stream_create(struct oz_pd *pd, u8 ep_num)
  */
 static void oz_isoc_stream_free(struct oz_isoc_stream *st)
 {
-	if (st->skb)
-		kfree_skb(st->skb);
+	kfree_skb(st->skb);
 	kfree(st);
 }
 /*------------------------------------------------------------------------------
@@ -689,25 +759,23 @@ int oz_isoc_stream_delete(struct oz_pd *pd, u8 ep_num)
 static void oz_isoc_destructor(struct sk_buff *skb)
 {
 	atomic_dec(&g_submitted_isoc);
-	oz_event_log(OZ_EVT_TX_ISOC_DONE, atomic_read(&g_submitted_isoc),
-		0, skb, 0);
 }
 /*------------------------------------------------------------------------------
  * Context: softirq
  */
-int oz_send_isoc_unit(struct oz_pd *pd, u8 ep_num, u8 *data, int len)
+int oz_send_isoc_unit(struct oz_pd *pd, u8 ep_num, const u8 *data, int len)
 {
 	struct net_device *dev = pd->net_dev;
 	struct oz_isoc_stream *st;
 	u8 nb_units = 0;
-	struct sk_buff *skb = 0;
-	struct oz_hdr *oz_hdr = 0;
+	struct sk_buff *skb = NULL;
+	struct oz_hdr *oz_hdr = NULL;
 	int size = 0;
 	spin_lock_bh(&pd->stream_lock);
 	st = pd_stream_find(pd, ep_num);
 	if (st) {
 		skb = st->skb;
-		st->skb = 0;
+		st->skb = NULL;
 		nb_units = st->nb_units;
 		st->nb_units = 0;
 		oz_hdr = st->oz_hdr;
@@ -720,13 +788,15 @@ int oz_send_isoc_unit(struct oz_pd *pd, u8 ep_num, u8 *data, int len)
 		/* Allocate enough space for max size frame. */
 		skb = alloc_skb(pd->max_tx_size + OZ_ALLOCATED_SPACE(dev),
 				GFP_ATOMIC);
-		if (skb == 0)
+		if (skb == NULL)
 			return 0;
 		/* Reserve the head room for lower layers. */
 		skb_reserve(skb, LL_RESERVED_SPACE(dev));
 		skb_reset_network_header(skb);
 		skb->dev = dev;
 		skb->protocol = htons(OZ_ETHERTYPE);
+		/* For audio packet set priority to AC_VO */
+		skb->priority = 0x7;
 		size = sizeof(struct oz_hdr) + sizeof(struct oz_isoc_large);
 		oz_hdr = (struct oz_hdr *)skb_put(skb, size);
 	}
@@ -756,21 +826,47 @@ int oz_send_isoc_unit(struct oz_pd *pd, u8 ep_num, u8 *data, int len)
 		memcpy(oz_hdr, &oz, sizeof(oz));
 		memcpy(oz_hdr+1, &iso, sizeof(iso));
 		if (dev_hard_header(skb, dev, OZ_ETHERTYPE, pd->mac_addr,
-				dev->dev_addr, skb->len) < 0) {
-			kfree_skb(skb);
-			return -1;
+				dev->dev_addr, skb->len) < 0)
+			goto out;
+
+		skb->destructor = oz_isoc_destructor;
+		/*Queue for Xmit if mode is not ANYTIME*/
+		if (!(pd->mode & OZ_F_ISOC_ANYTIME)) {
+			struct oz_tx_frame *isoc_unit = NULL;
+			int nb = pd->nb_queued_isoc_frames;
+			if (nb >= pd->isoc_latency) {
+				oz_trace2(OZ_TRACE_TX_FRAMES,
+						"Dropping ISOC Unit nb= %d\n",
+									nb);
+				goto out;
+			}
+			isoc_unit = oz_tx_frame_alloc(pd);
+			if (isoc_unit == NULL)
+				goto out;
+			isoc_unit->hdr = oz;
+			isoc_unit->skb = skb;
+			spin_lock_bh(&pd->tx_frame_lock);
+			list_add_tail(&isoc_unit->link, &pd->tx_queue);
+			pd->nb_queued_isoc_frames++;
+			spin_unlock_bh(&pd->tx_frame_lock);
+			oz_trace2(OZ_TRACE_TX_FRAMES,
+			"Added ISOC Frame to Tx Queue isoc_nb= %d, nb= %d\n",
+			pd->nb_queued_isoc_frames, pd->nb_queued_frames);
+			return 0;
 		}
+
+		/*In ANYTIME mode Xmit unit immediately*/
 		if (atomic_read(&g_submitted_isoc) < OZ_MAX_SUBMITTED_ISOC) {
-			skb->destructor = oz_isoc_destructor;
 			atomic_inc(&g_submitted_isoc);
-			oz_event_log(OZ_EVT_TX_ISOC, nb_units, iso.frame_number,
-				skb, atomic_read(&g_submitted_isoc));
 			if (dev_queue_xmit(skb) < 0)
 				return -1;
-		} else {
-			oz_event_log(OZ_EVT_TX_ISOC_DROP, 0, 0, 0, 0);
-			kfree_skb(skb);
+			else
+				return 0;
 		}
+
+out:	kfree_skb(skb);
+	return -1;
+
 	}
 	return 0;
 }
@@ -800,7 +896,7 @@ void oz_apps_term(void)
  */
 void oz_handle_app_elt(struct oz_pd *pd, u8 app_id, struct oz_elt *elt)
 {
-	struct oz_app_if *ai;
+	const struct oz_app_if *ai;
 	if (app_id == 0 || app_id > OZ_APPID_MAX)
 		return;
 	ai = &g_app_if[app_id-1];
@@ -812,7 +908,7 @@ void oz_handle_app_elt(struct oz_pd *pd, u8 app_id, struct oz_elt *elt)
 void oz_pd_indicate_farewells(struct oz_pd *pd)
 {
 	struct oz_farewell *f;
-	struct oz_app_if *ai = &g_app_if[OZ_APPID_USB-1];
+	const struct oz_app_if *ai = &g_app_if[OZ_APPID_USB-1];
 	while (1) {
 		oz_polling_lock_bh();
 		if (list_empty(&pd->farewell_list)) {

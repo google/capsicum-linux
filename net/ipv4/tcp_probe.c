@@ -91,7 +91,7 @@ static inline int tcp_probe_avail(void)
  * Note: arguments must match tcp_rcv_established()!
  */
 static int jtcp_rcv_established(struct sock *sk, struct sk_buff *skb,
-			       struct tcphdr *th, unsigned len)
+			       struct tcphdr *th, unsigned int len)
 {
 	const struct tcp_sock *tp = tcp_sk(sk);
 	const struct inet_sock *inet = inet_sk(sk);
@@ -138,7 +138,7 @@ static struct jprobe tcp_jprobe = {
 	.entry	= jtcp_rcv_established,
 };
 
-static int tcpprobe_open(struct inode * inode, struct file * file)
+static int tcpprobe_open(struct inode *inode, struct file *file)
 {
 	/* Reset (empty) log */
 	spin_lock_bh(&tcp_probe.lock);
@@ -234,7 +234,7 @@ static __init int tcpprobe_init(void)
 	if (!tcp_probe.log)
 		goto err0;
 
-	if (!proc_net_fops_create(&init_net, procname, S_IRUSR, &tcpprobe_fops))
+	if (!proc_create(procname, S_IRUSR, init_net.proc_net, &tcpprobe_fops))
 		goto err0;
 
 	ret = register_jprobe(&tcp_jprobe);
@@ -244,7 +244,7 @@ static __init int tcpprobe_init(void)
 	pr_info("probe registered (port=%d) bufsize=%u\n", port, bufsize);
 	return 0;
  err1:
-	proc_net_remove(&init_net, procname);
+	remove_proc_entry(procname, init_net.proc_net);
  err0:
 	kfree(tcp_probe.log);
 	return ret;
@@ -253,7 +253,7 @@ module_init(tcpprobe_init);
 
 static __exit void tcpprobe_exit(void)
 {
-	proc_net_remove(&init_net, procname);
+	remove_proc_entry(procname, init_net.proc_net);
 	unregister_jprobe(&tcp_jprobe);
 	kfree(tcp_probe.log);
 }

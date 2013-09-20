@@ -14,6 +14,8 @@
  */
 
 
+#include <linux/etherdevice.h>
+
 #include "rtllib.h"
 #include "dot11d.h"
 /* FIXME: add A freqs */
@@ -137,7 +139,6 @@ int rtllib_wx_set_wap(struct rtllib_device *ieee,
 {
 
 	int ret = 0;
-	u8 zero[] = {0, 0, 0, 0, 0, 0};
 	unsigned long flags;
 
 	short ifup = ieee->proto_started;
@@ -157,7 +158,7 @@ int rtllib_wx_set_wap(struct rtllib_device *ieee,
 		goto out;
 	}
 
-	if (memcmp(temp->sa_data, zero, ETH_ALEN) == 0) {
+	if (is_zero_ether_addr(temp->sa_data)) {
 		spin_lock_irqsave(&ieee->lock, flags);
 		memcpy(ieee->current_network.bssid, temp->sa_data, ETH_ALEN);
 		ieee->wap_set = 0;
@@ -177,7 +178,7 @@ int rtllib_wx_set_wap(struct rtllib_device *ieee,
 
 	ieee->cannot_notify = false;
 	memcpy(ieee->current_network.bssid, temp->sa_data, ETH_ALEN);
-	ieee->wap_set = (memcmp(temp->sa_data, zero, ETH_ALEN) != 0);
+	ieee->wap_set = !is_zero_ether_addr(temp->sa_data);
 
 	spin_unlock_irqrestore(&ieee->lock, flags);
 
@@ -479,7 +480,7 @@ int rtllib_wx_set_essid(struct rtllib_device *ieee,
 
 
 	/* this is just to be sure that the GET wx callback
-	 * has consisten infos. not needed otherwise
+	 * has consistent infos. not needed otherwise
 	 */
 	spin_lock_irqsave(&ieee->lock, flags);
 
@@ -575,7 +576,7 @@ int rtllib_wx_set_power(struct rtllib_device *ieee,
 	if ((!ieee->sta_wake_up) ||
 	    (!ieee->enter_sleep_state) ||
 	    (!ieee->ps_is_queue_empty)) {
-		RTLLIB_DEBUG(RTLLIB_DL_ERR, "%s(): PS mode is tryied to be use "
+		RTLLIB_DEBUG(RTLLIB_DL_ERR, "%s(): PS mode is tried to be use "
 			     "but driver missed a callback\n\n", __func__);
 		return -1;
 	}

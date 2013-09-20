@@ -22,8 +22,7 @@
 #include <linux/interrupt.h>
 #include <linux/io.h>
 #include <linux/module.h>
-
-#include <mach/ipu.h>
+#include <linux/dma/ipu-dma.h>
 
 #include "../dmaengine.h"
 #include "ipu_intern.h"
@@ -1348,7 +1347,7 @@ static struct dma_async_tx_descriptor *idmac_prep_slave_sg(struct dma_chan *chan
 	    chan->chan_id != IDMAC_IC_7)
 		return NULL;
 
-	if (direction != DMA_DEV_TO_MEM && direction != DMA_MEM_TO_DEV) {
+	if (!is_slave_direction(direction)) {
 		dev_err(chan->device->dev, "Invalid DMA direction %d!\n", direction);
 		return NULL;
 	}
@@ -1643,7 +1642,7 @@ static int __init ipu_idmac_init(struct ipu *ipu)
 	return dma_async_device_register(&idmac->dma);
 }
 
-static void __exit ipu_idmac_exit(struct ipu *ipu)
+static void ipu_idmac_exit(struct ipu *ipu)
 {
 	int i;
 	struct idmac *idmac = &ipu->idmac;
@@ -1663,7 +1662,6 @@ static void __exit ipu_idmac_exit(struct ipu *ipu)
 
 static int __init ipu_probe(struct platform_device *pdev)
 {
-	struct ipu_platform_data *pdata = pdev->dev.platform_data;
 	struct resource *mem_ipu, *mem_ic;
 	int ret;
 
@@ -1671,7 +1669,7 @@ static int __init ipu_probe(struct platform_device *pdev)
 
 	mem_ipu	= platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	mem_ic	= platform_get_resource(pdev, IORESOURCE_MEM, 1);
-	if (!pdata || !mem_ipu || !mem_ic)
+	if (!mem_ipu || !mem_ic)
 		return -EINVAL;
 
 	ipu_data.dev = &pdev->dev;
@@ -1688,10 +1686,9 @@ static int __init ipu_probe(struct platform_device *pdev)
 		goto err_noirq;
 
 	ipu_data.irq_err = ret;
-	ipu_data.irq_base = pdata->irq_base;
 
-	dev_dbg(&pdev->dev, "fn irq %u, err irq %u, irq-base %u\n",
-		ipu_data.irq_fn, ipu_data.irq_err, ipu_data.irq_base);
+	dev_dbg(&pdev->dev, "fn irq %u, err irq %u\n",
+		ipu_data.irq_fn, ipu_data.irq_err);
 
 	/* Remap IPU common registers */
 	ipu_data.reg_ipu = ioremap(mem_ipu->start, resource_size(mem_ipu));
@@ -1715,7 +1712,7 @@ static int __init ipu_probe(struct platform_device *pdev)
 	}
 
 	/* Make sure IPU HSP clock is running */
-	clk_enable(ipu_data.ipu_clk);
+	clk_prepare_enable(ipu_data.ipu_clk);
 
 	/* Disable all interrupts */
 	idmac_write_ipureg(&ipu_data, 0, IPU_INT_CTRL_1);
@@ -1747,7 +1744,7 @@ static int __init ipu_probe(struct platform_device *pdev)
 err_idmac_init:
 err_attach_irq:
 	ipu_irq_detach_irq(&ipu_data, pdev);
-	clk_disable(ipu_data.ipu_clk);
+	clk_disable_unprepare(ipu_data.ipu_clk);
 	clk_put(ipu_data.ipu_clk);
 err_clk_get:
 	iounmap(ipu_data.reg_ic);
@@ -1759,13 +1756,13 @@ err_noirq:
 	return ret;
 }
 
-static int __exit ipu_remove(struct platform_device *pdev)
+static int ipu_remove(struct platform_device *pdev)
 {
 	struct ipu *ipu = platform_get_drvdata(pdev);
 
 	ipu_idmac_exit(ipu);
 	ipu_irq_detach_irq(ipu, pdev);
-	clk_disable(ipu->ipu_clk);
+	clk_disable_unprepare(ipu->ipu_clk);
 	clk_put(ipu->ipu_clk);
 	iounmap(ipu->reg_ic);
 	iounmap(ipu->reg_ipu);
@@ -1784,7 +1781,7 @@ static struct platform_driver ipu_platform_driver = {
 		.name	= "ipu-core",
 		.owner	= THIS_MODULE,
 	},
-	.remove		= __exit_p(ipu_remove),
+	.remove		= ipu_remove,
 };
 
 static int __init ipu_init(void)

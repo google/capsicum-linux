@@ -5,7 +5,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2012, Intel Corp.
+ * Copyright (C) 2000 - 2013, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -54,8 +54,7 @@ ACPI_MODULE_NAME("exfldio")
 /* Local prototypes */
 static acpi_status
 acpi_ex_field_datum_io(union acpi_operand_object *obj_desc,
-		       u32 field_datum_byte_offset,
-		       u64 *value, u32 read_write);
+		       u32 field_datum_byte_offset, u64 *value, u32 read_write);
 
 static u8
 acpi_ex_register_overflow(union acpi_operand_object *obj_desc, u64 value);
@@ -155,7 +154,7 @@ acpi_ex_setup_region(union acpi_operand_object *obj_desc,
 #endif
 
 	/*
-	 * Validate the request.  The entire request from the byte offset for a
+	 * Validate the request. The entire request from the byte offset for a
 	 * length of one field datum (access width) must fit within the region.
 	 * (Region length is specified in bytes)
 	 */
@@ -183,7 +182,7 @@ acpi_ex_setup_region(union acpi_operand_object *obj_desc,
 		    obj_desc->common_field.access_byte_width) {
 			/*
 			 * This is the case where the access_type (acc_word, etc.) is wider
-			 * than the region itself.  For example, a region of length one
+			 * than the region itself. For example, a region of length one
 			 * byte, and a field with Dword access specified.
 			 */
 			ACPI_ERROR((AE_INFO,
@@ -222,9 +221,9 @@ acpi_ex_setup_region(union acpi_operand_object *obj_desc,
  * PARAMETERS:  obj_desc                - Field to be read
  *              field_datum_byte_offset - Byte offset of this datum within the
  *                                        parent field
- *              Value                   - Where to store value (must at least
+ *              value                   - Where to store value (must at least
  *                                        64 bits)
- *              Function                - Read or Write flag plus other region-
+ *              function                - Read or Write flag plus other region-
  *                                        dependent flags
  *
  * RETURN:      Status
@@ -315,13 +314,13 @@ acpi_ex_access_region(union acpi_operand_object *obj_desc,
  * FUNCTION:    acpi_ex_register_overflow
  *
  * PARAMETERS:  obj_desc                - Register(Field) to be written
- *              Value                   - Value to be stored
+ *              value                   - Value to be stored
  *
  * RETURN:      TRUE if value overflows the field, FALSE otherwise
  *
  * DESCRIPTION: Check if a value is out of range of the field being written.
  *              Used to check if the values written to Index and Bank registers
- *              are out of range.  Normally, the value is simply truncated
+ *              are out of range. Normally, the value is simply truncated
  *              to fit the field, but this case is most likely a serious
  *              coding error in the ASL.
  *
@@ -330,7 +329,6 @@ acpi_ex_access_region(union acpi_operand_object *obj_desc,
 static u8
 acpi_ex_register_overflow(union acpi_operand_object *obj_desc, u64 value)
 {
-	ACPI_FUNCTION_NAME(ex_register_overflow);
 
 	if (obj_desc->common_field.bit_length >= ACPI_INTEGER_BIT_SIZE) {
 		/*
@@ -365,12 +363,12 @@ acpi_ex_register_overflow(union acpi_operand_object *obj_desc, u64 value)
  * PARAMETERS:  obj_desc                - Field to be read
  *              field_datum_byte_offset - Byte offset of this datum within the
  *                                        parent field
- *              Value                   - Where to store value (must be 64 bits)
+ *              value                   - Where to store value (must be 64 bits)
  *              read_write              - Read or Write flag
  *
  * RETURN:      Status
  *
- * DESCRIPTION: Read or Write a single datum of a field.  The field_type is
+ * DESCRIPTION: Read or Write a single datum of a field. The field_type is
  *              demultiplexed here to handle the different types of fields
  *              (buffer_field, region_field, index_field, bank_field)
  *
@@ -448,7 +446,6 @@ acpi_ex_field_datum_io(union acpi_operand_object *obj_desc,
 		break;
 
 	case ACPI_TYPE_LOCAL_BANK_FIELD:
-
 		/*
 		 * Ensure that the bank_value is not beyond the capacity of
 		 * the register
@@ -490,7 +487,6 @@ acpi_ex_field_datum_io(union acpi_operand_object *obj_desc,
 		break;
 
 	case ACPI_TYPE_LOCAL_INDEX_FIELD:
-
 		/*
 		 * Ensure that the index_value is not beyond the capacity of
 		 * the register
@@ -574,7 +570,7 @@ acpi_ex_field_datum_io(union acpi_operand_object *obj_desc,
  * FUNCTION:    acpi_ex_write_with_update_rule
  *
  * PARAMETERS:  obj_desc                - Field to be written
- *              Mask                    - bitmask within field datum
+ *              mask                    - bitmask within field datum
  *              field_value             - Value to write
  *              field_datum_byte_offset - Offset of datum within field
  *
@@ -678,7 +674,7 @@ acpi_ex_write_with_update_rule(union acpi_operand_object *obj_desc,
  * FUNCTION:    acpi_ex_extract_from_field
  *
  * PARAMETERS:  obj_desc            - Field to be read
- *              Buffer              - Where to store the field data
+ *              buffer              - Where to store the field data
  *              buffer_length       - Length of Buffer
  *
  * RETURN:      Status
@@ -722,7 +718,19 @@ acpi_ex_extract_from_field(union acpi_operand_object *obj_desc,
 
 	if ((obj_desc->common_field.start_field_bit_offset == 0) &&
 	    (obj_desc->common_field.bit_length == access_bit_width)) {
-		status = acpi_ex_field_datum_io(obj_desc, 0, buffer, ACPI_READ);
+		if (buffer_length >= sizeof(u64)) {
+			status =
+			    acpi_ex_field_datum_io(obj_desc, 0, buffer,
+						   ACPI_READ);
+		} else {
+			/* Use raw_datum (u64) to handle buffers < 64 bits */
+
+			status =
+			    acpi_ex_field_datum_io(obj_desc, 0, &raw_datum,
+						   ACPI_READ);
+			ACPI_MEMCPY(buffer, &raw_datum, buffer_length);
+		}
+
 		return_ACPI_STATUS(status);
 	}
 
@@ -823,7 +831,7 @@ acpi_ex_extract_from_field(union acpi_operand_object *obj_desc,
  * FUNCTION:    acpi_ex_insert_into_field
  *
  * PARAMETERS:  obj_desc            - Field to be written
- *              Buffer              - Data to be written
+ *              buffer              - Data to be written
  *              buffer_length       - Length of Buffer
  *
  * RETURN:      Status
@@ -860,7 +868,7 @@ acpi_ex_insert_into_field(union acpi_operand_object *obj_desc,
 	    ACPI_ROUND_BITS_UP_TO_BYTES(obj_desc->common_field.bit_length);
 	/*
 	 * We must have a buffer that is at least as long as the field
-	 * we are writing to.  This is because individual fields are
+	 * we are writing to. This is because individual fields are
 	 * indivisible and partial writes are not supported -- as per
 	 * the ACPI specification.
 	 */
@@ -875,7 +883,7 @@ acpi_ex_insert_into_field(union acpi_operand_object *obj_desc,
 
 		/*
 		 * Copy the original data to the new buffer, starting
-		 * at Byte zero.  All unused (upper) bytes of the
+		 * at Byte zero. All unused (upper) bytes of the
 		 * buffer will be 0.
 		 */
 		ACPI_MEMCPY((char *)new_buffer, (char *)buffer, buffer_length);

@@ -72,7 +72,7 @@
 #include <asm/dec/machtype.h>
 #include <asm/dec/system.h>
 
-static char version[] __devinitdata =
+static char version[] =
 "declance.c: v0.011 by Linux MIPS DECstation task force\n";
 
 MODULE_AUTHOR("Linux MIPS DECstation task force");
@@ -607,8 +607,6 @@ static int lance_rx(struct net_device *dev)
 			skb = netdev_alloc_skb(dev, len + 2);
 
 			if (skb == 0) {
-				printk("%s: Memory squeeze, deferring packet.\n",
-				       dev->name);
 				dev->stats.rx_dropped++;
 				*rds_ptr(rd, mblength, lp->type) = 0;
 				*rds_ptr(rd, rmd1, lp->type) =
@@ -623,7 +621,7 @@ static int lance_rx(struct net_device *dev)
 			skb_put(skb, len);	/* make room */
 
 			cp_from_buf(lp->type, skb->data,
-				    (char *)lp->rx_buf_ptr_cpu[entry], len);
+				    lp->rx_buf_ptr_cpu[entry], len);
 
 			skb->protocol = eth_type_trans(skb, dev);
 			netif_rx(skb);
@@ -919,7 +917,7 @@ static int lance_start_xmit(struct sk_buff *skb, struct net_device *dev)
 	*lib_ptr(ib, btx_ring[entry].length, lp->type) = (-len);
 	*lib_ptr(ib, btx_ring[entry].misc, lp->type) = 0;
 
-	cp_to_buf(lp->type, (char *)lp->tx_buf_ptr_cpu[entry], skb->data, len);
+	cp_to_buf(lp->type, lp->tx_buf_ptr_cpu[entry], skb->data, len);
 
 	/* Now, give the packet to the lance */
 	*lib_ptr(ib, btx_ring[entry].tmd1, lp->type) =
@@ -1020,7 +1018,7 @@ static const struct net_device_ops lance_netdev_ops = {
 	.ndo_set_mac_address	= eth_mac_addr,
 };
 
-static int __devinit dec_lance_probe(struct device *bdev, const int type)
+static int dec_lance_probe(struct device *bdev, const int type)
 {
 	static unsigned version_printed;
 	static const char fmt[] = "declance%d";
@@ -1322,7 +1320,7 @@ static void __exit dec_lance_platform_remove(void)
 }
 
 #ifdef CONFIG_TC
-static int __devinit dec_lance_tc_probe(struct device *dev);
+static int dec_lance_tc_probe(struct device *dev);
 static int __exit dec_lance_tc_remove(struct device *dev);
 
 static const struct tc_device_id dec_lance_tc_table[] = {
@@ -1341,7 +1339,7 @@ static struct tc_driver dec_lance_tc_driver = {
 	},
 };
 
-static int __devinit dec_lance_tc_probe(struct device *dev)
+static int dec_lance_tc_probe(struct device *dev)
 {
         int status = dec_lance_probe(dev, PMAD_LANCE);
         if (!status)

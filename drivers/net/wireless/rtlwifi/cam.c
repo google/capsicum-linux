@@ -52,11 +52,8 @@ static void rtl_cam_program_entry(struct ieee80211_hw *hw, u32 entry_no,
 	u32 target_content = 0;
 	u8 entry_i;
 
-	RT_TRACE(rtlpriv, COMP_SEC, DBG_LOUD,
-		 "key_cont_128:\n %x:%x:%x:%x:%x:%x\n",
-		 key_cont_128[0], key_cont_128[1],
-		 key_cont_128[2], key_cont_128[3],
-		 key_cont_128[4], key_cont_128[5]);
+	RT_TRACE(rtlpriv, COMP_SEC, DBG_LOUD, "key_cont_128: %6phC\n",
+		 key_cont_128);
 
 	for (entry_i = 0; entry_i < CAM_CONTENT_COUNT; entry_i++) {
 		target_command = entry_i + CAM_CONTENT_COUNT * entry_no;
@@ -128,7 +125,7 @@ u8 rtl_cam_add_one_entry(struct ieee80211_hw *hw, u8 *mac_addr,
 	u32 us_config;
 	struct rtl_priv *rtlpriv = rtl_priv(hw);
 
-	RT_TRACE(rtlpriv, COMP_SEC, DBG_DMESG,
+	RT_TRACE(rtlpriv, COMP_SEC, DBG_LOUD,
 		 "EntryNo:%x, ulKeyId=%x, ulEncAlg=%x, ulUseDK=%x MacAddr %pM\n",
 		 ul_entry_idx, ul_key_id, ul_enc_alg,
 		 ul_default_key, mac_addr);
@@ -146,7 +143,7 @@ u8 rtl_cam_add_one_entry(struct ieee80211_hw *hw, u8 *mac_addr,
 	}
 
 	rtl_cam_program_entry(hw, ul_entry_idx, mac_addr,
-			      (u8 *) key_content, us_config);
+			      key_content, us_config);
 
 	RT_TRACE(rtlpriv, COMP_SEC, DBG_DMESG, "<===\n");
 
@@ -328,10 +325,9 @@ void rtl_cam_del_entry(struct ieee80211_hw *hw, u8 *sta_addr)
 		RT_TRACE(rtlpriv, COMP_SEC, DBG_EMERG, "sta_addr is NULL\n");
 	}
 
-	if ((sta_addr[0]|sta_addr[1]|sta_addr[2]|sta_addr[3]|\
-				sta_addr[4]|sta_addr[5]) == 0) {
+	if (is_zero_ether_addr(sta_addr)) {
 		RT_TRACE(rtlpriv, COMP_SEC, DBG_EMERG,
-			 "sta_addr is 00:00:00:00:00:00\n");
+			 "sta_addr is %pM\n", sta_addr);
 		return;
 	}
 	/* Does STA already exist? */
@@ -341,9 +337,10 @@ void rtl_cam_del_entry(struct ieee80211_hw *hw, u8 *sta_addr)
 		if (((bitmap & BIT(0)) == BIT(0)) &&
 		    (memcmp(addr, sta_addr, ETH_ALEN) == 0)) {
 			/* Remove from HW Security CAM */
-			memset(rtlpriv->sec.hwsec_cam_sta_addr[i], 0, ETH_ALEN);
+			eth_zero_addr(rtlpriv->sec.hwsec_cam_sta_addr[i]);
 			rtlpriv->sec.hwsec_cam_bitmap &= ~(BIT(0) << i);
-			pr_info("&&&&&&&&&del entry %d\n", i);
+			RT_TRACE(rtlpriv, COMP_SEC, DBG_LOUD,
+				 "del CAM entry %d\n", i);
 		}
 	}
 	return;

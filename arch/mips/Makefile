@@ -114,6 +114,7 @@ cflags-$(CONFIG_CPU_BIG_ENDIAN)		+= $(shell $(CC) -dumpmachine |grep -q 'mips.*e
 cflags-$(CONFIG_CPU_LITTLE_ENDIAN)	+= $(shell $(CC) -dumpmachine |grep -q 'mips.*el-.*' || echo -EL $(undef-all) $(predef-le))
 
 cflags-$(CONFIG_CPU_HAS_SMARTMIPS)	+= $(call cc-option,-msmartmips)
+cflags-$(CONFIG_CPU_MICROMIPS) += $(call cc-option,-mmicromips -mno-jals)
 
 cflags-$(CONFIG_SB1XXX_CORELIS)	+= $(call cc-option,-mno-sched-prolog) \
 				   -fno-omit-frame-pointer
@@ -145,8 +146,6 @@ cflags-$(CONFIG_CPU_NEVADA)	+= $(call cc-option,-march=rm5200,-march=r5000) \
 			-Wa,--trap
 cflags-$(CONFIG_CPU_RM7000)	+= $(call cc-option,-march=rm7000,-march=r5000) \
 			-Wa,--trap
-cflags-$(CONFIG_CPU_RM9000)	+= $(call cc-option,-march=rm9000,-march=r5000) \
-			-Wa,--trap
 cflags-$(CONFIG_CPU_SB1)	+= $(call cc-option,-march=sb1,-march=r5000) \
 			-Wa,--trap
 cflags-$(CONFIG_CPU_R8000)	+= -march=r8000 -Wa,--trap
@@ -173,9 +172,9 @@ endif
 #
 # Firmware support
 #
-libs-$(CONFIG_ARC)		+= arch/mips/fw/arc/
-libs-$(CONFIG_CFE)		+= arch/mips/fw/cfe/
-libs-$(CONFIG_SNIPROM)		+= arch/mips/fw/sni/
+libs-$(CONFIG_FW_ARC)		+= arch/mips/fw/arc/
+libs-$(CONFIG_FW_CFE)		+= arch/mips/fw/cfe/
+libs-$(CONFIG_FW_SNIPROM)	+= arch/mips/fw/sni/
 libs-y				+= arch/mips/fw/lib/
 
 #
@@ -191,6 +190,10 @@ endif
 # Board-dependent options and extra files
 #
 include $(srctree)/arch/mips/Kbuild.platforms
+
+ifdef CONFIG_PHYSICAL_START
+load-y					= $(CONFIG_PHYSICAL_START)
+endif
 
 cflags-y			+= -I$(srctree)/arch/mips/include/asm/mach-generic
 drivers-$(CONFIG_PCI)		+= arch/mips/pci/
@@ -219,13 +222,17 @@ endif
 
 KBUILD_AFLAGS	+= $(cflags-y)
 KBUILD_CFLAGS	+= $(cflags-y)
-KBUILD_CPPFLAGS += -D"VMLINUX_LOAD_ADDRESS=$(load-y)"
-KBUILD_CPPFLAGS += -D"DATAOFFSET=$(if $(dataoffset-y),$(dataoffset-y),0)"
+KBUILD_CPPFLAGS += -DVMLINUX_LOAD_ADDRESS=$(load-y)
+KBUILD_CPPFLAGS += -DDATAOFFSET=$(if $(dataoffset-y),$(dataoffset-y),0)
 
 LDFLAGS			+= -m $(ld-emul)
 
+ifdef CONFIG_CC_STACKPROTECTOR
+  KBUILD_CFLAGS += -fstack-protector
+endif
+
 ifdef CONFIG_MIPS
-CHECKFLAGS += $(shell $(CC) $(KBUILD_CFLAGS) -dM -E -xc /dev/null | \
+CHECKFLAGS += $(shell $(CC) $(KBUILD_CFLAGS) -dM -E -x c /dev/null | \
 	egrep -vw '__GNUC_(|MINOR_|PATCHLEVEL_)_' | \
 	sed -e "s/^\#define /-D'/" -e "s/ /'='/" -e "s/$$/'/")
 ifdef CONFIG_64BIT
@@ -235,7 +242,7 @@ endif
 
 OBJCOPYFLAGS		+= --remove-section=.reginfo
 
-head-y := arch/mips/kernel/head.o arch/mips/kernel/init_task.o
+head-y := arch/mips/kernel/head.o
 
 libs-y			+= arch/mips/lib/
 

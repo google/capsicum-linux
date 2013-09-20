@@ -455,6 +455,7 @@ static struct platform_device bfin_async_nand_device = {
 static void bfin_plat_nand_init(void)
 {
 	gpio_request(BFIN_NAND_PLAT_READY, "bfin_nand_plat");
+	gpio_direction_input(BFIN_NAND_PLAT_READY);
 }
 #else
 static void bfin_plat_nand_init(void) {}
@@ -873,7 +874,7 @@ static struct adf702x_platform_data adf7021_platform_data = {
 };
 static inline void adf702x_mac_init(void)
 {
-	random_ether_addr(adf7021_platform_data.mac_addr);
+	eth_random_addr(adf7021_platform_data.mac_addr);
 }
 #else
 static inline void adf702x_mac_init(void) {}
@@ -1525,7 +1526,7 @@ static struct platform_device bfin_sport_spi1_device = {
 
 #if defined(CONFIG_FB_BF537_LQ035) || defined(CONFIG_FB_BF537_LQ035_MODULE)
 static struct platform_device bfin_fb_device = {
-	.name = "bf537-lq035",
+	.name = "bf537_lq035",
 };
 #endif
 
@@ -1790,6 +1791,8 @@ static struct platform_device bfin_sir1_device = {
 #endif
 
 #if defined(CONFIG_I2C_BLACKFIN_TWI) || defined(CONFIG_I2C_BLACKFIN_TWI_MODULE)
+static const u16 bfin_twi0_pins[] = {P_TWI0_SCL, P_TWI0_SDA, 0};
+
 static struct resource bfin_twi0_resource[] = {
 	[0] = {
 		.start = TWI0_REGBASE,
@@ -1808,6 +1811,9 @@ static struct platform_device i2c_bfin_twi_device = {
 	.id = 0,
 	.num_resources = ARRAY_SIZE(bfin_twi0_resource),
 	.resource = bfin_twi0_resource,
+	.dev = {
+		.platform_data = &bfin_twi0_pins,
+	},
 };
 #endif
 
@@ -2361,7 +2367,13 @@ static struct i2c_board_info __initdata bfin_i2c_board_info[] = {
 	},
 #endif
 };
-
+#if defined(CONFIG_SERIAL_BFIN_SPORT) || defined(CONFIG_SERIAL_BFIN_SPORT_MODULE) \
+|| defined(CONFIG_BFIN_SPORT) || defined(CONFIG_BFIN_SPORT_MODULE)
+unsigned short bfin_sport0_peripherals[] = {
+	P_SPORT0_TFS, P_SPORT0_DTPRI, P_SPORT0_TSCLK, P_SPORT0_RFS,
+	P_SPORT0_DRPRI, P_SPORT0_RSCLK, P_SPORT0_DRSEC, P_SPORT0_DTSEC, 0
+};
+#endif
 #if defined(CONFIG_SERIAL_BFIN_SPORT) || defined(CONFIG_SERIAL_BFIN_SPORT_MODULE)
 #ifdef CONFIG_SERIAL_BFIN_SPORT0_UART
 static struct resource bfin_sport0_uart_resources[] = {
@@ -2380,11 +2392,6 @@ static struct resource bfin_sport0_uart_resources[] = {
 		.end = IRQ_SPORT0_ERROR,
 		.flags = IORESOURCE_IRQ,
 	},
-};
-
-static unsigned short bfin_sport0_peripherals[] = {
-	P_SPORT0_TFS, P_SPORT0_DTPRI, P_SPORT0_TSCLK, P_SPORT0_RFS,
-	P_SPORT0_DRPRI, P_SPORT0_RSCLK, 0
 };
 
 static struct platform_device bfin_sport0_uart_device = {
@@ -2432,7 +2439,49 @@ static struct platform_device bfin_sport1_uart_device = {
 };
 #endif
 #endif
-
+#if defined(CONFIG_BFIN_SPORT) || defined(CONFIG_BFIN_SPORT_MODULE)
+static struct resource bfin_sport0_resources[] = {
+	{
+		.start = SPORT0_TCR1,
+		.end = SPORT0_MRCS3+4,
+		.flags = IORESOURCE_MEM,
+	},
+	{
+		.start = IRQ_SPORT0_RX,
+		.end = IRQ_SPORT0_RX+1,
+		.flags = IORESOURCE_IRQ,
+	},
+	{
+		.start = IRQ_SPORT0_TX,
+		.end = IRQ_SPORT0_TX+1,
+		.flags = IORESOURCE_IRQ,
+	},
+	{
+		.start = IRQ_SPORT0_ERROR,
+		.end = IRQ_SPORT0_ERROR,
+		.flags = IORESOURCE_IRQ,
+	},
+	{
+		.start = CH_SPORT0_TX,
+		.end = CH_SPORT0_TX,
+		.flags = IORESOURCE_DMA,
+	},
+	{
+		.start = CH_SPORT0_RX,
+		.end = CH_SPORT0_RX,
+		.flags = IORESOURCE_DMA,
+	},
+};
+static struct platform_device bfin_sport0_device = {
+	.name = "bfin_sport_raw",
+	.id = 0,
+	.num_resources = ARRAY_SIZE(bfin_sport0_resources),
+	.resource = bfin_sport0_resources,
+	.dev = {
+		.platform_data = &bfin_sport0_peripherals, /* Passed to driver */
+	},
+};
+#endif
 #if defined(CONFIG_PATA_PLATFORM) || defined(CONFIG_PATA_PLATFORM_MODULE)
 #define CF_IDE_NAND_CARD_USE_HDD_INTERFACE
 /* #define CF_IDE_NAND_CARD_USE_CF_IN_COMMON_MEMORY_MODE */
@@ -2521,7 +2570,6 @@ static struct platform_device bfin_dpmc = {
 };
 
 #if defined(CONFIG_SND_BF5XX_I2S) || defined(CONFIG_SND_BF5XX_I2S_MODULE) || \
-	defined(CONFIG_SND_BF5XX_TDM) || defined(CONFIG_SND_BF5XX_TDM_MODULE) || \
 	defined(CONFIG_SND_BF5XX_AC97) || defined(CONFIG_SND_BF5XX_AC97_MODULE)
 
 #define SPORT_REQ(x) \
@@ -2579,17 +2627,25 @@ static struct platform_device bfin_i2s_pcm = {
 };
 #endif
 
-#if defined(CONFIG_SND_BF5XX_TDM) || defined(CONFIG_SND_BF5XX_TDM_MODULE)
-static struct platform_device bfin_tdm_pcm = {
-	.name = "bfin-tdm-pcm-audio",
-	.id = -1,
-};
-#endif
-
 #if defined(CONFIG_SND_BF5XX_AC97) || defined(CONFIG_SND_BF5XX_AC97_MODULE)
 static struct platform_device bfin_ac97_pcm = {
 	.name = "bfin-ac97-pcm-audio",
 	.id = -1,
+};
+#endif
+
+#if defined(CONFIG_SND_BF5XX_SOC_AD1836) \
+	        || defined(CONFIG_SND_BF5XX_SOC_AD1836_MODULE)
+static const char * const ad1836_link[] = {
+	"bfin-i2s.0",
+	"spi0.4",
+};
+static struct platform_device bfin_ad1836_machine = {
+	.name = "bfin-snd-ad1836",
+	.id = -1,
+	.dev = {
+		.platform_data = (void *)ad1836_link,
+	},
 };
 #endif
 
@@ -2626,18 +2682,6 @@ static struct platform_device bfin_eval_adav801_device = {
 #if defined(CONFIG_SND_BF5XX_SOC_I2S) || defined(CONFIG_SND_BF5XX_SOC_I2S_MODULE)
 static struct platform_device bfin_i2s = {
 	.name = "bfin-i2s",
-	.id = CONFIG_SND_BF5XX_SPORT_NUM,
-	.num_resources = ARRAY_SIZE(bfin_snd_resources[CONFIG_SND_BF5XX_SPORT_NUM]),
-	.resource = bfin_snd_resources[CONFIG_SND_BF5XX_SPORT_NUM],
-	.dev = {
-		.platform_data = &bfin_snd_data[CONFIG_SND_BF5XX_SPORT_NUM],
-	},
-};
-#endif
-
-#if defined(CONFIG_SND_BF5XX_SOC_TDM) || defined(CONFIG_SND_BF5XX_SOC_TDM_MODULE)
-static struct platform_device bfin_tdm = {
-	.name = "bfin-tdm",
 	.id = CONFIG_SND_BF5XX_SPORT_NUM,
 	.num_resources = ARRAY_SIZE(bfin_snd_resources[CONFIG_SND_BF5XX_SPORT_NUM]),
 	.resource = bfin_snd_resources[CONFIG_SND_BF5XX_SPORT_NUM],
@@ -2754,7 +2798,9 @@ static struct platform_device bf5xx_adau1701_device = {
 static struct platform_device *stamp_devices[] __initdata = {
 
 	&bfin_dpmc,
-
+#if defined(CONFIG_BFIN_SPORT) || defined(CONFIG_BFIN_SPORT_MODULE)
+	&bfin_sport0_device,
+#endif
 #if defined(CONFIG_BFIN_CFPCMCIA) || defined(CONFIG_BFIN_CFPCMCIA_MODULE)
 	&bfin_pcmcia_cf_device,
 #endif
@@ -2869,12 +2915,13 @@ static struct platform_device *stamp_devices[] __initdata = {
 	&bfin_i2s_pcm,
 #endif
 
-#if defined(CONFIG_SND_BF5XX_TDM) || defined(CONFIG_SND_BF5XX_TDM_MODULE)
-	&bfin_tdm_pcm,
-#endif
-
 #if defined(CONFIG_SND_BF5XX_AC97) || defined(CONFIG_SND_BF5XX_AC97_MODULE)
 	&bfin_ac97_pcm,
+#endif
+
+#if defined(CONFIG_SND_BF5XX_SOC_AD1836) || \
+	defined(CONFIG_SND_BF5XX_SOC_AD1836_MODULE)
+	&bfin_ad1836_machine,
 #endif
 
 #if defined(CONFIG_SND_BF5XX_SOC_AD73311) || \
@@ -2888,10 +2935,6 @@ static struct platform_device *stamp_devices[] __initdata = {
 
 #if defined(CONFIG_SND_BF5XX_SOC_I2S) || defined(CONFIG_SND_BF5XX_SOC_I2S_MODULE)
 	&bfin_i2s,
-#endif
-
-#if defined(CONFIG_SND_BF5XX_SOC_TDM) || defined(CONFIG_SND_BF5XX_SOC_TDM_MODULE)
-	&bfin_tdm,
 #endif
 
 #if defined(CONFIG_SND_BF5XX_SOC_AC97) || defined(CONFIG_SND_BF5XX_SOC_AC97_MODULE)

@@ -159,7 +159,7 @@ static DEFINE_PER_CPU(struct clock_event_device, tile_timer) = {
 	.set_mode = tile_timer_set_mode,
 };
 
-void __cpuinit setup_tile_timer(void)
+void setup_tile_timer(void)
 {
 	struct clock_event_device *evt = &__get_cpu_var(tile_timer);
 
@@ -230,6 +230,10 @@ int setup_profiling_timer(unsigned int multiplier)
  */
 cycles_t ns2cycles(unsigned long nsecs)
 {
-	struct clock_event_device *dev = &__get_cpu_var(tile_timer);
+	/*
+	 * We do not have to disable preemption here as each core has the same
+	 * clock frequency.
+	 */
+	struct clock_event_device *dev = &__raw_get_cpu_var(tile_timer);
 	return ((u64)nsecs * dev->mult) >> dev->shift;
 }

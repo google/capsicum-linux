@@ -22,6 +22,7 @@
 #include <linux/in6.h>
 #include <linux/netpoll.h>
 #include <linux/inetdevice.h>
+#include <linux/etherdevice.h>
 #include "bond_3ad.h"
 #include "bond_alb.h"
 
@@ -143,6 +144,7 @@ struct bond_params {
 	u8 num_peer_notif;
 	int arp_interval;
 	int arp_validate;
+	int arp_all_targets;
 	int use_carrier;
 	int fail_over_mac;
 	int updelay;
@@ -178,6 +180,7 @@ struct slave {
 	int    delay;
 	unsigned long jiffies;
 	unsigned long last_arp_rx;
+	unsigned long target_last_arp_rx[BOND_MAX_ARP_TARGETS];
 	s8     link;    /* one of BOND_LINK_XXXX */
 	s8     new_link;
 	u8     backup:1,   /* indicates backup slave. Value corresponds with
@@ -218,19 +221,17 @@ struct bonding {
 	struct   slave *primary_slave;
 	bool     force_primary;
 	s32      slave_cnt; /* never change this value outside the attach/detach wrappers */
-	int     (*recv_probe)(struct sk_buff *, struct bonding *,
-			       struct slave *);
+	int     (*recv_probe)(const struct sk_buff *, struct bonding *,
+			      struct slave *);
 	rwlock_t lock;
 	rwlock_t curr_slave_lock;
 	u8	 send_peer_notif;
-	s8	 setup_by_slave;
-	s8       igmp_retrans;
+	u8       igmp_retrans;
 #ifdef CONFIG_PROC_FS
 	struct   proc_dir_entry *proc_entry;
 	char     proc_file_name[IFNAMSIZ];
 #endif /* CONFIG_PROC_FS */
 	struct   list_head bond_list;
-	struct   netdev_hw_addr_list mc_list;
 	int      (*xmit_hash_policy)(struct sk_buff *, int);
 	u16      rr_tx_counter;
 	struct   ad_bond_info ad_info;
@@ -244,7 +245,7 @@ struct bonding {
 	struct   delayed_work ad_work;
 	struct   delayed_work mcast_work;
 #ifdef CONFIG_DEBUG_FS
-	/* debugging suport via debugfs */
+	/* debugging support via debugfs */
 	struct	 dentry *debug_dir;
 #endif /* CONFIG_DEBUG_FS */
 };
@@ -256,6 +257,9 @@ static inline bool bond_vlan_used(struct bonding *bond)
 
 #define bond_slave_get_rcu(dev) \
 	((struct slave *) rcu_dereference(dev->rx_handler_data))
+
+#define bond_slave_get_rtnl(dev) \
+	((struct slave *) rtnl_dereference(dev->rx_handler_data))
 
 /**
  * Returns NULL if the net_device does not belong to any of the bond's slaves
@@ -279,11 +283,9 @@ static inline struct slave *bond_get_slave_by_dev(struct bonding *bond,
 
 static inline struct bonding *bond_get_bond_by_slave(struct slave *slave)
 {
-	if (!slave || !slave->dev->master) {
+	if (!slave || !slave->bond)
 		return NULL;
-	}
-
-	return netdev_priv(slave->dev->master);
+	return slave->bond;
 }
 
 static inline bool bond_is_lb(const struct bonding *bond)
@@ -320,6 +322,9 @@ static inline bool bond_is_active_slave(struct slave *slave)
 #define BOND_FOM_ACTIVE			1
 #define BOND_FOM_FOLLOW			2
 
+#define BOND_ARP_TARGETS_ANY		0
+#define BOND_ARP_TARGETS_ALL		1
+
 #define BOND_ARP_VALIDATE_NONE		0
 #define BOND_ARP_VALIDATE_ACTIVE	(1 << BOND_STATE_ACTIVE)
 #define BOND_ARP_VALIDATE_BACKUP	(1 << BOND_STATE_BACKUP)
@@ -332,11 +337,31 @@ static inline int slave_do_arp_validate(struct bonding *bond,
 	return bond->params.arp_validate & (1 << bond_slave_state(slave));
 }
 
+/* Get the oldest arp which we've received on this slave for bond's
+ * arp_targets.
+ */
+static inline unsigned long slave_oldest_target_arp_rx(struct bonding *bond,
+						       struct slave *slave)
+{
+	int i = 1;
+	unsigned long ret = slave->target_last_arp_rx[0];
+
+	for (; (i < BOND_MAX_ARP_TARGETS) && bond->params.arp_targets[i]; i++)
+		if (time_before(slave->target_last_arp_rx[i], ret))
+			ret = slave->target_last_arp_rx[i];
+
+	return ret;
+}
+
 static inline unsigned long slave_last_rx(struct bonding *bond,
 					struct slave *slave)
 {
-	if (slave_do_arp_validate(bond, slave))
-		return slave->last_arp_rx;
+	if (slave_do_arp_validate(bond, slave)) {
+		if (bond->params.arp_all_targets == BOND_ARP_TARGETS_ALL)
+			return slave_oldest_target_arp_rx(bond, slave);
+		else
+			return slave->last_arp_rx;
+	}
 
 	return slave->dev->last_rx;
 }
@@ -359,10 +384,9 @@ static inline void bond_netpoll_send_skb(const struct slave *slave,
 
 static inline void bond_set_slave_inactive_flags(struct slave *slave)
 {
-	struct bonding *bond = netdev_priv(slave->dev->master);
-	if (!bond_is_lb(bond))
+	if (!bond_is_lb(slave->bond))
 		bond_set_backup_slave(slave);
-	if (!bond->params.all_slaves_active)
+	if (!slave->bond->params.all_slaves_active)
 		slave->inactive = 1;
 }
 
@@ -450,6 +474,34 @@ static inline void bond_destroy_proc_dir(struct bond_net *bn)
 }
 #endif
 
+static inline struct slave *bond_slave_has_mac(struct bonding *bond,
+					       const u8 *mac)
+{
+	int i = 0;
+	struct slave *tmp;
+
+	bond_for_each_slave(bond, tmp, i)
+		if (ether_addr_equal_64bits(mac, tmp->dev->dev_addr))
+			return tmp;
+
+	return NULL;
+}
+
+/* Check if the ip is present in arp ip list, or first free slot if ip == 0
+ * Returns -1 if not found, index if found
+ */
+static inline int bond_get_targets_ip(__be32 *targets, __be32 ip)
+{
+	int i;
+
+	for (i = 0; i < BOND_MAX_ARP_TARGETS; i++)
+		if (targets[i] == ip)
+			return i;
+		else if (targets[i] == 0)
+			break;
+
+	return -1;
+}
 
 /* exported from bond_main.c */
 extern int bond_net_id;
@@ -457,6 +509,7 @@ extern const struct bond_parm_tbl bond_lacp_tbl[];
 extern const struct bond_parm_tbl bond_mode_tbl[];
 extern const struct bond_parm_tbl xmit_hashtype_tbl[];
 extern const struct bond_parm_tbl arp_validate_tbl[];
+extern const struct bond_parm_tbl arp_all_targets_tbl[];
 extern const struct bond_parm_tbl fail_over_mac_tbl[];
 extern const struct bond_parm_tbl pri_reselect_tbl[];
 extern struct bond_parm_tbl ad_select_tbl[];

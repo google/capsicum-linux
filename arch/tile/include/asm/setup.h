@@ -11,16 +11,13 @@
  *   NON INFRINGEMENT.  See the GNU General Public License for
  *   more details.
  */
-
 #ifndef _ASM_TILE_SETUP_H
 #define _ASM_TILE_SETUP_H
 
-#define COMMAND_LINE_SIZE	2048
-
-#ifdef __KERNEL__
 
 #include <linux/pfn.h>
 #include <linux/init.h>
+#include <uapi/asm/setup.h>
 
 /*
  * Reserved space for vmalloc and iomap - defined in asm/page.h
@@ -41,18 +38,16 @@ void restrict_dma_mpls(void);
 #ifdef CONFIG_HARDWALL
 /* User-level network management functions */
 void reset_network_state(void);
-void grant_network_mpls(void);
-void restrict_network_mpls(void);
 struct task_struct;
-int hardwall_deactivate(struct task_struct *task);
+void hardwall_switch_tasks(struct task_struct *prev, struct task_struct *next);
+void hardwall_deactivate_all(struct task_struct *task);
+int hardwall_ipi_valid(int cpu);
 
 /* Hook hardwall code into changes in affinity. */
 #define arch_set_cpus_allowed(p, new_mask) do { \
-	if (p->thread.hardwall && !cpumask_equal(&p->cpus_allowed, new_mask)) \
-		hardwall_deactivate(p); \
+	if (!cpumask_equal(&p->cpus_allowed, new_mask)) \
+		hardwall_deactivate_all(p); \
 } while (0)
 #endif
-
-#endif /* __KERNEL__ */
 
 #endif /* _ASM_TILE_SETUP_H */

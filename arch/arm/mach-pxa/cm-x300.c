@@ -48,12 +48,12 @@
 
 #include <mach/pxa300.h>
 #include <mach/pxa27x-udc.h>
-#include <mach/pxafb.h>
-#include <mach/mmc.h>
-#include <mach/ohci.h>
-#include <plat/pxa3xx_nand.h>
+#include <linux/platform_data/video-pxafb.h>
+#include <linux/platform_data/mmc-pxamci.h>
+#include <linux/platform_data/usb-ohci-pxa27x.h>
+#include <linux/platform_data/mtd-nand-pxa3xx.h>
 #include <mach/audio.h>
-#include <mach/pxa3xx-u2d.h>
+#include <linux/platform_data/usb-pxa3xx-ulpi.h>
 
 #include <asm/mach/map.h>
 
@@ -713,9 +713,7 @@ struct da9030_battery_info cm_x300_battery_info = {
 };
 
 static struct regulator_consumer_supply buck2_consumers[] = {
-	{
-		.supply = "vcc_core",
-	},
+	REGULATOR_SUPPLY("vcc_core", NULL),
 };
 
 static struct regulator_init_data buck2_data = {
@@ -856,7 +854,7 @@ MACHINE_START(CM_X300, "CM-X300 module")
 	.nr_irqs	= PXA_NR_IRQS,
 	.init_irq	= pxa3xx_init_irq,
 	.handle_irq	= pxa3xx_handle_irq,
-	.timer		= &pxa_timer,
+	.init_time	= pxa_timer_init,
 	.init_machine	= cm_x300_init,
 	.fixup		= cm_x300_fixup,
 	.restart	= pxa_restart,

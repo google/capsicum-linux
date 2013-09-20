@@ -45,12 +45,12 @@
 #include <mach/pxa27x.h>
 #include <mach/balloon3.h>
 #include <mach/audio.h>
-#include <mach/pxafb.h>
-#include <mach/mmc.h>
+#include <linux/platform_data/video-pxafb.h>
+#include <linux/platform_data/mmc-pxamci.h>
 #include <mach/udc.h>
 #include <mach/pxa27x-udc.h>
-#include <mach/irda.h>
-#include <mach/ohci.h>
+#include <linux/platform_data/irda-pxaficp.h>
+#include <linux/platform_data/usb-ohci-pxa27x.h>
 
 #include "generic.h"
 #include "devices.h"
@@ -679,8 +679,6 @@ static struct mtd_partition balloon3_partition_info[] = {
 	},
 };
 
-static const char *balloon3_part_probes[] = { "cmdlinepart", NULL };
-
 struct platform_nand_data balloon3_nand_pdata = {
 	.chip = {
 		.nr_chips	= 4,
@@ -688,7 +686,6 @@ struct platform_nand_data balloon3_nand_pdata = {
 		.nr_partitions	= ARRAY_SIZE(balloon3_partition_info),
 		.partitions	= balloon3_partition_info,
 		.chip_delay	= 50,
-		.part_probe_types = balloon3_part_probes,
 	},
 	.ctrl = {
 		.hwcontrol	= 0,
@@ -732,9 +729,7 @@ static inline void balloon3_nand_init(void) {}
 #if defined(CONFIG_REGULATOR_MAX1586) || \
     defined(CONFIG_REGULATOR_MAX1586_MODULE)
 static struct regulator_consumer_supply balloon3_max1587a_consumers[] = {
-	{
-		.supply	= "vcc_core",
-	}
+	REGULATOR_SUPPLY("vcc_core", NULL),
 };
 
 static struct regulator_init_data balloon3_max1587a_v3_info = {
@@ -827,7 +822,7 @@ MACHINE_START(BALLOON3, "Balloon3")
 	.nr_irqs	= BALLOON3_NR_IRQS,
 	.init_irq	= balloon3_init_irq,
 	.handle_irq	= pxa27x_handle_irq,
-	.timer		= &pxa_timer,
+	.init_time	= pxa_timer_init,
 	.init_machine	= balloon3_init,
 	.atag_offset	= 0x100,
 	.restart	= pxa_restart,

@@ -1,13 +1,10 @@
-include include/asm-generic/Kbuild.asm
 
-header-y += registers.h
 header-y += ucontext.h
-header-y += user.h
 
 generic-y += auxvec.h
 generic-y += bug.h
 generic-y += bugs.h
-generic-y += cpumask.h
+generic-y += clkdev.h
 generic-y += cputime.h
 generic-y += current.h
 generic-y += device.h
@@ -23,12 +20,10 @@ generic-y += ioctl.h
 generic-y += ioctls.h
 generic-y += iomap.h
 generic-y += ipcbuf.h
-generic-y += ipc.h
 generic-y += irq_regs.h
 generic-y += kdebug.h
 generic-y += kmap_types.h
 generic-y += local64.h
-generic-y += local.h
 generic-y += local.h
 generic-y += mman.h
 generic-y += msgbuf.h
@@ -45,6 +40,7 @@ generic-y += sembuf.h
 generic-y += shmbuf.h
 generic-y += shmparam.h
 generic-y += siginfo.h
+generic-y += sizes.h
 generic-y += socket.h
 generic-y += sockios.h
 generic-y += statfs.h
@@ -52,6 +48,7 @@ generic-y += stat.h
 generic-y += termbits.h
 generic-y += termios.h
 generic-y += topology.h
+generic-y += trace_clock.h
 generic-y += types.h
 generic-y += ucontext.h
 generic-y += unaligned.h

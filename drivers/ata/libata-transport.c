@@ -37,7 +37,7 @@
 #include "libata.h"
 #include "libata-transport.h"
 
-#define ATA_PORT_ATTRS		2
+#define ATA_PORT_ATTRS		3
 #define ATA_LINK_ATTRS		3
 #define ATA_DEV_ATTRS		9
 
@@ -216,6 +216,7 @@ static DEVICE_ATTR(name, S_IRUGO, show_ata_port_##name, NULL)
 
 ata_port_simple_attr(nr_pmp_links, nr_pmp_links, "%d\n", int);
 ata_port_simple_attr(stats.idle_irq, idle_irq, "%ld\n", unsigned long);
+ata_port_simple_attr(local_port_no, port_no, "%u\n", unsigned int);
 
 static DECLARE_TRANSPORT_CLASS(ata_port_class,
 			       "ata_port", NULL, NULL, NULL);
@@ -232,7 +233,7 @@ static void ata_tport_release(struct device *dev)
  * Returns:
  *	%1 if the device represents a ATA Port, %0 else
  */
-int ata_is_port(const struct device *dev)
+static int ata_is_port(const struct device *dev)
 {
 	return dev->release == ata_tport_release;
 }
@@ -355,7 +356,7 @@ static void ata_tlink_release(struct device *dev)
  * Returns:
  *	%1 if the device represents a ATA link, %0 else
  */
-int ata_is_link(const struct device *dev)
+static int ata_is_link(const struct device *dev)
 {
 	return dev->release == ata_tlink_release;
 }
@@ -572,7 +573,7 @@ static void ata_tdev_release(struct device *dev)
  * Returns:
  *	%1 if the device represents a ATA device, %0 else
  */
-int ata_is_ata_dev(const struct device *dev)
+static int ata_is_ata_dev(const struct device *dev)
 {
 	return dev->release == ata_tdev_release;
 }
@@ -709,6 +710,7 @@ struct scsi_transport_template *ata_attach_transport(void)
 	count = 0;
 	SETUP_PORT_ATTRIBUTE(nr_pmp_links);
 	SETUP_PORT_ATTRIBUTE(idle_irq);
+	SETUP_PORT_ATTRIBUTE(port_no);
 	BUG_ON(count > ATA_PORT_ATTRS);
 	i->port_attrs[count] = NULL;
 

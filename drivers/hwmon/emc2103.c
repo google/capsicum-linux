@@ -405,7 +405,7 @@ static ssize_t set_fan_target(struct device *dev, struct device_attribute *da,
 	if (rpm_target == 0)
 		data->fan_target = 0x1fff;
 	else
-		data->fan_target = SENSORS_LIMIT(
+		data->fan_target = clamp_val(
 			(FAN_RPM_FACTOR * data->fan_multiplier) / rpm_target,
 			0, 0x1fff);
 
@@ -451,11 +451,15 @@ static ssize_t set_pwm_enable(struct device *dev, struct device_attribute *da,
 		data->fan_rpm_control = true;
 		break;
 	default:
-		mutex_unlock(&data->update_lock);
-		return -EINVAL;
+		count = -EINVAL;
+		goto err;
 	}
 
-	read_u8_from_i2c(client, REG_FAN_CONF1, &conf_reg);
+	result = read_u8_from_i2c(client, REG_FAN_CONF1, &conf_reg);
+	if (result) {
+		count = result;
+		goto err;
+	}
 
 	if (data->fan_rpm_control)
 		conf_reg |= 0x80;
@@ -463,7 +467,7 @@ static ssize_t set_pwm_enable(struct device *dev, struct device_attribute *da,
 		conf_reg &= ~0x80;
 
 	i2c_smbus_write_byte_data(client, REG_FAN_CONF1, conf_reg);
-
+err:
 	mutex_unlock(&data->update_lock);
 	return count;
 }
@@ -586,7 +590,8 @@ emc2103_probe(struct i2c_client *client, const struct i2c_device_id *id)
 	if (!i2c_check_functionality(client->adapter, I2C_FUNC_SMBUS_BYTE_DATA))
 		return -EIO;
 
-	data = kzalloc(sizeof(struct emc2103_data), GFP_KERNEL);
+	data = devm_kzalloc(&client->dev, sizeof(struct emc2103_data),
+			    GFP_KERNEL);
 	if (!data)
 		return -ENOMEM;
 
@@ -604,7 +609,7 @@ emc2103_probe(struct i2c_client *client, const struct i2c_device_id *id)
 		if (status < 0) {
 			dev_dbg(&client->dev, "reg 0x%02x, err %d\n", REG_CONF1,
 				status);
-			goto exit_free;
+			return status;
 		}
 
 		/* detect current state of hardware */
@@ -627,7 +632,7 @@ emc2103_probe(struct i2c_client *client, const struct i2c_device_id *id)
 	/* Register sysfs hooks */
 	status = sysfs_create_group(&client->dev.kobj, &emc2103_group);
 	if (status)
-		goto exit_free;
+		return status;
 
 	if (data->temp_count >= 3) {
 		status = sysfs_create_group(&client->dev.kobj,
@@ -662,8 +667,6 @@ exit_remove_temp3:
 		sysfs_remove_group(&client->dev.kobj, &emc2103_temp3_group);
 exit_remove:
 	sysfs_remove_group(&client->dev.kobj, &emc2103_group);
-exit_free:
-	kfree(data);
 	return status;
 }
 
@@ -681,7 +684,6 @@ static int emc2103_remove(struct i2c_client *client)
 
 	sysfs_remove_group(&client->dev.kobj, &emc2103_group);
 
-	kfree(data);
 	return 0;
 }
 
@@ -728,6 +730,6 @@ static struct i2c_driver emc2103_driver = {
 
 module_i2c_driver(emc2103_driver);
 
-MODULE_AUTHOR("Steve Glendinning <steve.glendinning@smsc.com>");
+MODULE_AUTHOR("Steve Glendinning <steve.glendinning@shawell.net>");
 MODULE_DESCRIPTION("SMSC EMC2103 hwmon driver");
 MODULE_LICENSE("GPL");

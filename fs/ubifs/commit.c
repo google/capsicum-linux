@@ -293,8 +293,8 @@ int ubifs_bg_thread(void *info)
 	int err;
 	struct ubifs_info *c = info;
 
-	dbg_msg("background thread \"%s\" started, PID %d",
-		c->bgt_name, current->pid);
+	ubifs_msg("background thread \"%s\" started, PID %d",
+		  c->bgt_name, current->pid);
 	set_freezable();
 
 	while (1) {
@@ -328,7 +328,7 @@ int ubifs_bg_thread(void *info)
 		cond_resched();
 	}
 
-	dbg_msg("background thread \"%s\" stops", c->bgt_name);
+	ubifs_msg("background thread \"%s\" stops", c->bgt_name);
 	return 0;
 }
 
@@ -496,7 +496,9 @@ int ubifs_gc_should_commit(struct ubifs_info *c)
 	return ret;
 }
 
-#ifdef CONFIG_UBIFS_FS_DEBUG
+/*
+ * Everything below is related to debugging.
+ */
 
 /**
  * struct idx_node - hold index nodes during index tree traversal.
@@ -512,7 +514,7 @@ struct idx_node {
 	struct list_head list;
 	int iip;
 	union ubifs_key upper_key;
-	struct ubifs_idx_node idx __attribute__((aligned(8)));
+	struct ubifs_idx_node idx __aligned(8);
 };
 
 /**
@@ -714,14 +716,14 @@ out:
 	return 0;
 
 out_dump:
-	dbg_err("dumping index node (iip=%d)", i->iip);
-	dbg_dump_node(c, idx);
+	ubifs_err("dumping index node (iip=%d)", i->iip);
+	ubifs_dump_node(c, idx);
 	list_del(&i->list);
 	kfree(i);
 	if (!list_empty(&list)) {
 		i = list_entry(list.prev, struct idx_node, list);
-		dbg_err("dumping parent index node");
-		dbg_dump_node(c, &i->idx);
+		ubifs_err("dumping parent index node");
+		ubifs_dump_node(c, &i->idx);
 	}
 out_free:
 	while (!list_empty(&list)) {
@@ -734,5 +736,3 @@ out_free:
 		err = -EINVAL;
 	return err;
 }
-
-#endif /* CONFIG_UBIFS_FS_DEBUG */

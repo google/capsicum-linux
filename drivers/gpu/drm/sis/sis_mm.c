@@ -31,8 +31,8 @@
  *    Thomas Hellström <thomas-at-tungstengraphics-dot-com>
  */
 
-#include "drmP.h"
-#include "sis_drm.h"
+#include <drm/drmP.h>
+#include <drm/sis_drm.h>
 #include "sis_drv.h"
 
 #include <video/sisfb.h>
@@ -74,7 +74,7 @@ static int sis_fb_init(struct drm_device *dev, void *data, struct drm_file *file
 	dev_priv->vram_offset = fb->offset;
 
 	mutex_unlock(&dev->struct_mutex);
-	DRM_DEBUG("offset = %u, size = %u\n", fb->offset, fb->size);
+	DRM_DEBUG("offset = %lu, size = %lu\n", fb->offset, fb->size);
 
 	return 0;
 }
@@ -128,17 +128,10 @@ static int sis_drm_alloc(struct drm_device *dev, struct drm_file *file,
 	if (retval)
 		goto fail_alloc;
 
-again:
-	if (idr_pre_get(&dev_priv->object_idr, GFP_KERNEL) == 0) {
-		retval = -ENOMEM;
+	retval = idr_alloc(&dev_priv->object_idr, item, 1, 0, GFP_KERNEL);
+	if (retval < 0)
 		goto fail_idr;
-	}
-
-	retval = idr_get_new_above(&dev_priv->object_idr, item, 1, &user_key);
-	if (retval == -EAGAIN)
-		goto again;
-	if (retval)
-		goto fail_idr;
+	user_key = retval;
 
 	list_add(&item->owner_list, &file_priv->obj_list);
 	mutex_unlock(&dev->struct_mutex);
@@ -161,7 +154,7 @@ fail_alloc:
 	mem->size = 0;
 	mem->free = 0;
 
-	DRM_DEBUG("alloc %d, size = %d, offset = %d\n", pool, mem->size,
+	DRM_DEBUG("alloc %d, size = %ld, offset = %ld\n", pool, mem->size,
 		  mem->offset);
 
 	return retval;
@@ -215,7 +208,7 @@ static int sis_ioctl_agp_init(struct drm_device *dev, void *data,
 	dev_priv->agp_offset = agp->offset;
 	mutex_unlock(&dev->struct_mutex);
 
-	DRM_DEBUG("offset = %u, size = %u\n", agp->offset, agp->size);
+	DRM_DEBUG("offset = %lu, size = %lu\n", agp->offset, agp->size);
 	return 0;
 }
 
@@ -321,14 +314,20 @@ void sis_reclaim_buffers_locked(struct drm_device *dev,
 	struct sis_file_private *file_priv = file->driver_priv;
 	struct sis_memblock *entry, *next;
 
+	if (!(file->minor->master && file->master->lock.hw_lock))
+		return;
+
+	drm_idlelock_take(&file->master->lock);
+
 	mutex_lock(&dev->struct_mutex);
 	if (list_empty(&file_priv->obj_list)) {
 		mutex_unlock(&dev->struct_mutex);
+		drm_idlelock_release(&file->master->lock);
+
 		return;
 	}
 
-	if (dev->driver->dma_quiescent)
-		dev->driver->dma_quiescent(dev);
+	sis_idle(dev);
 
 
 	list_for_each_entry_safe(entry, next, &file_priv->obj_list,
@@ -343,6 +342,9 @@ void sis_reclaim_buffers_locked(struct drm_device *dev,
 		kfree(entry);
 	}
 	mutex_unlock(&dev->struct_mutex);
+
+	drm_idlelock_release(&file->master->lock);
+
 	return;
 }
 

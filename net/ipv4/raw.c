@@ -111,9 +111,7 @@ EXPORT_SYMBOL_GPL(raw_unhash_sk);
 static struct sock *__raw_v4_lookup(struct net *net, struct sock *sk,
 		unsigned short num, __be32 raddr, __be32 laddr, int dif)
 {
-	struct hlist_node *node;
-
-	sk_for_each_from(sk, node) {
+	sk_for_each_from(sk) {
 		struct inet_sock *inet = inet_sk(sk);
 
 		if (net_eq(sock_net(sk), net) && inet->inet_num == num	&&
@@ -131,18 +129,20 @@ found:
  *	0 - deliver
  *	1 - block
  */
-static __inline__ int icmp_filter(struct sock *sk, struct sk_buff *skb)
+static int icmp_filter(const struct sock *sk, const struct sk_buff *skb)
 {
-	int type;
+	struct icmphdr _hdr;
+	const struct icmphdr *hdr;
 
-	if (!pskb_may_pull(skb, sizeof(struct icmphdr)))
+	hdr = skb_header_pointer(skb, skb_transport_offset(skb),
+				 sizeof(_hdr), &_hdr);
+	if (!hdr)
 		return 1;
 
-	type = icmp_hdr(skb)->type;
-	if (type < 32) {
+	if (hdr->type < 32) {
 		__u32 data = raw_sk(sk)->filter.data;
 
-		return ((1 << type) & data) != 0;
+		return ((1U << hdr->type) & data) != 0;
 	}
 
 	/* Do not block unknown ICMP types */
@@ -216,6 +216,11 @@ static void raw_err(struct sock *sk, struct sk_buff *skb, u32 info)
 	int err = 0;
 	int harderr = 0;
 
+	if (type == ICMP_DEST_UNREACH && code == ICMP_FRAG_NEEDED)
+		ipv4_sk_update_pmtu(skb, sk, info);
+	else if (type == ICMP_REDIRECT)
+		ipv4_sk_redirect(skb, sk);
+
 	/* Report error on raw socket, if:
 	   1. User requested ip_recverr.
 	   2. Socket is connected (otherwise the error indication
@@ -288,7 +293,7 @@ void raw_icmp_error(struct sk_buff *skb, int protocol, u32 info)
 	read_unlock(&raw_v4_hashinfo.lock);
 }
 
-static int raw_rcv_skb(struct sock * sk, struct sk_buff * skb)
+static int raw_rcv_skb(struct sock *sk, struct sk_buff *skb)
 {
 	/* Charge it to the socket. */
 
@@ -566,7 +571,8 @@ static int raw_sendmsg(struct kiocb *iocb, struct sock *sk, struct msghdr *msg,
 	flowi4_init_output(&fl4, ipc.oif, sk->sk_mark, tos,
 			   RT_SCOPE_UNIVERSE,
 			   inet->hdrincl ? IPPROTO_RAW : sk->sk_protocol,
-			   inet_sk_flowi_flags(sk) | FLOWI_FLAG_CAN_SLEEP,
+			   inet_sk_flowi_flags(sk) | FLOWI_FLAG_CAN_SLEEP |
+			    (inet->hdrincl ? FLOWI_FLAG_KNOWN_NH : 0),
 			   daddr, saddr, 0, 0);
 
 	if (!inet->hdrincl) {
@@ -887,6 +893,7 @@ struct proto raw_prot = {
 	.recvmsg	   = raw_recvmsg,
 	.bind		   = raw_bind,
 	.backlog_rcv	   = raw_rcv_skb,
+	.release_cb	   = ip4_datagram_release_cb,
 	.hash		   = raw_hash_sk,
 	.unhash		   = raw_unhash_sk,
 	.obj_size	   = sizeof(struct raw_sock),
@@ -906,9 +913,7 @@ static struct sock *raw_get_first(struct seq_file *seq)
 
 	for (state->bucket = 0; state->bucket < RAW_HTABLE_SIZE;
 			++state->bucket) {
-		struct hlist_node *node;
-
-		sk_for_each(sk, node, &state->h->ht[state->bucket])
+		sk_for_each(sk, &state->h->ht[state->bucket])
 			if (sock_net(sk) == seq_file_net(seq))
 				goto found;
 	}
@@ -987,7 +992,9 @@ static void raw_sock_seq_show(struct seq_file *seq, struct sock *sp, int i)
 		i, src, srcp, dest, destp, sp->sk_state,
 		sk_wmem_alloc_get(sp),
 		sk_rmem_alloc_get(sp),
-		0, 0L, 0, sock_i_uid(sp), 0, sock_i_ino(sp),
+		0, 0L, 0,
+		from_kuid_munged(seq_user_ns(seq), sock_i_uid(sp)),
+		0, sock_i_ino(sp),
 		atomic_read(&sp->sk_refcnt), sp, atomic_read(&sp->sk_drops));
 }
 
@@ -1040,7 +1047,7 @@ static const struct file_operations raw_seq_fops = {
 
 static __net_init int raw_init_net(struct net *net)
 {
-	if (!proc_net_fops_create(net, "raw", S_IRUGO, &raw_seq_fops))
+	if (!proc_create("raw", S_IRUGO, net->proc_net, &raw_seq_fops))
 		return -ENOMEM;
 
 	return 0;
@@ -1048,7 +1055,7 @@ static __net_init int raw_init_net(struct net *net)
 
 static __net_exit void raw_exit_net(struct net *net)
 {
-	proc_net_remove(net, "raw");
+	remove_proc_entry("raw", net->proc_net);
 }
 
 static __net_initdata struct pernet_operations raw_net_ops = {

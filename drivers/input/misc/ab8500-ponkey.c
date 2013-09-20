@@ -13,6 +13,7 @@
 #include <linux/input.h>
 #include <linux/interrupt.h>
 #include <linux/mfd/abx500/ab8500.h>
+#include <linux/of.h>
 #include <linux/slab.h>
 
 /**
@@ -44,7 +45,7 @@ static irqreturn_t ab8500_ponkey_handler(int irq, void *data)
 	return IRQ_HANDLED;
 }
 
-static int __devinit ab8500_ponkey_probe(struct platform_device *pdev)
+static int ab8500_ponkey_probe(struct platform_device *pdev)
 {
 	struct ab8500 *ab8500 = dev_get_drvdata(pdev->dev.parent);
 	struct ab8500_ponkey *ponkey;
@@ -117,7 +118,7 @@ err_free_mem:
 	return error;
 }
 
-static int __devexit ab8500_ponkey_remove(struct platform_device *pdev)
+static int ab8500_ponkey_remove(struct platform_device *pdev)
 {
 	struct ab8500_ponkey *ponkey = platform_get_drvdata(pdev);
 
@@ -126,18 +127,24 @@ static int __devexit ab8500_ponkey_remove(struct platform_device *pdev)
 	input_unregister_device(ponkey->idev);
 	kfree(ponkey);
 
-	platform_set_drvdata(pdev, NULL);
-
 	return 0;
 }
+
+#ifdef CONFIG_OF
+static const struct of_device_id ab8500_ponkey_match[] = {
+	{ .compatible = "stericsson,ab8500-ponkey", },
+	{}
+};
+#endif
 
 static struct platform_driver ab8500_ponkey_driver = {
 	.driver		= {
 		.name	= "ab8500-poweron-key",
 		.owner	= THIS_MODULE,
+		.of_match_table = of_match_ptr(ab8500_ponkey_match),
 	},
 	.probe		= ab8500_ponkey_probe,
-	.remove		= __devexit_p(ab8500_ponkey_remove),
+	.remove		= ab8500_ponkey_remove,
 };
 module_platform_driver(ab8500_ponkey_driver);
 

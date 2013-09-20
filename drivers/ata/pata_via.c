@@ -673,7 +673,7 @@ static int via_init_one(struct pci_dev *pdev, const struct pci_device_id *id)
 
 static int via_reinit_one(struct pci_dev *pdev)
 {
-	struct ata_host *host = dev_get_drvdata(&pdev->dev);
+	struct ata_host *host = pci_get_drvdata(pdev);
 	int rc;
 
 	rc = ata_pci_device_do_resume(pdev);
@@ -711,21 +711,10 @@ static struct pci_driver via_pci_driver = {
 #endif
 };
 
-static int __init via_init(void)
-{
-	return pci_register_driver(&via_pci_driver);
-}
-
-static void __exit via_exit(void)
-{
-	pci_unregister_driver(&via_pci_driver);
-}
+module_pci_driver(via_pci_driver);
 
 MODULE_AUTHOR("Alan Cox");
 MODULE_DESCRIPTION("low-level driver for VIA PATA");
 MODULE_LICENSE("GPL");
 MODULE_DEVICE_TABLE(pci, via);
 MODULE_VERSION(DRV_VERSION);
-
-module_init(via_init);
-module_exit(via_exit);

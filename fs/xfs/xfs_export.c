@@ -17,7 +17,6 @@
  */
 #include "xfs.h"
 #include "xfs_types.h"
-#include "xfs_inum.h"
 #include "xfs_log.h"
 #include "xfs_trans.h"
 #include "xfs_sb.h"
@@ -30,6 +29,7 @@
 #include "xfs_inode.h"
 #include "xfs_inode_item.h"
 #include "xfs_trace.h"
+#include "xfs_icache.h"
 
 /*
  * Note that we only accept fileids which are long enough rather than allow
@@ -48,24 +48,23 @@ static int xfs_fileid_length(int fileid_type)
 	case FILEID_INO32_GEN_PARENT | XFS_FILEID_TYPE_64FLAG:
 		return 6;
 	}
-	return 255; /* invalid */
+	return FILEID_INVALID;
 }
 
 STATIC int
 xfs_fs_encode_fh(
-	struct dentry		*dentry,
-	__u32			*fh,
-	int			*max_len,
-	int			connectable)
+	struct inode	*inode,
+	__u32		*fh,
+	int		*max_len,
+	struct inode	*parent)
 {
 	struct fid		*fid = (struct fid *)fh;
 	struct xfs_fid64	*fid64 = (struct xfs_fid64 *)fh;
-	struct inode		*inode = dentry->d_inode;
 	int			fileid_type;
 	int			len;
 
 	/* Directories don't need their parent encoded, they have ".." */
-	if (S_ISDIR(inode->i_mode) || !connectable)
+	if (!parent)
 		fileid_type = FILEID_INO32_GEN;
 	else
 		fileid_type = FILEID_INO32_GEN_PARENT;
@@ -91,26 +90,22 @@ xfs_fs_encode_fh(
 	len = xfs_fileid_length(fileid_type);
 	if (*max_len < len) {
 		*max_len = len;
-		return 255;
+		return FILEID_INVALID;
 	}
 	*max_len = len;
 
 	switch (fileid_type) {
 	case FILEID_INO32_GEN_PARENT:
-		spin_lock(&dentry->d_lock);
-		fid->i32.parent_ino = XFS_I(dentry->d_parent->d_inode)->i_ino;
-		fid->i32.parent_gen = dentry->d_parent->d_inode->i_generation;
-		spin_unlock(&dentry->d_lock);
+		fid->i32.parent_ino = XFS_I(parent)->i_ino;
+		fid->i32.parent_gen = parent->i_generation;
 		/*FALLTHRU*/
 	case FILEID_INO32_GEN:
 		fid->i32.ino = XFS_I(inode)->i_ino;
 		fid->i32.gen = inode->i_generation;
 		break;
 	case FILEID_INO32_GEN_PARENT | XFS_FILEID_TYPE_64FLAG:
-		spin_lock(&dentry->d_lock);
-		fid64->parent_ino = XFS_I(dentry->d_parent->d_inode)->i_ino;
-		fid64->parent_gen = dentry->d_parent->d_inode->i_generation;
-		spin_unlock(&dentry->d_lock);
+		fid64->parent_ino = XFS_I(parent)->i_ino;
+		fid64->parent_gen = parent->i_generation;
 		/*FALLTHRU*/
 	case FILEID_INO32_GEN | XFS_FILEID_TYPE_64FLAG:
 		fid64->ino = XFS_I(inode)->i_ino;
@@ -194,6 +189,9 @@ xfs_fs_fh_to_parent(struct super_block *sb, struct fid *fid,
 {
 	struct xfs_fid64	*fid64 = (struct xfs_fid64 *)fid;
 	struct inode		*inode = NULL;
+
+	if (fh_len < xfs_fileid_length(fileid_type))
+		return NULL;
 
 	switch (fileid_type) {
 	case FILEID_INO32_GEN_PARENT:

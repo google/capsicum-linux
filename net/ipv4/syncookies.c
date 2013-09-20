@@ -232,7 +232,8 @@ static inline struct sock *get_cookie_sock(struct sock *sk, struct sk_buff *skb,
  *
  * return false if we decode an option that should not be.
  */
-bool cookie_check_timestamp(struct tcp_options_received *tcp_opt, bool *ecn_ok)
+bool cookie_check_timestamp(struct tcp_options_received *tcp_opt,
+			struct net *net, bool *ecn_ok)
 {
 	/* echoed timestamp, lowest bits contain options */
 	u32 options = tcp_opt->rcv_tsecr & TSMASK;
@@ -247,7 +248,7 @@ bool cookie_check_timestamp(struct tcp_options_received *tcp_opt, bool *ecn_ok)
 
 	tcp_opt->sack_ok = (options & (1 << 4)) ? TCP_SACK_SEEN : 0;
 	*ecn_ok = (options >> 5) & 1;
-	if (*ecn_ok && !sysctl_tcp_ecn)
+	if (*ecn_ok && !net->ipv4.sysctl_tcp_ecn)
 		return false;
 
 	if (tcp_opt->sack_ok && !sysctl_tcp_sack)
@@ -266,7 +267,6 @@ struct sock *cookie_v4_check(struct sock *sk, struct sk_buff *skb,
 			     struct ip_options *opt)
 {
 	struct tcp_options_received tcp_opt;
-	const u8 *hash_location;
 	struct inet_request_sock *ireq;
 	struct tcp_request_sock *treq;
 	struct tcp_sock *tp = tcp_sk(sk);
@@ -293,9 +293,9 @@ struct sock *cookie_v4_check(struct sock *sk, struct sk_buff *skb,
 
 	/* check for timestamp cookie support */
 	memset(&tcp_opt, 0, sizeof(tcp_opt));
-	tcp_parse_options(skb, &tcp_opt, &hash_location, 0);
+	tcp_parse_options(skb, &tcp_opt, 0, NULL);
 
-	if (!cookie_check_timestamp(&tcp_opt, &ecn_ok))
+	if (!cookie_check_timestamp(&tcp_opt, sock_net(sk), &ecn_ok))
 		goto out;
 
 	ret = NULL;
@@ -319,6 +319,7 @@ struct sock *cookie_v4_check(struct sock *sk, struct sk_buff *skb,
 	ireq->tstamp_ok		= tcp_opt.saw_tstamp;
 	req->ts_recent		= tcp_opt.saw_tstamp ? tcp_opt.rcv_tsval : 0;
 	treq->snt_synack	= tcp_opt.saw_tstamp ? tcp_opt.rcv_tsecr : 0;
+	treq->listener		= NULL;
 
 	/* We throwed the options of the initial SYN away, so we hope
 	 * the ACK carries the same options again (see RFC1122 4.2.3.8)
@@ -339,7 +340,7 @@ struct sock *cookie_v4_check(struct sock *sk, struct sk_buff *skb,
 	}
 
 	req->expires	= 0UL;
-	req->retrans	= 0;
+	req->num_retrans = 0;
 
 	/*
 	 * We need to lookup the route here to get at the correct
@@ -347,8 +348,8 @@ struct sock *cookie_v4_check(struct sock *sk, struct sk_buff *skb,
 	 * hasn't changed since we received the original syn, but I see
 	 * no easy way to do this.
 	 */
-	flowi4_init_output(&fl4, 0, sk->sk_mark, RT_CONN_FLAGS(sk),
-			   RT_SCOPE_UNIVERSE, IPPROTO_TCP,
+	flowi4_init_output(&fl4, sk->sk_bound_dev_if, sk->sk_mark,
+			   RT_CONN_FLAGS(sk), RT_SCOPE_UNIVERSE, IPPROTO_TCP,
 			   inet_sk_flowi_flags(sk),
 			   (opt && opt->srr) ? opt->faddr : ireq->rmt_addr,
 			   ireq->loc_addr, th->source, th->dest);

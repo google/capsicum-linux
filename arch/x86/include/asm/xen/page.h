@@ -44,13 +44,15 @@ extern unsigned long  machine_to_phys_nr;
 
 extern unsigned long get_phys_to_machine(unsigned long pfn);
 extern bool set_phys_to_machine(unsigned long pfn, unsigned long mfn);
+extern bool __init early_set_phys_to_machine(unsigned long pfn, unsigned long mfn);
 extern bool __set_phys_to_machine(unsigned long pfn, unsigned long mfn);
 extern unsigned long set_phys_range_identity(unsigned long pfn_s,
 					     unsigned long pfn_e);
 
 extern int m2p_add_override(unsigned long mfn, struct page *page,
 			    struct gnttab_map_grant_ref *kmap_op);
-extern int m2p_remove_override(struct page *page, bool clear_pte);
+extern int m2p_remove_override(struct page *page,
+				struct gnttab_map_grant_ref *kmap_op);
 extern struct page *m2p_find_override(unsigned long mfn);
 extern unsigned long m2p_find_override_pfn(unsigned long mfn, unsigned long pfn);
 
@@ -209,5 +211,7 @@ xmaddr_t arbitrary_virt_to_machine(void *address);
 unsigned long arbitrary_virt_to_mfn(void *vaddr);
 void make_lowmem_page_readonly(void *vaddr);
 void make_lowmem_page_readwrite(void *vaddr);
+
+#define xen_remap(cookie, size) ioremap((cookie), (size));
 
 #endif /* _ASM_X86_XEN_PAGE_H */

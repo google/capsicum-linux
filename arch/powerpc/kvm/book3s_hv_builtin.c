@@ -25,6 +25,9 @@ static void __init kvm_linear_init_one(ulong size, int count, int type);
 static struct kvmppc_linear_info *kvm_alloc_linear(int type);
 static void kvm_release_linear(struct kvmppc_linear_info *ri);
 
+int kvm_hpt_order = KVM_DEFAULT_HPT_ORDER;
+EXPORT_SYMBOL_GPL(kvm_hpt_order);
+
 /*************** RMA *************/
 
 /*
@@ -154,8 +157,8 @@ static void __init kvm_linear_init_one(ulong size, int count, int type)
 	linear_info = alloc_bootmem(count * sizeof(struct kvmppc_linear_info));
 	for (i = 0; i < count; ++i) {
 		linear = alloc_bootmem_align(size, size);
-		pr_info("Allocated KVM %s at %p (%ld MB)\n", typestr, linear,
-			size >> 20);
+		pr_debug("Allocated KVM %s at %p (%ld MB)\n", typestr, linear,
+			 size >> 20);
 		linear_info[i].base_virt = linear;
 		linear_info[i].base_pfn = __pa(linear) >> PAGE_SHIFT;
 		linear_info[i].npages = npages;
@@ -209,7 +212,7 @@ static void kvm_release_linear(struct kvmppc_linear_info *ri)
 void __init kvm_linear_init(void)
 {
 	/* HPT */
-	kvm_linear_init_one(1 << HPT_ORDER, kvm_hpt_count, KVM_LINEAR_HPT);
+	kvm_linear_init_one(1 << kvm_hpt_order, kvm_hpt_count, KVM_LINEAR_HPT);
 
 	/* RMA */
 	/* Only do this on PPC970 in HV mode */

@@ -52,14 +52,14 @@ static inline long syscall_get_error(struct task_struct *task,
 static inline long syscall_get_return_value(struct task_struct *task,
 					    struct pt_regs *regs)
 {
-	return REGS_RAX(regs->regs.gp);
+	return REGS_AX(regs->regs.gp);
 }
 
 static inline void syscall_set_return_value(struct task_struct *task,
 					    struct pt_regs *regs,
 					    int error, long val)
 {
-	REGS_SET_SYSCALL_RETURN(regs->regs.gp, (long) error ?: val);
+	PT_REGS_SET_SYSCALL_RETURN(regs, (long) error ?: val);
 }
 
 #ifdef CONFIG_X86_32
@@ -131,13 +131,13 @@ static inline void syscall_get_arguments(struct task_struct *task,
 		switch (i) {
 		case 0:
 			if (!n--) break;
-			*args++ = UPT_RDI(r);
+			*args++ = UPT_DI(r);
 		case 1:
 			if (!n--) break;
-			*args++ = UPT_RSI(r);
+			*args++ = UPT_SI(r);
 		case 2:
 			if (!n--) break;
-			*args++ = UPT_RDX(r);
+			*args++ = UPT_DX(r);
 		case 3:
 			if (!n--) break;
 			*args++ = UPT_R10(r);
@@ -193,13 +193,13 @@ static inline void syscall_set_arguments(struct task_struct *task,
 		switch (i) {
 		case 0:
 			if (!n--) break;
-			UPT_RDI(r) = *args++;
+			UPT_DI(r) = *args++;
 		case 1:
 			if (!n--) break;
-			UPT_RSI(r) = *args++;
+			UPT_SI(r) = *args++;
 		case 2:
 			if (!n--) break;
-			UPT_RDX(r) = *args++;
+			UPT_DX(r) = *args++;
 		case 3:
 			if (!n--) break;
 			UPT_R10(r) = *args++;

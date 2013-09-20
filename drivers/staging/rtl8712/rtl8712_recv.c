@@ -28,12 +28,13 @@
 
 #define _RTL8712_RECV_C_
 
+#include <linux/if_ether.h>
+#include <linux/ip.h>
+
 #include "osdep_service.h"
 #include "drv_types.h"
 #include "recv_osdep.h"
 #include "mlme_osdep.h"
-#include "ip.h"
-#include "if_ether.h"
 #include "ethernet.h"
 #include "usb_ops.h"
 #include "wifi.h"
@@ -114,11 +115,11 @@ void r8712_free_recv_priv(struct recv_priv *precvpriv)
 	kfree(precvpriv->pallocated_recv_buf);
 	skb_queue_purge(&precvpriv->rx_skb_queue);
 	if (skb_queue_len(&precvpriv->rx_skb_queue))
-		printk(KERN_WARNING "r8712u: rx_skb_queue not empty\n");
+		netdev_warn(padapter->pnetdev, "r8712u: rx_skb_queue not empty\n");
 	skb_queue_purge(&precvpriv->free_recv_skb_queue);
 	if (skb_queue_len(&precvpriv->free_recv_skb_queue))
-		printk(KERN_WARNING "r8712u: free_recv_skb_queue not empty "
-		       "%d\n", skb_queue_len(&precvpriv->free_recv_skb_queue));
+		netdev_warn(padapter->pnetdev, "r8712u: free_recv_skb_queue not empty %d\n",
+			    skb_queue_len(&precvpriv->free_recv_skb_queue));
 }
 
 int r8712_init_recvbuf(struct _adapter *padapter, struct recv_buf *precvbuf)
@@ -363,9 +364,8 @@ static int amsdu_to_msdu(struct _adapter *padapter, union recv_frame *prframe)
 		nSubframe_Length = (nSubframe_Length >> 8) +
 				   (nSubframe_Length << 8);
 		if (a_len < (ETHERNET_HEADER_SIZE + nSubframe_Length)) {
-			printk(KERN_WARNING "r8712u: nRemain_Length is %d and"
-			    " nSubframe_Length is: %d\n",
-			    a_len, nSubframe_Length);
+			netdev_warn(padapter->pnetdev, "r8712u: nRemain_Length is %d and nSubframe_Length is: %d\n",
+				    a_len, nSubframe_Length);
 			goto exit;
 		}
 		/* move the data point to data content */
@@ -373,13 +373,14 @@ static int amsdu_to_msdu(struct _adapter *padapter, union recv_frame *prframe)
 		a_len -= ETH_HLEN;
 		/* Allocate new skb for releasing to upper layer */
 		sub_skb = dev_alloc_skb(nSubframe_Length + 12);
+		if (!sub_skb)
+			break;
 		skb_reserve(sub_skb, 12);
 		data_ptr = (u8 *)skb_put(sub_skb, nSubframe_Length);
 		memcpy(data_ptr, pdata, nSubframe_Length);
 		subframes[nr_subframes++] = sub_skb;
 		if (nr_subframes >= MAX_SUBFRAME_COUNT) {
-			printk(KERN_WARNING "r8712u: ParseSubframe(): Too"
-			    " many Subframes! Packets dropped!\n");
+			netdev_warn(padapter->pnetdev, "r8712u: ParseSubframe(): Too many Subframes! Packets dropped!\n");
 			break;
 		}
 		pdata += nSubframe_Length;
@@ -459,7 +460,7 @@ void r8712_rxcmd_event_hdl(struct _adapter *padapter, void *prxcmdbuf)
 		cmd_seq = (u8)((le32_to_cpu(voffset) >> 24) & 0x7f);
 		eid = (u8)((le32_to_cpu(voffset) >> 16) & 0xff);
 		r8712_event_handle(padapter, (uint *)poffset);
-		poffset += (cmd_len + 8);/*8 bytes aligment*/
+		poffset += (cmd_len + 8);/*8 bytes alignment*/
 	} while (le32_to_cpu(voffset) & BIT(31));
 
 }
@@ -603,7 +604,7 @@ static int recv_indicatepkt_reorder(struct _adapter *padapter,
 		}
 	}
 	spin_lock_irqsave(&ppending_recvframe_queue->lock, irql);
-	/*s2. check if winstart_b(indicate_seq) needs to been updated*/
+	/*s2. check if winstart_b(indicate_seq) needs to be updated*/
 	if (!check_indicate_seq(preorder_ctrl, pattrib->seq_num))
 		goto _err_exit;
 	/*s3. Insert all packet into Reorder Queue to maintain its ordering.*/
@@ -1093,6 +1094,8 @@ static int recvbuf2recvframe(struct _adapter *padapter, struct sk_buff *pskb)
 			precvframe->u.hdr.rx_end = pkt_copy->data + alloc_sz;
 		} else {
 			precvframe->u.hdr.pkt = skb_clone(pskb, GFP_ATOMIC);
+			if (!precvframe->u.hdr.pkt)
+				return _FAIL;
 			precvframe->u.hdr.rx_head = pbuf;
 			precvframe->u.hdr.rx_data = pbuf;
 			precvframe->u.hdr.rx_tail = pbuf;
@@ -1126,6 +1129,9 @@ static void recv_tasklet(void *priv)
 		recvbuf2recvframe(padapter, pskb);
 		skb_reset_tail_pointer(pskb);
 		pskb->len = 0;
-		skb_queue_tail(&precvpriv->free_recv_skb_queue, pskb);
+		if (!skb_cloned(pskb))
+			skb_queue_tail(&precvpriv->free_recv_skb_queue, pskb);
+		else
+			consume_skb(pskb);
 	}
 }

@@ -19,6 +19,7 @@
 #include <linux/cpufreq.h>
 #include <linux/ioport.h>
 #include <linux/platform_device.h>
+#include <linux/reboot.h>
 
 #include <video/sa1100fb.h>
 
@@ -131,9 +132,9 @@ static void sa1100_power_off(void)
 	PMCR = PMCR_SF;
 }
 
-void sa11x0_restart(char mode, const char *cmd)
+void sa11x0_restart(enum reboot_mode mode, const char *cmd)
 {
-	if (mode == 's') {
+	if (mode == REBOOT_SOFT) {
 		/* Jump into ROM at address 0 */
 		soft_restart(0);
 	} else {
@@ -359,6 +360,10 @@ static int __init sa1100_init(void)
 
 arch_initcall(sa1100_init);
 
+void __init sa11x0_init_late(void)
+{
+	sa11x0_pm_init();
+}
 
 /*
  * Common I/O mapping:

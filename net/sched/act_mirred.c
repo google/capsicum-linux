@@ -62,8 +62,9 @@ static const struct nla_policy mirred_policy[TCA_MIRRED_MAX + 1] = {
 	[TCA_MIRRED_PARMS]	= { .len = sizeof(struct tc_mirred) },
 };
 
-static int tcf_mirred_init(struct nlattr *nla, struct nlattr *est,
-			   struct tc_action *a, int ovr, int bind)
+static int tcf_mirred_init(struct net *net, struct nlattr *nla,
+			   struct nlattr *est, struct tc_action *a, int ovr,
+			   int bind)
 {
 	struct nlattr *tb[TCA_MIRRED_MAX + 1];
 	struct tc_mirred *parm;
@@ -88,7 +89,7 @@ static int tcf_mirred_init(struct nlattr *nla, struct nlattr *est,
 		return -EINVAL;
 	}
 	if (parm->ifindex) {
-		dev = __dev_get_by_index(&init_net, parm->ifindex);
+		dev = __dev_get_by_index(net, parm->ifindex);
 		if (dev == NULL)
 			return -ENODEV;
 		switch (dev->type) {
@@ -174,9 +175,8 @@ static int tcf_mirred(struct sk_buff *skb, const struct tc_action *a,
 	}
 
 	if (!(dev->flags & IFF_UP)) {
-		if (net_ratelimit())
-			pr_notice("tc mirred to Houston: device %s is down\n",
-				  dev->name);
+		net_notice_ratelimited("tc mirred to Houston: device %s is down\n",
+				       dev->name);
 		goto out;
 	}
 
@@ -201,13 +201,12 @@ static int tcf_mirred(struct sk_buff *skb, const struct tc_action *a,
 out:
 	if (err) {
 		m->tcf_qstats.overlimits++;
-		/* should we be asking for packet to be dropped?
-		 * may make sense for redirect case only
-		 */
-		retval = TC_ACT_SHOT;
-	} else {
+		if (m->tcfm_eaction != TCA_EGRESS_MIRROR)
+			retval = TC_ACT_SHOT;
+		else
+			retval = m->tcf_action;
+	} else
 		retval = m->tcf_action;
-	}
 	spin_unlock(&m->tcf_lock);
 
 	return retval;
@@ -227,11 +226,13 @@ static int tcf_mirred_dump(struct sk_buff *skb, struct tc_action *a, int bind, i
 	};
 	struct tcf_t t;
 
-	NLA_PUT(skb, TCA_MIRRED_PARMS, sizeof(opt), &opt);
+	if (nla_put(skb, TCA_MIRRED_PARMS, sizeof(opt), &opt))
+		goto nla_put_failure;
 	t.install = jiffies_to_clock_t(jiffies - m->tcf_tm.install);
 	t.lastuse = jiffies_to_clock_t(jiffies - m->tcf_tm.lastuse);
 	t.expires = jiffies_to_clock_t(m->tcf_tm.expires);
-	NLA_PUT(skb, TCA_MIRRED_TM, sizeof(t), &t);
+	if (nla_put(skb, TCA_MIRRED_TM, sizeof(t), &t))
+		goto nla_put_failure;
 	return skb->len;
 
 nla_put_failure:
@@ -242,7 +243,7 @@ nla_put_failure:
 static int mirred_device_event(struct notifier_block *unused,
 			       unsigned long event, void *ptr)
 {
-	struct net_device *dev = ptr;
+	struct net_device *dev = netdev_notifier_info_to_dev(ptr);
 	struct tcf_mirred *m;
 
 	if (event == NETDEV_UNREGISTER)

@@ -141,7 +141,7 @@ static inline struct shmid_kernel *shm_lock(struct ipc_namespace *ns, int id)
 static inline void shm_lock_by_ptr(struct shmid_kernel *ipcp)
 {
 	rcu_read_lock();
-	spin_lock(&ipcp->shm_perm.lock);
+	ipc_lock_object(&ipcp->shm_perm);
 }
 
 static inline struct shmid_kernel *shm_lock_check(struct ipc_namespace *ns,
@@ -193,7 +193,7 @@ static void shm_destroy(struct ipc_namespace *ns, struct shmid_kernel *shp)
 	if (!is_file_hugepages(shp->shm_file))
 		shmem_lock(shp->shm_file, 0, shp->mlock_user);
 	else if (shp->mlock_user)
-		user_shm_unlock(shp->shm_file->f_path.dentry->d_inode->i_size,
+		user_shm_unlock(file_inode(shp->shm_file)->i_size,
 						shp->mlock_user);
 	fput (shp->shm_file);
 	security_shm_free(shp);
@@ -393,6 +393,16 @@ static int shm_fsync(struct file *file, loff_t start, loff_t end, int datasync)
 	return sfd->file->f_op->fsync(sfd->file, start, end, datasync);
 }
 
+static long shm_fallocate(struct file *file, int mode, loff_t offset,
+			  loff_t len)
+{
+	struct shm_file_data *sfd = shm_file_data(file);
+
+	if (!sfd->file->f_op->fallocate)
+		return -EOPNOTSUPP;
+	return sfd->file->f_op->fallocate(file, mode, offset, len);
+}
+
 static unsigned long shm_get_unmapped_area(struct file *file,
 	unsigned long addr, unsigned long len, unsigned long pgoff,
 	unsigned long flags)
@@ -410,6 +420,7 @@ static const struct file_operations shm_file_operations = {
 	.get_unmapped_area	= shm_get_unmapped_area,
 #endif
 	.llseek		= noop_llseek,
+	.fallocate	= shm_fallocate,
 };
 
 static const struct file_operations shm_file_operations_huge = {
@@ -418,6 +429,7 @@ static const struct file_operations shm_file_operations_huge = {
 	.release	= shm_release,
 	.get_unmapped_area	= shm_get_unmapped_area,
 	.llseek		= noop_llseek,
+	.fallocate	= shm_fallocate,
 };
 
 int is_file_shm_hugepages(struct file *file)
@@ -450,7 +462,7 @@ static int newseg(struct ipc_namespace *ns, struct ipc_params *params)
 	size_t size = params->u.size;
 	int error;
 	struct shmid_kernel *shp;
-	int numpages = (size + PAGE_SIZE -1) >> PAGE_SHIFT;
+	size_t numpages = (size + PAGE_SIZE - 1) >> PAGE_SHIFT;
 	struct file * file;
 	char name[13];
 	int id;
@@ -479,11 +491,22 @@ static int newseg(struct ipc_namespace *ns, struct ipc_params *params)
 
 	sprintf (name, "SYSV%08x", key);
 	if (shmflg & SHM_HUGETLB) {
+		struct hstate *hs;
+		size_t hugesize;
+
+		hs = hstate_sizelog((shmflg >> SHM_HUGE_SHIFT) & SHM_HUGE_MASK);
+		if (!hs) {
+			error = -EINVAL;
+			goto no_file;
+		}
+		hugesize = ALIGN(size, huge_page_size(hs));
+
 		/* hugetlb_file_setup applies strict accounting */
 		if (shmflg & SHM_NORESERVE)
 			acctflag = VM_NORESERVE;
-		file = hugetlb_file_setup(name, 0, size, acctflag,
-					&shp->mlock_user, HUGETLB_SHMFS_INODE);
+		file = hugetlb_file_setup(name, hugesize, acctflag,
+				  &shp->mlock_user, HUGETLB_SHMFS_INODE,
+				(shmflg >> SHM_HUGE_SHIFT) & SHM_HUGE_MASK);
 	} else {
 		/*
 		 * Do not allow no accounting for OVERCOMMIT_NEVER, even
@@ -512,15 +535,18 @@ static int newseg(struct ipc_namespace *ns, struct ipc_params *params)
 	shp->shm_nattch = 0;
 	shp->shm_file = file;
 	shp->shm_creator = current;
+
 	/*
 	 * shmid gets reported as "inode#" in /proc/pid/maps.
 	 * proc-ps tools use this. Changing this will break them.
 	 */
-	file->f_dentry->d_inode->i_ino = shp->shm_perm.id;
+	file_inode(file)->i_ino = shp->shm_perm.id;
 
 	ns->shm_tot += numpages;
 	error = shp->shm_perm.id;
-	shm_unlock(shp);
+
+	ipc_unlock_object(&shp->shm_perm);
+	rcu_read_unlock();
 	return error;
 
 no_id:
@@ -665,7 +691,7 @@ static void shm_add_rss_swap(struct shmid_kernel *shp,
 {
 	struct inode *inode;
 
-	inode = shp->shm_file->f_path.dentry->d_inode;
+	inode = file_inode(shp->shm_file);
 
 	if (is_file_hugepages(shp->shm_file)) {
 		struct address_space *mapping = inode->i_mapping;
@@ -731,29 +757,42 @@ static int shmctl_down(struct ipc_namespace *ns, int shmid, int cmd,
 			return -EFAULT;
 	}
 
+	down_write(&shm_ids(ns).rw_mutex);
+	rcu_read_lock();
+
 	ipcp = ipcctl_pre_down(ns, &shm_ids(ns), shmid, cmd,
 			       &shmid64.shm_perm, 0);
-	if (IS_ERR(ipcp))
-		return PTR_ERR(ipcp);
+	if (IS_ERR(ipcp)) {
+		err = PTR_ERR(ipcp);
+		/* the ipc lock is not held upon failure */
+		goto out_unlock1;
+	}
 
 	shp = container_of(ipcp, struct shmid_kernel, shm_perm);
 
 	err = security_shm_shmctl(shp, cmd);
 	if (err)
-		goto out_unlock;
+		goto out_unlock0;
+
 	switch (cmd) {
 	case IPC_RMID:
+		/* do_shm_rmid unlocks the ipc object and rcu */
 		do_shm_rmid(ns, ipcp);
 		goto out_up;
 	case IPC_SET:
-		ipc_update_perm(&shmid64.shm_perm, ipcp);
+		err = ipc_update_perm(&shmid64.shm_perm, ipcp);
+		if (err)
+			goto out_unlock0;
 		shp->shm_ctim = get_seconds();
 		break;
 	default:
 		err = -EINVAL;
 	}
-out_unlock:
-	shm_unlock(shp);
+
+out_unlock0:
+	ipc_unlock_object(&shp->shm_perm);
+out_unlock1:
+	rcu_read_unlock();
 out_up:
 	up_write(&shm_ids(ns).rw_mutex);
 	return err;
@@ -881,10 +920,10 @@ SYSCALL_DEFINE3(shmctl, int, shmid, int, cmd, struct shmid_ds __user *, buf)
 		audit_ipc_obj(&(shp->shm_perm));
 
 		if (!ns_capable(ns->user_ns, CAP_IPC_LOCK)) {
-			uid_t euid = current_euid();
+			kuid_t euid = current_euid();
 			err = -EPERM;
-			if (euid != shp->shm_perm.uid &&
-			    euid != shp->shm_perm.cuid)
+			if (!uid_eq(euid, shp->shm_perm.uid) &&
+			    !uid_eq(euid, shp->shm_perm.cuid))
 				goto out_unlock;
 			if (cmd == SHM_LOCK && !rlimit(RLIMIT_MEMLOCK))
 				goto out_unlock;
@@ -941,7 +980,8 @@ out:
  * "raddr" thing points to kernel space, and there has to be a wrapper around
  * this.
  */
-long do_shmat(int shmid, char __user *shmaddr, int shmflg, ulong *raddr)
+long do_shmat(int shmid, char __user *shmaddr, int shmflg, ulong *raddr,
+	      unsigned long shmlba)
 {
 	struct shmid_kernel *shp;
 	unsigned long addr;
@@ -951,19 +991,19 @@ long do_shmat(int shmid, char __user *shmaddr, int shmflg, ulong *raddr)
 	unsigned long flags;
 	unsigned long prot;
 	int acc_mode;
-	unsigned long user_addr;
 	struct ipc_namespace *ns;
 	struct shm_file_data *sfd;
 	struct path path;
 	fmode_t f_mode;
+	unsigned long populate = 0;
 
 	err = -EINVAL;
 	if (shmid < 0)
 		goto out;
 	else if ((addr = (ulong)shmaddr)) {
-		if (addr & (SHMLBA-1)) {
+		if (addr & (shmlba - 1)) {
 			if (shmflg & SHM_RND)
-				addr &= ~(SHMLBA-1);	   /* round down */
+				addr &= ~(shmlba - 1);	   /* round down */
 			else
 #ifndef __ARCH_FORCE_SHMLBA
 				if (addr & ~PAGE_MASK)
@@ -1026,7 +1066,8 @@ long do_shmat(int shmid, char __user *shmaddr, int shmflg, ulong *raddr)
 			  is_file_hugepages(shp->shm_file) ?
 				&shm_file_operations_huge :
 				&shm_file_operations);
-	if (!file)
+	err = PTR_ERR(file);
+	if (IS_ERR(file))
 		goto out_free;
 
 	file->private_data = sfd;
@@ -1035,6 +1076,10 @@ long do_shmat(int shmid, char __user *shmaddr, int shmflg, ulong *raddr)
 	sfd->ns = get_ipc_ns(ns);
 	sfd->file = shp->shm_file;
 	sfd->vm_ops = NULL;
+
+	err = security_mmap_file(file, prot, flags);
+	if (err)
+		goto out_fput;
 
 	down_write(&current->mm->mmap_sem);
 	if (addr && !(shmflg & SHM_REMAP)) {
@@ -1050,14 +1095,17 @@ long do_shmat(int shmid, char __user *shmaddr, int shmflg, ulong *raddr)
 			goto invalid;
 	}
 		
-	user_addr = do_mmap (file, addr, size, prot, flags, 0);
-	*raddr = user_addr;
+	addr = do_mmap_pgoff(file, addr, size, prot, flags, 0, &populate);
+	*raddr = addr;
 	err = 0;
-	if (IS_ERR_VALUE(user_addr))
-		err = (long)user_addr;
+	if (IS_ERR_VALUE(addr))
+		err = (long)addr;
 invalid:
 	up_write(&current->mm->mmap_sem);
+	if (populate)
+		mm_populate(addr, populate);
 
+out_fput:
 	fput(file);
 
 out_nattch:
@@ -1090,7 +1138,7 @@ SYSCALL_DEFINE3(shmat, int, shmid, char __user *, shmaddr, int, shmflg)
 	unsigned long ret;
 	long err;
 
-	err = do_shmat(shmid, shmaddr, shmflg, &ret);
+	err = do_shmat(shmid, shmaddr, shmflg, &ret, SHMLBA);
 	if (err)
 		return err;
 	force_successful_syscall_return();
@@ -1152,7 +1200,7 @@ SYSCALL_DEFINE1(shmdt, char __user *, shmaddr)
 			(vma->vm_start - addr)/PAGE_SIZE == vma->vm_pgoff) {
 
 
-			size = vma->vm_file->f_path.dentry->d_inode->i_size;
+			size = file_inode(vma->vm_file)->i_size;
 			do_munmap(mm, vma->vm_start, vma->vm_end - vma->vm_start);
 			/*
 			 * We discovered the size of the shm segment, so
@@ -1202,6 +1250,7 @@ SYSCALL_DEFINE1(shmdt, char __user *, shmaddr)
 #ifdef CONFIG_PROC_FS
 static int sysvipc_shm_proc_show(struct seq_file *s, void *it)
 {
+	struct user_namespace *user_ns = seq_user_ns(s);
 	struct shmid_kernel *shp = it;
 	unsigned long rss = 0, swp = 0;
 
@@ -1224,10 +1273,10 @@ static int sysvipc_shm_proc_show(struct seq_file *s, void *it)
 			  shp->shm_cprid,
 			  shp->shm_lprid,
 			  shp->shm_nattch,
-			  shp->shm_perm.uid,
-			  shp->shm_perm.gid,
-			  shp->shm_perm.cuid,
-			  shp->shm_perm.cgid,
+			  from_kuid_munged(user_ns, shp->shm_perm.uid),
+			  from_kgid_munged(user_ns, shp->shm_perm.gid),
+			  from_kuid_munged(user_ns, shp->shm_perm.cuid),
+			  from_kgid_munged(user_ns, shp->shm_perm.cgid),
 			  shp->shm_atim,
 			  shp->shm_dtim,
 			  shp->shm_ctim,

@@ -232,6 +232,7 @@ ENTRY(feroceon_coherent_user_range)
 	cmp	r0, r1
 	blo	1b
 	mcr	p15, 0, r0, c7, c10, 4		@ drain WB
+	mov	r0, #0
 	mov	pc, lr
 
 /*
@@ -414,6 +415,9 @@ ENTRY(feroceon_dma_unmap_area)
 	mov	pc, lr
 ENDPROC(feroceon_dma_unmap_area)
 
+	.globl	feroceon_flush_kern_cache_louis
+	.equ	feroceon_flush_kern_cache_louis, feroceon_flush_kern_cache_all
+
 	@ define struct cpu_cache_fns (see <asm/cacheflush.h> and proc-macros.S)
 	define_cache_functions feroceon
 
@@ -430,6 +434,7 @@ ENDPROC(feroceon_dma_unmap_area)
 	range_alias flush_icache_all
 	range_alias flush_user_cache_all
 	range_alias flush_kern_cache_all
+	range_alias flush_kern_cache_louis
 	range_alias flush_user_cache_range
 	range_alias coherent_kern_range
 	range_alias coherent_user_range
@@ -508,8 +513,6 @@ ENTRY(cpu_feroceon_set_pte_ext)
 	mcr	p15, 0, r0, c7, c10, 4		@ drain WB
 #endif
 	mov	pc, lr
-
-	__CPUINIT
 
 	.type	__feroceon_setup, #function
 __feroceon_setup:

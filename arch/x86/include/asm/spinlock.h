@@ -12,18 +12,15 @@
  * Simple spin lock operations.  There are two variants, one clears IRQ's
  * on the local processor, one does not.
  *
- * These are fair FIFO ticket locks, which are currently limited to 256
- * CPUs.
+ * These are fair FIFO ticket locks, which support up to 2^16 CPUs.
  *
  * (the type definitions are in asm/spinlock_types.h)
  */
 
 #ifdef CONFIG_X86_32
 # define LOCK_PTR_REG "a"
-# define REG_PTR_MODE "k"
 #else
 # define LOCK_PTR_REG "D"
-# define REG_PTR_MODE "q"
 #endif
 
 #if defined(CONFIG_X86_32) && \
@@ -235,9 +232,5 @@ static inline void arch_write_unlock(arch_rwlock_t *rw)
 #define arch_spin_relax(lock)	cpu_relax()
 #define arch_read_relax(lock)	cpu_relax()
 #define arch_write_relax(lock)	cpu_relax()
-
-/* The {read|write|spin}_lock() on x86 are full memory barriers. */
-static inline void smp_mb__after_lock(void) { }
-#define ARCH_HAS_SMP_MB_AFTER_LOCK
 
 #endif /* _ASM_X86_SPINLOCK_H */

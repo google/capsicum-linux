@@ -237,18 +237,16 @@ static int __init cs553x_init_one(int cs, int mmio, unsigned long adr)
 	this->ecc.hwctl  = cs_enable_hwecc;
 	this->ecc.calculate = cs_calculate_ecc;
 	this->ecc.correct  = nand_correct_data;
+	this->ecc.strength = 1;
 
 	/* Enable the following for a flash based bad block table */
 	this->bbt_options = NAND_BBT_USE_FLASH;
-	this->options = NAND_NO_AUTOINCR;
 
 	/* Scan to find existence of the device */
 	if (nand_scan(new_mtd, 1)) {
 		err = -ENXIO;
 		goto out_ior;
 	}
-
-	this->ecc.strength = 1;
 
 	new_mtd->name = kasprintf(GFP_KERNEL, "cs553x_nand_cs%d", cs);
 

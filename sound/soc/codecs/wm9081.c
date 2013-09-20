@@ -3,7 +3,7 @@
  *
  * Author: Mark Brown
  *
- * Copyright 2009 Wolfson Microelectronics plc
+ * Copyright 2009-12 Wolfson Microelectronics plc
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
@@ -774,7 +774,7 @@ static const struct snd_soc_dapm_widget wm9081_dapm_widgets[] = {
 SND_SOC_DAPM_INPUT("IN1"),
 SND_SOC_DAPM_INPUT("IN2"),
 
-SND_SOC_DAPM_DAC("DAC", "HiFi Playback", WM9081_POWER_MANAGEMENT, 0, 0),
+SND_SOC_DAPM_DAC("DAC", NULL, WM9081_POWER_MANAGEMENT, 0, 0),
 
 SND_SOC_DAPM_MIXER_NAMED_CTL("Mixer", SND_SOC_NOPM, 0, 0,
 			     mixer, ARRAY_SIZE(mixer)),
@@ -799,6 +799,7 @@ SND_SOC_DAPM_SUPPLY("TSENSE", WM9081_POWER_MANAGEMENT, 7, 0, NULL, 0),
 static const struct snd_soc_dapm_route wm9081_audio_paths[] = {
 	{ "DAC", NULL, "CLK_SYS" },
 	{ "DAC", NULL, "CLK_DSP" },
+	{ "DAC", NULL, "AIF" },
 
 	{ "Mixer", "IN1 Switch", "IN1" },
 	{ "Mixer", "IN2 Switch", "IN2" },
@@ -1252,7 +1253,7 @@ static const struct snd_soc_dai_ops wm9081_dai_ops = {
 static struct snd_soc_dai_driver wm9081_dai = {
 	.name = "wm9081-hifi",
 	.playback = {
-		.stream_name = "HiFi Playback",
+		.stream_name = "AIF",
 		.channels_min = 1,
 		.channels_max = 2,
 		.rates = WM9081_RATES,
@@ -1326,8 +1327,8 @@ static const struct regmap_config wm9081_regmap = {
 };
 
 #if defined(CONFIG_I2C) || defined(CONFIG_I2C_MODULE)
-static __devinit int wm9081_i2c_probe(struct i2c_client *i2c,
-				      const struct i2c_device_id *id)
+static int wm9081_i2c_probe(struct i2c_client *i2c,
+			    const struct i2c_device_id *id)
 {
 	struct wm9081_priv *wm9081;
 	unsigned int reg;
@@ -1340,28 +1341,27 @@ static __devinit int wm9081_i2c_probe(struct i2c_client *i2c,
 
 	i2c_set_clientdata(i2c, wm9081);
 
-	wm9081->regmap = regmap_init_i2c(i2c, &wm9081_regmap);
+	wm9081->regmap = devm_regmap_init_i2c(i2c, &wm9081_regmap);
 	if (IS_ERR(wm9081->regmap)) {
 		ret = PTR_ERR(wm9081->regmap);
 		dev_err(&i2c->dev, "regmap_init() failed: %d\n", ret);
-		goto err;
+		return ret;
 	}
 
 	ret = regmap_read(wm9081->regmap, WM9081_SOFTWARE_RESET, &reg);
 	if (ret != 0) {
 		dev_err(&i2c->dev, "Failed to read chip ID: %d\n", ret);
-		goto err_regmap;
+		return ret;
 	}
 	if (reg != 0x9081) {
 		dev_err(&i2c->dev, "Device is not a WM9081: ID=0x%x\n", reg);
-		ret = -EINVAL;
-		goto err_regmap;
+		return -EINVAL;
 	}
 
 	ret = wm9081_reset(wm9081->regmap);
 	if (ret < 0) {
 		dev_err(&i2c->dev, "Failed to issue reset\n");
-		goto err_regmap;
+		return ret;
 	}
 
 	if (dev_get_platdata(&i2c->dev))
@@ -1381,23 +1381,14 @@ static __devinit int wm9081_i2c_probe(struct i2c_client *i2c,
 	ret = snd_soc_register_codec(&i2c->dev,
 			&soc_codec_dev_wm9081, &wm9081_dai, 1);
 	if (ret < 0)
-		goto err_regmap;
+		return ret;
 
 	return 0;
-
-err_regmap:
-	regmap_exit(wm9081->regmap);
-err:
-
-	return ret;
 }
 
-static __devexit int wm9081_i2c_remove(struct i2c_client *client)
+static int wm9081_i2c_remove(struct i2c_client *client)
 {
-	struct wm9081_priv *wm9081 = i2c_get_clientdata(client);
-
 	snd_soc_unregister_codec(&client->dev);
-	regmap_exit(wm9081->regmap);
 	return 0;
 }
 
@@ -1413,7 +1404,7 @@ static struct i2c_driver wm9081_i2c_driver = {
 		.owner = THIS_MODULE,
 	},
 	.probe =    wm9081_i2c_probe,
-	.remove =   __devexit_p(wm9081_i2c_remove),
+	.remove =   wm9081_i2c_remove,
 	.id_table = wm9081_i2c_id,
 };
 #endif

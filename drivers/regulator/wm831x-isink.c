@@ -148,12 +148,13 @@ static irqreturn_t wm831x_isink_irq(int irq, void *data)
 }
 
 
-static __devinit int wm831x_isink_probe(struct platform_device *pdev)
+static int wm831x_isink_probe(struct platform_device *pdev)
 {
 	struct wm831x *wm831x = dev_get_drvdata(pdev->dev.parent);
 	struct wm831x_pdata *pdata = wm831x->dev->platform_data;
 	struct wm831x_isink *isink;
 	int id = pdev->id % ARRAY_SIZE(pdata->isink);
+	struct regulator_config config = { };
 	struct resource *res;
 	int ret, irq;
 
@@ -171,9 +172,9 @@ static __devinit int wm831x_isink_probe(struct platform_device *pdev)
 
 	isink->wm831x = wm831x;
 
-	res = platform_get_resource(pdev, IORESOURCE_IO, 0);
+	res = platform_get_resource(pdev, IORESOURCE_REG, 0);
 	if (res == NULL) {
-		dev_err(&pdev->dev, "No I/O resource\n");
+		dev_err(&pdev->dev, "No REG resource\n");
 		ret = -EINVAL;
 		goto err;
 	}
@@ -189,8 +190,11 @@ static __devinit int wm831x_isink_probe(struct platform_device *pdev)
 	isink->desc.type = REGULATOR_CURRENT;
 	isink->desc.owner = THIS_MODULE;
 
-	isink->regulator = regulator_register(&isink->desc, &pdev->dev,
-					     pdata->isink[id], isink, NULL);
+	config.dev = pdev->dev.parent;
+	config.init_data = pdata->isink[id];
+	config.driver_data = isink;
+
+	isink->regulator = regulator_register(&isink->desc, &config);
 	if (IS_ERR(isink->regulator)) {
 		ret = PTR_ERR(isink->regulator);
 		dev_err(wm831x->dev, "Failed to register ISINK%d: %d\n",
@@ -198,7 +202,7 @@ static __devinit int wm831x_isink_probe(struct platform_device *pdev)
 		goto err;
 	}
 
-	irq = platform_get_irq(pdev, 0);
+	irq = wm831x_irq(wm831x, platform_get_irq(pdev, 0));
 	ret = request_threaded_irq(irq, NULL, wm831x_isink_irq,
 				   IRQF_TRIGGER_RISING, isink->name, isink);
 	if (ret != 0) {
@@ -217,13 +221,11 @@ err:
 	return ret;
 }
 
-static __devexit int wm831x_isink_remove(struct platform_device *pdev)
+static int wm831x_isink_remove(struct platform_device *pdev)
 {
 	struct wm831x_isink *isink = platform_get_drvdata(pdev);
 
-	platform_set_drvdata(pdev, NULL);
-
-	free_irq(platform_get_irq(pdev, 0), isink);
+	free_irq(wm831x_irq(isink->wm831x, platform_get_irq(pdev, 0)), isink);
 
 	regulator_unregister(isink->regulator);
 
@@ -232,7 +234,7 @@ static __devexit int wm831x_isink_remove(struct platform_device *pdev)
 
 static struct platform_driver wm831x_isink_driver = {
 	.probe = wm831x_isink_probe,
-	.remove = __devexit_p(wm831x_isink_remove),
+	.remove = wm831x_isink_remove,
 	.driver		= {
 		.name	= "wm831x-isink",
 		.owner	= THIS_MODULE,

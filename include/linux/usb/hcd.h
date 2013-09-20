@@ -84,7 +84,7 @@ struct usb_hcd {
 
 	struct timer_list	rh_timer;	/* drives root-hub polling */
 	struct urb		*status_urb;	/* the current status urb */
-#ifdef CONFIG_USB_SUSPEND
+#ifdef CONFIG_PM_RUNTIME
 	struct work_struct	wakeup_work;	/* for remote wakeup */
 #endif
 
@@ -92,6 +92,12 @@ struct usb_hcd {
 	 * hardware info/state
 	 */
 	const struct hc_driver	*driver;	/* hw-specific hooks */
+
+	/*
+	 * OTG and some Host controllers need software interaction with phys;
+	 * other external phys should be software-transparent
+	 */
+	struct usb_phy	*phy;
 
 	/* Flags that need to be manipulated atomically because they can
 	 * change while the host controller is running.  Always use
@@ -126,13 +132,11 @@ struct usb_hcd {
 	unsigned		wireless:1;	/* Wireless USB HCD */
 	unsigned		authorized_default:1;
 	unsigned		has_tt:1;	/* Integrated TT in root hub */
-	unsigned		broken_pci_sleep:1;	/* Don't put the
-			controller in PCI-D3 for system sleep */
 
 	unsigned int		irq;		/* irq allocated */
 	void __iomem		*regs;		/* device memory/io */
-	u64			rsrc_start;	/* memory/io resource start */
-	u64			rsrc_len;	/* memory/io resource length */
+	resource_size_t		rsrc_start;	/* memory/io resource start */
+	resource_size_t		rsrc_len;	/* memory/io resource length */
 	unsigned		power_budget;	/* in mA, 0 = no limit */
 
 	/* bandwidth_mutex should be taken before adding or removing
@@ -214,6 +218,7 @@ struct hc_driver {
 #define	HCD_SHARED	0x0004		/* Two (or more) usb_hcds share HW */
 #define	HCD_USB11	0x0010		/* USB 1.1 */
 #define	HCD_USB2	0x0020		/* USB 2.0 */
+#define	HCD_USB25	0x0030		/* Wireless USB 1.0 (USB 2.5)*/
 #define	HCD_USB3	0x0040		/* USB 3.0 */
 #define	HCD_MASK	0x0070
 
@@ -344,6 +349,16 @@ struct hc_driver {
 		 */
 	int	(*update_device)(struct usb_hcd *, struct usb_device *);
 	int	(*set_usb2_hw_lpm)(struct usb_hcd *, struct usb_device *, int);
+	/* USB 3.0 Link Power Management */
+		/* Returns the USB3 hub-encoded value for the U1/U2 timeout. */
+	int	(*enable_usb3_lpm_timeout)(struct usb_hcd *,
+			struct usb_device *, enum usb3_link_state state);
+		/* The xHCI host controller can still fail the command to
+		 * disable the LPM timeouts, so this can return an error code.
+		 */
+	int	(*disable_usb3_lpm_timeout)(struct usb_hcd *,
+			struct usb_device *, enum usb3_link_state state);
+	int	(*find_raw_port_number)(struct usb_hcd *, int);
 };
 
 extern int usb_hcd_link_urb_to_ep(struct usb_hcd *hcd, struct urb *urb);
@@ -383,6 +398,7 @@ extern int usb_hcd_is_primary_hcd(struct usb_hcd *hcd);
 extern int usb_add_hcd(struct usb_hcd *hcd,
 		unsigned int irqnum, unsigned long irqflags);
 extern void usb_remove_hcd(struct usb_hcd *hcd);
+extern int usb_hcd_find_raw_port_number(struct usb_hcd *hcd, int port1);
 
 struct platform_device;
 extern void usb_hcd_platform_shutdown(struct platform_device *dev);
@@ -416,6 +432,9 @@ extern void usb_hc_died(struct usb_hcd *hcd);
 extern void usb_hcd_poll_rh_status(struct usb_hcd *hcd);
 extern void usb_wakeup_notification(struct usb_device *hdev,
 		unsigned int portnum);
+
+extern void usb_hcd_start_port_resume(struct usb_bus *bus, int portnum);
+extern void usb_hcd_end_port_resume(struct usb_bus *bus, int portnum);
 
 /* The D0/D1 toggle bits ... USE WITH CAUTION (they're almost hcd-internal) */
 #define usb_gettoggle(dev, ep, out) (((dev)->toggle[out] >> (ep)) & 1)
@@ -575,37 +594,14 @@ extern int hcd_bus_suspend(struct usb_device *rhdev, pm_message_t msg);
 extern int hcd_bus_resume(struct usb_device *rhdev, pm_message_t msg);
 #endif /* CONFIG_PM */
 
-#ifdef CONFIG_USB_SUSPEND
+#ifdef CONFIG_PM_RUNTIME
 extern void usb_hcd_resume_root_hub(struct usb_hcd *hcd);
 #else
 static inline void usb_hcd_resume_root_hub(struct usb_hcd *hcd)
 {
 	return;
 }
-#endif /* CONFIG_USB_SUSPEND */
-
-
-/*
- * USB device fs stuff
- */
-
-#ifdef CONFIG_USB_DEVICEFS
-
-/*
- * these are expected to be called from the USB core/hub thread
- * with the kernel lock held
- */
-extern void usbfs_update_special(void);
-extern int usbfs_init(void);
-extern void usbfs_cleanup(void);
-
-#else /* CONFIG_USB_DEVICEFS */
-
-static inline void usbfs_update_special(void) {}
-static inline int usbfs_init(void) { return 0; }
-static inline void usbfs_cleanup(void) { }
-
-#endif /* CONFIG_USB_DEVICEFS */
+#endif /* CONFIG_PM_RUNTIME */
 
 /*-------------------------------------------------------------------------*/
 

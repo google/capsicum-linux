@@ -48,8 +48,7 @@
 
 /* Unused commands: 0x23, 0x27, 0x30, 0x31 */
 
-/**
- * MCDI version 1
+/* MCDI version 1
  *
  * Each MCDI request starts with an MCDI_HEADER, which is a 32byte
  * structure, filled in by the client.
@@ -290,6 +289,7 @@
 #define          MCDI_EVENT_CODE_TX_FLUSH  0xc /* enum */
 #define          MCDI_EVENT_CODE_PTP_RX  0xd /* enum */
 #define          MCDI_EVENT_CODE_PTP_FAULT  0xe /* enum */
+#define          MCDI_EVENT_CODE_PTP_PPS  0xf /* enum */
 #define       MCDI_EVENT_CMDDONE_DATA_OFST 0
 #define       MCDI_EVENT_CMDDONE_DATA_LBN 0
 #define       MCDI_EVENT_CMDDONE_DATA_WIDTH 32
@@ -492,12 +492,12 @@
 
 /* MC_CMD_GET_FPGAREG_OUT msgresponse */
 #define    MC_CMD_GET_FPGAREG_OUT_LENMIN 1
-#define    MC_CMD_GET_FPGAREG_OUT_LENMAX 255
+#define    MC_CMD_GET_FPGAREG_OUT_LENMAX 252
 #define    MC_CMD_GET_FPGAREG_OUT_LEN(num) (0+1*(num))
 #define       MC_CMD_GET_FPGAREG_OUT_BUFFER_OFST 0
 #define       MC_CMD_GET_FPGAREG_OUT_BUFFER_LEN 1
 #define       MC_CMD_GET_FPGAREG_OUT_BUFFER_MINNUM 1
-#define       MC_CMD_GET_FPGAREG_OUT_BUFFER_MAXNUM 255
+#define       MC_CMD_GET_FPGAREG_OUT_BUFFER_MAXNUM 252
 
 
 /***********************************/
@@ -508,13 +508,13 @@
 
 /* MC_CMD_PUT_FPGAREG_IN msgrequest */
 #define    MC_CMD_PUT_FPGAREG_IN_LENMIN 5
-#define    MC_CMD_PUT_FPGAREG_IN_LENMAX 255
+#define    MC_CMD_PUT_FPGAREG_IN_LENMAX 252
 #define    MC_CMD_PUT_FPGAREG_IN_LEN(num) (4+1*(num))
 #define       MC_CMD_PUT_FPGAREG_IN_ADDR_OFST 0
 #define       MC_CMD_PUT_FPGAREG_IN_BUFFER_OFST 4
 #define       MC_CMD_PUT_FPGAREG_IN_BUFFER_LEN 1
 #define       MC_CMD_PUT_FPGAREG_IN_BUFFER_MINNUM 1
-#define       MC_CMD_PUT_FPGAREG_IN_BUFFER_MAXNUM 251
+#define       MC_CMD_PUT_FPGAREG_IN_BUFFER_MAXNUM 248
 
 /* MC_CMD_PUT_FPGAREG_OUT msgresponse */
 #define    MC_CMD_PUT_FPGAREG_OUT_LEN 0
@@ -553,6 +553,7 @@
 #define          MC_CMD_PTP_MODE_V1_VLAN 0x1 /* enum */
 #define          MC_CMD_PTP_MODE_V2 0x2 /* enum */
 #define          MC_CMD_PTP_MODE_V2_VLAN 0x3 /* enum */
+#define          MC_CMD_PTP_MODE_V2_ENHANCED 0x4 /* enum */
 
 /* MC_CMD_PTP_IN_DISABLE msgrequest */
 #define    MC_CMD_PTP_IN_DISABLE_LEN 8
@@ -561,7 +562,7 @@
 
 /* MC_CMD_PTP_IN_TRANSMIT msgrequest */
 #define    MC_CMD_PTP_IN_TRANSMIT_LENMIN 13
-#define    MC_CMD_PTP_IN_TRANSMIT_LENMAX 255
+#define    MC_CMD_PTP_IN_TRANSMIT_LENMAX 252
 #define    MC_CMD_PTP_IN_TRANSMIT_LEN(num) (12+1*(num))
 /*            MC_CMD_PTP_IN_CMD_OFST 0 */
 /*            MC_CMD_PTP_IN_PERIPH_ID_OFST 4 */
@@ -569,7 +570,7 @@
 #define       MC_CMD_PTP_IN_TRANSMIT_PACKET_OFST 12
 #define       MC_CMD_PTP_IN_TRANSMIT_PACKET_LEN 1
 #define       MC_CMD_PTP_IN_TRANSMIT_PACKET_MINNUM 1
-#define       MC_CMD_PTP_IN_TRANSMIT_PACKET_MAXNUM 243
+#define       MC_CMD_PTP_IN_TRANSMIT_PACKET_MAXNUM 240
 
 /* MC_CMD_PTP_IN_READ_NIC_TIME msgrequest */
 #define    MC_CMD_PTP_IN_READ_NIC_TIME_LEN 8
@@ -1146,7 +1147,7 @@
 
 /* MC_CMD_PUTS_IN msgrequest */
 #define    MC_CMD_PUTS_IN_LENMIN 13
-#define    MC_CMD_PUTS_IN_LENMAX 255
+#define    MC_CMD_PUTS_IN_LENMAX 252
 #define    MC_CMD_PUTS_IN_LEN(num) (12+1*(num))
 #define       MC_CMD_PUTS_IN_DEST_OFST 0
 #define        MC_CMD_PUTS_IN_UART_LBN 0
@@ -1158,7 +1159,7 @@
 #define       MC_CMD_PUTS_IN_STRING_OFST 12
 #define       MC_CMD_PUTS_IN_STRING_LEN 1
 #define       MC_CMD_PUTS_IN_STRING_MINNUM 1
-#define       MC_CMD_PUTS_IN_STRING_MAXNUM 243
+#define       MC_CMD_PUTS_IN_STRING_MAXNUM 240
 
 /* MC_CMD_PUTS_OUT msgresponse */
 #define    MC_CMD_PUTS_OUT_LEN 0
@@ -1948,12 +1949,12 @@
 
 /* MC_CMD_NVRAM_READ_OUT msgresponse */
 #define    MC_CMD_NVRAM_READ_OUT_LENMIN 1
-#define    MC_CMD_NVRAM_READ_OUT_LENMAX 255
+#define    MC_CMD_NVRAM_READ_OUT_LENMAX 252
 #define    MC_CMD_NVRAM_READ_OUT_LEN(num) (0+1*(num))
 #define       MC_CMD_NVRAM_READ_OUT_READ_BUFFER_OFST 0
 #define       MC_CMD_NVRAM_READ_OUT_READ_BUFFER_LEN 1
 #define       MC_CMD_NVRAM_READ_OUT_READ_BUFFER_MINNUM 1
-#define       MC_CMD_NVRAM_READ_OUT_READ_BUFFER_MAXNUM 255
+#define       MC_CMD_NVRAM_READ_OUT_READ_BUFFER_MAXNUM 252
 
 
 /***********************************/
@@ -1964,7 +1965,7 @@
 
 /* MC_CMD_NVRAM_WRITE_IN msgrequest */
 #define    MC_CMD_NVRAM_WRITE_IN_LENMIN 13
-#define    MC_CMD_NVRAM_WRITE_IN_LENMAX 255
+#define    MC_CMD_NVRAM_WRITE_IN_LENMAX 252
 #define    MC_CMD_NVRAM_WRITE_IN_LEN(num) (12+1*(num))
 #define       MC_CMD_NVRAM_WRITE_IN_TYPE_OFST 0
 /*            Enum values, see field(s): */
@@ -1974,7 +1975,7 @@
 #define       MC_CMD_NVRAM_WRITE_IN_WRITE_BUFFER_OFST 12
 #define       MC_CMD_NVRAM_WRITE_IN_WRITE_BUFFER_LEN 1
 #define       MC_CMD_NVRAM_WRITE_IN_WRITE_BUFFER_MINNUM 1
-#define       MC_CMD_NVRAM_WRITE_IN_WRITE_BUFFER_MAXNUM 243
+#define       MC_CMD_NVRAM_WRITE_IN_WRITE_BUFFER_MAXNUM 240
 
 /* MC_CMD_NVRAM_WRITE_OUT msgresponse */
 #define    MC_CMD_NVRAM_WRITE_OUT_LEN 0
@@ -2306,13 +2307,13 @@
 
 /* MC_CMD_GET_PHY_MEDIA_INFO_OUT msgresponse */
 #define    MC_CMD_GET_PHY_MEDIA_INFO_OUT_LENMIN 5
-#define    MC_CMD_GET_PHY_MEDIA_INFO_OUT_LENMAX 255
+#define    MC_CMD_GET_PHY_MEDIA_INFO_OUT_LENMAX 252
 #define    MC_CMD_GET_PHY_MEDIA_INFO_OUT_LEN(num) (4+1*(num))
 #define       MC_CMD_GET_PHY_MEDIA_INFO_OUT_DATALEN_OFST 0
 #define       MC_CMD_GET_PHY_MEDIA_INFO_OUT_DATA_OFST 4
 #define       MC_CMD_GET_PHY_MEDIA_INFO_OUT_DATA_LEN 1
 #define       MC_CMD_GET_PHY_MEDIA_INFO_OUT_DATA_MINNUM 1
-#define       MC_CMD_GET_PHY_MEDIA_INFO_OUT_DATA_MAXNUM 251
+#define       MC_CMD_GET_PHY_MEDIA_INFO_OUT_DATA_MAXNUM 248
 
 
 /***********************************/
