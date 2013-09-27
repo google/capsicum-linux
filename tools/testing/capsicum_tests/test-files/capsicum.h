@@ -13,7 +13,7 @@
 
 #include <stdint.h>
 #include <sys/prctl.h>
-#include <asm-generic/errno.h>
+#include <uapi/asm-generic/errno.h>
 #include <misc/test_harness.h>
 #include <../security/capsicum_caps.h>
 #include <unistd.h>

@@ -8,6 +8,7 @@
  * published by the Free Software Foundation.
  */
 
+#include <uapi/asm-generic/errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <errno.h>

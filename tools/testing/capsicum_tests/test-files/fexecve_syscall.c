@@ -8,6 +8,7 @@
  * published by the Free Software Foundation.
  */
 
+#include <uapi/asm-generic/errno.h>
 #include <errno.h>
 #include <string.h>
 #include <sys/types.h>
@@ -32,6 +33,7 @@ TEST(basic_fexecve) {
 
 	r = sys_fexecve(myself, argv_pass, child_envp);
 	perror("fexecve");
+	EXPECT_EQ(r, 0);
 	EXPECT_TRUE(!"fexecve() should never return");
 }
 
@@ -61,6 +63,7 @@ TEST(fexecve_succeed_with_cap) {
 	fd = cap_new(myself, CAP_FEXECVE);
 	r = sys_fexecve(fd, argv_pass, child_envp);
 	perror("fexecve()");
+	EXPECT_EQ(r, 0);
 	EXPECT_TRUE(!"fexecve() should have succeeded");
 }
 
@@ -111,7 +114,8 @@ int main(int argc, char **argv)
 
 		cap_enter();
 		r = sys_fexecve(myself, argv_pass, child_envp);
-		perror("exec() failed");
+		if (!r)
+			perror("exec() failed");
 		return 1;
 	}
 
