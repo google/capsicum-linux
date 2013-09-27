@@ -1571,12 +1571,12 @@ struct task_struct *fork_idle(int cpu)
  * task, and increments its reference count so that reference
  * will remain valid.
  */
-long do_fork(unsigned long clone_flags,
-	      unsigned long stack_start,
-	      unsigned long stack_size,
-	      struct task_struct **taskp,
-	      int __user *parent_tidptr,
-	      int __user *child_tidptr)
+long do_fork_task(unsigned long clone_flags,
+		unsigned long stack_start,
+		unsigned long stack_size,
+		struct task_struct **taskp,
+		int __user *parent_tidptr,
+		int __user *child_tidptr)
 {
 	struct task_struct *p;
 	int trace = 0;
@@ -1652,20 +1652,29 @@ long do_fork(unsigned long clone_flags,
 	return nr;
 }
 
+long do_fork(unsigned long clone_flags,
+		unsigned long stack_start,
+		unsigned long stack_size,
+		int __user *parent_tidptr,
+		int __user *child_tidptr)
+{
+	return do_fork_task(clone_flags, stack_start, stack_size, NULL, parent_tidptr, child_tidptr);
+}
+
 /*
  * Create a kernel thread.
  */
 pid_t kernel_thread(int (*fn)(void *), void *arg, unsigned long flags)
 {
 	return do_fork(flags|CLONE_VM|CLONE_UNTRACED, (unsigned long)fn,
-		(unsigned long)arg, NULL, NULL, NULL);
+		(unsigned long)arg, NULL, NULL);
 }
 
 #ifdef __ARCH_WANT_SYS_FORK
 SYSCALL_DEFINE0(fork)
 {
 #ifdef CONFIG_MMU
-	return do_fork(SIGCHLD, 0, 0, NULL, NULL, NULL);
+	return do_fork(SIGCHLD, 0, 0, NULL, NULL);
 #else
 	/* can not support in nommu mode */
 	return(-EINVAL);
@@ -1676,8 +1685,8 @@ SYSCALL_DEFINE0(fork)
 #ifdef __ARCH_WANT_SYS_VFORK
 SYSCALL_DEFINE0(vfork)
 {
-	return do_fork(CLONE_VFORK | CLONE_VM | SIGCHLD, 0,
-		0, NULL, NULL, NULL);
+	return do_fork(CLONE_VFORK | CLONE_VM | SIGCHLD, 0, 
+			0, NULL, NULL);
 }
 #endif
 
@@ -1699,7 +1708,7 @@ SYSCALL_DEFINE2(pdfork, int __user *, fdp, int,  flags)
 		goto out_putfd;
 	}
 
-	ret = do_fork(0, 0, 0, &task, NULL, NULL);
+	ret = do_fork_task(0, 0, 0, &task, NULL, NULL);
 
 	if (ret < 0)
 		goto out_fput;
@@ -1744,7 +1753,7 @@ SYSCALL_DEFINE5(clone, unsigned long, clone_flags, unsigned long, newsp,
 		 int, tls_val)
 #endif
 {
-	return do_fork(clone_flags, newsp, 0, NULL, parent_tidptr, child_tidptr);
+	return do_fork(clone_flags, newsp, 0, parent_tidptr, child_tidptr);
 }
 #endif
 
