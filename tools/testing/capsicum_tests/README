@@ -19,10 +19,10 @@ kernel. The disk image should be called test.img, and placed in the
 tools/testing/capsicum_tests directory. The base image’s /sbin/init should be
 renamed to init.orig, and the shell script called test-files/init should be
 copied into its place. /etc/fstab should be replaced (or combined) with
-test-files/fstab. The test scripts currently assume that the UML kernel
-executable is in ../linux/build/linux (relative to the userspace test
-repository). The command-lines used to build the kernel can be found in the
-CAPSICUM_BUILD_HOWTO file.
+test-files/fstab, and a /tests/ directory should be created. The test scripts
+currently assume that the UML kernel executable is in ../../../build/linux
+(relative to the userspace test repository). The command-lines used to build
+the kernel can be found in the CAPSICUM_BUILD_HOWTO file.
 
 How it works is that run-test and friends launch the UML kernel with that disk
 image, a console on standard I/O, and a runtest= parameter indicating the test
