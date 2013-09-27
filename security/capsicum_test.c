@@ -20,6 +20,7 @@
 #include <linux/fdtable.h>
 #include <linux/sched.h>
 #include <linux/syscalls.h>
+#include <linux/task_work.h>
 
 #include "capsicum_int.h"
 
@@ -29,6 +30,12 @@
  * These unit tests exercise the Capsicum security module.
  */
 
+void flush_fputs(void) {
+	/* Calling fput() merely queues up the operation to occur later, either via the delayed_fput_list in
+	 * fs/file_table.c, or via the task work queue.  Flush them both. */
+	task_work_run();
+	flush_delayed_fput();
+}
 
 /* Test the wrapping and unwrapping of file descriptors in capabilities. */
 FIXTURE(new_cap) {
@@ -46,11 +53,13 @@ FIXTURE_SETUP(new_cap) {
 	ASSERT_NE(self->cap, 0);
 	self->capf = fcheck(self->cap);
 	ASSERT_NE(self->capf, NULL);
+	flush_fputs();
 }
 
 FIXTURE_TEARDOWN(new_cap) {
 	fput(self->orig);
 	sys_close(self->cap);
+	flush_fputs();
 }
 
 TEST_F(new_cap, init_ok) {
@@ -91,6 +100,7 @@ TEST_F(new_cap, rewrap) {
 	EXPECT_EQ(file_count(self->orig), old_count + 1);
 
 	sys_close(fd);
+	flush_fputs();
 
 	EXPECT_EQ(file_count(self->orig), old_count);
 }
@@ -111,6 +121,7 @@ FIXTURE(fget) {
 
 FIXTURE_SETUP(fget) {
 	self->orig = fget(0);
+	flush_fputs();
 	self->orig_refs = file_count(self->orig);
 	self->cap = capsicum_wrap_new_fd(self->orig, 0);
 	ASSERT_EQ(file_count(self->orig), self->orig_refs+1);
@@ -118,8 +129,10 @@ FIXTURE_SETUP(fget) {
 }
 
 FIXTURE_TEARDOWN(fget) {
+	flush_fputs();
 	ASSERT_EQ(file_count(self->orig), self->orig_refs+1);
 	sys_close(self->cap);
+	flush_fputs();
 	ASSERT_EQ(file_count(self->orig), self->orig_refs);
 	fput(self->orig);
 	ASSERT_EQ(file_count(self->orig), self->orig_refs-1);
@@ -159,7 +172,6 @@ TEST_F(fget, fget_raw) {
 TEST_F(fget, fget_raw_light) {
 	int fpn;
 	struct file *f = fget_raw_light(self->cap, &fpn);
-
 
 	EXPECT_EQ(f, self->orig);
 	EXPECT_EQ(fpn, 0);
