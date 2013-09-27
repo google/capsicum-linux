@@ -25,7 +25,7 @@ static inline int cap_enter(void)
 
 static inline int cap_new(unsigned int fd, uint64_t rights)
 {
-	return syscall(312, fd, rights);
+	return syscall(314, fd, rights);
 }
 
 #endif /*__CAPSICUM_USERSPACE_H__*/

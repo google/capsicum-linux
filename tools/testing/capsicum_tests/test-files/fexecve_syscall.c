@@ -19,7 +19,7 @@
 
 static inline int sys_fexecve(int fd, char **argv, char **envp)
 {
-	return syscall(317, fd, argv, envp);
+	return syscall(319, fd, argv, envp);
 }
 
 int myself;
