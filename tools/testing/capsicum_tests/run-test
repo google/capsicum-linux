@@ -31,6 +31,13 @@ else
     export KGDB=""
 fi
 
+if [ "$1" = "-a" ]; then
+    shift
+    export TESTS="kt;kt procdesc;cap_new.test;procdesc.test;seccomp.test;fexecve_syscall.test"
+else
+    TESTS="$@"
+fi
+
 if expr match "$1" ".*\\.test\\|kt" >/dev/null ; then
     make --no-print-directory -C test-files $1 || exit 1
 fi
@@ -39,16 +46,16 @@ echo "Building..."
 
 if $VM ; then
 
-    make -C ../../../ -j14 $TARGETS O=build-native/ >/dev/null && (./run-vm-test-on-last-build $KGDB "$@" 2>&1 | sed -n '/---- Executing: .* ----/,$p')
+    make -C ../../../ -j14 $TARGETS O=build-native/ >/dev/null && (./run-vm-test-on-last-build $KGDB $TESTS 2>&1 | sed -n '/---- Executing: .* ----/,$p')
 
 else
     if $LOUD; then
 
-	make -C ../../../ -j 14 linux ARCH=um O=build/ && ./run-test-on-last-build "$@"
+	make -C ../../../ -j 14 linux ARCH=um O=build/ && ./run-test-on-last-build $TESTS
 
     else
 
-	make -C ../../../ -j 14 linux ARCH=um O=build/ >/dev/null && (./run-test-on-last-build "$@" 2>&1 | sed -n '/---- Executing: .* ----/,$p' | grep -Pav 'remove_umid_dir - remove_files_and_dir failed with err = -16|System halted.')
+	make -C ../../../ -j 14 linux ARCH=um O=build/ >/dev/null && (./run-test-on-last-build $TESTS 2>&1 | sed -n '/---- Executing: .* ----/,$p' | grep -Pav 'remove_umid_dir - remove_files_and_dir failed with err = -16|System halted.')
     fi
 fi
 
