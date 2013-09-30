@@ -1,4 +1,4 @@
-/* 
+/*
  * Tests for Capsicum, a capability API for UNIX.
  *
  * Copyright (C) 2012 The Chromium OS Authors <chromium-os-dev@chromium.org>
@@ -9,20 +9,20 @@
  */
 
 #include <stdio.h>
+#include <unistd.h>
 
 #include "capsicum.h"
 
 TEST(cap_new_basic) {
-	int x = cap_new(1, 0);
-
+	int x = cap_new(STDOUT_FILENO, CAP_READ|CAP_WRITE|CAP_SEEK);
+	EXPECT_NE(-1, x);
 	write(x, "OK!\n", 4);
 }
 
 TEST(cap_enter_basic) {
-	cap_enter();
+	int rc = cap_enter();
+	EXPECT_EQ(0, rc);
 }
 
 
 TEST_HARNESS_MAIN
-
-

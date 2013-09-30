@@ -29,15 +29,15 @@ TEST(use_pdfork) {
 	int r, pd = -1;
 
 	r = pdfork(&pd, 0);
-	ASSERT_GE(r, 0);
+	ASSERT_LE(0, r);
 
 	if (r == 0) {
 		/* We're the child. */
-		ASSERT_EQ(pd, -1);
+		ASSERT_EQ(-1, pd);
 		exit(0);
 	}
 
-	ASSERT_NE(pd, -1);
+	ASSERT_NE(-1, pd);
 	close(pd);
 }
 
@@ -52,11 +52,11 @@ FIXTURE_SETUP(pdexit) {
 	int pipes[2];
 
 	r = pipe(pipes);
-	ASSERT_GE(r, 0);
+	ASSERT_LE(0, r);
 	self->pipe = pipes[1];
 
 	r = pdfork(&self->pd, 0);
-	ASSERT_GE(r, 0);
+	ASSERT_LE(0, r);
 
 	if (r == 0) {
 		/* We're the child. */
@@ -78,14 +78,14 @@ TEST_F(pdexit, poll) {
 
 	FD_SET(pd, &fds);
 	r = select(pd+1, NULL, NULL, &fds, &timeout);
-	EXPECT_EQ(r, 0);
+	EXPECT_EQ(0, r);
 
 	/* Tell the child to exit. (The value of r doesn't matter here.) */
 	write(self->pipe, &r, sizeof(r));
 
 	FD_SET(pd, &fds);
 	r = select(pd+1, NULL, NULL, &fds, NULL);
-	EXPECT_EQ(r, 1);
+	EXPECT_EQ(1, r);
 
 	close(pd);
 }
@@ -98,7 +98,7 @@ TEST_F(pdexit, poll_multiple) {
 	struct timeval timeout = {0, 0};
 
 	r = fork();
-	ASSERT_GE(r, 0);
+	ASSERT_LE(0, r);
 	if (!r) {
 		/* Give the other processes time to get set up, then
 		   terminate the child. */
@@ -108,22 +108,22 @@ TEST_F(pdexit, poll_multiple) {
 	}
 
 	other_pid = fork();
-	ASSERT_GE(other_pid, 0);
+	ASSERT_LE(0, other_pid);
 
 	FD_SET(pd, &fds);
 	r = select(pd+1, NULL, NULL, &fds, &timeout);
-	EXPECT_EQ(r, 0);
+	EXPECT_EQ(0, r);
 
 	FD_SET(pd, &fds);
 	r = select(pd+1, NULL, NULL, &fds, NULL);
-	EXPECT_EQ(r, 1);
+	EXPECT_EQ(1, r);
 
 	close(pd);
 
 	if (other_pid) {
 		waitpid(other_pid, &r, 0);
 		EXPECT_TRUE(WIFEXITED(r));
-		EXPECT_EQ(WEXITSTATUS(r), 0);
+		EXPECT_EQ(0, WEXITSTATUS(r));
 	} else {
 		exit(0);
 	}
@@ -171,7 +171,7 @@ static char getstate(int pid)
 		if (!_ctr) { \
 			TH_LOG("Expected " #pid "('%c') in states '%c'/'%c'", \
 				_state, state1, state2); \
-			EXPECT_EQ(_ctr, 0); \
+			EXPECT_EQ(0, _ctr); \
 		} \
 	} while (0)
 
@@ -200,7 +200,7 @@ TEST(close_daemon) {
 	int pid, pd = -1;
 
 	pid = pdfork(&pd, PD_DAEMON);
-	ASSERT_GE(pid, 0);
+	ASSERT_LE(0, pid);
 
 	if (pid == 0) {
 		/* We're the child. */
@@ -243,14 +243,13 @@ TEST(pdfork_daemon_restricted) {
 
 	cap_enter();
 	r = pdfork(&fd, PD_DAEMON);
-	EXPECT_EQ(r, -1);
-	EXPECT_EQ(errno, ECAPMODE);
+	EXPECT_EQ(-1, r);
+	EXPECT_EQ(ECAPMODE, errno);
 
 	r = pdfork(&fd, 0);
 	if (r == 0)
 		exit(0);
-	EXPECT_GE(r, 0);
+	EXPECT_LE(0, r);
 }
 
 TEST_HARNESS_MAIN
-

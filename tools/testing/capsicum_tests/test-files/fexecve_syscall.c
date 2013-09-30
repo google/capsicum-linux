@@ -33,7 +33,7 @@ TEST(basic_fexecve) {
 
 	r = sys_fexecve(myself, argv_pass, child_envp);
 	perror("fexecve");
-	EXPECT_EQ(r, 0);
+	EXPECT_EQ(0, r);
 	EXPECT_TRUE(!"fexecve() should never return");
 }
 
@@ -42,8 +42,8 @@ TEST(fexecve_in_cap_mode) {
 
 	cap_enter();
 	r = sys_fexecve(myself, argv_pass, child_envp);
-	EXPECT_EQ(r, -1);
-	EXPECT_EQ(errno, ECAPMODE);
+	EXPECT_EQ(-1, r);
+	EXPECT_EQ(ECAPMODE, errno);
 }
 
 TEST(fexecve_fails_without_cap) {
@@ -52,8 +52,8 @@ TEST(fexecve_fails_without_cap) {
 	cap_enter();
 	fd = cap_new(myself, 0);
 	r = sys_fexecve(fd, argv_fail, child_envp);
-	EXPECT_EQ(r, -1);
-	EXPECT_EQ(errno, ENOTCAPABLE);
+	EXPECT_EQ(-1, r);
+	EXPECT_EQ(ENOTCAPABLE, errno);
 }
 
 TEST(fexecve_succeed_with_cap) {
@@ -63,7 +63,7 @@ TEST(fexecve_succeed_with_cap) {
 	fd = cap_new(myself, CAP_FEXECVE);
 	r = sys_fexecve(fd, argv_pass, child_envp);
 	perror("fexecve()");
-	EXPECT_EQ(r, 0);
+	EXPECT_EQ(0, r);
 	EXPECT_TRUE(!"fexecve() should have succeeded");
 }
 
@@ -75,15 +75,15 @@ TEST(fexecve_checks_permissions) {
 		"cp %s %s.nonexec && chmod -x %s.nonexec",
 		argv_pass[0], argv_pass[0], argv_pass[0]);
 	result = system(buf);
-	ASSERT_EQ(result, 0);
+	ASSERT_EQ(0, result);
 
 	snprintf(buf, sizeof(buf), "%s.nonexec", argv_pass[0]);
 	fd = open(buf, O_RDONLY);
-	ASSERT_GE(fd, 0);
+	ASSERT_LE(0, fd);
 
 	result = sys_fexecve(fd, argv_fail, child_envp);
-	EXPECT_EQ(result, -1);
-	EXPECT_EQ(errno, EACCES);
+	EXPECT_EQ(-1, result);
+	EXPECT_EQ(EACCES, errno);
 
 	close(fd);
 }
@@ -91,7 +91,7 @@ TEST(fexecve_checks_permissions) {
 TEST(execve_fails) {
 	cap_enter();
 	execve(argv_fail[0], argv_fail, child_envp);
-	EXPECT_EQ(errno, ECAPMODE);
+	EXPECT_EQ(ECAPMODE, errno);
 }
 
 int main(int argc, char **argv)
@@ -121,5 +121,3 @@ int main(int argc, char **argv)
 
 	return test_harness_run(argc > 1 ? argv[1] : "");
 }
-
-
