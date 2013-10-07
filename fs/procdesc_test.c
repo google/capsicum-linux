@@ -22,10 +22,6 @@
 
 #include "procdesc_int.h"
 
-/* Hack in prototypes. */
-asmlinkage int sys_pdfork(int __user *fdp, int flags);
-
-
 /* These tests can spawn child processes. This doesn't matter, because
  * the launch environment for these kernel tests immediately exits.
  * More sophisticated tests which require cooperation from the child

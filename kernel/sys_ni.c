@@ -209,3 +209,11 @@ cond_syscall(compat_sys_open_by_handle_at);
 
 /* compare kernel pointers */
 cond_syscall(sys_kcmp);
+
+/* capsicum object capabilities */
+cond_syscall(sys_fexecve);
+cond_syscall(sys_pdgetpid);
+cond_syscall(sys_pdkill);
+cond_syscall(sys_pdwait4);
+cond_syscall(sys_pdfork);
+cond_syscall(sys_cap_new);
