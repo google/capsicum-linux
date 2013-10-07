@@ -13,5 +13,4 @@ if [ "$1" = "" ]; then
 
   exit 1
 fi
-../../../build/linux ubd0=test.img con0=fd:2 con1=fd:0,fd:1 con=pts mem=4096M security=capsicum cwd="\"`pwd`\"" runtest="\"$*\""
-
+../../../build/linux ubd0=test.img rw con0=fd:2 con1=fd:0,fd:1 con=pts mem=4096M security=capsicum cwd="\"`pwd`\"" runtest="\"$*\""
