@@ -51,11 +51,25 @@ bool file_is_procdesc(struct file *f)
 	return f->f_op == &procdesc_ops;
 }
 
-/* pdfork() is arch-specific. */
-
 SYSCALL_DEFINE2(pdgetpid, int, fd, pid_t __user *, pidp)
 {
-	return -ENOSYS;
+	struct file *pd;
+	pid_t pid;
+
+	pd = fget(fd);
+
+	if (!pd)
+		return -EBADF;
+	if (!file_is_procdesc(pd)) {
+		fput(pd);
+		return -EINVAL;
+	}
+
+	pid = task_tgid_vnr(FILE_PD(pd)->task);
+	fput(pd);
+	put_user(pid, pidp);
+
+	return 0;
 }
 
 long do_pdkill(struct task_struct *task, int signum)
@@ -85,8 +99,10 @@ SYSCALL_DEFINE2(pdkill, int, fd, int, signum)
 
 	if (!pd)
 		return -EBADF;
-	if (!file_is_procdesc(pd))
+	if (!file_is_procdesc(pd)) {
+		fput(pd);
 		return -EINVAL;
+	}
 
 	ret = do_pdkill(FILE_PD(pd)->task, signum);
 	fput(pd);
