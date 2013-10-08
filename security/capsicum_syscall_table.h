@@ -14,6 +14,7 @@
  */
 #include <linux/audit.h>
 #include <linux/mman.h>
+#include <linux/prctl.h>
 #include <asm/prctl.h>
 
 int capsicum_run_syscall_table(int arch, int call, unsigned long *args)
@@ -175,6 +176,30 @@ int capsicum_run_syscall_table(int arch, int call, unsigned long *args)
 
 	case (__NR_brk):
 		return 0;
+
+	case (__NR_prctl):
+		/* Allow through PR_GET_* calls */
+		switch (args[0]) {
+		case PR_CAPBSET_READ:
+		case PR_CAPBSET_DROP:
+		case PR_GET_DUMPABLE:
+		case PR_GET_ENDIAN:
+		case PR_GET_FPEMU:
+		case PR_GET_KEEPCAPS:
+		case PR_GET_NAME:
+		case PR_GET_NO_NEW_PRIVS:
+		case PR_GET_PDEATHSIG:
+		case PR_GET_SECCOMP:
+		case PR_GET_SECUREBITS:
+		case PR_GET_TIMERSLACK:
+		case PR_GET_TIMING:
+		case PR_GET_TSC:
+		case PR_GET_UNALIGN:
+		case PR_MCE_KILL_GET:
+			return 0;
+		default:
+			return -ECAPMODE;
+		}
 
 	case (__NR_arch_prctl):
 		return (args[0] & ~(ARCH_SET_FS|ARCH_GET_FS|ARCH_SET_GS|ARCH_GET_GS) ? -ECAPMODE : 0);
