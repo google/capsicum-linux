@@ -222,6 +222,9 @@ int capsicum_run_syscall_table(int arch, int call, unsigned long *args)
 	case (__NR_cap_new):
 		return 0;
 
+	case (__NR_cap_getrights):
+		return 0;
+
 	case (__NR_exit):
 		return 0;
 

@@ -113,6 +113,35 @@ SYSCALL_DEFINE2(cap_new, unsigned int, orig_fd, u64, new_rights)
 	return sys_cap_new_impl(orig_fd, new_rights);
 }
 
+SYSCALL_DEFINE2(cap_getrights, unsigned int, fd, u64 __user *, rightsp)
+{
+	int result;
+	struct file *file;
+	struct files_struct *files = current->files;
+	u64 rights = (u64)-1;
+
+	rcu_read_lock();
+	file = fcheck_files(files, fd);
+
+	if (!file) {
+		result = -EBADF;
+		goto out_err;
+	}
+
+	if (!capsicum_is_cap(file)) {
+		result = -EINVAL;
+		goto out_err;
+	}
+	capsicum_unwrap(file, &rights);
+	rcu_read_unlock();
+	put_user(rights, rightsp);
+	return 0;
+
+out_err:
+	rcu_read_unlock();
+	return result;
+}
+
 int capsicum_intercept_syscall(int arch, int callnr, unsigned long *args)
 {
 	int result;

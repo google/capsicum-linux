@@ -320,12 +320,13 @@
 311	64	process_vm_writev	sys_process_vm_writev
 312	common	kcmp			sys_kcmp
 313	common	finit_module		sys_finit_module
-314	common	cap_new			sys_cap_new
-315	common	pdfork			stub_pdfork
-316	common	pdgetpid		sys_pdgetpid
-317	common	pdkill			sys_pdkill
-318	common	pdwait4			sys_pdwait4
-319	common	fexecve			stub_fexecve
+314	common	cap_new		sys_cap_new
+315	common	cap_getrights		sys_cap_getrights
+316	common	pdfork			stub_pdfork
+317	common	pdgetpid		sys_pdgetpid
+318	common	pdkill			sys_pdkill
+319	common	pdwait4			sys_pdwait4
+320	common	fexecve			stub_fexecve
 #
 # x32-specific system call numbers start at 512 to avoid cache impact
 # for native 64-bit operation.
