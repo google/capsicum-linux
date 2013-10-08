@@ -452,7 +452,7 @@ int __secure_computing(int this_syscall)
 		break;
 	}
 #endif
-#ifdef CONFIG_CAPSICUM
+#ifdef CONFIG_SECURITY_CAPSICUM
 	case SECCOMP_MODE_CAPSICUM: {
 		unsigned long args[6];
 		int arch, ret;
@@ -527,7 +527,7 @@ long prctl_set_seccomp(unsigned long seccomp_mode, char __user *filter)
 			goto out;
 		break;
 #endif
-#ifdef CONFIG_CAPSICUM
+#ifdef CONFIG_SECURITY_CAPSICUM
 	case SECCOMP_MODE_CAPSICUM:
 		ret = 0;
 		break;

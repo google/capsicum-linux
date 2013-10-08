@@ -4,7 +4,8 @@
 cp arch/um/defconfig .config
 make menuconfig ARCH=um O=`pwd`/build
 # (here you should enable CONFIG_SECURITY, CONFIG_DEBUG_FS,
-# CONFIG_SECURITY_PATH, CONFIG_SECCOMP, and CONFIG_SECCOMP_FILTER)
+# CONFIG_SECURITY_PATH, CONFIG_SECURITY_CAPSICUM, CONFIG_PROCDESC,
+# CONFIG_64BIT)
 make -j14 linux ARCH=um O=`pwd`/build/
 
 

@@ -117,7 +117,7 @@ config LSM_MMAP_MIN_ADDR
 	  this low address space will need the permission specific to the
 	  systems running LSM.
 
-config CAPSICUM
+config SECURITY_CAPSICUM
 	bool "Capsicum capabilities"
 	default y
 	depends on SECURITY
@@ -141,6 +141,7 @@ source security/integrity/Kconfig
 
 choice
 	prompt "Default security module"
+	default DEFAULT_SECURITY_CAPSICUM if SECURITY_CAPSICUM
 	default DEFAULT_SECURITY_SELINUX if SECURITY_SELINUX
 	default DEFAULT_SECURITY_SMACK if SECURITY_SMACK
 	default DEFAULT_SECURITY_TOMOYO if SECURITY_TOMOYO
@@ -151,6 +152,9 @@ choice
 	help
 	  Select the security module that will be used by default if the
 	  kernel parameter security= is not specified.
+
+	config DEFAULT_SECURITY_CAPSICUM
+		bool "Capsicum" if SECURITY_CAPSICUM=y
 
 	config DEFAULT_SECURITY_SELINUX
 		bool "SELinux" if SECURITY_SELINUX=y
@@ -174,6 +178,7 @@ endchoice
 
 config DEFAULT_SECURITY
 	string
+	default "capsicum" if DEFAULT_SECURITY_CAPSICUM
 	default "selinux" if DEFAULT_SECURITY_SELINUX
 	default "smack" if DEFAULT_SECURITY_SMACK
 	default "tomoyo" if DEFAULT_SECURITY_TOMOYO
@@ -182,4 +187,3 @@ config DEFAULT_SECURITY
 	default "" if DEFAULT_SECURITY_DAC
 
 endmenu
-
