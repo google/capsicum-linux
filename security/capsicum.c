@@ -148,7 +148,7 @@ int capsicum_intercept_syscall(int arch, int callnr, unsigned long *args)
 	if (!enabled)
 		return 0;
 
-	pending = capsicum_get_pending_syscall();
+	pending = capsicum_alloc_pending_syscall();
 	if (IS_ERR(pending))
 		return PTR_ERR(pending);
 
@@ -221,7 +221,7 @@ struct file *capsicum_cap_alloc(void)
 	struct capability *cap;
 	struct file *newfile;
 
-	cap = kmalloc(sizeof(*cap), GFP_KERNEL);
+	cap = kzalloc(sizeof(*cap), GFP_KERNEL);
 	if (cap == NULL)
 		return ERR_PTR(-ENOMEM);
 
@@ -307,7 +307,8 @@ static int capsicum_release(struct inode *i, struct file *fp)
 		return -EINVAL;
 
 	c = fp->private_data;
-	fput(c->underlying);
+	if (c->underlying)
+		fput(c->underlying);
 	kfree(c);
 
 	return 0;
@@ -319,9 +320,10 @@ static int capsicum_release(struct inode *i, struct file *fp)
  * thread-local storage so we know what rights to give any new fd that this
  * syscall installs.
  *
- * If we were in capability mode, we performed a rights check on entry to the
- * current syscall. This function checks that the file we are unwrapping is
- * the same as the one which was examined in capsicum_intercept_syscall().
+ * If we were in capability mode and this call was triggered by a syscall, we
+ * performed a rights check on entry to the syscall. This function checks that
+ * the file we are unwrapping is the same as the one which was examined in
+ * capsicum_intercept_syscall().
  */
 static struct file *capsicum_file_lookup(struct file *file, unsigned int fd)
 {
@@ -331,10 +333,8 @@ static struct file *capsicum_file_lookup(struct file *file, unsigned int fd)
 	bool found_fd = false;
 
 	pending = capsicum_get_pending_syscall();
-	if (IS_ERR(pending)) {
-		printk(KERN_ERR "Cannot allocate in capsicum_file_lookup()\n");
-		return NULL;
-	}
+	if (!pending)
+		return file;
 
 	/* Newly-installed file descriptors inherit the rights of the file
 	 * descriptor used in the call that created them. So record the rights
@@ -371,27 +371,16 @@ static struct file *capsicum_file_lookup(struct file *file, unsigned int fd)
 	return unwrapped;
 }
 
-/* We are about to install @file in @fd. This hook allows us to change which
- * file actually gets stored in the process's file table. In particular, if the
- * last file to be looked up was a capability, we wrap the file we are about to
- * install in a capability with the same rights.
- *
- * Because fd_install() cannot return an error, we take this opportunity to
- * pre-allocate a capability and place it in thread-local storage, at a point
- * where it is OK to abort.
- */
+/* A new file descriptor is being allocated in @fd. This hook allows us to
+ * pre-allocate a capability and place it in thread-local storage, so a
+ * subsequent installation of a file for that @fd can be wrapped in a capability
+ * (the allocation is not possible at installation time) */
 static int capsicum_fd_alloc(unsigned int fd)
 {
 	struct file *capf;
 	struct capsicum_pending_syscall *pending;
 
-	/* Optimisation: If we haven't worked with capabilities so far in this
-	 * thread, there is no need to allocate a structure just to say so.
-	 */
-	if (!current_security())
-		return 0;
-
-	pending = capsicum_get_pending_syscall();
+	pending = capsicum_alloc_pending_syscall();
 	if (IS_ERR(pending))
 		return PTR_ERR(pending);
 
@@ -414,11 +403,9 @@ static struct file *capsicum_file_install(struct file *file, unsigned int fd)
 	struct capsicum_pending_syscall *pending;
 	struct file *capf;
 
-	pending = current_security();
+	pending = capsicum_get_pending_syscall();
 	if (!pending)
 		return file;
-
-	BUG_ON(pending->task != current);
 
 	if (pending->new_cap_rights == (u64)-1 || capsicum_is_cap(file))
 		return file;
@@ -455,14 +442,34 @@ static int capsicum_path_lookup(struct dentry *dentry, const char *name)
 	return 0;
 }
 
-/* Return (and allocate if necessary) the thread-local storage we use to
- * record details of the current system call.
+/* Return the thread-local storage we use to record details of the current
+ * system call, if it is present and is associated with the current thread.
  */
 struct capsicum_pending_syscall *capsicum_get_pending_syscall(void)
 {
 	struct capsicum_pending_syscall *pending = current_security();
+	if (pending && pending->task == current) {
+		/* There is a per-task credential structure containing the
+		 * relevant security field, and it's for the current thread.
+		 * Return it. */
+		return pending;
+	} else {
+		return NULL;
+	}
+}
+
+/* Allocate the thread-local storage we use to record details of the current
+ * system call.  If there is already per-thread storage available, re-use that.
+ */
+struct capsicum_pending_syscall *capsicum_alloc_pending_syscall(void)
+{
+	struct capsicum_pending_syscall *pending = current_security();
 
 	if (!pending || pending->task != current) {
+		/* Either there is no security data in the per-task credentials,
+		 * or it is for a different thread.  Replace the per-task
+		 * credentials with a new version that does include the security
+		 * data for this thread. */
 		struct cred *cred;
 
 		cred = prepare_creds();
@@ -471,8 +478,8 @@ struct capsicum_pending_syscall *capsicum_get_pending_syscall(void)
 
 		/* If we're unsharing a cred which already points to some other
 		 * thread's capsicum_pending_syscall, capsicum_cred_prepare()
-		 * will dup that capsicum_pending_syscall into our new cred -
-		 * so the memory we need might already be allocated.
+		 * will have duplicated that capsicum_pending_syscall into our
+		 * new cred - so the memory we need might already be allocated.
 		 */
 		pending = cred->security;
 		if (!pending) {
@@ -484,11 +491,11 @@ struct capsicum_pending_syscall *capsicum_get_pending_syscall(void)
 			cred->security = pending;
 		}
 
-		commit_creds(cred);
 		pending->new_cap_rights = (u64)-1;
 		pending->next_free = 0;
 		pending->next_new_cap = NULL;
 		pending->task = current;
+		commit_creds(cred);
 	}
 
 	return pending;
@@ -496,13 +503,22 @@ struct capsicum_pending_syscall *capsicum_get_pending_syscall(void)
 
 static void capsicum_cred_free(struct cred *cred)
 {
-	kfree(cred->security);
+	struct capsicum_pending_syscall* pending = cred->security;
 	cred->security = NULL;
+	if (pending) {
+		if (pending->next_new_cap) {
+			/* We're freeing a thread-local storage structure that
+			 * has a pre-allocated capability hanging off it, so
+			 * free that too. */
+			put_filp(pending->next_new_cap);
+		}
+		kfree(pending);
+	}
 }
 
 static int capsicum_cred_alloc_blank(struct cred *cred, gfp_t gfp)
 {
-	cred->security = kmalloc(sizeof(struct capsicum_pending_syscall), gfp);
+	cred->security = kzalloc(sizeof(struct capsicum_pending_syscall), gfp);
 	if (!cred->security)
 		return -ENOMEM;
 	return 0;
@@ -510,21 +526,26 @@ static int capsicum_cred_alloc_blank(struct cred *cred, gfp_t gfp)
 
 static void capsicum_cred_transfer(struct cred *new, const struct cred *old)
 {
-	BUG_ON(!new->security);
-	memcpy(new->security, old->security,
-			sizeof(struct capsicum_pending_syscall));
+	const struct capsicum_pending_syscall *old_pending = old->security;
+	struct capsicum_pending_syscall *pending = new->security;
+	BUG_ON(!pending);
+	*pending = *old_pending;
 }
 
 static int capsicum_cred_prepare(struct cred *new, const struct cred *old,
 		gfp_t gfp)
 {
-	struct capsicum_pending_syscall *pending = old->security;
+	const struct capsicum_pending_syscall *old_pending = old->security;
+	struct capsicum_pending_syscall *pending;
 
-	if (pending && pending->task == current) {
-		int err = capsicum_cred_alloc_blank(new, gfp);
-		if (err)
-			return err;
-		capsicum_cred_transfer(new, old);
+	if (old_pending && old_pending->task == current) {
+		pending = kmemdup(old_pending, sizeof(struct capsicum_pending_syscall), gfp);
+		if (!pending)
+			return -ENOMEM;
+		/* Any dangling pre-allocated capability is still owned by the
+		 * old instance */
+		pending->next_new_cap = NULL;
+		new->security = pending;
 	}
 
 	return 0;

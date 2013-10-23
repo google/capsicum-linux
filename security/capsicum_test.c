@@ -257,14 +257,14 @@ TEST(cred_copy_pending) {
 }
 
 /* If the thread-local Capsicum state object attached to our cred does not
- * belong to our thread (ie the cred is shared), capsicum_get_pending_syscall()
+ * belong to our thread (ie the cred is shared), capsicum_alloc_pending_syscall()
  * will allocate us our own private cred and thread-local object.
  */
 TEST(unshare_cred) {
 	const struct cred *old_cred;
 	struct capsicum_pending_syscall *old_pending, *new_pending;
 
-	old_pending = capsicum_get_pending_syscall();
+	old_pending = capsicum_alloc_pending_syscall();
 	old_cred = current_cred();
 	ASSERT_EQ(old_cred->security, old_pending);
 
@@ -274,7 +274,7 @@ TEST(unshare_cred) {
 	 */
 	old_pending->task = NULL;
 
-	new_pending = capsicum_get_pending_syscall();
+	new_pending = capsicum_alloc_pending_syscall();
 	EXPECT_NE(new_pending, old_pending);
 	EXPECT_NE(current_cred(), old_cred);
 }

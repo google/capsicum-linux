@@ -17,6 +17,7 @@
 
 /* This is used in seccomp.c; eventually it should move to a public location. */
 struct capsicum_pending_syscall *capsicum_get_pending_syscall(void);
+struct capsicum_pending_syscall *capsicum_alloc_pending_syscall(void);
 
 /* Everything else in this file is for use in test code only
  * (capsicum_test.c).
@@ -28,9 +29,14 @@ struct file *capsicum_unwrap(const struct file *capability, u64 *rights);
 int capsicum_intercept_syscall(int arch, int callnr, unsigned long *args);
 int capsicum_run_syscall_table(struct capsicum_pending_syscall *pending, int arch, int call, unsigned long *args);
 
-/* Per-thread Capsicum local state. We use this to check that file mappings
- * haven't changed between calls to our hooks, to prevent a time-of-check/
- * time-of-use race.
+/* Per-thread Capsicum local state. This is used for two purposes:
+ * - To check that file mappings haven't changed between the entry to a
+ *   syscall, and the point that the LSM hooks are called to manipulate
+ *   file descriptors. This prevents time-of-check/time-of-use (TOCTOU)
+ *   races.
+ * - When a new file descriptor is created, we pre-allocate a capability
+ *   in case it needs wrapping at installation time, and store that capability
+ *   in next_new_cap in the meanwhile.
  */
 struct capsicum_pending_syscall {
 	struct file *files[6];
