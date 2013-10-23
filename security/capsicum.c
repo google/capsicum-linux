@@ -37,18 +37,16 @@
  *    capability-wrapped file descriptors they're operating on.
  *  - An LSM hook to prevent upward directory traversal when using openat()
  *    and friends in capability mode.
- *  - (TODO) A "process descriptor" mechanism which allows processes to
+ *  - A "process descriptor" mechanism which allows processes to
  *    refer to each other with file descriptors, which can then be
  *    capability-wrapped, allowing us to restrict access to the global PID
  *    namespace.
  */
 
-static int require_rights(unsigned long fd, u64 rights);
+static int require_rights(struct capsicum_pending_syscall *pending,
+			  unsigned long fd, u64 required_rights);
 
-/* The table is generated code which uses require_rights() and sys_cap_new(),
- * so we include it here. We also include custom syscall handling code.
- */
-#include "capsicum_custom_syscalls.h"
+/* The table uses require_rights(), so we include it here. */
 #include "capsicum_syscall_table.h"
 
 struct capability {
@@ -156,19 +154,19 @@ int capsicum_intercept_syscall(int arch, int callnr, unsigned long *args)
 
 	pending->next_free = 0;
 	pending->new_cap_rights = 0;
-	result = capsicum_run_syscall_table(arch, callnr, args);
+	result = capsicum_run_syscall_table(pending, arch, callnr, args);
 
 	/* TODO(meredydd) custom syscalls here */
 
 	return result;
 }
 
-static int require_rights(unsigned long fd, u64 required_rights)
+static int require_rights(struct capsicum_pending_syscall *pending, unsigned long fd, u64 required_rights)
 {
 	struct file *file;
 	u64 actual_rights = (u64)-1;
 	int result = -1;
-	struct capsicum_pending_syscall *pending;
+	BUG_ON(!pending);
 
 	/* AT_FDCWD is a non-file-descriptor value passed in a file-descriptor
 	 * parameter to openat() and friends, to make them act like open() and
@@ -195,11 +193,6 @@ static int require_rights(unsigned long fd, u64 required_rights)
 	 * looking up the same file we checked permissions on, preventing
 	 * an exploitable race condition.
 	 */
-	pending = capsicum_get_pending_syscall();
-	if (IS_ERR(pending)) {
-		result = PTR_ERR(pending);
-		goto out;
-	}
 	BUG_ON(pending->next_free >= ARRAY_SIZE(pending->files));
 	pending->fds[pending->next_free] = fd;
 	pending->files[pending->next_free] = file;

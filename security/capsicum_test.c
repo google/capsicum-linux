@@ -298,7 +298,9 @@ FIXTURE_TEARDOWN(customcall) {}
  */
 static int run_table(int call, unsigned long *args)
 {
-	return capsicum_run_syscall_table(AUDIT_ARCH_X86_64, call, args);
+	struct capsicum_pending_syscall pending;
+	memset(&pending, 0, sizeof(pending));
+	return capsicum_run_syscall_table(&pending, AUDIT_ARCH_X86_64, call, args);
 }
 
 TEST_F(customcall, mmap) {
