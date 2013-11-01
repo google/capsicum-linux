@@ -11,6 +11,9 @@
  * Mode 1 uses a fixed list of allowed system calls.
  * Mode 2 allows user-defined system call filters in the form
  *        of Berkeley Packet Filters/Linux Socket Filters.
+ * Mode 3 disallows system calls that access global namespaces,
+ *        and checks per-file descriptor rights for other
+ *        system calls.
  */
 
 #include <linux/atomic.h>

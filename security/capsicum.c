@@ -74,7 +74,7 @@ static int __init capsicum_init(void)
 }
 __initcall(capsicum_init);
 
-static int sys_cap_new_impl(unsigned int orig_fd, u64 new_rights)
+static int do_sys_cap_new(unsigned int orig_fd, u64 new_rights)
 {
 	struct file *file;
 	struct files_struct *files = current->files;
@@ -108,7 +108,7 @@ SYSCALL_DEFINE2(cap_new, unsigned int, orig_fd, u64, new_rights)
 	if (!enabled)
 		return -ENOSYS;
 
-	return sys_cap_new_impl(orig_fd, new_rights);
+	return do_sys_cap_new(orig_fd, new_rights);
 }
 
 SYSCALL_DEFINE2(cap_getrights, unsigned int, fd, u64 __user *, rightsp)
@@ -161,7 +161,8 @@ int capsicum_intercept_syscall(int arch, int callnr, unsigned long *args)
 	return result;
 }
 
-static int require_rights(struct capsicum_pending_syscall *pending, unsigned long fd, u64 required_rights)
+static int require_rights(struct capsicum_pending_syscall *pending,
+			  unsigned long fd, u64 required_rights)
 {
 	struct file *file;
 	u64 actual_rights = (u64)-1;
@@ -280,37 +281,37 @@ err_put_unused_fd:
  * If rights is non-NULL, the capability's rights will be stored there too.
  * If cap is not a capability, returns NULL.
  */
-struct file *capsicum_unwrap(const struct file *cap, u64 *rights)
+struct file *capsicum_unwrap(const struct file *capf, u64 *rights)
 {
-	struct capability *c;
+	struct capability *cap;
 
-	if (!capsicum_is_cap(cap))
+	if (!capsicum_is_cap(capf))
 		return NULL;
 
-	c = cap->private_data;
+	cap = capf->private_data;
 
 	if (rights)
-		*rights = c->rights;
+		*rights = cap->rights;
 
-	return c->underlying;
+	return cap->underlying;
 }
 
 /*
  * When we release a capability, release our reference to the underlying
  * (wrapped) file as well.
  */
-static int capsicum_release(struct inode *i, struct file *fp)
+static int capsicum_release(struct inode *i, struct file *capf)
 {
-	struct capability *c;
+	struct capability *cap;
 
-	if (!capsicum_is_cap(fp))
+	if (!capsicum_is_cap(capf))
 		return -EINVAL;
 
-	c = fp->private_data;
-	if (c->underlying)
-		fput(c->underlying);
-	kfree(c);
-
+	cap = capf->private_data;
+	BUG_ON(!cap);
+	if (cap->underlying)
+		fput(cap->underlying);
+	cap->underlying = NULL;
 	return 0;
 }
 

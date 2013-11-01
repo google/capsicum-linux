@@ -27,7 +27,8 @@ int capsicum_is_cap(const struct file *file);
 int capsicum_wrap_new_fd(struct file *orig, u64 rights);
 struct file *capsicum_unwrap(const struct file *capability, u64 *rights);
 int capsicum_intercept_syscall(int arch, int callnr, unsigned long *args);
-int capsicum_run_syscall_table(struct capsicum_pending_syscall *pending, int arch, int call, unsigned long *args);
+int capsicum_run_syscall_table(struct capsicum_pending_syscall *pending,
+			int arch, int call, unsigned long *args);
 
 /* Per-thread Capsicum local state. This is used for two purposes:
  * - To check that file mappings haven't changed between the entry to a
@@ -40,10 +41,10 @@ int capsicum_run_syscall_table(struct capsicum_pending_syscall *pending, int arc
  */
 struct capsicum_pending_syscall {
 	struct file *files[6];
-	struct file *next_new_cap;
-	u64 new_cap_rights;
 	unsigned int fds[6];
 	int next_free;
+	struct file *next_new_cap;
+	u64 new_cap_rights;
 	/* The back-reference to the task-struct allows us to detect when
 	 * the cred struct gets shared between tasks, and un-share it.
 	 */
