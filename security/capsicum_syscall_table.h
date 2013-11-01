@@ -45,15 +45,16 @@ int capsicum_run_syscall_table(struct capsicum_pending_syscall *pending,
 	case (__NR_accept4):
 		return require_rights(pending, args[0], CAP_ACCEPT);
 
-	case (__NR_bind):
-		return require_rights(pending, args[0], CAP_BIND);
-
-	case (__NR_connect):
-		return require_rights(pending, args[0], CAP_CONNECT);
-
 	case (__NR_sendto):
 		return require_rights(pending, args[0], CAP_WRITE
 					| (((void *)args[4] != NULL) ? CAP_CONNECT : 0));
+
+	case (__NR_sendmsg):
+		return require_rights(pending, args[0], CAP_WRITE | CAP_CONNECT);
+
+	case (__NR_sendfile):
+		return require_rights(pending, args[0], CAP_READ)
+			?: require_rights(pending, args[1], CAP_WRITE);
 
 	case (__NR_fremovexattr):
 		return require_rights(pending, args[0], CAP_EXTATTR_DELETE);
@@ -66,9 +67,6 @@ int capsicum_run_syscall_table(struct capsicum_pending_syscall *pending,
 
 	case (__NR_fsetxattr):
 		return require_rights(pending, args[0], CAP_EXTATTR_SET);
-
-	case (__NR_fchdir):
-		return require_rights(pending, args[0], CAP_FCHDIR);
 
 	case (__NR_fchmod):
 		return require_rights(pending, args[0], CAP_FCHMOD);
@@ -85,8 +83,14 @@ int capsicum_run_syscall_table(struct capsicum_pending_syscall *pending,
 	case (__NR_fstat):
 		return require_rights(pending, args[0], CAP_FSTAT);
 
+	case (__NR_fstatfs):
+		return require_rights(pending, args[0], CAP_FSTATFS);
+
 	case (__NR_fsync):
 		return require_rights(pending, args[0], CAP_FSYNC);
+
+	case (__NR_sync):
+		return 0;
 
 	case (__NR_fdatasync):
 		return require_rights(pending, args[0], CAP_FSYNC);
@@ -157,19 +161,55 @@ int capsicum_run_syscall_table(struct capsicum_pending_syscall *pending,
 	case (__NR_unlinkat):
 		return require_rights(pending, args[0], CAP_LOOKUP|CAP_DELETE);
 
+	case (__NR_getdents):
+		return require_rights(pending, args[0], CAP_READ|CAP_SEEK);
+
 	case (__NR_mmap):
 		return check_mmap(pending, arch, call, args);
 
 	case (__NR_munmap):
 		return 0;
 
+	case (__NR_mlock):
+		return 0;
+
+	case (__NR_munlock):
+		return 0;
+
+	case (__NR_mlockall):
+		return 0;
+
+	case (__NR_munlockall):
+		return 0;
+
+	case (__NR_mprotect):
+		return 0;
+
+	case (__NR_msync):
+		return 0;
+
+	case (__NR_madvise):
+		return 0;
+
+	case (__NR_mincore):
+		return 0;
+
 	case (__NR_pread64):
+		return require_rights(pending, args[0], CAP_READ);
+
+	case (__NR_preadv):
+		return require_rights(pending, args[0], CAP_READ);
+
+	case (__NR_readv):
 		return require_rights(pending, args[0], CAP_READ);
 
 	case (__NR_read):
 		return require_rights(pending, args[0], CAP_READ|CAP_SEEK);
 
 	case (__NR_recvfrom):
+		return require_rights(pending, args[0], CAP_READ);
+
+	case (__NR_recvmsg):
 		return require_rights(pending, args[0], CAP_READ);
 
 	case (__NR_lseek):
@@ -187,7 +227,55 @@ int capsicum_run_syscall_table(struct capsicum_pending_syscall *pending,
 	case (__NR_pwrite64):
 		return require_rights(pending, args[0], CAP_WRITE);
 
+	case (__NR_pwritev):
+		return require_rights(pending, args[0], CAP_WRITE);
+
+	case (__NR_writev):
+		return require_rights(pending, args[0], CAP_WRITE);
+
+	case (__NR_dup):
+		return 0;
+
+	case (__NR_dup2):
+		return 0;
+
+	case (__NR_dup3):
+		return 0;
+
+	case (__NR_pipe):
+		return 0;
+
+	case (__NR_pipe2):
+		return 0;
+
 	case (__NR_uname):
+		return 0;
+
+	case (__NR_setsid):
+		return 0;
+
+	case (__NR_setuid):
+		return 0;
+
+	case (__NR_setgid):
+		return 0;
+
+	case (__NR_setfsuid):
+		return 0;
+
+	case (__NR_setfsgid):
+		return 0;
+
+	case (__NR_setreuid):
+		return 0;
+
+	case (__NR_setregid):
+		return 0;
+
+	case (__NR_setresuid):
+		return 0;
+
+	case (__NR_setresgid):
 		return 0;
 
 	case (__NR_brk):
@@ -223,8 +311,20 @@ int capsicum_run_syscall_table(struct capsicum_pending_syscall *pending,
 	case (__NR_rt_sigaction):
 		return 0;
 
+	case (__NR_sigaltstack):
+		return 0;
+
 	case (__NR_fexecve):
 		return require_rights(pending, args[0], CAP_FEXECVE);
+
+	case (__NR_clone):
+		return 0;
+
+	case (__NR_fork):
+		return 0;
+
+	case (__NR_vfork):
+		return 0;
 
 	case (__NR_pdfork):
 		return (args[1] & ~(0) ? -ECAPMODE : 0);
@@ -241,10 +341,106 @@ int capsicum_run_syscall_table(struct capsicum_pending_syscall *pending,
 	case (__NR_cap_getrights):
 		return 0;
 
+	case (__NR_clock_getres):
+		return 0;
+
+	case (__NR_clock_gettime):
+		return 0;
+
 	case (__NR_exit):
 		return 0;
 
 	case (__NR_exit_group):
+		return 0;
+
+	case (__NR_getsid):
+		return 0;
+
+	case (__NR_getpid):
+		return 0;
+
+	case (__NR_getppid):
+		return 0;
+
+	case (__NR_getgid):
+		return 0;
+
+	case (__NR_getegid):
+		return 0;
+
+	case (__NR_getuid):
+		return 0;
+
+	case (__NR_geteuid):
+		return 0;
+
+	case (__NR_getpgid):
+		return 0;
+
+	case (__NR_getpgrp):
+		return 0;
+
+	case (__NR_getresgid):
+		return 0;
+
+	case (__NR_getresuid):
+		return 0;
+
+	case (__NR_getgroups):
+		return 0;
+
+	case (__NR_getitimer):
+		return 0;
+
+	case (__NR_setitimer):
+		return 0;
+
+	case (__NR_getpriority):
+		return 0;
+
+	case (__NR_setpriority):
+		return 0;
+
+	case (__NR_getrlimit):
+		return 0;
+
+	case (__NR_setrlimit):
+		return 0;
+
+	case (__NR_getrusage):
+		return 0;
+
+	case (__NR_gettimeofday):
+		return 0;
+
+	case (__NR_mknodat):
+		return require_rights(pending, args[0], CAP_MKFIFO);
+
+	case (__NR_nanosleep):
+		return 0;
+
+	case (__NR_sched_getparam):
+		return 0;
+
+	case (__NR_sched_get_priority_max):
+		return 0;
+
+	case (__NR_sched_get_priority_min):
+		return 0;
+
+	case (__NR_sched_getscheduler):
+		return 0;
+
+	case (__NR_sched_rr_get_interval):
+		return 0;
+
+	case (__NR_sched_setparam):
+		return 0;
+
+	case (__NR_sched_setscheduler):
+		return 0;
+
+	case (__NR_sched_yield):
 		return 0;
 
 	default:
