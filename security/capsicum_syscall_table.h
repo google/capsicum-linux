@@ -103,6 +103,7 @@ int capsicum_run_syscall_table(struct capsicum_pending_syscall *pending,
 	case (__NR_fdatasync): return require_rights(pending, args[0], CAP_FSYNC);
 	case (__NR_fexecve): return require_rights(pending, args[0], CAP_FEXECVE);
 	case (__NR_fgetxattr): return require_rights(pending, args[0], CAP_EXTATTR_GET);
+	case (__NR_finit_module): return require_rights(pending, args[0], CAP_FEXECVE);
 	case (__NR_flistxattr): return require_rights(pending, args[0], CAP_EXTATTR_LIST);
 	case (__NR_flock): return require_rights(pending, args[0], CAP_FLOCK);
 	case (__NR_fork): return 0;
@@ -165,9 +166,11 @@ int capsicum_run_syscall_table(struct capsicum_pending_syscall *pending,
 	case (__NR_pwrite64): return require_rights(pending, args[0], CAP_WRITE);
 	case (__NR_pwritev): return require_rights(pending, args[0], CAP_WRITE);
 	case (__NR_read): return require_rights(pending, args[0], CAP_READ|CAP_SEEK);
+	case (__NR_readahead): return require_rights(pending, args[0], CAP_READ|CAP_SEEK);
 	case (__NR_readlinkat): return require_rights(pending, args[0], CAP_LOOKUP|CAP_READ);
 	case (__NR_readv): return require_rights(pending, args[0], CAP_READ);
 	case (__NR_recvfrom): return require_rights(pending, args[0], CAP_READ);
+	case (__NR_recvmmsg): return require_rights(pending, args[0], CAP_READ);
 	case (__NR_recvmsg): return require_rights(pending, args[0], CAP_READ);
 	case (__NR_renameat):
 		return require_rights(pending, args[0], CAP_LOOKUP|CAP_DELETE)
@@ -184,6 +187,7 @@ int capsicum_run_syscall_table(struct capsicum_pending_syscall *pending,
 	case (__NR_sendfile):
 		return require_rights(pending, args[0], CAP_READ)
 			?: require_rights(pending, args[1], CAP_WRITE);
+	case (__NR_sendmmsg): return require_rights(pending, args[0], CAP_WRITE | CAP_CONNECT);
 	case (__NR_sendmsg): return require_rights(pending, args[0], CAP_WRITE | CAP_CONNECT);
 	case (__NR_sendto):
 		return require_rights(pending, args[0], CAP_WRITE | (((void *)args[4] != NULL) ? CAP_CONNECT : 0));
@@ -202,13 +206,19 @@ int capsicum_run_syscall_table(struct capsicum_pending_syscall *pending,
 	case (__NR_setuid): return 0;
 	case (__NR_shutdown): return require_rights(pending, args[0], CAP_SHUTDOWN);
 	case (__NR_sigaltstack): return 0;
+	case (__NR_socket): return 0;
+	case (__NR_socketpair): return 0;
 	case (__NR_symlinkat): return require_rights(pending, args[1], CAP_LOOKUP|CAP_CREATE);
 	case (__NR_sync): return 0;
+	case (__NR_syncfs): return require_rights(pending, args[0], CAP_FSYNC);
+	case (__NR_sync_file_range): return require_rights(pending, args[0], CAP_FSYNC);
+	case (__NR_umask): return 0;
 	case (__NR_uname): return 0;
 	case (__NR_unlinkat): return require_rights(pending, args[0], CAP_LOOKUP|CAP_DELETE);
-	case (__NR_utimensat): 
+	case (__NR_utimensat):
 		return require_rights(pending, args[0], CAP_FUTIMES | (((void *)args[1] != NULL) ? CAP_LOOKUP : 0));
 	case (__NR_vfork): return 0;
+	case (__NR_vmsplice): return require_rights(pending, args[0], CAP_WRITE);
 	case (__NR_write): return require_rights(pending, args[0], CAP_WRITE|CAP_SEEK);
 	case (__NR_writev): return require_rights(pending, args[0], CAP_WRITE);
 	default: return -ECAPMODE;
