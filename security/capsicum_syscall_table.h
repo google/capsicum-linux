@@ -72,12 +72,12 @@ static int check_prctl(struct capsicum_pending_syscall *pending,
 }
 
 int capsicum_run_syscall_table(struct capsicum_pending_syscall *pending,
-			       int arch, int call, unsigned long *args)
+			       int arch, int callnr, unsigned long *args)
 {
 	if (arch != AUDIT_ARCH_X86_64)
 		return -ECAPMODE;
 
-	switch (call) {
+	switch (callnr) {
 	case (__NR_accept): return require_rights(pending, args[0], CAP_ACCEPT);
 	case (__NR_accept4): return require_rights(pending, args[0], CAP_ACCEPT);
 	case (__NR_arch_prctl):

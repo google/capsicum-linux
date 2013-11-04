@@ -498,10 +498,6 @@ repeat:
 	if (start <= files->next_fd)
 		files->next_fd = fd + 1;
 
-	error = security_fd_alloc(fd);
-	if (error)
-		goto out;
-
 	__set_open_fd(fd, fdt);
 	if (flags & O_CLOEXEC)
 		__set_close_on_exec(fd, fdt);

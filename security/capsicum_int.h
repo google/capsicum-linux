@@ -23,6 +23,7 @@ struct capsicum_pending_syscall *capsicum_alloc_pending_syscall(void);
  * (capsicum_test.c).
  */
 
+struct file *capsicum_cap_alloc(void);
 int capsicum_is_cap(const struct file *file);
 int capsicum_wrap_new_fd(struct file *orig, u64 rights);
 struct file *capsicum_unwrap(const struct file *capability, u64 *rights);
@@ -35,9 +36,9 @@ int capsicum_run_syscall_table(struct capsicum_pending_syscall *pending,
  *   syscall, and the point that the LSM hooks are called to manipulate
  *   file descriptors. This prevents time-of-check/time-of-use (TOCTOU)
  *   races.
- * - When a new file descriptor is created, we pre-allocate a capability
+ * - When openat() on a capability is called, we pre-allocate a capability
  *   in case it needs wrapping at installation time, and store that capability
- *   in next_new_cap in the meanwhile.
+ *   in next_new_cap in the meanwhile (and store its rights in new_cap_rights).
  */
 struct capsicum_pending_syscall {
 	struct file *files[6];

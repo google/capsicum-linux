@@ -674,9 +674,6 @@ static inline void security_free_mnt_opts(struct security_mnt_opts *opts)
  *	file object to substitute a response. This hook is called within an
  *	rcu_read_lock() section, and is not expected to obtain or release
  *	references to orig or to any return value.
- * @fd_alloc:
- *	This hook notifies security modules of an impending file descriptor
- *	installation, and gives them the opportunity to abort it.
  * @file_install:
  *	This hook allows security modules to intercept file descriptor
  *	installations. This allows them to change the file installed under
@@ -1574,7 +1571,6 @@ struct security_operations {
 	int (*file_open) (struct file *file, const struct cred *cred);
 	int (*path_lookup) (struct dentry *dentry, const char *name);
 	struct file *(*file_lookup) (struct file *orig, unsigned int fd);
-	int (*fd_alloc) (unsigned int fd);
 	struct file *(*file_install) (struct file *orig, unsigned int fd);
 
 	int (*task_create) (unsigned long clone_flags);
@@ -1849,7 +1845,6 @@ int security_file_receive(struct file *file);
 int security_file_open(struct file *file, const struct cred *cred);
 int security_path_lookup(struct dentry *dentry, const char *name);
 struct file *security_file_lookup(struct file *orig, unsigned int fd);
-int security_fd_alloc(unsigned int fd);
 struct file *security_file_install(struct file *orig, unsigned int fd);
 int security_task_create(unsigned long clone_flags);
 void security_task_free(struct task_struct *task);

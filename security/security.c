@@ -791,11 +791,6 @@ struct file *security_file_lookup(struct file *orig, unsigned int fd)
 	return security_ops->file_lookup(orig, fd);
 }
 
-int security_fd_alloc(unsigned int fd)
-{
-	return security_ops->fd_alloc(fd);
-}
-
 struct file *security_file_install(struct file *orig, unsigned int fd)
 {
 	return security_ops->file_install(orig, fd);

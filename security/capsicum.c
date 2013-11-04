@@ -144,6 +144,7 @@ int capsicum_intercept_syscall(int arch, int callnr, unsigned long *args)
 {
 	int result;
 	struct capsicum_pending_syscall *pending;
+	u64 existing_rights;
 
 	if (!enabled)
 		return 0;
@@ -156,7 +157,28 @@ int capsicum_intercept_syscall(int arch, int callnr, unsigned long *args)
 	pending->new_cap_rights = 0;
 	result = capsicum_run_syscall_table(pending, arch, callnr, args);
 
-	/* TODO(meredydd) custom syscalls here */
+	existing_rights = (u64)-1;
+	if (result == 0 && callnr == __NR_openat &&
+		capsicum_unwrap(pending->files[0], &existing_rights)) {
+		/* We are performing openat(capfd,...) on a capability. This is the
+		 * only way (other than cap_new(2)) of creating a new
+		 * capability; pre-allocate a capability in this case so that
+		 * when we come to install the new file descriptor, we can
+		 * substitute in this capability wrapper (in
+		 * capsicum_file_install). */
+		BUG_ON(!pending->files[0]);
+		if (!pending->next_new_cap) {
+			pending->next_new_cap = capsicum_cap_alloc();
+			if (IS_ERR(pending->next_new_cap))
+				return PTR_ERR(pending->next_new_cap);
+		}
+		/* Can theoretically find an existing pre-allocated capability
+		 * hanging off the capsicum_pending_syscall if an earlier call
+		 * to openat(capfd,...) for this thread failed later in the
+		 * syscall processing (before the fd got installed). Re-use
+		 * the capability, but update the rights. */
+		pending->new_cap_rights = existing_rights;
+	}
 
 	return result;
 }
@@ -317,9 +339,7 @@ static int capsicum_release(struct inode *i, struct file *capf)
 
 /*
  * We are looking up a file by its file descriptor. If it is a capability,
- * we unwrap it and return the underlying file, recording its rights in
- * thread-local storage so we know what rights to give any new fd that this
- * syscall installs.
+ * we unwrap it and return the underlying file.
  *
  * If we were in capability mode and this call was triggered by a syscall, we
  * performed a rights check on entry to the syscall. This function checks that
@@ -333,17 +353,9 @@ static struct file *capsicum_file_lookup(struct file *file, unsigned int fd)
 	int i;
 	bool found_fd = false;
 
-	pending = capsicum_get_pending_syscall();
-	if (!pending)
-		return file;
-
-	/* Newly-installed file descriptors inherit the rights of the file
-	 * descriptor used in the call that created them. So record the rights
-	 * of the file we just looked up (full rights if it wasn't a
-	 * capability).
-	 */
-	pending->new_cap_rights = (u64)-1;
-	unwrapped = capsicum_unwrap(file, &pending->new_cap_rights);
+	/* See if the file in question is a capability. */
+	u64 rights = (u64)-1;
+	unwrapped = capsicum_unwrap(file, &rights);
 	if (!unwrapped)
 		return file;
 
@@ -358,7 +370,8 @@ static struct file *capsicum_file_lookup(struct file *file, unsigned int fd)
 	 * multiple records of the same fd in pending, we want to check them
 	 * all.
 	 */
-	if (capsicum_current_cap_mode()) {
+	pending = capsicum_get_pending_syscall();
+	if (capsicum_current_cap_mode() && pending) {
 		for (i = 0; i < pending->next_free; i++) {
 			if (pending->fds[i] == fd) {
 				found_fd = true;
@@ -368,30 +381,7 @@ static struct file *capsicum_file_lookup(struct file *file, unsigned int fd)
 		}
 		BUG_ON(!found_fd);
 	}
-
 	return unwrapped;
-}
-
-/* A new file descriptor is being allocated in @fd. This hook allows us to
- * pre-allocate a capability and place it in thread-local storage, so a
- * subsequent installation of a file for that @fd can be wrapped in a capability
- * (the allocation is not possible at installation time) */
-static int capsicum_fd_alloc(unsigned int fd)
-{
-	struct file *capf;
-	struct capsicum_pending_syscall *pending;
-
-	pending = capsicum_alloc_pending_syscall();
-	if (IS_ERR(pending))
-		return PTR_ERR(pending);
-
-	if (!pending->next_new_cap) {
-		capf = capsicum_cap_alloc();
-		if (IS_ERR(capf))
-			return PTR_ERR(capf);
-		pending->next_new_cap = capf;
-	}
-	return 0;
 }
 
 /* We are about to install @file in @fd. This hook allows us to change which
@@ -404,17 +394,19 @@ static struct file *capsicum_file_install(struct file *file, unsigned int fd)
 	struct capsicum_pending_syscall *pending;
 	struct file *capf;
 
+	if (capsicum_is_cap(file))
+		return file;
+
 	pending = capsicum_get_pending_syscall();
 	if (!pending)
 		return file;
 
-	if (pending->new_cap_rights == (u64)-1 || capsicum_is_cap(file))
+	if (pending->new_cap_rights == (u64)-1 || !pending->next_new_cap)
 		return file;
 
-	/* We cannot signal failure from here, so we rely on a preallocated
-	 * capability wrapper from capsicum_fd_alloc(). */
-	BUG_ON(!pending->next_new_cap);
-
+	/* We are in the middle of processing a system call that allocates a few
+	 * file descriptor for a capability, and the system call interception
+	 * process has pre-allocated a capability wrapper for us.  Use it. */
 	capf = pending->next_new_cap;
 	capsicum_cap_set(capf, file, pending->new_cap_rights);
 	pending->next_new_cap = NULL;
@@ -592,7 +584,6 @@ const struct file_operations capability_ops = {
 static struct security_operations capsicum_security_ops = {
 		.name = "capsicum",
 		.file_lookup = capsicum_file_lookup,
-		.fd_alloc = capsicum_fd_alloc,
 		.file_install = capsicum_file_install,
 		.path_lookup = capsicum_path_lookup,
 		.cred_alloc_blank = capsicum_cred_alloc_blank,
