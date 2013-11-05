@@ -61,10 +61,9 @@ additional configuration parameters:
 Testing
 -------
 
-The capsicum-linux currently includes tests and test scripts in the
-`tools/testing/capsicum_tests/` directory (although the tests themselves are
-being migrated to the separate
-[capsicum-test](https://github.com/google/capsicum-test) repository).
+The capsicum-linux currently includes test scripts in the
+`tools/testing/capsicum_tests/` directory, although the (user-space) tests themselves are
+in the separate [capsicum-test](https://github.com/google/capsicum-test) repository.
 
 These test scripts currently expect specific build configurations (replacing the
 `-j 5` flag with an appropriate parallelization factor for the local machine):

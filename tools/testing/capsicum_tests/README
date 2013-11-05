@@ -60,28 +60,6 @@ Building...
 [  PASSED  ]
 
 
-Userspace tests
-
-	Userspace tests are just C programs, using the same C unit-test harness
-as the kernel. There is a Makefile which builds a .c file into a corresponding
-.test executable. You can build and run a specific test with the
-run-userspace-test script (eg ./run-userspace-test cap_new.test).
-
-Example:
-$ ./run-userspace-test cap_new.test
-make: Entering directory `.../capsicum_tests/test-files'
-make: `cap_new.test' is up to date.
-make: Leaving directory `.../capsicum_tests/test-files'
-Building...
----- Executing: cap_new.test ----
-[==========] Running 2 tests from 1 test cases.
-[ RUN      ] global.cap_enter_basic
-[       OK ] global.cap_enter_basic
-[ RUN      ] global.cap_new_basic
-[       OK ] global.cap_new_basic
-[==========] 2 / 2 tests passed.
-[  PASSED  ]
-
 Running tests in an x86 virtual machine
 
 	These scripts are also capable of running tests in a full x86 virtual
