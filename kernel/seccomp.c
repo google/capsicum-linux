@@ -21,6 +21,7 @@
 #include <linux/compat.h>
 #include <linux/sched.h>
 #include <linux/seccomp.h>
+#include <linux/capsicum.h>
 
 /* #define SECCOMP_DEBUG 1 */
 
@@ -34,11 +35,6 @@
 #include <linux/uaccess.h>
 #include <linux/ftrace.h>
 
-/* TODO(meredydd) Need to work out whether this is the right interface to
- * expose, or whether it should be wrapped up in (eg) an LSM hook for syscall
- * interposition, or an ftrace hook with some sort of interdiction capability.
- */
-#include "../security/capsicum_int.h"
 
 /**
  * struct seccomp_filter - container for seccomp BPF programs
@@ -456,6 +452,10 @@ int __secure_computing(int this_syscall)
 	}
 #endif
 #ifdef CONFIG_SECURITY_CAPSICUM
+	/* TODO(meredydd) Need to work out whether this is the right interface to
+	 * expose, or whether it should be wrapped up in (eg) an LSM hook for syscall
+	 * interposition, or an ftrace hook with some sort of interdiction capability.
+	 */
 	case SECCOMP_MODE_CAPSICUM: {
 		unsigned long args[6];
 		int arch, ret;

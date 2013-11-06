@@ -1702,7 +1702,7 @@ SYSCALL_DEFINE2(pdfork, int __user *, fdp, int,  flags)
 	if (fd < 0)
 		return fd;
 
-	pd = prepare_procdesc();
+	pd  = procdesc_alloc();
 	if (IS_ERR(pd)) {
 		ret = PTR_ERR(pd);
 		goto out_putfd;
@@ -1713,7 +1713,7 @@ SYSCALL_DEFINE2(pdfork, int __user *, fdp, int,  flags)
 	if (ret < 0)
 		goto out_fput;
 
-	set_procdesc_task(pd, task, flags & PD_DAEMON);
+	procdesc_init(pd, task, flags & PD_DAEMON);
 	fd_install(fd, pd);
 	put_user(fd, fdp);
 

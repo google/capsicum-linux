@@ -1,37 +1,5 @@
-/*-
- * Copyright (c) 2008-2010 Robert N. M. Watson
- * All rights reserved.
- *
- * This software was developed at the University of Cambridge Computer
- * Laboratory with support from a grant from Google, Inc.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- * 1. Redistributions of source code must retain the above copyright
- *    notice, this list of conditions and the following disclaimer.
- * 2. Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in the
- *    documentation and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
- * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
- * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
- * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
- * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
- * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
- * SUCH DAMAGE.
- */
-
-/* The following is a copy-and-paste from FreeBSD; uncommenting capabilities
- * as I use them.
- *
- * TODO(meredydd) these should definitely live elsewhere in the long term.
- */
+#ifndef _UAPI_LINUX_CAPSICUM_H
+#define _UAPI_LINUX_CAPSICUM_H
 
 /* General file I/O. */
 #define CAP_NONE                0x0000000000000000ULL   /* None required */
@@ -72,11 +40,10 @@
 #define CAP_EXTATTR_SET         0x0000000010000000ULL
 
 /* Access Control Lists. */
-/*#define CAP_ACL_CHECK           0x0000000020000000ULL
+#define CAP_ACL_CHECK           0x0000000020000000ULL
 #define CAP_ACL_DELETE          0x0000000040000000ULL
 #define CAP_ACL_GET             0x0000000080000000ULL
 #define CAP_ACL_SET             0x0000000100000000ULL
-*/
 
 /* Socket operations. */
 #define CAP_ACCEPT              0x0000000200000000ULL
@@ -96,26 +63,28 @@
 	    | CAP_LISTEN | CAP_PEELOFF | CAP_SETSOCKOPT | CAP_SHUTDOWN)
 
 /* Mandatory Access Control. */
-/*#define CAP_MAC_GET             0x0000080000000000ULL
-#define CAP_MAC_SET             0x0000100000000000ULL*/
+#define CAP_MAC_GET             0x0000080000000000ULL
+#define CAP_MAC_SET             0x0000100000000000ULL
 
 /* Methods on semaphores. */
-/*#define CAP_SEM_GETVALUE        0x0000200000000000ULL
+#define CAP_SEM_GETVALUE        0x0000200000000000ULL
 #define CAP_SEM_POST            0x0000400000000000ULL
-#define CAP_SEM_WAIT            0x0000800000000000ULL*/
+#define CAP_SEM_WAIT            0x0000800000000000ULL
 
 /* kqueue events. */
-/*#define CAP_POLL_EVENT          0x0001000000000000ULL
-#define CAP_POST_EVENT          0x0002000000000000ULL*/
+#define CAP_POLL_EVENT          0x0001000000000000ULL
+#define CAP_POST_EVENT          0x0002000000000000ULL
 
 /* These rights are extremely powerful, and allow things of global scope. */
 #define CAP_IOCTL               0x0004000000000000ULL
-/*#define CAP_TTYHOOK             0x0008000000000000ULL*/
+#define CAP_TTYHOOK             0x0008000000000000ULL
 
 /* Process management via process descriptors. */
-/*#define CAP_PDGETPID            0x0010000000000000ULL
+#define CAP_PDGETPID            0x0010000000000000ULL
 #define CAP_PDWAIT              0x0020000000000000ULL
-#define CAP_PDKILL              0x0040000000000000ULL*/
+#define CAP_PDKILL              0x0040000000000000ULL
 
 /* The mask of all valid method rights. */
-/*#define CAP_MASK_VALID          0x007fffffffffffffULL*/
+#define CAP_MASK_VALID          0x007fffffffffffffULL
+
+#endif /* _UAPI_LINUX_CAPSICUM_H */

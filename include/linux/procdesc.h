@@ -10,12 +10,9 @@
 #ifndef _LINUX_PROCDESC_H
 #define _LINUX_PROCDESC_H
 
-#define PD_DAEMON 0x1
+#include <uapi/linux/procdesc.h>
 
-#ifdef __KERNEL__
-struct file *prepare_procdesc(void);
-void set_procdesc_task(struct file *pd, struct task_struct *task, bool daemon);
-bool file_is_procdesc(struct file *f);
-#endif
+struct file *procdesc_alloc(void);
+void procdesc_init(struct file *pd, struct task_struct *task, bool daemon);
 
 #endif /* _LINUX_PROCDESC_H */

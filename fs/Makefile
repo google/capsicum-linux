@@ -50,7 +50,7 @@ obj-$(CONFIG_SYSCTL)		+= drop_caches.o
 
 obj-$(CONFIG_FHANDLE)		+= fhandle.o
 
-obj-$(CONFIG_PROCDESC)		+= procdesc.o procdesc_test.o
+obj-$(CONFIG_PROCDESC)		+= procdesc.o
 
 obj-y				+= quota/
 

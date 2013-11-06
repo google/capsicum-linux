@@ -21,9 +21,31 @@
 #include <linux/slab.h>
 #include <linux/syscalls.h>
 
-#include "procdesc_int.h"
+struct procdesc {
+	struct task_struct *task;
+	bool daemon;
+};
 
-struct file *prepare_procdesc(void)
+extern const struct file_operations procdesc_file_ops;
+
+static inline bool file_is_procdesc(struct file *f)
+{
+	return f->f_op == &procdesc_file_ops;
+}
+
+/*
+ * Retrieve the procdesc structure associated with a file, or NULL
+ * if the file is not a process descriptor.
+ */
+static inline struct procdesc *procdesc_get(struct file *f)
+{
+	if (!f || !file_is_procdesc(f))
+		return NULL;
+	return f->private_data;
+}
+
+/* Allocate a new struct file and associated procdesc. */
+struct file *procdesc_alloc(void)
 {
 	struct procdesc *pd;
 	struct file *f;
@@ -32,49 +54,48 @@ struct file *prepare_procdesc(void)
 	if (!pd)
 		return ERR_PTR(-ENOMEM);
 
-	f = anon_inode_getfile("[procdesc]", &procdesc_ops, pd, 0);
+	f = anon_inode_getfile("[procdesc]", &procdesc_file_ops, pd, 0);
 	if (IS_ERR(f))
 		kfree(pd);
 
 	return f;
 }
 
-void set_procdesc_task(struct file *f, struct task_struct *task, bool daemon)
+/* Initialize the contents of a previously-allocated procdesc structure. */
+void procdesc_init(struct file *f, struct task_struct *task, bool daemon)
 {
-	BUG_ON(!file_is_procdesc(f));
-	FILE_PD(f)->task = task;
-	FILE_PD(f)->daemon = daemon;
-}
-
-bool file_is_procdesc(struct file *f)
-{
-	return f->f_op == &procdesc_ops;
+	struct procdesc *pd = procdesc_get(f);
+	BUG_ON(!pd);
+	pd->task = task;
+	pd->daemon = daemon;
 }
 
 SYSCALL_DEFINE2(pdgetpid, int, fd, pid_t __user *, pidp)
 {
-	struct file *pd;
+	struct file *f;
+	struct procdesc *pd;
 	pid_t pid;
 
-	pd = fget(fd);
-
-	if (!pd)
+	f = fget(fd);
+	if (!f)
 		return -EBADF;
-	if (!file_is_procdesc(pd)) {
-		fput(pd);
+
+	pd = procdesc_get(f);
+	if (!pd) {
+		fput(f);
 		return -EINVAL;
 	}
 
-	pid = task_tgid_vnr(FILE_PD(pd)->task);
-	fput(pd);
+	pid = task_tgid_vnr(pd->task);
+	fput(f);
 	put_user(pid, pidp);
-
 	return 0;
 }
 
-long do_pdkill(struct task_struct *task, int signum)
+static long do_pdkill(struct task_struct *task, int signum)
 {
-	/* This is essentially the sys_kill call path, but with the permission
+	/*
+	 * This is essentially the sys_kill call path, but with the permission
 	 * checking removed. I've also removed the tasklist read lock, which
 	 * I believe is only necessary for finding the process associated with
 	 * a pid.
@@ -92,34 +113,38 @@ long do_pdkill(struct task_struct *task, int signum)
 
 SYSCALL_DEFINE2(pdkill, int, fd, int, signum)
 {
-	struct file *pd;
+	struct file *f;
+	struct procdesc *pd;
 	int ret;
 
-	pd = fget(fd);
-
-	if (!pd)
+	f = fget(fd);
+	if (!f)
 		return -EBADF;
-	if (!file_is_procdesc(pd)) {
-		fput(pd);
+
+	pd = procdesc_get(f);
+	if (!pd) {
+		fput(f);
 		return -EINVAL;
 	}
-
-	ret = do_pdkill(FILE_PD(pd)->task, signum);
-	fput(pd);
-
+	ret = do_pdkill(pd->task, signum);
+	fput(f);
 	return ret;
 }
 
 SYSCALL_DEFINE4(pdwait4, int, fd, int __user *, status, int, options,
 		struct rusage __user *, rusage)
 {
+	/* TODO(drysdale): implement this */
 	return -ENOSYS;
 }
 
-static int procdesc_release(struct inode *inode, struct file *file)
+/*
+ * File operations for process descriptor pseudofiles.
+ */
+static int procdesc_release(struct inode *inode, struct file *f)
 {
-	struct procdesc *pd = FILE_PD(file);
-
+	struct procdesc *pd = procdesc_get(f);
+	BUG_ON(!pd);
 	if (pd->task) {
 		if (!pd->daemon && !task_is_dead(pd->task))
 			do_pdkill(pd->task, SIGKILL);
@@ -131,12 +156,12 @@ static int procdesc_release(struct inode *inode, struct file *file)
 	return 0;
 }
 
-static unsigned int procdesc_poll(struct file *file,
+static unsigned int procdesc_poll(struct file *f,
 				   struct poll_table_struct *wait)
 {
-	struct procdesc *pd = FILE_PD(file);
-
-	poll_wait(file, &pd->task->wait_exit, wait);
+	struct procdesc *pd = procdesc_get(f);
+	BUG_ON(!pd);
+	poll_wait(f, &pd->task->wait_exit, wait);
 
 	if (task_is_dead(pd->task))
 		return POLL_HUP;
@@ -144,7 +169,7 @@ static unsigned int procdesc_poll(struct file *file,
 		return 0;
 }
 
-const struct file_operations procdesc_ops = {
+const struct file_operations procdesc_file_ops = {
 	.poll = procdesc_poll,
 	.release = procdesc_release
 };

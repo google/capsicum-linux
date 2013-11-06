@@ -21,8 +21,7 @@
 #include <linux/sched.h>
 #include <linux/syscalls.h>
 #include <linux/task_work.h>
-
-#include "capsicum_int.h"
+#include <linux/capsicum.h>
 
 #include <misc/test_harness.h>
 
@@ -47,7 +46,7 @@ FIXTURE(new_cap) {
 FIXTURE_SETUP(new_cap) {
 	self->orig = fget(0);
 	ASSERT_NE(self->orig, NULL);
-	self->cap = capsicum_wrap_new_fd(self->orig, 0);
+	self->cap = capsicum_install_fd(self->orig, 0);
 	ASSERT_GE(self->cap, 0);
 	/* The new capability fd must not be the same as the original (0). */
 	ASSERT_NE(self->cap, 0);
@@ -89,7 +88,7 @@ TEST_F(new_cap, rewrap) {
 
 	old_count = file_count(self->orig);
 
-	fd = capsicum_wrap_new_fd(self->capf, -1);
+	fd = capsicum_install_fd(self->capf, -1);
 	ASSERT_GT(fd, 0);
 	f = fcheck(fd);
 
@@ -123,7 +122,7 @@ FIXTURE_SETUP(fget) {
 	self->orig = fget(0);
 	flush_fputs();
 	self->orig_refs = file_count(self->orig);
-	self->cap = capsicum_wrap_new_fd(self->orig, 0);
+	self->cap = capsicum_install_fd(self->orig, 0);
 	ASSERT_EQ(file_count(self->orig), self->orig_refs+1);
 	ASSERT_EQ(file_count(fcheck(self->cap)), 1);
 }
@@ -200,7 +199,7 @@ TEST_F(fget, simulate_toctou) {
 	/* Let's pretend we're executing a syscall. We have one
 	 * capability with rights, and one without (self->cap).
 	 */
-	fd_with_rights = capsicum_wrap_new_fd(self->orig, CAP_WRITE|CAP_SEEK);
+	fd_with_rights = capsicum_install_fd(self->orig, CAP_WRITE|CAP_SEEK);
 
 	/* The process starts to execute a syscall, on our fd with rights. */
 	write_args[0] = fd_with_rights;
@@ -313,10 +312,10 @@ TEST_F(customcall, mmap) {
 	ASSERT_NE(file, NULL);
 
 	/* If we're missing a capability, it will fail. */
-	cap_none = capsicum_wrap_new_fd(file, CAP_NONE);
-	cap_mmap = capsicum_wrap_new_fd(file, CAP_MMAP);
-	cap_read = capsicum_wrap_new_fd(file, CAP_READ);
-	cap_both = capsicum_wrap_new_fd(file, CAP_MMAP | CAP_READ);
+	cap_none = capsicum_install_fd(file, CAP_NONE);
+	cap_mmap = capsicum_install_fd(file, CAP_MMAP);
+	cap_read = capsicum_install_fd(file, CAP_READ);
+	cap_both = capsicum_install_fd(file, CAP_MMAP | CAP_READ);
 
 	fput(file);
 
