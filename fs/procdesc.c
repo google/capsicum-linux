@@ -134,8 +134,23 @@ SYSCALL_DEFINE2(pdkill, int, fd, int, signum)
 SYSCALL_DEFINE4(pdwait4, int, fd, int __user *, status, int, options,
 		struct rusage __user *, rusage)
 {
-	/* TODO(drysdale): implement this */
-	return -ENOSYS;
+	struct file *f;
+	struct procdesc *pd;
+	pid_t pid;
+
+	f = fget(fd);
+	if (!f)
+		return -EBADF;
+
+	/* Convert to a pid_t and forward on to wait4(2) */
+	pd = procdesc_get(f);
+	if (!pd) {
+		fput(f);
+		return -EINVAL;
+	}
+	pid = task_tgid_vnr(pd->task);
+	fput(f);
+	return sys_wait4(pid, status, options, rusage);
 }
 
 /*
