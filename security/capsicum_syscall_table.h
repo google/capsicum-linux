@@ -156,7 +156,7 @@ static int capsicum_run_syscall_table(struct capsicum_pending_syscall *pending,
 	case (__NR_nanosleep): return 0;
 	case (__NR_newfstatat): return capsicum_require_rights(pending, args[0], CAP_LOOKUP|CAP_FSTAT);
 	case (__NR_openat): return check_openat(pending, args);
-	case (__NR_pdfork): return (args[1] & ~(0) ? -ECAPMODE : 0);
+	case (__NR_pdfork): return 0;
 	case (__NR_pdgetpid): return capsicum_require_rights(pending, args[0], CAP_PDGETPID);
 	case (__NR_pdkill): return capsicum_require_rights(pending, args[0], CAP_PDKILL);
 	case (__NR_pdwait4): return capsicum_require_rights(pending, args[0], CAP_PDWAIT);
