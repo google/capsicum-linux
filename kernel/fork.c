@@ -1708,7 +1708,7 @@ SYSCALL_DEFINE2(pdfork, int __user *, fdp, int,  flags)
 		goto out_putfd;
 	}
 
-	ret = do_fork_task(0, 0, 0, &task, NULL, NULL);
+	ret = do_fork_task(SIGCHLD, 0, 0, &task, NULL, NULL);
 
 	if (ret < 0)
 		goto out_fput;
