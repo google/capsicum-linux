@@ -423,6 +423,7 @@ static int capsicum_release(struct inode *i, struct file *capf)
 	if (cap->underlying)
 		fput(cap->underlying);
 	cap->underlying = NULL;
+	kfree(cap);
 	return 0;
 }
 
