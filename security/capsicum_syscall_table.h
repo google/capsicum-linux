@@ -9,6 +9,7 @@
  */
 #include <linux/audit.h>
 #include <linux/mman.h>
+#include <linux/poll.h>
 #include <linux/prctl.h>
 #include <asm/prctl.h>
 
@@ -69,6 +70,75 @@ static int check_prctl(struct capsicum_pending_syscall *pending,
 	default:
 		return -ECAPMODE;
 	}
+}
+
+static int check_select(struct capsicum_pending_syscall *pending,
+			unsigned long *args)
+{
+	int n;
+	int ret = 0;
+	void *bits;
+	unsigned int size;
+	/* Allocate small arguments on the stack to save memory and be faster */
+	long stack_fds[SELECT_STACK_ALLOC/sizeof(long)];
+	unsigned long *inp, *outp, *exp;
+	int ii, jj;
+
+	/*
+	 * We need 3 bitmaps (in/out/ex for incoming only), since we used fdset
+	 * we need to allocate memory in units of long-words.
+	 */
+	n = args[0];
+	size = FDS_BYTES(n);
+	bits = stack_fds;
+	if (size > sizeof(stack_fds) / 3) {
+		/* Not enough space in on-stack array; must use kmalloc */
+		ret = -ENOMEM;
+		bits = kmalloc(3 * size, GFP_KERNEL);
+		if (!bits)
+			goto out_nofds;
+	}
+	inp = (unsigned long*)bits;
+	outp = (unsigned long *)(bits + size);
+	exp = (unsigned long *)(bits + 2*size);
+
+	if ((ret = get_fd_set(n, (fd_set __user *)args[1], inp)) ||
+	    (ret = get_fd_set(n, (fd_set __user *)args[2], outp)) ||
+	    (ret = get_fd_set(n, (fd_set __user *)args[3], exp)))
+		goto out;
+
+	/*
+	 * Also resize the internals of the capsicum_pending_syscall so there is
+	 * enough space for all the fd/struct files involved.  This may fail, which
+	 * will trigger an -ENOMEM failure from capsicum_require_rights() below.
+	 */
+	capsicum_realloc_pending_syscall(pending, n);
+
+	/* Check that each of the file descriptors involved has CAP_POLL_EVENT. */
+	for (ii = 0; ii < n; ) {
+		unsigned long in, out, ex;
+		unsigned long all_bits, bit = 1;
+		in = *inp++; out = *outp++; ex = *exp++;
+		all_bits = in | out | ex;
+		if (all_bits == 0) {
+			ii += BITS_PER_LONG;
+			continue;
+		}
+		for (jj = 0; jj < BITS_PER_LONG; ++jj, ++ii, bit <<= 1) {
+			if (ii >= n)
+				break;
+			if (!(bit & all_bits))
+				continue;
+			ret = capsicum_require_rights(pending, ii, CAP_POLL_EVENT);
+			if (ret)
+				goto out;
+		}
+	}
+out:
+	if (bits != stack_fds)
+		kfree(bits);
+out_nofds:
+	return ret;
 }
 
 static int capsicum_run_syscall_table(struct capsicum_pending_syscall *pending,
@@ -186,6 +256,7 @@ static int capsicum_run_syscall_table(struct capsicum_pending_syscall *pending,
 	case (__NR_sched_setparam): return 0;
 	case (__NR_sched_setscheduler): return 0;
 	case (__NR_sched_yield): return 0;
+	case (__NR_select): return check_select(pending, args);
 	case (__NR_sendfile):
 		return capsicum_require_rights(pending, args[0], CAP_READ)
 			?: capsicum_require_rights(pending, args[1], CAP_WRITE);

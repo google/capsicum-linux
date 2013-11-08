@@ -52,10 +52,19 @@
  * Stored in current->cred->security.
  */
 struct capsicum_pending_syscall {
-	unsigned int fds[6];
-	struct file *files[6];
-	int next_free;
+	/*
+	 * For most syscalls, use the array of fd/struct file pairs defined
+	 * inline in this structure.
+	 */
+	unsigned int inline_fds[6];
+	struct file *inline_files[6];
 
+	unsigned int *fds;
+	struct file **files;
+	int next_free;
+	int fd_count;
+
+	/* Pre-allocated capability and associated rights */
 	struct file *next_new_cap;
 	u64 new_cap_rights;
 	/*
@@ -127,6 +136,9 @@ static struct capsicum_pending_syscall *capsicum_alloc_pending_syscall(void)
 				return ERR_PTR(-ENOMEM);
 			}
 			cred->security = pending;
+			pending->fd_count = ARRAY_SIZE(pending->inline_files);
+			pending->fds = &(pending->inline_fds[0]);
+			pending->files = &(pending->inline_files[0]);
 		}
 
 		pending->new_cap_rights = (u64)-1;
@@ -137,6 +149,43 @@ static struct capsicum_pending_syscall *capsicum_alloc_pending_syscall(void)
 	}
 
 	return pending;
+}
+
+/*
+ * Ensure that the given capsicum_pending_syscall has enough space to record the
+ * given number of fd/struct file pairs.
+ */
+static void capsicum_realloc_pending_syscall(struct capsicum_pending_syscall *pending,
+					int numfds)
+{
+	unsigned int *mem_fds;
+	struct file **mem_files;
+	if (numfds <= pending->fd_count)
+		return;
+
+	/*
+	 * Allocate space.  If we fail, continue anyway and hope that the limit
+	 * doesn't get hit.
+	 */
+	mem_fds = kmalloc(numfds * sizeof(unsigned int), GFP_KERNEL);
+	if (!mem_fds)
+		return;
+	mem_files = kmalloc(numfds * sizeof(struct file_struct *), GFP_KERNEL);
+	if (!mem_files) {
+		kfree(mem_fds);
+		return;
+	}
+
+	/* Free any existing dynamic memory */
+	if (pending->fds != &(pending->inline_fds[0])) {
+		kfree(pending->fds);
+	}
+	if (pending->files != &(pending->inline_files[0])) {
+		kfree(pending->files);
+	}
+	pending->fd_count = numfds;
+	pending->fds = mem_fds;
+	pending->files = mem_files;
 }
 
 /*
@@ -159,7 +208,7 @@ static struct file *capsicum_cap_alloc(void)
 	struct file *newfile;
 
 	cap = kzalloc(sizeof(*cap), GFP_KERNEL);
-	if (cap == NULL)
+	if (!cap)
 		return ERR_PTR(-ENOMEM);
 
 	newfile = anon_inode_getfile("[capability]", &capsicum_file_ops, cap, 0);
@@ -256,12 +305,16 @@ static int capsicum_require_rights(struct capsicum_pending_syscall *pending,
 	rcu_read_lock();
 
 	file = fcheck(fd);
-	if (file == NULL) {
+	if (!file) {
 		result = -EBADF;
 		goto out;
 	}
 	capsicum_unwrap(file, &actual_rights);
 
+	if (pending->next_free >= pending->fd_count) {
+		result = -ENOMEM;
+		goto out;
+	}
 	/*
 	 * Make an anti-TOCTOU record. We record the identity of the file
 	 * this fd points to in thread-local data, at the same time as
@@ -269,7 +322,6 @@ static int capsicum_require_rights(struct capsicum_pending_syscall *pending,
 	 * looking up the same file we checked permissions on, preventing
 	 * an exploitable race condition.
 	 */
-	BUG_ON(pending->next_free >= ARRAY_SIZE(pending->files));
 	pending->fds[pending->next_free] = fd;
 	pending->files[pending->next_free] = file;
 	pending->next_free++;
@@ -543,9 +595,16 @@ static int capsicum_path_lookup(struct dentry *dentry, const char *name)
 
 static void capsicum_cred_free(struct cred *cred)
 {
-	struct capsicum_pending_syscall* pending = cred->security;
+	struct capsicum_pending_syscall *pending = cred->security;
 	cred->security = NULL;
 	if (pending) {
+		/* Free any anti-TOCTOU dynamic memory */
+		if (pending->fds != &(pending->inline_fds[0])) {
+			kfree(pending->fds);
+		}
+		if (pending->files != &(pending->inline_files[0])) {
+			kfree(pending->files);
+		}
 		if (pending->next_new_cap) {
 			/* We're freeing a thread-local storage structure that
 			 * has a pre-allocated capability hanging off it, so
@@ -558,18 +617,15 @@ static void capsicum_cred_free(struct cred *cred)
 
 static int capsicum_cred_alloc_blank(struct cred *cred, gfp_t gfp)
 {
-	cred->security = kzalloc(sizeof(struct capsicum_pending_syscall), gfp);
-	if (!cred->security)
+	struct capsicum_pending_syscall *pending;
+	pending = kzalloc(sizeof(struct capsicum_pending_syscall), gfp);
+	if (!pending)
 		return -ENOMEM;
+	pending->fd_count = ARRAY_SIZE(pending->inline_files);
+	pending->fds = &(pending->inline_fds[0]);
+	pending->files = &(pending->inline_files[0]);
+	cred->security = pending;
 	return 0;
-}
-
-static void capsicum_cred_transfer(struct cred *new, const struct cred *old)
-{
-	const struct capsicum_pending_syscall *old_pending = old->security;
-	struct capsicum_pending_syscall *pending = new->security;
-	BUG_ON(!pending);
-	*pending = *old_pending;
 }
 
 static int capsicum_cred_prepare(struct cred *new, const struct cred *old,
@@ -578,14 +634,17 @@ static int capsicum_cred_prepare(struct cred *new, const struct cred *old,
 	const struct capsicum_pending_syscall *old_pending = old->security;
 	struct capsicum_pending_syscall *pending;
 
+	/*
+	 * Only bother setting up Capsicum cred structure if the old creds had
+	 * one for this task.  This prevents non-Capsicum processes getting the
+	 * overhead of Capsicum.
+	 */
 	if (old_pending && old_pending->task == current) {
-		pending = kmemdup(old_pending, sizeof(struct capsicum_pending_syscall), gfp);
-		if (!pending)
-			return -ENOMEM;
-		/* Any dangling pre-allocated capability is still owned by the
-		 * old instance */
-		pending->next_new_cap = NULL;
-		new->security = pending;
+		int ret = capsicum_cred_alloc_blank(new, gfp);
+		if (!ret)
+			return ret;
+		pending = new->security;
+		pending->task = old_pending->task;
 	}
 
 	return 0;
@@ -645,7 +704,6 @@ struct security_operations capsicum_security_ops = {
 	.cred_alloc_blank = capsicum_cred_alloc_blank,
 	.cred_free = capsicum_cred_free,
 	.cred_prepare = capsicum_cred_prepare,
-	.cred_transfer = capsicum_cred_transfer
 };
 
 #include "capsicum_test.c"
