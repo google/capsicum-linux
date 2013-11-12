@@ -45,6 +45,43 @@ static int check_openat(struct capsicum_pending_syscall *pending,
 		?: (args[2] & ~(O_WRONLY|O_RDWR|O_CREAT|O_EXCL|O_TRUNC|O_APPEND|FASYNC|O_CLOEXEC|O_DIRECT|O_DIRECTORY|O_LARGEFILE|O_NOATIME|O_NOCTTY|O_NOFOLLOW|O_NONBLOCK|O_SYNC) ? -ECAPMODE : 0);
 }
 
+#define N_STACK_FDS (POLL_STACK_ALLOC / sizeof(struct pollfd))
+
+static int check_poll(struct capsicum_pending_syscall *pending,
+		unsigned long *args)
+{
+	struct pollfd __user *ufds = (struct pollfd __user *)args[0];
+	unsigned int nfds = args[1];
+	struct pollfd fds[N_STACK_FDS];
+	int len;
+	unsigned long todo = nfds;
+	int j;
+	int ret;
+
+	/*
+	 * Also resize the internals of the capsicum_pending_syscall so there is
+	 * enough space for all the fd/struct files involved.  This may fail, which
+	 * will trigger an -ENOMEM failure from capsicum_require_rights() below.
+	 */
+	capsicum_realloc_pending_syscall(pending, nfds);
+
+	for (;;) {
+		len = min_t(unsigned int, todo, N_STACK_FDS);
+		if (!len)
+			break;
+		if (copy_from_user(fds, ufds + nfds-todo,
+					sizeof(struct pollfd) * len))
+			return -EFAULT;
+		for (j = 0; j < len; j++) {
+			ret = capsicum_require_rights(pending, fds[j].fd, CAP_POLL_EVENT);
+			if (ret)
+				return ret;
+		}
+		todo -= len;
+	}
+	return 0;
+}
+
 static int check_prctl(struct capsicum_pending_syscall *pending,
 		unsigned long *args)
 {
@@ -75,7 +112,7 @@ static int check_prctl(struct capsicum_pending_syscall *pending,
 static int check_select(struct capsicum_pending_syscall *pending,
 			unsigned long *args)
 {
-	int n;
+	int n = args[0];
 	int ret = 0;
 	void *bits;
 	unsigned int size;
@@ -88,7 +125,6 @@ static int check_select(struct capsicum_pending_syscall *pending,
 	 * We need 3 bitmaps (in/out/ex for incoming only), since we used fdset
 	 * we need to allocate memory in units of long-words.
 	 */
-	n = args[0];
 	size = FDS_BYTES(n);
 	bits = stack_fds;
 	if (size > sizeof(stack_fds) / 3) {
@@ -232,9 +268,12 @@ static int capsicum_run_syscall_table(struct capsicum_pending_syscall *pending,
 	case (__NR_pdwait4): return capsicum_require_rights(pending, args[0], CAP_PDWAIT);
 	case (__NR_pipe): return 0;
 	case (__NR_pipe2): return 0;
+	case (__NR_poll): return check_poll(pending, args);
+	case (__NR_ppoll): return check_poll(pending, args);
 	case (__NR_prctl): return check_prctl(pending, args);
 	case (__NR_pread64): return capsicum_require_rights(pending, args[0], CAP_READ);
 	case (__NR_preadv): return capsicum_require_rights(pending, args[0], CAP_READ);
+	case (__NR_pselect6): return check_select(pending, args);
 	case (__NR_pwrite64): return capsicum_require_rights(pending, args[0], CAP_WRITE);
 	case (__NR_pwritev): return capsicum_require_rights(pending, args[0], CAP_WRITE);
 	case (__NR_read): return capsicum_require_rights(pending, args[0], CAP_READ|CAP_SEEK);
