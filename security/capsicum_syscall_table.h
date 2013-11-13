@@ -291,6 +291,13 @@ static int capsicum_run_syscall_table(struct capsicum_pending_syscall *pending,
 		return capsicum_require_rights(pending, args[0], CAP_LOOKUP|CAP_DELETE)
 			?: capsicum_require_rights(pending, args[2], CAP_LOOKUP|CAP_CREATE);
 	case (__NR_rt_sigaction): return 0;
+	case (__NR_rt_sigpending): return 0;
+	case (__NR_rt_sigprocmask): return 0;
+	case (__NR_rt_sigqueueinfo): return 0;
+	case (__NR_rt_sigreturn): return 0;
+	case (__NR_rt_sigsuspend): return 0;
+	case (__NR_rt_sigtimedwait): return 0;
+	case (__NR_rt_tgsigqueueinfo): return 0;
 	case (__NR_sched_get_priority_max): return 0;
 	case (__NR_sched_get_priority_min): return 0;
 	case (__NR_sched_getparam): return 0;
