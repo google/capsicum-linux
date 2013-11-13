@@ -255,7 +255,7 @@ static int capsicum_run_syscall_table(struct capsicum_pending_syscall *pending,
 	case (__NR_mlockall): return 0;
 	case (__NR_mmap): return check_mmap(pending, args);
 	case (__NR_mprotect): return 0;
-	case (__NR_mq_getsetattr): return capsicum_require_rights(pending, args[0], 0);
+	case (__NR_mq_getsetattr): return capsicum_require_rights(pending, args[0], CAP_POLL_EVENT);
 	case (__NR_mq_notify): return capsicum_require_rights(pending, args[0], CAP_POLL_EVENT);
 	case (__NR_mq_timedreceive): return capsicum_require_rights(pending, args[0], CAP_READ);
 	case (__NR_mq_timedsend): return capsicum_require_rights(pending, args[0], CAP_WRITE);
