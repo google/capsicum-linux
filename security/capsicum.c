@@ -40,6 +40,13 @@
 #include <linux/syscalls.h>
 #include <linux/capsicum.h>
 
+#if 0
+#define kdebug(FMT, ...) \
+	printk(KERN_ERR "[%-9.9s%5u] "FMT"\n", current->comm, current->pid ,##__VA_ARGS__)
+#else
+#define kdebug(FMT, ...)
+#endif
+
 /*
  * Per-thread Capsicum local state. This is used for two purposes:
  * - To check that file mappings haven't changed between the entry to a
