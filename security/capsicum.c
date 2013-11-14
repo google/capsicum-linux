@@ -631,6 +631,7 @@ static int capsicum_cred_alloc_blank(struct cred *cred, gfp_t gfp)
 	pending->fd_count = ARRAY_SIZE(pending->inline_files);
 	pending->fds = &(pending->inline_fds[0]);
 	pending->files = &(pending->inline_files[0]);
+	pending->task = current;
 	cred->security = pending;
 	return 0;
 }
@@ -639,7 +640,6 @@ static int capsicum_cred_prepare(struct cred *new, const struct cred *old,
 		gfp_t gfp)
 {
 	const struct capsicum_pending_syscall *old_pending = old->security;
-	struct capsicum_pending_syscall *pending;
 
 	/*
 	 * Only bother setting up Capsicum cred structure if the old creds had
@@ -648,10 +648,8 @@ static int capsicum_cred_prepare(struct cred *new, const struct cred *old,
 	 */
 	if (old_pending && old_pending->task == current) {
 		int ret = capsicum_cred_alloc_blank(new, gfp);
-		if (!ret)
+		if (ret)
 			return ret;
-		pending = new->security;
-		pending->task = old_pending->task;
 	}
 
 	return 0;
