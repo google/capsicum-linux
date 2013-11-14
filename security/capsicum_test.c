@@ -248,8 +248,6 @@ TEST(cred_copy_pending) {
 	new_cred = prepare_creds();
 	EXPECT_NE(new_cred->security, NULL);
 	EXPECT_NE(new_cred->security, old_cred->security);
-	EXPECT_TRUE(!memcmp(new_cred->security, old_cred->security,
-			sizeof(struct capsicum_pending_syscall)));
 
 	commit_creds(new_cred);
 	EXPECT_EQ(current_cred(), new_cred);
@@ -299,6 +297,9 @@ static int run_table(int call, unsigned long *args)
 {
 	struct capsicum_pending_syscall pending;
 	memset(&pending, 0, sizeof(pending));
+	pending.fd_count = ARRAY_SIZE(pending.inline_files);
+	pending.fds = &(pending.inline_fds[0]);
+	pending.files = &(pending.inline_files[0]);
 	return capsicum_run_syscall_table(&pending, AUDIT_ARCH_X86_64, call, args);
 }
 
