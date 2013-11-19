@@ -1753,8 +1753,12 @@ static int link_path_walk(const char *name, struct nameidata *nd)
 	struct path next;
 	int err;
 	
-	while (*name=='/')
+	while (*name=='/') {
+		err = security_path_lookup(NULL, name);
+		if (err)
+			return err;
 		name++;
+	}
 	if (!*name)
 		return 0;
 
