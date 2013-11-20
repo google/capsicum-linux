@@ -1118,6 +1118,12 @@ struct task_struct {
 	unsigned sched_reset_on_fork:1;
 	unsigned sched_contributes_to_load:1;
 
+	/*
+	 * Indicates that even though exit_signal is zero, this is still a
+	 * forked process not a cloned thread.
+	 */
+	unsigned quiet_forked:1;
+
 	pid_t pid;
 	pid_t tgid;
 

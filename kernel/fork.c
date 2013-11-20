@@ -1406,6 +1406,7 @@ static struct task_struct *copy_process(unsigned long clone_flags,
 		p->group_leader = p;
 		p->tgid = p->pid;
 	}
+	p->quiet_forked = !!(clone_flags & CLONE_QUIET_FORK);
 
 	p->pdeath_signal = 0;
 	p->exit_state = 0;
@@ -1600,6 +1601,8 @@ long do_fork_task(unsigned long clone_flags,
 	if (!(clone_flags & CLONE_UNTRACED)) {
 		if (clone_flags & CLONE_VFORK)
 			trace = PTRACE_EVENT_VFORK;
+		else if (clone_flags & CLONE_QUIET_FORK)
+			trace = PTRACE_EVENT_FORK;
 		else if ((clone_flags & CSIGNAL) != SIGCHLD)
 			trace = PTRACE_EVENT_CLONE;
 		else
@@ -1708,7 +1711,7 @@ SYSCALL_DEFINE2(pdfork, int __user *, fdp, int,  flags)
 		goto out_putfd;
 	}
 
-	ret = do_fork_task(SIGCHLD, 0, 0, &task, NULL, NULL);
+	ret = do_fork_task(CLONE_QUIET_FORK, 0, 0, &task, NULL, NULL);
 
 	if (ret < 0)
 		goto out_fput;
