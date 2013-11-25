@@ -716,6 +716,25 @@ struct file *fget_raw(unsigned int fd)
 
 EXPORT_SYMBOL(fget_raw);
 
+struct file *fget_raw_no_unwrap(unsigned int fd)
+{
+	struct file *file;
+	struct files_struct *files = current->files;
+
+	rcu_read_lock();
+	file = fcheck_files(files, fd);
+	if (file) {
+		/* File object ref couldn't be taken */
+		if (!atomic_long_inc_not_zero(&file->f_count))
+			file = NULL;
+	}
+	rcu_read_unlock();
+
+	return file;
+}
+
+EXPORT_SYMBOL(fget_raw_no_unwrap);
+
 /*
  * Lightweight file lookup - no refcnt increment if fd table isn't shared.
  *
