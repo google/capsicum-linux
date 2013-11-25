@@ -11,6 +11,10 @@
 #include <linux/mman.h>
 #include <linux/poll.h>
 #include <linux/prctl.h>
+#include <linux/socket.h>
+#include <net/compat.h>
+#include <net/scm.h>
+#include <net/sock.h>
 #include <asm/prctl.h>
 
 static int check_mmap(struct capsicum_pending_syscall *pending,
@@ -176,6 +180,178 @@ out:
 out_nofds:
 	return ret;
 }
+static int check_cmsghdr(struct capsicum_pending_syscall *pending,
+			struct msghdr *msg,
+			struct cmsghdr *cmsg)
+{
+	int i, num;
+	int *fdp = (int*)CMSG_DATA(cmsg);
+
+	if (!CMSG_OK(msg, cmsg))
+		return -EINVAL;
+	if (cmsg->cmsg_level != SOL_SOCKET || cmsg->cmsg_type != SCM_RIGHTS)
+
+		return 0;
+	num = (cmsg->cmsg_len - CMSG_ALIGN(sizeof(struct cmsghdr)))/sizeof(int);
+	if (num <= 0)
+		return 0;
+
+	if (num > SCM_MAX_FD)
+		return -EINVAL;
+	for (i=0; i< num; i++) {
+		/*
+		 * We don't require any particular rights on the transferred
+		 * file descriptor, but we do need to remember the fd/file
+		 * mapping for TOCTOU protection
+		 */
+		int err = capsicum_require_rights(pending, fdp[i], 0);
+		if (err)
+			return err;
+	}
+	return 0;
+}
+
+/* Watch out for for a msghdr that is transferring a file descriptor. */
+static int check_msghdr(struct capsicum_pending_syscall *pending,
+			struct socket *sock,
+			struct msghdr __user *msg,
+			int flags)
+{
+	struct msghdr msg_sys;
+	struct compat_msghdr __user *msg_compat =
+		(struct compat_msghdr __user *)msg;
+	unsigned char ctl[sizeof(struct cmsghdr) + sizeof(int)]
+		__attribute__ ((aligned(sizeof(__kernel_size_t))));
+	unsigned char *ctl_buf = ctl;
+	int err, ctl_len;
+	struct cmsghdr *cmsg;
+
+	if (MSG_CMSG_COMPAT & flags) {
+		if (get_compat_msghdr(&msg_sys, msg_compat))
+			return -EFAULT;
+	} else if (copy_from_user(&msg_sys, msg, sizeof(struct msghdr))) {
+		return -EFAULT;
+	}
+
+	ctl_len = msg_sys.msg_controllen;
+	if (msg_sys.msg_control == NULL || ctl_len < CMSG_LEN(sizeof(int)))
+		return 0;
+
+	/*
+	 * Careful! Before this, msg_sys->msg_control contains a user pointer.
+	 * Afterwards, it will be a kernel pointer. Thus the compiler-assisted
+	 * checking falls down on this.
+	 */
+	if (MSG_CMSG_COMPAT & flags) {
+		err =
+		    cmsghdr_from_user_compat_to_kern(&msg_sys, sock->sk, ctl,
+						     sizeof(ctl));
+		if (err)
+			return err;
+		ctl_buf = msg_sys.msg_control;
+		ctl_len = msg_sys.msg_controllen;
+	} else {
+		if (ctl_len > sizeof(ctl)) {
+			ctl_buf = sock_kmalloc(sock->sk, ctl_len, GFP_KERNEL);
+			if (ctl_buf == NULL)
+				return -ENOBUFS;
+		}
+		err = -EFAULT;
+		if (copy_from_user(ctl_buf,
+				   (void __user __force *)msg_sys.msg_control,
+				   ctl_len))
+			goto out_freectl;
+		msg_sys.msg_control = ctl_buf;
+	}
+
+	for (cmsg = CMSG_FIRSTHDR(&msg_sys); cmsg; cmsg = CMSG_NXTHDR(&msg_sys, cmsg)) {
+		err = check_cmsghdr(pending, &msg_sys, cmsg);
+		if (err)
+			goto out_freectl;
+	}
+
+	err = 0;
+
+out_freectl:
+	if (ctl_buf != ctl)
+		sock_kfree_s(sock->sk, ctl_buf, ctl_len);
+	return err;
+}
+
+static int check_sendmsg(struct capsicum_pending_syscall *pending,
+			unsigned long *args)
+{
+	int rc;
+	int fd = args[0];
+	struct msghdr __user *msg = (struct msghdr __user *)args[1];
+	int flags = args[2];
+	int fput_needed, err;
+	struct socket *sock;
+
+	rc = capsicum_require_rights(pending, fd, CAP_WRITE | CAP_CONNECT);
+	if (rc)
+		return rc;
+
+	sock = sockfd_lookup_light(fd, &err, &fput_needed);
+	if (!sock)
+		return err;
+	/* Only need to do more if this is a UNIX domain socket */
+	err = 0;
+	if (sock->sk->sk_family != AF_UNIX)
+		goto out_fput;
+	if (sock->type != SOCK_STREAM)
+		goto out_fput;
+	err = check_msghdr(pending, sock, msg, flags);
+
+out_fput:
+	fput_light(sock->file, fput_needed);
+	return err;
+}
+
+static int check_sendmmsg(struct capsicum_pending_syscall *pending,
+			unsigned long *args)
+{
+	int rc;
+	int fd = args[0];
+	struct mmsghdr __user *mmsg = (struct mmsghdr __user *)args[1];
+	unsigned int vlen = args[2];
+	int flags = args[3];
+	int datagrams;
+	struct mmsghdr __user *entry;
+	int fput_needed, err;
+	struct socket *sock;
+
+	rc = capsicum_require_rights(pending, fd, CAP_WRITE | CAP_CONNECT);
+	if (rc)
+		return rc;
+
+	if (flags & MSG_CMSG_COMPAT)
+		return -EINVAL;
+	if (vlen > UIO_MAXIOV)
+		vlen = UIO_MAXIOV;
+	sock = sockfd_lookup_light(fd, &err, &fput_needed);
+	if (!sock)
+		return err;
+	/* Only need to do more if this is a UNIX domain socket */
+	err = 0;
+	if (sock->sk->sk_family != AF_UNIX)
+		goto out_fput;
+	if (sock->type != SOCK_STREAM)
+		goto out_fput;
+	datagrams = 0;
+	entry = mmsg;
+	while (datagrams < vlen) {
+		err = check_msghdr(pending, sock, (struct msghdr __user *)entry, flags);
+		if (err)
+			goto out_fput;
+		++entry;
+		++datagrams;
+	}
+	err = 0;
+out_fput:
+	fput_light(sock->file, fput_needed);
+	return err;
+}
 
 static int capsicum_run_syscall_table(struct capsicum_pending_syscall *pending,
 				int arch, int callnr, unsigned long *args)
@@ -310,8 +486,9 @@ static int capsicum_run_syscall_table(struct capsicum_pending_syscall *pending,
 	case (__NR_sendfile):
 		return capsicum_require_rights(pending, args[0], CAP_READ)
 			?: capsicum_require_rights(pending, args[1], CAP_WRITE);
-	case (__NR_sendmmsg): return capsicum_require_rights(pending, args[0], CAP_WRITE | CAP_CONNECT);
-	case (__NR_sendmsg): return capsicum_require_rights(pending, args[0], CAP_WRITE | CAP_CONNECT);
+	case (__NR_sendmmsg): return check_sendmmsg(pending, args);
+	case (__NR_sendmsg): return check_sendmsg(pending, args);
+return capsicum_require_rights(pending, args[0], CAP_WRITE | CAP_CONNECT);
 	case (__NR_sendto):
 		return capsicum_require_rights(pending, args[0], CAP_WRITE | (((void *)args[4] != NULL) ? CAP_CONNECT : 0));
 	case (__NR_setfsgid): return 0;
