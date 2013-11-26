@@ -486,6 +486,19 @@ static int capsicum_release(struct inode *i, struct file *capf)
 	return 0;
 }
 
+static int capsicum_show_fdinfo(struct seq_file *m, struct file *capf)
+{
+	struct capsicum_capability *cap;
+
+	if (!capsicum_is_cap(capf))
+		return -EINVAL;
+
+	cap = capf->private_data;
+	BUG_ON(!cap);
+	seq_printf(m, "rights:\t%#016llx\n", cap->rights);
+	return 0;
+}
+
 static void capsicum_panic_not_unwrapped(void)
 {
 	/*
@@ -698,7 +711,7 @@ struct file_operations capsicum_file_ops = {
 	.splice_read = panic_ptr,
 	.setlease = panic_ptr,
 	.fallocate = panic_ptr,
-	.show_fdinfo = panic_ptr
+	.show_fdinfo = capsicum_show_fdinfo
 };
 
 struct security_operations capsicum_security_ops = {
