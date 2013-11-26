@@ -198,7 +198,9 @@ static int check_cmsghdr(struct capsicum_pending_syscall *pending,
 
 	if (num > SCM_MAX_FD)
 		return -EINVAL;
-	for (i=0; i< num; i++) {
+
+	capsicum_realloc_pending_syscall(pending, num + 1);
+	for (i=0; i<num; i++) {
 		/*
 		 * We don't require any particular rights on the transferred
 		 * file descriptor, but we do need to remember the fd/file
