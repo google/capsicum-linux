@@ -55,8 +55,8 @@ xfs_swapext(
 	int		error = 0;
 
 	/* Pull information for the target fd */
-	f = fdget((int)sxp->sx_fdtarget);
-	if (!f.file) {
+	f = fdget((int)sxp->sx_fdtarget, CAP_TODO);
+	if (IS_ERR(f.file)) {
 		error = XFS_ERROR(EINVAL);
 		goto out;
 	}
@@ -68,8 +68,8 @@ xfs_swapext(
 		goto out_put_file;
 	}
 
-	tmp = fdget((int)sxp->sx_fdtmp);
-	if (!tmp.file) {
+	tmp = fdget((int)sxp->sx_fdtmp, CAP_TODO);
+	if (IS_ERR(tmp.file)) {
 		error = XFS_ERROR(EINVAL);
 		goto out_put_file;
 	}

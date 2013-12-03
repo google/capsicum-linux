@@ -1619,10 +1619,10 @@ int do_fexecve(int fd,
 	struct user_arg_ptr argv = { .ptr.native = __argv };
 	struct user_arg_ptr envp = { .ptr.native = __envp };
 	int retval;
-	struct file *file = fget(fd);
+	struct file *file = fget(fd, CAP_FEXECVE);
 
-	if (!file)
-		return -EBADF;
+	if (IS_ERR(file))
+		return PTR_ERR(file);
 
 	retval = do_execve_common(file->f_path.dentry->d_name.name, file,
 			argv, envp);

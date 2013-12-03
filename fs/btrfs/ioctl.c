@@ -1522,10 +1522,12 @@ static noinline int btrfs_ioctl_snap_create_transid(struct file *file,
 		ret = btrfs_mksubvol(&file->f_path, name, namelen,
 				     NULL, transid, readonly, inherit);
 	} else {
-		struct fd src = fdget(fd);
+		struct fd src = fdget(fd, CAP_TODO);
 		struct inode *src_inode;
-		if (!src.file) {
-			ret = -EINVAL;
+		if (IS_ERR(src.file)) {
+			ret = PTR_ERR(src.file);
+			if (ret == -EBADF)
+				ret = -EINVAL;
 			goto out_drop_write;
 		}
 
@@ -2509,9 +2511,9 @@ static noinline long btrfs_ioctl_clone(struct file *file, unsigned long srcfd,
 	if (ret)
 		return ret;
 
-	src_file = fdget(srcfd);
-	if (!src_file.file) {
-		ret = -EBADF;
+	src_file = fdget(srcfd, CAP_TODO);
+	if (IS_ERR(src_file.file)) {
+		ret = PTR_ERR(src_file.file);
 		goto out_drop_write;
 	}
 

@@ -1897,11 +1897,11 @@ static int path_init(int dfd, const char *name, unsigned int flags,
 		}
 	} else {
 		/* Caller must check execute permissions on the starting path component */
-		struct fd f = fdget_raw(dfd);
+		struct fd f = fdget_raw(dfd, CAP_LOOKUP);
 		struct dentry *dentry;
 
-		if (!f.file)
-			return -EBADF;
+		if (IS_ERR(f.file))
+			return PTR_ERR(f.file);
 
 		dentry = f.file->f_path.dentry;
 

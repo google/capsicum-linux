@@ -604,10 +604,10 @@ int do_vfs_ioctl(struct file *filp, unsigned int fd, unsigned int cmd,
 SYSCALL_DEFINE3(ioctl, unsigned int, fd, unsigned int, cmd, unsigned long, arg)
 {
 	int error;
-	struct fd f = fdget(fd);
+	struct fd f = fdget(fd, CAP_TODO|CAP_IOCTL);
 
-	if (!f.file)
-		return -EBADF;
+	if (IS_ERR(f.file))
+		return PTR_ERR(f.file);
 	error = security_file_ioctl(f.file, cmd, arg);
 	if (!error)
 		error = do_vfs_ioctl(f.file, fd, cmd, arg);

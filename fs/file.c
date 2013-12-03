@@ -654,28 +654,32 @@ void do_close_on_exec(struct files_struct *files)
  * LSM hook, and return what it returns. We adjust the reference counter
  * if necessary.
  */
-static struct file *unwrap_file(struct file *orig, int fd, bool update_refcnt)
+static struct file *unwrap_file(struct file *orig, u64 required_rights,
+				bool update_refcnt)
 {
 	struct file *f;
 
 	if (orig == NULL)
-		return NULL;
-	f = security_file_lookup(orig, fd);
+		return ERR_PTR(-EBADF);
+	if (IS_ERR(orig))
+		return orig;
+	f = security_file_lookup(orig, required_rights);
 	if (f != orig && update_refcnt) {
-		/* If we're not returning the original, and the calling code
+		/* We're not returning the original, and the calling code
 		 * has already incremented the refcount on it, we need to
 		 * release that reference and obtain a reference to the new
 		 * return value, if any.
 		 */
-		if (f && !atomic_long_inc_not_zero(&f->f_count))
-			f = NULL;
+		if (!IS_ERR(f) && !atomic_long_inc_not_zero(&f->f_count)) {
+			f = ERR_PTR(-EBADF);
+		}
 		atomic_long_dec(&orig->f_count);
 	}
 
 	return f;
 }
 
-struct file *fget(unsigned int fd)
+struct file *fget(unsigned int fd, u64 required_rights)
 {
 	struct file *file;
 	struct files_struct *files = current->files;
@@ -686,17 +690,16 @@ struct file *fget(unsigned int fd)
 		/* File object ref couldn't be taken */
 		if (file->f_mode & FMODE_PATH ||
 		    !atomic_long_inc_not_zero(&file->f_count))
-			file = NULL;
+			file = ERR_PTR(-EBADF);
 	}
-	file = unwrap_file(file, fd, true);
+	file = unwrap_file(file, required_rights, true);
 	rcu_read_unlock();
 
 	return file;
 }
-
 EXPORT_SYMBOL(fget);
 
-struct file *fget_raw(unsigned int fd)
+struct file *fget_raw(unsigned int fd, u64 required_rights)
 {
 	struct file *file;
 	struct files_struct *files = current->files;
@@ -706,17 +709,16 @@ struct file *fget_raw(unsigned int fd)
 	if (file) {
 		/* File object ref couldn't be taken */
 		if (!atomic_long_inc_not_zero(&file->f_count))
-			file = NULL;
+			file = ERR_PTR(-EBADF);
 	}
-	file = unwrap_file(file, fd, true);
+	file = unwrap_file(file, required_rights, true);
 	rcu_read_unlock();
 
 	return file;
 }
-
 EXPORT_SYMBOL(fget_raw);
 
-struct file *fget_raw_no_unwrap(unsigned int fd)
+struct file *fget_raw_no_unwrap(unsigned int fd, u64 required_rights)
 {
 	struct file *file;
 	struct files_struct *files = current->files;
@@ -726,13 +728,12 @@ struct file *fget_raw_no_unwrap(unsigned int fd)
 	if (file) {
 		/* File object ref couldn't be taken */
 		if (!atomic_long_inc_not_zero(&file->f_count))
-			file = NULL;
+			file = ERR_PTR(-EBADF);
 	}
 	rcu_read_unlock();
 
 	return file;
 }
-
 EXPORT_SYMBOL(fget_raw_no_unwrap);
 
 /*
@@ -751,7 +752,7 @@ EXPORT_SYMBOL(fget_raw_no_unwrap);
  * The fput_needed flag returned by fget_light should be passed to the
  * corresponding fput_light.
  */
-struct file *fget_light(unsigned int fd, int *fput_needed)
+struct file *fget_light(unsigned int fd, u64 required_rights, int *fput_needed)
 {
 	struct file *file;
 	struct files_struct *files = current->files;
@@ -760,8 +761,9 @@ struct file *fget_light(unsigned int fd, int *fput_needed)
 	if (atomic_read(&files->count) == 1) {
 		file = fcheck_files(files, fd);
 		if (file && (file->f_mode & FMODE_PATH))
-			file = NULL;
-		file = unwrap_file(file, fd, false);
+			file = ERR_PTR(-EBADF);
+		else
+			file = unwrap_file(file, required_rights, false);
 	} else {
 		rcu_read_lock();
 		file = fcheck_files(files, fd);
@@ -771,9 +773,9 @@ struct file *fget_light(unsigned int fd, int *fput_needed)
 				*fput_needed = 1;
 			else
 				/* Didn't get the reference, someone's freed */
-				file = NULL;
+				file = ERR_PTR(-EBADF);
 		}
-		file = unwrap_file(file, fd, true);
+		file = unwrap_file(file, required_rights, true);
 		rcu_read_unlock();
 	}
 
@@ -781,7 +783,7 @@ struct file *fget_light(unsigned int fd, int *fput_needed)
 }
 EXPORT_SYMBOL(fget_light);
 
-struct file *fget_raw_light(unsigned int fd, int *fput_needed)
+struct file *fget_raw_light(unsigned int fd, u64 required_rights, int *fput_needed)
 {
 	struct file *file;
 	struct files_struct *files = current->files;
@@ -789,7 +791,7 @@ struct file *fget_raw_light(unsigned int fd, int *fput_needed)
 	*fput_needed = 0;
 	if (atomic_read(&files->count) == 1) {
 		file = fcheck_files(files, fd);
-		file = unwrap_file(file, fd, false);
+		file = unwrap_file(file, required_rights, false);
 	} else {
 		rcu_read_lock();
 		file = fcheck_files(files, fd);
@@ -798,9 +800,9 @@ struct file *fget_raw_light(unsigned int fd, int *fput_needed)
 				*fput_needed = 1;
 			else
 				/* Didn't get the reference, someone's freed */
-				file = NULL;
+				file = ERR_PTR(-EBADF);
 		}
-		file = unwrap_file(file, fd, true);
+		file = unwrap_file(file, required_rights, true);
 		rcu_read_unlock();
 	}
 
@@ -949,14 +951,16 @@ SYSCALL_DEFINE2(dup2, unsigned int, oldfd, unsigned int, newfd)
 SYSCALL_DEFINE1(dup, unsigned int, fildes)
 {
 	int ret = -EBADF;
-	struct file *file = fget_raw(fildes);
+	struct file *file = fget_raw(fildes, CAP_NONE);
 
-	if (file) {
+	if (!IS_ERR(file)) {
 		ret = get_unused_fd();
 		if (ret >= 0)
 			fd_install(ret, file);
 		else
 			fput(file);
+	} else {
+		ret = PTR_ERR(file);
 	}
 	return ret;
 }

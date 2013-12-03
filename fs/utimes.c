@@ -145,10 +145,11 @@ long do_utimes(int dfd, const char __user *filename, struct timespec *times,
 		if (flags & AT_SYMLINK_NOFOLLOW)
 			goto out;
 
-		f = fdget(dfd);
-		error = -EBADF;
-		if (!f.file)
+		f = fdget(dfd, CAP_FUTIMES);
+		if (IS_ERR(f.file)) {
+			error = PTR_ERR(f.file);
 			goto out;
+		}
 
 		error = utimes_common(&f.file->f_path, times);
 		fdput(f);

@@ -1357,10 +1357,19 @@ SYSCALL_DEFINE6(mmap_pgoff, unsigned long, addr, unsigned long, len,
 	unsigned long retval = -EBADF;
 
 	if (!(flags & MAP_ANONYMOUS)) {
+		u64 rights = CAP_MMAP;
+		if (prot & PROT_READ)
+			rights |= CAP_READ;
+		if (prot & PROT_WRITE)
+			rights |= CAP_WRITE;
+		if (prot & PROT_EXEC)
+			rights |= CAP_MAPEXEC;
 		audit_mmap_fd(fd, flags);
-		file = fget(fd);
-		if (!file)
+		file = fget(fd, rights);
+		if (IS_ERR(file)) {
+			retval = PTR_ERR(file);
 			goto out;
+		}
 		if (is_file_hugepages(file))
 			len = ALIGN(len, huge_page_size(hstate_file(file)));
 		retval = -EINVAL;

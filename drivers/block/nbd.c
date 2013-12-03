@@ -646,10 +646,11 @@ static int __nbd_ioctl(struct block_device *bdev, struct nbd_device *nbd,
 
 	case NBD_SET_SOCK: {
 		struct file *file;
+		int err;
 		if (nbd->file)
 			return -EBUSY;
-		file = fget(arg);
-		if (file) {
+		file = fget(arg, CAP_TODO);
+		if (!IS_ERR(file)) {
 			struct inode *inode = file_inode(file);
 			if (S_ISSOCK(inode->i_mode)) {
 				nbd->file = file;
@@ -660,9 +661,14 @@ static int __nbd_ioctl(struct block_device *bdev, struct nbd_device *nbd,
 				return 0;
 			} else {
 				fput(file);
+				err = -EINVAL;
 			}
+		} else {
+			err = PTR_ERR(file);
+			if (err == -EBADF)
+				err = -EINVAL;
 		}
-		return -EINVAL;
+		return err;
 	}
 
 	case NBD_SET_BLKSIZE:

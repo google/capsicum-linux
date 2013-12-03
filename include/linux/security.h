@@ -664,16 +664,15 @@ static inline void security_free_mnt_opts(struct security_mnt_opts *opts)
  *      Return 0 if permission is granted.
  * @file_lookup:
  *	This hook allows security modules to intercept file descriptor lookups
- *	and modify the return value for fget(). This allows them to provide
- *	an illusion that certain file descriptors do not exist (usually
- *	provoking an -EBADF), or to substitute a new return value for fget().
- *	@fd is the file descriptor being looked up.
- *	@file is the file in the process's file table - that is, the one that
- *	would be returned by default.
- *	Return @file to permit the lookup, NULL to prevent it, and a different
- *	file object to substitute a response. This hook is called within an
- *	rcu_read_lock() section, and is not expected to obtain or release
- *	references to orig or to any return value.
+ *	to check whether a required set of rights are available for the file
+ *	descriptor. This allows the security model to fail the lookup, or to
+ *	substitute a new return value for fget().
+ *	@file is the file in the process's file table, which may be replaced by
+ *	another file as the return value from the hook.
+ *	@required_rights is the rights that the file descriptor should hold.
+ *	Return PTR_ERR holding the unwrapped file.
+ *	This hook is called within an rcu_read_lock() section, and is not
+ *	expected to obtain or release references to the old or new file.
  * @file_install:
  *	This hook allows security modules to intercept file descriptor
  *	installations. This allows them to change the file installed under
@@ -1570,7 +1569,7 @@ struct security_operations {
 	int (*file_receive) (struct file *file);
 	int (*file_open) (struct file *file, const struct cred *cred);
 	int (*path_lookup) (struct dentry *dentry, const char *name);
-	struct file *(*file_lookup) (struct file *orig, unsigned int fd);
+	struct file *(*file_lookup) (struct file *orig, u64 required_rights);
 	struct file *(*file_install) (struct file *orig, unsigned int fd);
 
 	int (*task_create) (unsigned long clone_flags);
@@ -1844,7 +1843,7 @@ int security_file_send_sigiotask(struct task_struct *tsk,
 int security_file_receive(struct file *file);
 int security_file_open(struct file *file, const struct cred *cred);
 int security_path_lookup(struct dentry *dentry, const char *name);
-struct file *security_file_lookup(struct file *orig, unsigned int fd);
+struct file *security_file_lookup(struct file *orig, u64 required_rights);
 struct file *security_file_install(struct file *orig, unsigned int fd);
 int security_task_create(unsigned long clone_flags);
 void security_task_free(struct task_struct *task);
@@ -2341,7 +2340,7 @@ static inline int security_file_open(struct file *file,
 }
 
 static inline struct file *security_file_lookup(struct file *orig,
-						unsigned int fd)
+						u64 required_rights)
 {
 	return orig;
 }

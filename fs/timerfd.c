@@ -293,9 +293,9 @@ static const struct file_operations timerfd_fops = {
 
 static int timerfd_fget(int fd, struct fd *p)
 {
-	struct fd f = fdget(fd);
-	if (!f.file)
-		return -EBADF;
+	struct fd f = fdget(fd, CAP_TODO);
+	if (IS_ERR(f.file))
+		return PTR_ERR(f.file);
 	if (f.file->f_op != &timerfd_fops) {
 		fdput(f);
 		return -EINVAL;

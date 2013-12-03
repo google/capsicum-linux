@@ -5986,12 +5986,12 @@ static int set_bitmap_file(struct mddev *mddev, int fd)
 	if (fd >= 0) {
 		if (mddev->bitmap)
 			return -EEXIST; /* cannot add when bitmap is present */
-		mddev->bitmap_info.file = fget(fd);
+		mddev->bitmap_info.file = fget(fd, CAP_TODO);
 
-		if (mddev->bitmap_info.file == NULL) {
+		if (IS_ERR(mddev->bitmap_info.file)) {
 			printk(KERN_ERR "%s: error: failed to get bitmap file\n",
 			       mdname(mddev));
-			return -EBADF;
+			return PTR_ERR(mddev->bitmap_info.file);
 		}
 
 		err = deny_bitmap_write_access(mddev->bitmap_info.file);

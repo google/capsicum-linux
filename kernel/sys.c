@@ -1637,9 +1637,9 @@ static int prctl_set_mm_exe_file(struct mm_struct *mm, unsigned int fd)
 	struct inode *inode;
 	int err;
 
-	exe = fdget(fd);
-	if (!exe.file)
-		return -EBADF;
+	exe = fdget(fd, CAP_TODO);
+	if (IS_ERR(exe.file))
+		return PTR_ERR(exe.file);
 
 	inode = file_inode(exe.file);
 

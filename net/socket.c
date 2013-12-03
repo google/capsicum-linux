@@ -434,9 +434,9 @@ struct socket *sockfd_lookup(int fd, int *err)
 	struct file *file;
 	struct socket *sock;
 
-	file = fget(fd);
-	if (!file) {
-		*err = -EBADF;
+	file = fget(fd, CAP_TODO);
+	if (IS_ERR(file)) {
+		*err = PTR_ERR(file);
 		return NULL;
 	}
 
@@ -453,12 +453,14 @@ struct socket *sockfd_lookup_light(int fd, int *err, int *fput_needed)
 	struct socket *sock;
 
 	*err = -EBADF;
-	file = fget_light(fd, fput_needed);
-	if (file) {
+	file = fget_light(fd, CAP_TODO, fput_needed);
+	if (!IS_ERR(file)) {
 		sock = sock_from_file(file, err);
 		if (sock)
 			return sock;
 		fput_light(file, *fput_needed);
+	} else {
+		*err = PTR_ERR(file);
 	}
 	return NULL;
 }

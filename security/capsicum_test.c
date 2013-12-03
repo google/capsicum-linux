@@ -44,8 +44,8 @@ FIXTURE(new_cap) {
 };
 
 FIXTURE_SETUP(new_cap) {
-	self->orig = fget(0);
-	ASSERT_NE(self->orig, NULL);
+	self->orig = fget(0, CAP_NONE);
+	ASSERT_FALSE(IS_ERR(self->orig));
 	self->cap = capsicum_install_fd(self->orig, 0);
 	ASSERT_GE(self->cap, 0);
 	/* The new capability fd must not be the same as the original (0). */
@@ -114,15 +114,14 @@ TEST_F(new_cap, is_cap) {
 FIXTURE(fget) {
 	struct file *orig;
 	int cap;
-
 	int orig_refs;
 };
 
 FIXTURE_SETUP(fget) {
-	self->orig = fget(0);
+	self->orig = fget(0, CAP_NONE);
 	flush_fputs();
 	self->orig_refs = file_count(self->orig);
-	self->cap = capsicum_install_fd(self->orig, 0);
+	self->cap = capsicum_install_fd(self->orig, CAP_READ|CAP_WRITE|CAP_SEEK);
 	ASSERT_EQ(file_count(self->orig), self->orig_refs+1);
 	ASSERT_EQ(file_count(fcheck(self->cap)), 1);
 }
@@ -138,7 +137,7 @@ FIXTURE_TEARDOWN(fget) {
 }
 
 TEST_F(fget, fget) {
-	struct file *f = fget(self->cap);
+	struct file *f = fget(self->cap, CAP_NONE);
 
 	EXPECT_EQ(f, self->orig);
 	EXPECT_EQ(file_count(fcheck(self->cap)), 1);
@@ -149,7 +148,7 @@ TEST_F(fget, fget) {
 
 TEST_F(fget, fget_light) {
 	int fpn;
-	struct file *f = fget_light(self->cap, &fpn);
+	struct file *f = fget_light(self->cap, CAP_NONE, &fpn);
 
 	EXPECT_EQ(f, self->orig);
 	EXPECT_FALSE(fpn);
@@ -159,7 +158,7 @@ TEST_F(fget, fget_light) {
 }
 
 TEST_F(fget, fget_raw) {
-	struct file *f = fget_raw(self->cap);
+	struct file *f = fget_raw(self->cap, CAP_NONE);
 
 	EXPECT_EQ(f, self->orig);
 	EXPECT_EQ(file_count(fcheck(self->cap)), 1);
@@ -170,7 +169,7 @@ TEST_F(fget, fget_raw) {
 
 TEST_F(fget, fget_raw_light) {
 	int fpn;
-	struct file *f = fget_raw_light(self->cap, &fpn);
+	struct file *f = fget_raw_light(self->cap, CAP_NONE, &fpn);
 
 	EXPECT_EQ(f, self->orig);
 	EXPECT_EQ(fpn, 0);

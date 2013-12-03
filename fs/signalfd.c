@@ -288,9 +288,9 @@ SYSCALL_DEFINE4(signalfd4, int, ufd, sigset_t __user *, user_mask,
 		if (ufd < 0)
 			kfree(ctx);
 	} else {
-		struct fd f = fdget(ufd);
-		if (!f.file)
-			return -EBADF;
+		struct fd f = fdget(ufd, CAP_TODO);
+		if (IS_ERR(f.file))
+			return PTR_ERR(f.file);
 		ctx = f.file->private_data;
 		if (f.file->f_op != &signalfd_fops) {
 			fdput(f);

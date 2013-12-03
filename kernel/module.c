@@ -2546,9 +2546,13 @@ static int copy_module_from_fd(int fd, struct load_info *info)
 	loff_t pos;
 	ssize_t bytes = 0;
 
-	file = fget(fd);
-	if (!file)
-		return -ENOEXEC;
+	file = fget(fd, CAP_TODO);
+	if (IS_ERR(file)) {
+		err = PTR_ERR(file);
+		if (err == -EBADF)
+			err = -ENOEXEC;
+		return err;
+	}
 
 	err = security_kernel_module_from_file(file);
 	if (err)

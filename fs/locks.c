@@ -1744,19 +1744,21 @@ EXPORT_SYMBOL(flock_lock_file_wait);
  */
 SYSCALL_DEFINE2(flock, unsigned int, fd, unsigned int, cmd)
 {
-	struct fd f = fdget(fd);
+	struct fd f = fdget(fd, CAP_FLOCK);
 	struct file_lock *lock;
 	int can_sleep, unlock;
 	int error;
 
-	error = -EBADF;
-	if (!f.file)
+	if (IS_ERR(f.file)) {
+		error = PTR_ERR(f.file);
 		goto out;
+	}
 
 	can_sleep = !(cmd & LOCK_NB);
 	cmd &= ~LOCK_NB;
 	unlock = (cmd == LOCK_UN);
 
+	error = -EBADF;
 	if (!unlock && !(cmd & LOCK_MAND) &&
 	    !(f.file->f_mode & (FMODE_READ|FMODE_WRITE)))
 		goto out_putf;

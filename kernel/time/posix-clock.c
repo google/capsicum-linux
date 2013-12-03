@@ -248,11 +248,15 @@ struct posix_clock_desc {
 
 static int get_clock_desc(const clockid_t id, struct posix_clock_desc *cd)
 {
-	struct file *fp = fget(CLOCKID_TO_FD(id));
+	struct file *fp = fget(CLOCKID_TO_FD(id), CAP_TODO);
 	int err = -EINVAL;
 
-	if (!fp)
+	if (IS_ERR(fp)) {
+		err = PTR_ERR(fp);
+		if (err == -EBADF)
+			err = -EINVAL;
 		return err;
+	}
 
 	if (fp->f_op->open != posix_clock_open || !fp->private_data)
 		goto out;

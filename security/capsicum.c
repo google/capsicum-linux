@@ -515,48 +515,24 @@ static void capsicum_panic_not_unwrapped(void)
 
 /*
  * We are looking up a file by its file descriptor. If it is a capability,
- * we unwrap it and return the underlying file.
+ * and has the required rights, we unwrap it and return the underlying file.
  *
  * If we were in capability mode and this call was triggered by a syscall, we
  * performed a rights check on entry to the syscall. This function checks that
  * the file we are unwrapping is the same as the one which was examined in
  * capsicum_intercept_syscall().
  */
-static struct file *capsicum_file_lookup(struct file *file, unsigned int fd)
+static struct file *capsicum_file_lookup(struct file *file, u64 required_rights)
 {
+	u64 rights;
 	struct file *underlying;
-	struct capsicum_pending_syscall *pending;
-	int i;
-	bool found_fd = false;
 
 	/* See if the file in question is a capability. */
-	underlying = capsicum_unwrap(file, NULL);
+	underlying = capsicum_unwrap(file, &rights);
 	if (!underlying)
 		return file;
-
-	/*
-	 * Verify that this file descriptor is the same one we checked when
-	 * we were deciding whether to allow this syscall in the first place.
-	 * This is only relevant in capability mode, because we don't check
-	 * otherwise.
-	 *
-	 * Even if we've found a lookup record, we still check all the others,
-	 * to prevent a race where the user could change the identity of a
-	 * single fd passed as two parameters to the same call. If there are
-	 * multiple records of the same fd in pending, we want to check them
-	 * all.
-	 */
-	pending = capsicum_get_pending_syscall();
-	if (pending && capsicum_in_cap_mode()) {
-		for (i = 0; i < pending->next_free; i++) {
-			if (pending->fds[i] == fd) {
-				found_fd = true;
-				if (pending->files[i] != file)
-					return NULL;
-			}
-		}
-		BUG_ON(!found_fd);
-	}
+	if ((rights & required_rights) != required_rights)
+		return ERR_PTR(-ENOTCAPABLE);
 	return underlying;
 }
 

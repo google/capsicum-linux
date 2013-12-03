@@ -786,9 +786,9 @@ int security_file_open(struct file *file, const struct cred *cred)
 	return fsnotify_perm(file, MAY_OPEN);
 }
 
-struct file *security_file_lookup(struct file *orig, unsigned int fd)
+struct file *security_file_lookup(struct file *file, u64 required_rights)
 {
-	return security_ops->file_lookup(orig, fd);
+	return security_ops->file_lookup(file, required_rights);
 }
 
 struct file *security_file_install(struct file *orig, unsigned int fd)

@@ -415,12 +415,12 @@ retry:
 SYSCALL_DEFINE5(fsetxattr, int, fd, const char __user *, name,
 		const void __user *,value, size_t, size, int, flags)
 {
-	struct fd f = fdget(fd);
+	struct fd f = fdget(fd, CAP_EXTATTR_SET);
 	struct dentry *dentry;
-	int error = -EBADF;
+	int error;
 
-	if (!f.file)
-		return error;
+	if (IS_ERR(f.file))
+		return PTR_ERR(f.file);
 	dentry = f.file->f_path.dentry;
 	audit_inode(NULL, dentry, 0);
 	error = mnt_want_write_file(f.file);
@@ -522,11 +522,11 @@ retry:
 SYSCALL_DEFINE4(fgetxattr, int, fd, const char __user *, name,
 		void __user *, value, size_t, size)
 {
-	struct fd f = fdget(fd);
+	struct fd f = fdget(fd, CAP_EXTATTR_GET);
 	ssize_t error = -EBADF;
 
-	if (!f.file)
-		return error;
+	if (IS_ERR(f.file))
+		return PTR_ERR(f.file);
 	audit_inode(NULL, f.file->f_path.dentry, 0);
 	error = getxattr(f.file->f_path.dentry, name, value, size);
 	fdput(f);
@@ -611,11 +611,11 @@ retry:
 
 SYSCALL_DEFINE3(flistxattr, int, fd, char __user *, list, size_t, size)
 {
-	struct fd f = fdget(fd);
+	struct fd f = fdget(fd, CAP_EXTATTR_LIST);
 	ssize_t error = -EBADF;
 
-	if (!f.file)
-		return error;
+	if (IS_ERR(f.file))
+		return PTR_ERR(f.file);
 	audit_inode(NULL, f.file->f_path.dentry, 0);
 	error = listxattr(f.file->f_path.dentry, list, size);
 	fdput(f);
@@ -688,12 +688,12 @@ retry:
 
 SYSCALL_DEFINE2(fremovexattr, int, fd, const char __user *, name)
 {
-	struct fd f = fdget(fd);
+	struct fd f = fdget(fd, CAP_EXTATTR_DELETE);
 	struct dentry *dentry;
 	int error = -EBADF;
 
-	if (!f.file)
-		return error;
+	if (IS_ERR(f.file))
+		return PTR_ERR(f.file);
 	dentry = f.file->f_path.dentry;
 	audit_inode(NULL, dentry, 0);
 	error = mnt_want_write_file(f.file);

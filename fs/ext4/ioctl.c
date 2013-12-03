@@ -435,9 +435,9 @@ group_extend_out:
 			return -EFAULT;
 		me.moved_len = 0;
 
-		donor = fdget(me.donor_fd);
-		if (!donor.file)
-			return -EBADF;
+		donor = fdget(me.donor_fd, CAP_TODO);
+		if (IS_ERR(donor.file))
+			return PTR_ERR(donor.file);
 
 		if (!(donor.file->f_mode & FMODE_WRITE)) {
 			err = -EBADF;

@@ -57,12 +57,14 @@ EXPORT_SYMBOL(vfs_getattr);
 
 int vfs_fstat(unsigned int fd, struct kstat *stat)
 {
-	struct fd f = fdget_raw(fd);
-	int error = -EBADF;
+	struct fd f = fdget_raw(fd, CAP_FSTAT);
+	int error;
 
-	if (f.file) {
+	if (!IS_ERR(f.file)) {
 		error = vfs_getattr(&f.file->f_path, stat);
 		fdput(f);
+	} else {
+		error = PTR_ERR(f.file);
 	}
 	return error;
 }

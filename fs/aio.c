@@ -1098,9 +1098,9 @@ static int io_submit_one(struct kioctx *ctx, struct iocb __user *user_iocb,
 	if (unlikely(!req))
 		return -EAGAIN;
 
-	req->ki_filp = fget(iocb->aio_fildes);
-	if (unlikely(!req->ki_filp)) {
-		ret = -EBADF;
+	req->ki_filp = fget(iocb->aio_fildes, CAP_TODO);
+	if (unlikely(IS_ERR(req->ki_filp))) {
+		ret = PTR_ERR(req->ki_filp);
 		goto out_put_req;
 	}
 

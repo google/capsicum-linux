@@ -1803,15 +1803,18 @@ SYSCALL_DEFINE4(epoll_ctl, int, epfd, int, op, int, fd,
 		goto error_return;
 
 	/* Get the "struct file *" for the eventpoll file */
-	error = -EBADF;
-	file = fget(epfd);
-	if (!file)
+	file = fget(epfd, CAP_POLL_EVENT);
+	if (IS_ERR(file)) {
+		error = PTR_ERR(file);
 		goto error_return;
+	}
 
 	/* Get the "struct file *" for the target file */
-	tfile = fget(fd);
-	if (!tfile)
+	tfile = fget(fd, CAP_POLL_EVENT);
+	if (IS_ERR(tfile)) {
+		error = PTR_ERR(tfile);
 		goto error_fput;
+	}
 
 	/* The target file descriptor must support poll */
 	error = -EPERM;
@@ -1931,9 +1934,9 @@ SYSCALL_DEFINE4(epoll_wait, int, epfd, struct epoll_event __user *, events,
 		return -EFAULT;
 
 	/* Get the "struct file *" for the eventpoll file */
-	f = fdget(epfd);
-	if (!f.file)
-		return -EBADF;
+	f = fdget(epfd, CAP_TODO);
+	if (IS_ERR(f.file))
+		return PTR_ERR(f.file);
 
 	/*
 	 * We have to check that the file structure underneath the fd

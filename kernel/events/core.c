@@ -585,11 +585,11 @@ static inline int perf_cgroup_connect(int fd, struct perf_event *event,
 {
 	struct perf_cgroup *cgrp;
 	struct cgroup_subsys_state *css;
-	struct fd f = fdget(fd);
+	struct fd f = fdget(fd, CAP_TODO);
 	int ret = 0;
 
-	if (!f.file)
-		return -EBADF;
+	if (IS_ERR(f.file))
+		return PTR_ERR(f.file);
 
 	css = cgroup_css_from_dir(f.file, perf_subsys_id);
 	if (IS_ERR(css)) {
@@ -3505,9 +3505,9 @@ static const struct file_operations perf_fops;
 
 static inline int perf_fget_light(int fd, struct fd *p)
 {
-	struct fd f = fdget(fd);
-	if (!f.file)
-		return -EBADF;
+	struct fd f = fdget(fd, CAP_TODO);
+	if (IS_ERR(f.file))
+		return PTR_ERR(f.file);
 
 	if (f.file->f_op != &perf_fops) {
 		fdput(f);

@@ -431,8 +431,8 @@ static int cgroupstats_user_cmd(struct sk_buff *skb, struct genl_info *info)
 		return -EINVAL;
 
 	fd = nla_get_u32(info->attrs[CGROUPSTATS_CMD_ATTR_FD]);
-	f = fdget(fd);
-	if (!f.file)
+	f = fdget(fd, CAP_TODO);
+	if (IS_ERR(f.file))
 		return 0;
 
 	size = nla_total_size(sizeof(struct cgroupstats));

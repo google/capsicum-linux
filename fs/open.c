@@ -158,10 +158,11 @@ static long do_sys_ftruncate(unsigned int fd, loff_t length, int small)
 	error = -EINVAL;
 	if (length < 0)
 		goto out;
-	error = -EBADF;
-	f = fdget(fd);
-	if (!f.file)
+	f = fdget(fd, CAP_FTRUNCATE);
+	if (IS_ERR(f.file)) {
+		error = PTR_ERR(f.file);
 		goto out;
+	}
 
 	/* explicitly opened as large or we are on 64-bit box */
 	if (f.file->f_flags & O_LARGEFILE)
@@ -281,12 +282,14 @@ int do_fallocate(struct file *file, int mode, loff_t offset, loff_t len)
 
 SYSCALL_DEFINE4(fallocate, int, fd, int, mode, loff_t, offset, loff_t, len)
 {
-	struct fd f = fdget(fd);
-	int error = -EBADF;
+	struct fd f = fdget(fd, CAP_WRITE);
+	int error;
 
-	if (f.file) {
+	if (!IS_ERR(f.file)) {
 		error = do_fallocate(f.file, mode, offset, len);
 		fdput(f);
+	} else {
+		error = PTR_ERR(f.file);
 	}
 	return error;
 }
@@ -405,13 +408,14 @@ out:
 
 SYSCALL_DEFINE1(fchdir, unsigned int, fd)
 {
-	struct fd f = fdget_raw(fd);
+	struct fd f = fdget_raw(fd, CAP_FCHDIR);
 	struct inode *inode;
 	int error = -EBADF;
 
-	error = -EBADF;
-	if (!f.file)
+	if (IS_ERR(f.file)) {
+		error = PTR_ERR(f.file);
 		goto out;
+	}
 
 	inode = file_inode(f.file);
 
@@ -488,11 +492,13 @@ SYSCALL_DEFINE2(fchmod, unsigned int, fd, umode_t, mode)
 	struct file * file;
 	int err = -EBADF;
 
-	file = fget(fd);
-	if (file) {
+	file = fget(fd, CAP_FCHMOD);
+	if (!IS_ERR(file)) {
 		audit_inode(NULL, file->f_path.dentry, 0);
 		err = chmod_common(&file->f_path, mode);
 		fput(file);
+	} else {
+		err = PTR_ERR(file);
 	}
 	return err;
 }
@@ -601,11 +607,13 @@ SYSCALL_DEFINE3(lchown, const char __user *, filename, uid_t, user, gid_t, group
 
 SYSCALL_DEFINE3(fchown, unsigned int, fd, uid_t, user, gid_t, group)
 {
-	struct fd f = fdget(fd);
-	int error = -EBADF;
+	struct fd f = fdget(fd, CAP_FCHOWN);
+	int error;
 
-	if (!f.file)
+	if (IS_ERR(f.file)) {
+		error = PTR_ERR(f.file);
 		goto out;
+	}
 
 	error = mnt_want_write_file(f.file);
 	if (error)

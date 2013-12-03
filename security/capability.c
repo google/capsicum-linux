@@ -364,7 +364,7 @@ static int cap_file_open(struct file *file, const struct cred *cred)
 	return 0;
 }
 
-static struct file *cap_file_lookup(struct file *orig, unsigned int fd)
+static struct file *cap_file_lookup(struct file *orig, u64 required_rights)
 {
 	return orig;
 }

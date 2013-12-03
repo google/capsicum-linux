@@ -741,9 +741,9 @@ SYSCALL_DEFINE3(inotify_add_watch, int, fd, const char __user *, pathname,
 	if (unlikely(!(mask & ALL_INOTIFY_BITS)))
 		return -EINVAL;
 
-	f = fdget(fd);
-	if (unlikely(!f.file))
-		return -EBADF;
+	f = fdget(fd, CAP_TODO);
+	if (unlikely(IS_ERR(f.file)))
+		return PTR_ERR(f.file);
 
 	/* verify that this is indeed an inotify instance */
 	if (unlikely(f.file->f_op != &inotify_fops)) {
@@ -779,9 +779,9 @@ SYSCALL_DEFINE2(inotify_rm_watch, int, fd, __s32, wd)
 	struct fd f;
 	int ret = 0;
 
-	f = fdget(fd);
-	if (unlikely(!f.file))
-		return -EBADF;
+	f = fdget(fd, CAP_TODO);
+	if (unlikely(IS_ERR(f.file)))
+		return PTR_ERR(f.file);
 
 	/* verify that this is indeed an inotify instance */
 	ret = -EINVAL;

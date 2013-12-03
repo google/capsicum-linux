@@ -856,11 +856,11 @@ err:
 
 static struct socket *get_tap_socket(int fd)
 {
-	struct file *file = fget(fd);
+	struct file *file = fget(fd, CAP_TODO);
 	struct socket *sock;
 
-	if (!file)
-		return ERR_PTR(-EBADF);
+	if (IS_ERR(file))
+		return PTR_ERR(file);
 	sock = tun_get_socket(file);
 	if (!IS_ERR(sock))
 		return sock;

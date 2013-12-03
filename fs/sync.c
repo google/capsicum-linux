@@ -148,12 +148,12 @@ void emergency_sync(void)
  */
 SYSCALL_DEFINE1(syncfs, int, fd)
 {
-	struct fd f = fdget(fd);
+	struct fd f = fdget(fd, CAP_FSYNC);
 	struct super_block *sb;
 	int ret;
 
-	if (!f.file)
-		return -EBADF;
+	if (IS_ERR(f.file))
+		return PTR_ERR(f.file);
 	sb = f.file->f_dentry->d_sb;
 
 	down_read(&sb->s_umount);
@@ -199,12 +199,14 @@ EXPORT_SYMBOL(vfs_fsync);
 
 static int do_fsync(unsigned int fd, int datasync)
 {
-	struct fd f = fdget(fd);
-	int ret = -EBADF;
+	struct fd f = fdget(fd, CAP_FSYNC);
+	int ret;
 
-	if (f.file) {
+	if (!IS_ERR(f.file)) {
 		ret = vfs_fsync(f.file, datasync);
 		fdput(f);
+	} else {
+		ret = PTR_ERR(f.file);
 	}
 	return ret;
 }
@@ -327,10 +329,11 @@ SYSCALL_DEFINE4(sync_file_range, int, fd, loff_t, offset, loff_t, nbytes,
 	else
 		endbyte--;		/* inclusive */
 
-	ret = -EBADF;
-	f = fdget(fd);
-	if (!f.file)
+	f = fdget(fd, CAP_TODO);
+	if (IS_ERR(f.file)) {
+		ret = PTR_ERR(f.file);
 		goto out;
+	}
 
 	i_mode = file_inode(f.file)->i_mode;
 	ret = -ESPIPE;

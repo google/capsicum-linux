@@ -4872,13 +4872,13 @@ restart_args:
 
 	if (unlikely((cmd_flags & PFM_CMD_FD) == 0)) goto skip_fd;
 
-	ret = -EBADF;
-
-	f = fdget(fd);
-	if (unlikely(f.file == NULL)) {
+	f = fdget(fd, CAP_TODO);
+	if (unlikely(IS_ERR(f.file)) {
 		DPRINT(("invalid fd %d\n", fd));
+		ret = PTR_ERR(f.file);
 		goto error_args;
 	}
+	ret = -EBADF;
 	if (unlikely(PFM_IS_FILE(f.file) == 0)) {
 		DPRINT(("fd %d not related to perfmon\n", fd));
 		goto error_args;

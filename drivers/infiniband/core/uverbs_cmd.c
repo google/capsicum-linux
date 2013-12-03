@@ -724,9 +724,9 @@ ssize_t ib_uverbs_open_xrcd(struct ib_uverbs_file *file,
 
 	if (cmd.fd != -1) {
 		/* search for file descriptor */
-		f = fdget(cmd.fd);
-		if (!f.file) {
-			ret = -EBADF;
+		f = fdget(cmd.fd, CAP_TODO);
+		if (IS_ERR(f.file)) {
+			ret = PTR_ERR(f.file);
 			goto err_tree_mutex_unlock;
 		}
 

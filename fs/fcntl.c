@@ -347,12 +347,14 @@ static int check_fcntl_cmd(unsigned cmd)
 }
 
 SYSCALL_DEFINE3(fcntl, unsigned int, fd, unsigned int, cmd, unsigned long, arg)
-{	
-	struct fd f = fdget_raw(fd);
+{
+	struct fd f = fdget_raw(fd, CAP_TODO|CAP_FCNTL);
 	long err = -EBADF;
 
-	if (!f.file)
+	if (IS_ERR(f.file)) {
+		err = PTR_ERR(f.file);
 		goto out;
+	}
 
 	if (unlikely(f.file->f_mode & FMODE_PATH)) {
 		if (!check_fcntl_cmd(cmd))
@@ -373,11 +375,13 @@ out:
 SYSCALL_DEFINE3(fcntl64, unsigned int, fd, unsigned int, cmd,
 		unsigned long, arg)
 {	
-	struct fd f = fdget_raw(fd);
+	struct fd f = fdget_raw(fd, CAP_FCNTL);
 	long err = -EBADF;
 
-	if (!f.file)
+	if (IS_ERR(f.file)) {
+		err = PTR_ERR(f.file);
 		goto out;
+	}
 
 	if (unlikely(f.file->f_mode & FMODE_PATH)) {
 		if (!check_fcntl_cmd(cmd))

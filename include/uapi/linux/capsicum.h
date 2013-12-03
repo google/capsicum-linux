@@ -1,6 +1,11 @@
 #ifndef _UAPI_LINUX_CAPSICUM_H
 #define _UAPI_LINUX_CAPSICUM_H
 
+/* TODO(drysdale): remove this and all uses. */
+/* Temporary marker indicating internal file use whose necessary rights have not
+ * yet been determined. */
+#define CAP_TODO                CAP_NONE
+
 /* General file I/O. */
 #define CAP_NONE                0x0000000000000000ULL   /* None required */
 #define CAP_READ                0x0000000000000001ULL   /* read/recv */

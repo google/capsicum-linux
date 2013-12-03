@@ -118,9 +118,9 @@ int hpux_getdents(unsigned int fd, struct hpux_dirent __user *dirent, unsigned i
 	};
 	int error;
 
-	arg = fdget(fd);
-	if (!arg.file)
-		return -EBADF;
+	arg = fdget(fd, CAP_READ|CAP_SEEK);
+	if (IS_ERR(arg.file))
+		return PTR_ERR(arg.file);
 
 	error = iterate_dir(arg.file, &buf.ctx);
 	if (error >= 0)

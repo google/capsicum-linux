@@ -267,9 +267,9 @@ EXPORT_SYMBOL(vfs_llseek);
 SYSCALL_DEFINE3(lseek, unsigned int, fd, off_t, offset, unsigned int, whence)
 {
 	off_t retval;
-	struct fd f = fdget(fd);
-	if (!f.file)
-		return -EBADF;
+	struct fd f = fdget(fd, CAP_SEEK);
+	if (IS_ERR(f.file))
+		return PTR_ERR(f.file);
 
 	retval = -EINVAL;
 	if (whence <= SEEK_MAX) {
@@ -295,11 +295,11 @@ SYSCALL_DEFINE5(llseek, unsigned int, fd, unsigned long, offset_high,
 		unsigned int, whence)
 {
 	int retval;
-	struct fd f = fdget(fd);
+	struct fd f = fdget(fd, CAP_SEEK);
 	loff_t offset;
 
-	if (!f.file)
-		return -EBADF;
+	if (IS_ERR(f.file))
+		return PTR_ERR(f.file);
 
 	retval = -EINVAL;
 	if (whence > SEEK_MAX)
@@ -500,15 +500,17 @@ static inline void file_pos_write(struct file *file, loff_t pos)
 
 SYSCALL_DEFINE3(read, unsigned int, fd, char __user *, buf, size_t, count)
 {
-	struct fd f = fdget(fd);
-	ssize_t ret = -EBADF;
+	struct fd f = fdget(fd, CAP_READ|CAP_SEEK);
+	ssize_t ret;
 
-	if (f.file) {
+	if (!IS_ERR(f.file)) {
 		loff_t pos = file_pos_read(f.file);
 		ret = vfs_read(f.file, buf, count, &pos);
 		if (ret >= 0)
 			file_pos_write(f.file, pos);
 		fdput(f);
+	} else {
+		ret = PTR_ERR(f.file);
 	}
 	return ret;
 }
@@ -516,15 +518,17 @@ SYSCALL_DEFINE3(read, unsigned int, fd, char __user *, buf, size_t, count)
 SYSCALL_DEFINE3(write, unsigned int, fd, const char __user *, buf,
 		size_t, count)
 {
-	struct fd f = fdget(fd);
-	ssize_t ret = -EBADF;
+	struct fd f = fdget(fd, CAP_WRITE|CAP_SEEK);
+	ssize_t ret;
 
-	if (f.file) {
+	if (!IS_ERR(f.file)) {
 		loff_t pos = file_pos_read(f.file);
 		ret = vfs_write(f.file, buf, count, &pos);
 		if (ret >= 0)
 			file_pos_write(f.file, pos);
 		fdput(f);
+	} else {
+		ret = PTR_ERR(f.file);
 	}
 
 	return ret;
@@ -539,12 +543,14 @@ SYSCALL_DEFINE4(pread64, unsigned int, fd, char __user *, buf,
 	if (pos < 0)
 		return -EINVAL;
 
-	f = fdget(fd);
-	if (f.file) {
+	f = fdget(fd, CAP_READ);
+	if (!IS_ERR(f.file)) {
 		ret = -ESPIPE;
 		if (f.file->f_mode & FMODE_PREAD)
 			ret = vfs_read(f.file, buf, count, &pos);
 		fdput(f);
+	} else {
+		ret = PTR_ERR(f.file);
 	}
 
 	return ret;
@@ -559,12 +565,14 @@ SYSCALL_DEFINE4(pwrite64, unsigned int, fd, const char __user *, buf,
 	if (pos < 0)
 		return -EINVAL;
 
-	f = fdget(fd);
-	if (f.file) {
+	f = fdget(fd, CAP_WRITE);
+	if (!IS_ERR(f.file)) {
 		ret = -ESPIPE;
 		if (f.file->f_mode & FMODE_PWRITE)  
 			ret = vfs_write(f.file, buf, count, &pos);
 		fdput(f);
+	} else {
+		ret = PTR_ERR(f.file);
 	}
 
 	return ret;
@@ -805,15 +813,17 @@ EXPORT_SYMBOL(vfs_writev);
 SYSCALL_DEFINE3(readv, unsigned long, fd, const struct iovec __user *, vec,
 		unsigned long, vlen)
 {
-	struct fd f = fdget(fd);
-	ssize_t ret = -EBADF;
+	struct fd f = fdget(fd, CAP_READ);
+	ssize_t ret;
 
-	if (f.file) {
+	if (!IS_ERR(f.file)) {
 		loff_t pos = file_pos_read(f.file);
 		ret = vfs_readv(f.file, vec, vlen, &pos);
 		if (ret >= 0)
 			file_pos_write(f.file, pos);
 		fdput(f);
+	} else {
+		ret = PTR_ERR(f.file);
 	}
 
 	if (ret > 0)
@@ -825,15 +835,17 @@ SYSCALL_DEFINE3(readv, unsigned long, fd, const struct iovec __user *, vec,
 SYSCALL_DEFINE3(writev, unsigned long, fd, const struct iovec __user *, vec,
 		unsigned long, vlen)
 {
-	struct fd f = fdget(fd);
-	ssize_t ret = -EBADF;
+	struct fd f = fdget(fd, CAP_WRITE);
+	ssize_t ret;
 
-	if (f.file) {
+	if (!IS_ERR(f.file)) {
 		loff_t pos = file_pos_read(f.file);
 		ret = vfs_writev(f.file, vec, vlen, &pos);
 		if (ret >= 0)
 			file_pos_write(f.file, pos);
 		fdput(f);
+	} else {
+		ret = PTR_ERR(f.file);
 	}
 
 	if (ret > 0)
@@ -853,17 +865,19 @@ SYSCALL_DEFINE5(preadv, unsigned long, fd, const struct iovec __user *, vec,
 {
 	loff_t pos = pos_from_hilo(pos_h, pos_l);
 	struct fd f;
-	ssize_t ret = -EBADF;
+	ssize_t ret;
 
 	if (pos < 0)
 		return -EINVAL;
 
-	f = fdget(fd);
-	if (f.file) {
+	f = fdget(fd, CAP_READ);
+	if (!IS_ERR(f.file)) {
 		ret = -ESPIPE;
 		if (f.file->f_mode & FMODE_PREAD)
 			ret = vfs_readv(f.file, vec, vlen, &pos);
 		fdput(f);
+	} else {
+		ret = PTR_ERR(f.file);
 	}
 
 	if (ret > 0)
@@ -877,17 +891,19 @@ SYSCALL_DEFINE5(pwritev, unsigned long, fd, const struct iovec __user *, vec,
 {
 	loff_t pos = pos_from_hilo(pos_h, pos_l);
 	struct fd f;
-	ssize_t ret = -EBADF;
+	ssize_t ret;
 
 	if (pos < 0)
 		return -EINVAL;
 
-	f = fdget(fd);
-	if (f.file) {
+	f = fdget(fd, CAP_WRITE);
+	if (!IS_ERR(f.file)) {
 		ret = -ESPIPE;
 		if (f.file->f_mode & FMODE_PWRITE)
 			ret = vfs_writev(f.file, vec, vlen, &pos);
 		fdput(f);
+	} else {
+		ret = PTR_ERR(f.file);
 	}
 
 	if (ret > 0)
@@ -984,12 +1000,12 @@ COMPAT_SYSCALL_DEFINE3(readv, unsigned long, fd,
 		const struct compat_iovec __user *,vec,
 		unsigned long, vlen)
 {
-	struct fd f = fdget(fd);
+	struct fd f = fdget(fd, CAP_READ);
 	ssize_t ret;
 	loff_t pos;
 
-	if (!f.file)
-		return -EBADF;
+	if (IS_ERR(f.file))
+		return PTR_ERR(f.file);
 	pos = f.file->f_pos;
 	ret = compat_readv(f.file, vec, vlen, &pos);
 	if (ret >= 0)
@@ -1007,9 +1023,9 @@ COMPAT_SYSCALL_DEFINE4(preadv64, unsigned long, fd,
 
 	if (pos < 0)
 		return -EINVAL;
-	f = fdget(fd);
-	if (!f.file)
-		return -EBADF;
+	f = fdget(fd, CAP_READ);
+	if (IS_ERR(f.file))
+		return PTR_ERR(f.file);
 	ret = -ESPIPE;
 	if (f.file->f_mode & FMODE_PREAD)
 		ret = compat_readv(f.file, vec, vlen, &pos);
@@ -1051,12 +1067,12 @@ COMPAT_SYSCALL_DEFINE3(writev, unsigned long, fd,
 		const struct compat_iovec __user *, vec,
 		unsigned long, vlen)
 {
-	struct fd f = fdget(fd);
+	struct fd f = fdget(fd, CAP_WRITE);
 	ssize_t ret;
 	loff_t pos;
 
-	if (!f.file)
-		return -EBADF;
+	if (IS_ERR(f.file))
+		return PTR_ERR(f.file);
 	pos = f.file->f_pos;
 	ret = compat_writev(f.file, vec, vlen, &pos);
 	if (ret >= 0)
@@ -1074,9 +1090,9 @@ COMPAT_SYSCALL_DEFINE4(pwritev64, unsigned long, fd,
 
 	if (pos < 0)
 		return -EINVAL;
-	f = fdget(fd);
-	if (!f.file)
-		return -EBADF;
+	f = fdget(fd, CAP_WRITE);
+	if (IS_ERR(f.file))
+		return PTR_ERR(f.file);
 	ret = -ESPIPE;
 	if (f.file->f_mode & FMODE_PWRITE)
 		ret = compat_writev(f.file, vec, vlen, &pos);
@@ -1107,9 +1123,11 @@ static ssize_t do_sendfile(int out_fd, int in_fd, loff_t *ppos,
 	 * Get input file, and verify that it is ok..
 	 */
 	retval = -EBADF;
-	in = fdget(in_fd);
-	if (!in.file)
+	in = fdget(in_fd, CAP_READ);
+	if (IS_ERR(in.file)) {
+		retval = PTR_ERR(in.file);
 		goto out;
+	}
 	if (!(in.file->f_mode & FMODE_READ))
 		goto fput_in;
 	retval = -ESPIPE;
@@ -1129,9 +1147,11 @@ static ssize_t do_sendfile(int out_fd, int in_fd, loff_t *ppos,
 	 * Get output file, and verify that it is ok..
 	 */
 	retval = -EBADF;
-	out = fdget(out_fd);
-	if (!out.file)
+	out = fdget(out_fd, CAP_WRITE);
+	if (IS_ERR(out.file)) {
+		retval = PTR_ERR(out.file);
 		goto fput_in;
+	}
 	if (!(out.file->f_mode & FMODE_WRITE))
 		goto fput_out;
 	retval = -EINVAL;

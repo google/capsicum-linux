@@ -978,9 +978,9 @@ SYSCALL_DEFINE5(mq_timedsend, mqd_t, mqdes, const char __user *, u_msg_ptr,
 
 	audit_mq_sendrecv(mqdes, msg_len, msg_prio, timeout ? &ts : NULL);
 
-	f = fdget(mqdes);
-	if (unlikely(!f.file)) {
-		ret = -EBADF;
+	f = fdget(mqdes, CAP_WRITE);
+	if (unlikely(IS_ERR(f.file))) {
+		ret = PTR_ERR(f.file);
 		goto out;
 	}
 
@@ -1094,9 +1094,9 @@ SYSCALL_DEFINE5(mq_timedreceive, mqd_t, mqdes, char __user *, u_msg_ptr,
 
 	audit_mq_sendrecv(mqdes, msg_len, 0, timeout ? &ts : NULL);
 
-	f = fdget(mqdes);
-	if (unlikely(!f.file)) {
-		ret = -EBADF;
+	f = fdget(mqdes, CAP_READ);
+	if (unlikely(IS_ERR(f.file))) {
+		ret = PTR_ERR(f.file);
 		goto out;
 	}
 
@@ -1229,9 +1229,9 @@ SYSCALL_DEFINE2(mq_notify, mqd_t, mqdes,
 			skb_put(nc, NOTIFY_COOKIE_LEN);
 			/* and attach it to the socket */
 retry:
-			f = fdget(notification.sigev_signo);
-			if (!f.file) {
-				ret = -EBADF;
+			f = fdget(notification.sigev_signo, CAP_POLL_EVENT);
+			if (IS_ERR(f.file)) {
+				ret = PTR_ERR(f.file);
 				goto out;
 			}
 			sock = netlink_getsockbyfilp(f.file);
@@ -1254,9 +1254,9 @@ retry:
 		}
 	}
 
-	f = fdget(mqdes);
-	if (!f.file) {
-		ret = -EBADF;
+	f = fdget(mqdes, CAP_POLL_EVENT);
+	if (IS_ERR(f.file)) {
+		ret = PTR_ERR(f.file);
 		goto out;
 	}
 
@@ -1328,9 +1328,9 @@ SYSCALL_DEFINE3(mq_getsetattr, mqd_t, mqdes,
 			return -EINVAL;
 	}
 
-	f = fdget(mqdes);
-	if (!f.file) {
-		ret = -EBADF;
+	f = fdget(mqdes, CAP_POLL_EVENT);
+	if (IS_ERR(f.file)) {
+		ret = PTR_ERR(f.file);
 		goto out;
 	}
 

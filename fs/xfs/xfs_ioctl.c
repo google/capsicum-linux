@@ -77,9 +77,9 @@ xfs_find_handle(
 	struct xfs_inode	*ip;
 
 	if (cmd == XFS_IOC_FD_TO_HANDLE) {
-		f = fdget(hreq->fd);
-		if (!f.file)
-			return -EBADF;
+		f = fdget(hreq->fd, CAP_TODO);
+		if (IS_ERR(f.file))
+			return PTR_ERR(f.file);
 		inode = file_inode(f.file);
 	} else {
 		error = user_lpath((const char __user *)hreq->path, &path);

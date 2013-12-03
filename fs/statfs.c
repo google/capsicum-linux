@@ -94,11 +94,13 @@ retry:
 
 int fd_statfs(int fd, struct kstatfs *st)
 {
-	struct fd f = fdget(fd);
-	int error = -EBADF;
-	if (f.file) {
+	struct fd f = fdget(fd, CAP_FSTATFS);
+	int error;
+	if (!IS_ERR(f.file)) {
 		error = vfs_statfs(&f.file->f_path, st);
 		fdput(f);
+	} else {
+		error = PTR_ERR(f.file);
 	}
 	return error;
 }

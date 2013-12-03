@@ -785,12 +785,12 @@ static int p9_fd_open(struct p9_client *client, int rfd, int wfd)
 	if (!ts)
 		return -ENOMEM;
 
-	ts->rd = fget(rfd);
-	ts->wr = fget(wfd);
-	if (!ts->rd || !ts->wr) {
-		if (ts->rd)
+	ts->rd = fget(rfd, CAP_TODO|CAP_READ);
+	ts->wr = fget(wfd, CAP_TODO|CAP_WRITE);
+	if (IS_ERR(ts->rd) || IS_ERR(ts->wr)) {
+		if (!IS_ERR(ts->rd))
 			fput(ts->rd);
-		if (ts->wr)
+		if (!IS_ERR(ts->wr))
 			fput(ts->wr);
 		kfree(ts);
 		return -EIO;
