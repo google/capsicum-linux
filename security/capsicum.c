@@ -58,19 +58,9 @@
  *   in next_new_cap in the meanwhile (and store its rights in new_cap_rights).
  * Stored in current->cred->security.
  */
+/* TODO(drysdale): remove this structure and re-write openat to be
+ * capability-aware; involves removing all references to pending; also remove file_ */
 struct capsicum_pending_syscall {
-	/*
-	 * For most syscalls, use the array of fd/struct file pairs defined
-	 * inline in this structure.
-	 */
-	unsigned int inline_fds[6];
-	struct file *inline_files[6];
-
-	unsigned int *fds;
-	struct file **files;
-	int next_free;
-	int fd_count;
-
 	/* Pre-allocated capability and associated rights */
 	struct file *next_new_cap;
 	u64 new_cap_rights;
@@ -143,56 +133,15 @@ static struct capsicum_pending_syscall *capsicum_alloc_pending_syscall(void)
 				return ERR_PTR(-ENOMEM);
 			}
 			cred->security = pending;
-			pending->fd_count = ARRAY_SIZE(pending->inline_files);
-			pending->fds = &(pending->inline_fds[0]);
-			pending->files = &(pending->inline_files[0]);
 		}
 
 		pending->new_cap_rights = (u64)-1;
-		pending->next_free = 0;
 		pending->next_new_cap = NULL;
 		pending->task = current;
 		commit_creds(cred);
 	}
 
 	return pending;
-}
-
-/*
- * Ensure that the given capsicum_pending_syscall has enough space to record the
- * given number of fd/struct file pairs.
- */
-static void capsicum_realloc_pending_syscall(struct capsicum_pending_syscall *pending,
-					int numfds)
-{
-	unsigned int *mem_fds;
-	struct file **mem_files;
-	if (numfds <= pending->fd_count)
-		return;
-
-	/*
-	 * Allocate space.  If we fail, continue anyway and hope that the limit
-	 * doesn't get hit.
-	 */
-	mem_fds = kmalloc(numfds * sizeof(unsigned int), GFP_KERNEL);
-	if (!mem_fds)
-		return;
-	mem_files = kmalloc(numfds * sizeof(struct file_struct *), GFP_KERNEL);
-	if (!mem_files) {
-		kfree(mem_fds);
-		return;
-	}
-
-	/* Free any existing dynamic memory */
-	if (pending->fds != &(pending->inline_fds[0])) {
-		kfree(pending->fds);
-	}
-	if (pending->files != &(pending->inline_files[0])) {
-		kfree(pending->files);
-	}
-	pending->fd_count = numfds;
-	pending->fds = mem_fds;
-	pending->files = mem_files;
 }
 
 /*
@@ -292,56 +241,6 @@ err_put_unused_fd:
 	return error;
 }
 
-/*
- * Check whether the given file descriptor/capability has the required rights,
- * and generated a corresponding anti-TOCTOU record in pending.
- * Returns 0 if the rights are available, <0 on error.
- */
-static int capsicum_require_rights(struct capsicum_pending_syscall *pending,
-				unsigned long fd, u64 required_rights)
-{
-	struct file *file;
-	u64 actual_rights = (u64)-1;
-	int result = -1;
-	BUG_ON(!pending);
-
-	/* Disallow lookups relative to current directory in capability mode */
-	if (fd == AT_FDCWD)
-		return -ECAPMODE;
-
-	rcu_read_lock();
-
-	file = fcheck(fd);
-	if (!file) {
-		result = -EBADF;
-		goto out;
-	}
-	capsicum_unwrap(file, &actual_rights);
-
-	if (pending->next_free >= pending->fd_count) {
-		result = -ENOMEM;
-		goto out;
-	}
-	/*
-	 * Make an anti-TOCTOU record. We record the identity of the file
-	 * this fd points to in thread-local data, at the same time as
-	 * we check its permissions. The fget() hook can then check that it's
-	 * looking up the same file we checked permissions on, preventing
-	 * an exploitable race condition.
-	 */
-	pending->fds[pending->next_free] = fd;
-	pending->files[pending->next_free] = file;
-	pending->next_free++;
-
-	if ((actual_rights & required_rights) == required_rights)
-		result = 0;
-	else
-		result = -ENOTCAPABLE;
-out:
-	rcu_read_unlock();
-	return result;
-}
-
 /* Include the per-syscall processing code */
 #include "capsicum_syscall_table.h"
 
@@ -352,45 +251,58 @@ out:
 int capsicum_intercept_syscall(int arch, int callnr, unsigned long *args)
 {
 	int result;
-	struct capsicum_pending_syscall *pending;
 	u64 existing_rights;
 
 	if (!capsicum_enabled)
 		return 0;
 
-	pending = capsicum_alloc_pending_syscall();
-	if (IS_ERR(pending))
-		return PTR_ERR(pending);
-
-	pending->next_free = 0;
-	pending->new_cap_rights = 0;
-	result = capsicum_run_syscall_table(pending, arch, callnr, args);
+	result = capsicum_run_syscall_table(arch, callnr, args);
 
 	existing_rights = (u64)-1;
-	if (result == 0 && callnr == __NR_openat &&
-		capsicum_unwrap(pending->files[0], &existing_rights)) {
-		/*
-		 * We are performing openat(capfd,...) on a capability. This is
-		 * the only way (other than cap_new(2)) of creating a new
-		 * capability; pre-allocate a capability in this case so that
-		 * when we come to install the new file descriptor, we can
-		 * substitute in this capability wrapper (in
-		 * capsicum_file_install).
-		 */
-		BUG_ON(!pending->files[0]);
-		if (!pending->next_new_cap) {
-			pending->next_new_cap = capsicum_cap_alloc();
-			if (IS_ERR(pending->next_new_cap))
-				return PTR_ERR(pending->next_new_cap);
+	if (result == 0 && callnr == __NR_openat) {
+		struct file *file;
+		rcu_read_lock();
+		file = fcheck(args[0]);
+		if (!file) {
+			rcu_read_unlock();
+			return -EBADF;
 		}
-		/*
-		 * Can theoretically find an existing pre-allocated capability
-		 * hanging off the capsicum_pending_syscall if an earlier call
-		 * to openat(capfd,...) for this thread failed later in the
-		 * syscall processing (before the fd got installed). Re-use the
-		 * capability, but update the rights.
-		 */
-		pending->new_cap_rights = existing_rights;
+		if (capsicum_unwrap(file, &existing_rights)) {
+			/*
+			 * We are performing openat(capfd,...) on a
+			 * capability. This is the only way (other than
+			 * cap_new(2)) of creating a new capability;
+			 * pre-allocate a capability in this case so that when
+			 * we come to install the new file descriptor, we can
+			 * substitute in this capability wrapper (in
+			 * capsicum_file_install).
+			 */
+			struct capsicum_pending_syscall *pending;
+			pending = capsicum_alloc_pending_syscall();
+			if (IS_ERR(pending)) {
+				rcu_read_unlock();
+				return PTR_ERR(pending);
+			}
+			pending->new_cap_rights = 0;
+
+			if (!pending->next_new_cap) {
+				pending->next_new_cap = capsicum_cap_alloc();
+				if (IS_ERR(pending->next_new_cap)) {
+					rcu_read_unlock();
+					return PTR_ERR(pending->next_new_cap);
+				}
+			}
+			/*
+			 * Can theoretically find an existing pre-allocated
+			 * capability hanging off the capsicum_pending_syscall
+			 * if an earlier call to openat(capfd,...) for this
+			 * thread failed later in the syscall processing (before
+			 * the fd got installed). Re-use the capability, but
+			 * update the rights.
+			 */
+			pending->new_cap_rights = existing_rights;
+		}
+		rcu_read_unlock();
 	}
 
 	return result;
@@ -542,6 +454,7 @@ static struct file *capsicum_file_lookup(struct file *file, u64 required_rights)
  * last file to be looked up was a capability, we wrap the file we are about to
  * install in a capability with the same rights.
  */
+/* TODO(drysdale): remove this (and the hook) when openat(2) is made cap-aware */
 static struct file *capsicum_file_install(struct file *file, unsigned int fd)
 {
 	struct capsicum_pending_syscall *pending;
@@ -594,13 +507,6 @@ static void capsicum_cred_free(struct cred *cred)
 	struct capsicum_pending_syscall *pending = cred->security;
 	cred->security = NULL;
 	if (pending) {
-		/* Free any anti-TOCTOU dynamic memory */
-		if (pending->fds != &(pending->inline_fds[0])) {
-			kfree(pending->fds);
-		}
-		if (pending->files != &(pending->inline_files[0])) {
-			kfree(pending->files);
-		}
 		if (pending->next_new_cap) {
 			/* We're freeing a thread-local storage structure that
 			 * has a pre-allocated capability hanging off it, so
@@ -617,9 +523,6 @@ static int capsicum_cred_alloc_blank(struct cred *cred, gfp_t gfp)
 	pending = kzalloc(sizeof(struct capsicum_pending_syscall), gfp);
 	if (!pending)
 		return -ENOMEM;
-	pending->fd_count = ARRAY_SIZE(pending->inline_files);
-	pending->fds = &(pending->inline_fds[0]);
-	pending->files = &(pending->inline_files[0]);
 	pending->task = current;
 	cred->security = pending;
 	return 0;
