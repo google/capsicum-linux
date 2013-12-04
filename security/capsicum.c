@@ -63,7 +63,7 @@
 struct capsicum_pending_syscall {
 	/* Pre-allocated capability and associated rights */
 	struct file *next_new_cap;
-	u64 new_cap_rights;
+	cap_rights_t new_cap_rights;
 	/*
 	 * The back-reference to the task-struct allows us to detect when
 	 * the cred struct gets shared between tasks, and un-share it.
@@ -77,7 +77,7 @@ struct capsicum_pending_syscall {
  * not another capability. Stored in file->private_data.
  */
 struct capsicum_capability {
-	u64 rights;
+	cap_rights_t rights;
 	struct file *underlying;
 };
 
@@ -135,7 +135,7 @@ static struct capsicum_pending_syscall *capsicum_alloc_pending_syscall(void)
 			cred->security = pending;
 		}
 
-		pending->new_cap_rights = (u64)-1;
+		pending->new_cap_rights = CAP_ALL;
 		pending->next_new_cap = NULL;
 		pending->task = current;
 		commit_creds(cred);
@@ -178,7 +178,8 @@ static struct file *capsicum_cap_alloc(void)
  * Initialise an already-allocated capability object. to point to the given
  * underlying file with the given rights.
  */
-static void capsicum_cap_set(struct file *capf, struct file *underlying, u64 rights)
+static void capsicum_cap_set(struct file *capf, struct file *underlying,
+			cap_rights_t rights)
 {
 	struct capsicum_capability *cap = capf->private_data;
 
@@ -193,7 +194,8 @@ static void capsicum_cap_set(struct file *capf, struct file *underlying, u64 rig
  * If rights is non-NULL, the capability's rights will be stored there too.
  * If cap is not a capability, returns NULL.
  */
-static struct file *capsicum_unwrap(const struct file *capf, u64 *rights)
+static struct file *capsicum_unwrap(const struct file *capf,
+				cap_rights_t *rights)
 {
 	struct capsicum_capability *cap;
 
@@ -212,7 +214,7 @@ static struct file *capsicum_unwrap(const struct file *capf, u64 *rights)
  * Wrap a file in a new capability object and install the capability object into
  * the file descriptor table.
  */
-static int capsicum_install_fd(struct file *orig, u64 rights)
+static int capsicum_install_fd(struct file *orig, cap_rights_t rights)
 {
 	int error, fd;
 	struct file *file;
@@ -251,14 +253,14 @@ err_put_unused_fd:
 int capsicum_intercept_syscall(int arch, int callnr, unsigned long *args)
 {
 	int result;
-	u64 existing_rights;
+	cap_rights_t existing_rights;
 
 	if (!capsicum_enabled)
 		return 0;
 
 	result = capsicum_run_syscall_table(arch, callnr, args);
 
-	existing_rights = (u64)-1;
+	existing_rights = CAP_ALL;
 	if (result == 0 && callnr == __NR_openat) {
 		struct file *file;
 		rcu_read_lock();
@@ -308,11 +310,11 @@ int capsicum_intercept_syscall(int arch, int callnr, unsigned long *args)
 	return result;
 }
 
-static int do_sys_cap_new(unsigned int orig_fd, u64 new_rights)
+static int do_sys_cap_new(unsigned int orig_fd, cap_rights_t new_rights)
 {
 	struct file *file;
 	struct files_struct *files = current->files;
-	u64 existing_rights = (u64)-1;
+	cap_rights_t existing_rights = CAP_ALL;
 
 	rcu_read_lock();
 	file = fcheck_files(files, orig_fd);
@@ -342,7 +344,7 @@ SYSCALL_DEFINE2(cap_new, unsigned int, orig_fd, u64, new_rights)
 	if (!capsicum_enabled)
 		return -ENOSYS;
 
-	return do_sys_cap_new(orig_fd, new_rights);
+	return do_sys_cap_new(orig_fd, (cap_rights_t)new_rights);
 }
 
 SYSCALL_DEFINE2(cap_getrights, unsigned int, fd, u64 __user *, rightsp)
@@ -350,7 +352,7 @@ SYSCALL_DEFINE2(cap_getrights, unsigned int, fd, u64 __user *, rightsp)
 	int result;
 	struct file *file;
 	struct files_struct *files = current->files;
-	u64 rights = (u64)-1;
+        cap_rights_t rights = CAP_ALL;
 
 	rcu_read_lock();
 	file = fcheck_files(files, fd);
@@ -434,9 +436,10 @@ static void capsicum_panic_not_unwrapped(void)
  * the file we are unwrapping is the same as the one which was examined in
  * capsicum_intercept_syscall().
  */
-static struct file *capsicum_file_lookup(struct file *file, u64 required_rights)
+static struct file *capsicum_file_lookup(struct file *file,
+					 cap_rights_t required_rights)
 {
-	u64 rights;
+	cap_rights_t rights;
 	struct file *underlying;
 
 	/* See if the file in question is a capability. */
@@ -467,7 +470,7 @@ static struct file *capsicum_file_install(struct file *file, unsigned int fd)
 	if (!pending)
 		return file;
 
-	if (pending->new_cap_rights == (u64)-1 || !pending->next_new_cap)
+	if (pending->new_cap_rights == CAP_ALL || !pending->next_new_cap)
 		return file;
 
 	/* We are in the middle of processing a system call that allocates a few

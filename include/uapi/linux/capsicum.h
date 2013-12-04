@@ -1,6 +1,8 @@
 #ifndef _UAPI_LINUX_CAPSICUM_H
 #define _UAPI_LINUX_CAPSICUM_H
 
+typedef __u64 cap_rights_t;
+
 /* TODO(drysdale): remove this and all uses. */
 /* Temporary marker indicating internal file use whose necessary rights have not
  * yet been determined. */
@@ -91,5 +93,8 @@
 
 /* The mask of all valid method rights. */
 #define CAP_MASK_VALID          0x007fffffffffffffULL
+
+/* All possible method rights. */
+#define CAP_ALL                 0xFfffffffffffffffULL
 
 #endif /* _UAPI_LINUX_CAPSICUM_H */

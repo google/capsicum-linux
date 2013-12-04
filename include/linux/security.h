@@ -24,6 +24,7 @@
 
 #include <linux/key.h>
 #include <linux/capability.h>
+#include <linux/capsicum.h>
 #include <linux/slab.h>
 #include <linux/err.h>
 #include <linux/string.h>
@@ -1569,7 +1570,8 @@ struct security_operations {
 	int (*file_receive) (struct file *file);
 	int (*file_open) (struct file *file, const struct cred *cred);
 	int (*path_lookup) (struct dentry *dentry, const char *name);
-	struct file *(*file_lookup) (struct file *orig, u64 required_rights);
+	struct file *(*file_lookup) (struct file *orig,
+				     cap_rights_t required_rights);
 	struct file *(*file_install) (struct file *orig, unsigned int fd);
 
 	int (*task_create) (unsigned long clone_flags);
@@ -1843,7 +1845,8 @@ int security_file_send_sigiotask(struct task_struct *tsk,
 int security_file_receive(struct file *file);
 int security_file_open(struct file *file, const struct cred *cred);
 int security_path_lookup(struct dentry *dentry, const char *name);
-struct file *security_file_lookup(struct file *orig, u64 required_rights);
+struct file *security_file_lookup(struct file *orig,
+				  cap_rights_t required_rights);
 struct file *security_file_install(struct file *orig, unsigned int fd);
 int security_task_create(unsigned long clone_flags);
 void security_task_free(struct task_struct *task);
@@ -2340,7 +2343,7 @@ static inline int security_file_open(struct file *file,
 }
 
 static inline struct file *security_file_lookup(struct file *orig,
-						u64 required_rights)
+						cap_rights_t required_rights)
 {
 	return orig;
 }

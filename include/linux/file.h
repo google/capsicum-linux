@@ -38,23 +38,26 @@ static inline void fdput(struct fd fd)
 		fput(fd.file);
 }
 
-extern struct file *fget(unsigned int fd, u64 required_rights);
-extern struct file *fget_light(unsigned int fd, u64 required_rights,
+extern struct file *fget(unsigned int fd, cap_rights_t required_rights);
+extern struct file *fget_light(unsigned int fd, cap_rights_t required_rights,
 			int *fput_needed);
 
-static inline struct fd fdget(unsigned int fd, u64 required_rights)
+static inline struct fd fdget(unsigned int fd, cap_rights_t required_rights)
 {
 	int b;
 	struct file *f = fget_light(fd, required_rights, &b);
 	return (struct fd){f,b};
 }
 
-extern struct file *fget_raw(unsigned int fd, u64 required_rights);
-extern struct file *fget_raw_no_unwrap(unsigned int fd, u64 required_rights);
-extern struct file *fget_raw_light(unsigned int fd, u64 required_rights,
+extern struct file *fget_raw(unsigned int fd, cap_rights_t required_rights);
+extern struct file *fget_raw_no_unwrap(unsigned int fd,
+				cap_rights_t required_rights);
+extern struct file *fget_raw_light(unsigned int fd,
+				cap_rights_t required_rights,
 				int *fput_needed);
 
-static inline struct fd fdget_raw(unsigned int fd, u64 required_rights)
+static inline struct fd fdget_raw(unsigned int fd,
+				cap_rights_t required_rights)
 {
 	int b;
 	struct file *f = fget_raw_light(fd, required_rights, &b);
