@@ -1837,7 +1837,7 @@ static int link_path_walk(const char *name, struct nameidata *nd)
 }
 
 static int path_init(int dfd, const char *name, unsigned int flags,
-		     struct nameidata *nd, struct file **fp)
+		struct nameidata *nd, struct file **fp, cap_rights_t *rights)
 {
 	int retval = 0;
 
@@ -1897,9 +1897,10 @@ static int path_init(int dfd, const char *name, unsigned int flags,
 		}
 	} else {
 		/* Caller must check execute permissions on the starting path component */
-		struct fd f = fdget_raw(dfd, CAP_LOOKUP);
+		struct fd f;
 		struct dentry *dentry;
 
+		f.file = fget_raw_light(dfd, CAP_LOOKUP, rights, &f.need_put);
 		if (IS_ERR(f.file))
 			return PTR_ERR(f.file);
 
@@ -1959,7 +1960,7 @@ static int path_lookupat(int dfd, const char *name,
 	 * be handled by restarting a traditional ref-walk (which will always
 	 * be able to complete).
 	 */
-	err = path_init(dfd, name, flags | LOOKUP_PARENT, nd, &base);
+	err = path_init(dfd, name, flags | LOOKUP_PARENT, nd, &base, NULL);
 
 	if (unlikely(err))
 		return err;
@@ -2978,6 +2979,7 @@ out:
 static struct file *path_openat(int dfd, struct filename *pathname,
 		struct nameidata *nd, const struct open_flags *op, int flags)
 {
+	cap_rights_t base_rights = CAP_ALL;
 	struct file *base = NULL;
 	struct file *file;
 	struct path path;
@@ -2995,7 +2997,7 @@ static struct file *path_openat(int dfd, struct filename *pathname,
 		goto out;
 	}
 
-	error = path_init(dfd, pathname->name, flags | LOOKUP_PARENT, nd, &base);
+	error = path_init(dfd, pathname->name, flags | LOOKUP_PARENT, nd, &base, &base_rights);
 	if (unlikely(error))
 		goto out;
 
@@ -3024,6 +3026,15 @@ static struct file *path_openat(int dfd, struct filename *pathname,
 			break;
 		error = do_last(nd, &path, file, op, &opened, pathname);
 		put_link(nd, &link, cookie);
+	}
+	if (!error) {
+		struct file *repl_file = security_file_openat(base_rights, file);
+		if (IS_ERR(repl_file)) {
+			error = PTR_ERR(repl_file);
+			goto out;
+		} else {
+			file = repl_file;
+		}
 	}
 out:
 	if (nd->root.mnt && !(nd->flags & LOOKUP_ROOT))
