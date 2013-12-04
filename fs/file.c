@@ -720,7 +720,7 @@ struct file *fget_raw(unsigned int fd, cap_rights_t required_rights)
 }
 EXPORT_SYMBOL(fget_raw);
 
-struct file *fget_raw_no_unwrap(unsigned int fd, cap_rights_t required_rights)
+struct file *fget_raw_no_unwrap(unsigned int fd)
 {
 	struct file *file;
 	struct files_struct *files = current->files;

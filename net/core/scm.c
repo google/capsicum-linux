@@ -104,7 +104,7 @@ static int scm_fp_copy(struct cmsghdr *cmsg, struct scm_fp_list **fplp)
 
 		if (fd < 0)
 			return -EBADF;
-		file = fget_raw_no_unwrap(fd, CAP_TODO|CAP_NONE);
+		file = fget_raw_no_unwrap(fd);
 		if (IS_ERR(file))
 			return PTR_ERR(file);
 		*fpp++ = file;

@@ -50,8 +50,7 @@ static inline struct fd fdget(unsigned int fd, cap_rights_t required_rights)
 }
 
 extern struct file *fget_raw(unsigned int fd, cap_rights_t required_rights);
-extern struct file *fget_raw_no_unwrap(unsigned int fd,
-				cap_rights_t required_rights);
+extern struct file *fget_raw_no_unwrap(unsigned int fd);
 extern struct file *fget_raw_light(unsigned int fd,
 				cap_rights_t required_rights,
 				cap_rights_t *actual_rights,
