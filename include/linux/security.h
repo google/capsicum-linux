@@ -684,11 +684,6 @@ static inline void security_free_mnt_opts(struct security_mnt_opts *opts)
  *    	file has been opened; CAP_ALL for non-relative open()s and non-capabilities.
  *	@file is the newly opened struct file.
  *	Return PTR_ERR holding the struct file to be used.
- * @file_install:
- *	This hook allows security modules to intercept file descriptor
- *	installations. This allows them to change the file installed under
- *	a descriptor (for example, by wrapping it), although it cannot
- *	prevent the installation from occurring at all.
  * @file_open
  *	Save open-time permission checking state for later use upon
  *	file_permission, and recheck access if anything has changed
@@ -1584,7 +1579,6 @@ struct security_operations {
 				     cap_rights_t required_rights,
 				     cap_rights_t *actual_rights);
 	struct file *(*file_openat) (cap_rights_t base_rights, struct file *file);
-	struct file *(*file_install) (struct file *orig, unsigned int fd);
 
 	int (*task_create) (unsigned long clone_flags);
 	void (*task_free) (struct task_struct *task);
@@ -1861,7 +1855,6 @@ struct file *security_file_lookup(struct file *orig,
 				cap_rights_t required_rights,
 				cap_rights_t *actual_rights);
 struct file *security_file_openat(cap_rights_t base_rights, struct file *file);
-struct file *security_file_install(struct file *orig, unsigned int fd);
 int security_task_create(unsigned long clone_flags);
 void security_task_free(struct task_struct *task);
 int security_cred_alloc_blank(struct cred *cred, gfp_t gfp);
@@ -2365,12 +2358,6 @@ static inline struct file *security_file_lookup(struct file *orig,
 static inline int security_fd_alloc(unsigned int fd)
 {
 	return 0;
-}
-
-static inline struct file *security_file_install(struct file *orig,
-						 unsigned int fd)
-{
-	return orig;
 }
 
 static inline int security_path_lookup(struct dentry *dentry, const char *name)
