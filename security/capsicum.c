@@ -48,30 +48,6 @@
 #endif
 
 /*
- * Per-thread Capsicum local state. This is used for two purposes:
- * - To check that file mappings haven't changed between the entry to a
- *   syscall, and the point that the LSM hooks are called to manipulate
- *   file descriptors. This prevents time-of-check/time-of-use (TOCTOU)
- *   races.
- * - When openat() on a capability is called, we pre-allocate a capability
- *   in case it needs wrapping at installation time, and store that capability
- *   in next_new_cap in the meanwhile (and store its rights in new_cap_rights).
- * Stored in current->cred->security.
- */
-/* TODO(drysdale): remove this structure and re-write openat to be
- * capability-aware; involves removing all references to pending; also remove file_ */
-struct capsicum_pending_syscall {
-	/* Pre-allocated capability and associated rights */
-	struct file *next_new_cap;
-	cap_rights_t new_cap_rights;
-	/*
-	 * The back-reference to the task-struct allows us to detect when
-	 * the cred struct gets shared between tasks, and un-share it.
-	 */
-	struct task_struct *task;
-};
-
-/*
  * Capability structure, holding the associated rights and underlying real file.
  * Capabilities are not stacked, i.e. underlying always points to a normal file
  * not another capability. Stored in file->private_data.
@@ -99,64 +75,7 @@ static inline int capsicum_is_cap(const struct file *file)
 }
 
 /*
- * Allocate the thread-local storage we use to record details of the current
- * system call.  If there is already per-thread storage available, re-use that.
- */
-static struct capsicum_pending_syscall *capsicum_alloc_pending_syscall(void)
-{
-	struct capsicum_pending_syscall *pending = current_security();
-
-	if (!pending || pending->task != current) {
-		/*
-		 * Either there is no security data in the per-task credentials,
-		 * or it is for a different thread.  Replace the per-task
-		 * credentials with a new version that does include the security
-		 * data for this thread.
-		 */
-		struct cred *cred;
-
-		cred = prepare_creds();
-		if (!cred)
-			return ERR_PTR(-ENOMEM);
-
-		/*
-		 * If we're unsharing a cred which already points to some other
-		 * thread's capsicum_pending_syscall, capsicum_cred_prepare()
-		 * will have duplicated that capsicum_pending_syscall into our
-		 * new cred - so the memory we need might already be allocated.
-		 */
-		pending = cred->security;
-		if (!pending) {
-			pending = kmalloc(sizeof(*pending), GFP_KERNEL);
-			if (!pending) {
-				abort_creds(cred);
-				return ERR_PTR(-ENOMEM);
-			}
-			cred->security = pending;
-		}
-
-		pending->new_cap_rights = CAP_ALL;
-		pending->next_new_cap = NULL;
-		pending->task = current;
-		commit_creds(cred);
-	}
-
-	return pending;
-}
-
-/*
- * Return the thread-local storage we use to record details of the current
- * system call, if it is present and is associated with the current thread.
- */
-static struct capsicum_pending_syscall *capsicum_get_pending_syscall(void)
-{
-	struct capsicum_pending_syscall *pending = current_security();
-	return (pending && pending->task == current) ? pending : NULL;
-}
-
-/*
- * Allocate a capability object. This is separate from initialisation, because
- * we pre-allocate capabilities for use in capsicum_file_install().
+ * Allocate a capability object.
  */
 static struct file *capsicum_cap_alloc(void)
 {
@@ -252,62 +171,9 @@ err_put_unused_fd:
  */
 int capsicum_intercept_syscall(int arch, int callnr, unsigned long *args)
 {
-	int result;
-	cap_rights_t existing_rights;
-
 	if (!capsicum_enabled)
 		return 0;
-
-	result = capsicum_run_syscall_table(arch, callnr, args);
-
-	existing_rights = CAP_ALL;
-	if (result == 0 && callnr == __NR_openat) {
-		struct file *file;
-		rcu_read_lock();
-		file = fcheck(args[0]);
-		if (!file) {
-			rcu_read_unlock();
-			return -EBADF;
-		}
-		if (capsicum_unwrap(file, &existing_rights)) {
-			/*
-			 * We are performing openat(capfd,...) on a
-			 * capability. This is the only way (other than
-			 * cap_new(2)) of creating a new capability;
-			 * pre-allocate a capability in this case so that when
-			 * we come to install the new file descriptor, we can
-			 * substitute in this capability wrapper (in
-			 * capsicum_file_install).
-			 */
-			struct capsicum_pending_syscall *pending;
-			pending = capsicum_alloc_pending_syscall();
-			if (IS_ERR(pending)) {
-				rcu_read_unlock();
-				return PTR_ERR(pending);
-			}
-			pending->new_cap_rights = 0;
-
-			if (!pending->next_new_cap) {
-				pending->next_new_cap = capsicum_cap_alloc();
-				if (IS_ERR(pending->next_new_cap)) {
-					rcu_read_unlock();
-					return PTR_ERR(pending->next_new_cap);
-				}
-			}
-			/*
-			 * Can theoretically find an existing pre-allocated
-			 * capability hanging off the capsicum_pending_syscall
-			 * if an earlier call to openat(capfd,...) for this
-			 * thread failed later in the syscall processing (before
-			 * the fd got installed). Re-use the capability, but
-			 * update the rights.
-			 */
-			pending->new_cap_rights = existing_rights;
-		}
-		rcu_read_unlock();
-	}
-
-	return result;
+	return capsicum_run_syscall_table(arch, callnr, args);
 }
 
 static int do_sys_cap_new(unsigned int orig_fd, cap_rights_t new_rights)
@@ -488,39 +354,6 @@ static struct file *capsicum_file_openat(cap_rights_t base_rights, struct file *
 }
 
 /*
- * We are about to install @file in @fd. This hook allows us to change which
- * file actually gets stored in the process's file table. In particular, if the
- * last file to be looked up was a capability, we wrap the file we are about to
- * install in a capability with the same rights.
- */
-/* TODO(drysdale): remove this (and the hook) when openat(2) is made cap-aware */
-static struct file *capsicum_file_install(struct file *file, unsigned int fd)
-{
-	struct capsicum_pending_syscall *pending;
-	struct file *capf;
-
-	if (capsicum_is_cap(file))
-		return file;
-
-	pending = capsicum_get_pending_syscall();
-	if (!pending)
-		return file;
-
-	if (pending->new_cap_rights == CAP_ALL || !pending->next_new_cap)
-		return file;
-
-	/* We are in the middle of processing a system call that allocates a few
-	 * file descriptor for a capability, and the system call interception
-	 * process has pre-allocated a capability wrapper for us.  Use it. */
-	capf = pending->next_new_cap;
-	capsicum_cap_set(capf, file, pending->new_cap_rights);
-	pending->next_new_cap = NULL;
-	pending->new_cap_rights = 0;
-
-	return capf;
-}
-
-/*
  * In capability mode, we restrict processes' paths by denying absolute path
  * lookup, and allowing only downward lookups from file descriptors using
  * openat() and friends. We therefore prevent absolute lookups and upward
@@ -537,51 +370,6 @@ static int capsicum_path_lookup(struct dentry *dentry, const char *name)
 
 	if (name[0] == '/')
 		return -ECAPMODE;
-
-	return 0;
-}
-
-static void capsicum_cred_free(struct cred *cred)
-{
-	struct capsicum_pending_syscall *pending = cred->security;
-	cred->security = NULL;
-	if (pending) {
-		if (pending->next_new_cap) {
-			/* We're freeing a thread-local storage structure that
-			 * has a pre-allocated capability hanging off it, so
-			 * free that too. */
-			put_filp(pending->next_new_cap);
-		}
-		kfree(pending);
-	}
-}
-
-static int capsicum_cred_alloc_blank(struct cred *cred, gfp_t gfp)
-{
-	struct capsicum_pending_syscall *pending;
-	pending = kzalloc(sizeof(struct capsicum_pending_syscall), gfp);
-	if (!pending)
-		return -ENOMEM;
-	pending->task = current;
-	cred->security = pending;
-	return 0;
-}
-
-static int capsicum_cred_prepare(struct cred *new, const struct cred *old,
-		gfp_t gfp)
-{
-	const struct capsicum_pending_syscall *old_pending = old->security;
-
-	/*
-	 * Only bother setting up Capsicum cred structure if the old creds had
-	 * one for this task.  This prevents non-Capsicum processes getting the
-	 * overhead of Capsicum.
-	 */
-	if (old_pending && old_pending->task == current) {
-		int ret = capsicum_cred_alloc_blank(new, gfp);
-		if (ret)
-			return ret;
-	}
 
 	return 0;
 }
@@ -636,11 +424,7 @@ struct security_operations capsicum_security_ops = {
 	.name = "capsicum",
 	.file_lookup = capsicum_file_lookup,
 	.file_openat = capsicum_file_openat,
-	.file_install = capsicum_file_install,
 	.path_lookup = capsicum_path_lookup,
-	.cred_alloc_blank = capsicum_cred_alloc_blank,
-	.cred_free = capsicum_cred_free,
-	.cred_prepare = capsicum_cred_prepare,
 };
 
 #include "capsicum_test.c"
