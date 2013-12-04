@@ -676,6 +676,14 @@ static inline void security_free_mnt_opts(struct security_mnt_opts *opts)
  *	Return PTR_ERR holding the unwrapped file.
  *	This hook is called within an rcu_read_lock() section, and is not
  *	expected to obtain or release references to the old or new file.
+ * @file_openat:
+ *	This hook allows security modules to intercept openat() operations
+ *	to perform security checks and to potentially substitute a different file
+ *	descriptor for the newly opened file
+ *	@base_rights is the rights associated with the directory relative to which the
+ *    	file has been opened; CAP_ALL for non-relative open()s and non-capabilities.
+ *	@file is the newly opened struct file.
+ *	Return PTR_ERR holding the struct file to be used.
  * @file_install:
  *	This hook allows security modules to intercept file descriptor
  *	installations. This allows them to change the file installed under
@@ -1575,6 +1583,7 @@ struct security_operations {
 	struct file *(*file_lookup) (struct file *orig,
 				     cap_rights_t required_rights,
 				     cap_rights_t *actual_rights);
+	struct file *(*file_openat) (cap_rights_t base_rights, struct file *file);
 	struct file *(*file_install) (struct file *orig, unsigned int fd);
 
 	int (*task_create) (unsigned long clone_flags);
@@ -1851,6 +1860,7 @@ int security_path_lookup(struct dentry *dentry, const char *name);
 struct file *security_file_lookup(struct file *orig,
 				cap_rights_t required_rights,
 				cap_rights_t *actual_rights);
+struct file *security_file_openat(cap_rights_t base_rights, struct file *file);
 struct file *security_file_install(struct file *orig, unsigned int fd);
 int security_task_create(unsigned long clone_flags);
 void security_task_free(struct task_struct *task);

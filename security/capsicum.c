@@ -457,6 +457,36 @@ static struct file *capsicum_file_lookup(struct file *file,
 	return underlying;
 }
 
+
+static struct file *capsicum_file_openat(cap_rights_t base_rights, struct file *file)
+{
+	cap_rights_t required_rights;
+	struct file *capf;
+	if (base_rights == CAP_ALL)
+		return file;
+
+	/* Now check the directory capability has the appropriate rights */
+	required_rights = (file->f_flags & O_WRONLY) ? CAP_WRITE : CAP_READ;
+	if (file->f_flags & O_RDWR)
+		required_rights |= (CAP_READ|CAP_WRITE);
+	if (file->f_flags & O_CREAT)
+		required_rights |= CAP_WRITE;
+	if (file->f_flags & O_EXCL)
+		required_rights |= CAP_WRITE;
+	if (file->f_flags & O_TRUNC)
+		required_rights |= CAP_WRITE;
+	if ((base_rights & required_rights) != required_rights)
+		return ERR_PTR(-ENOTCAPABLE);
+
+	/* Now allocate the capability file descriptor wrapper */
+	capf = capsicum_cap_alloc();
+	if (IS_ERR(capf))
+		return capf;
+
+	capsicum_cap_set(capf, file, base_rights);
+	return capf;
+}
+
 /*
  * We are about to install @file in @fd. This hook allows us to change which
  * file actually gets stored in the process's file table. In particular, if the
@@ -605,6 +635,7 @@ struct file_operations capsicum_file_ops = {
 struct security_operations capsicum_security_ops = {
 	.name = "capsicum",
 	.file_lookup = capsicum_file_lookup,
+	.file_openat = capsicum_file_openat,
 	.file_install = capsicum_file_install,
 	.path_lookup = capsicum_path_lookup,
 	.cred_alloc_blank = capsicum_cred_alloc_blank,
