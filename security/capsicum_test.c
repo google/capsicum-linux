@@ -169,7 +169,7 @@ TEST_F(fget, fget_raw) {
 
 TEST_F(fget, fget_raw_light) {
 	int fpn;
-	struct file *f = fget_raw_light(self->cap, CAP_NONE, &fpn);
+	struct file *f = fget_raw_light(self->cap, CAP_NONE, NULL, &fpn);
 
 	EXPECT_EQ(f, self->orig);
 	EXPECT_EQ(fpn, 0);

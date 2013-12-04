@@ -656,6 +656,7 @@ void do_close_on_exec(struct files_struct *files)
  */
 static struct file *unwrap_file(struct file *orig,
 				cap_rights_t required_rights,
+				cap_rights_t *actual_rights,
 				bool update_refcnt)
 {
 	struct file *f;
@@ -664,7 +665,7 @@ static struct file *unwrap_file(struct file *orig,
 		return ERR_PTR(-EBADF);
 	if (IS_ERR(orig))
 		return orig;
-	f = security_file_lookup(orig, required_rights);
+	f = security_file_lookup(orig, required_rights, actual_rights);
 	if (f != orig && update_refcnt) {
 		/* We're not returning the original, and the calling code
 		 * has already incremented the refcount on it, we need to
@@ -693,7 +694,7 @@ struct file *fget(unsigned int fd, cap_rights_t required_rights)
 		    !atomic_long_inc_not_zero(&file->f_count))
 			file = ERR_PTR(-EBADF);
 	}
-	file = unwrap_file(file, required_rights, true);
+	file = unwrap_file(file, required_rights, NULL, true);
 	rcu_read_unlock();
 
 	return file;
@@ -712,7 +713,7 @@ struct file *fget_raw(unsigned int fd, cap_rights_t required_rights)
 		if (!atomic_long_inc_not_zero(&file->f_count))
 			file = ERR_PTR(-EBADF);
 	}
-	file = unwrap_file(file, required_rights, true);
+	file = unwrap_file(file, required_rights, NULL, true);
 	rcu_read_unlock();
 
 	return file;
@@ -765,7 +766,7 @@ struct file *fget_light(unsigned int fd, cap_rights_t required_rights,
 		if (file && (file->f_mode & FMODE_PATH))
 			file = ERR_PTR(-EBADF);
 		else
-			file = unwrap_file(file, required_rights, false);
+			file = unwrap_file(file, required_rights, NULL, false);
 	} else {
 		rcu_read_lock();
 		file = fcheck_files(files, fd);
@@ -777,7 +778,7 @@ struct file *fget_light(unsigned int fd, cap_rights_t required_rights,
 				/* Didn't get the reference, someone's freed */
 				file = ERR_PTR(-EBADF);
 		}
-		file = unwrap_file(file, required_rights, true);
+		file = unwrap_file(file, required_rights, NULL, true);
 		rcu_read_unlock();
 	}
 
@@ -786,7 +787,7 @@ struct file *fget_light(unsigned int fd, cap_rights_t required_rights,
 EXPORT_SYMBOL(fget_light);
 
 struct file *fget_raw_light(unsigned int fd, cap_rights_t required_rights,
-			int *fput_needed)
+			cap_rights_t *actual_rights, int *fput_needed)
 {
 	struct file *file;
 	struct files_struct *files = current->files;
@@ -794,7 +795,7 @@ struct file *fget_raw_light(unsigned int fd, cap_rights_t required_rights,
 	*fput_needed = 0;
 	if (atomic_read(&files->count) == 1) {
 		file = fcheck_files(files, fd);
-		file = unwrap_file(file, required_rights, false);
+		file = unwrap_file(file, required_rights, actual_rights, false);
 	} else {
 		rcu_read_lock();
 		file = fcheck_files(files, fd);
@@ -805,7 +806,7 @@ struct file *fget_raw_light(unsigned int fd, cap_rights_t required_rights,
 				/* Didn't get the reference, someone's freed */
 				file = ERR_PTR(-EBADF);
 		}
-		file = unwrap_file(file, required_rights, true);
+		file = unwrap_file(file, required_rights, actual_rights, true);
 		rcu_read_unlock();
 	}
 

@@ -671,6 +671,8 @@ static inline void security_free_mnt_opts(struct security_mnt_opts *opts)
  *	@file is the file in the process's file table, which may be replaced by
  *	another file as the return value from the hook.
  *	@required_rights is the rights that the file descriptor should hold.
+ *	@actual_rights is filled in (if it is non-NLL) with the rights that the
+ *	file descriptor holds.
  *	Return PTR_ERR holding the unwrapped file.
  *	This hook is called within an rcu_read_lock() section, and is not
  *	expected to obtain or release references to the old or new file.
@@ -1571,7 +1573,8 @@ struct security_operations {
 	int (*file_open) (struct file *file, const struct cred *cred);
 	int (*path_lookup) (struct dentry *dentry, const char *name);
 	struct file *(*file_lookup) (struct file *orig,
-				     cap_rights_t required_rights);
+				     cap_rights_t required_rights,
+				     cap_rights_t *actual_rights);
 	struct file *(*file_install) (struct file *orig, unsigned int fd);
 
 	int (*task_create) (unsigned long clone_flags);
@@ -1846,7 +1849,8 @@ int security_file_receive(struct file *file);
 int security_file_open(struct file *file, const struct cred *cred);
 int security_path_lookup(struct dentry *dentry, const char *name);
 struct file *security_file_lookup(struct file *orig,
-				  cap_rights_t required_rights);
+				cap_rights_t required_rights,
+				cap_rights_t *actual_rights);
 struct file *security_file_install(struct file *orig, unsigned int fd);
 int security_task_create(unsigned long clone_flags);
 void security_task_free(struct task_struct *task);

@@ -437,17 +437,23 @@ static void capsicum_panic_not_unwrapped(void)
  * capsicum_intercept_syscall().
  */
 static struct file *capsicum_file_lookup(struct file *file,
-					 cap_rights_t required_rights)
+					cap_rights_t required_rights,
+					cap_rights_t *actual_rights)
 {
 	cap_rights_t rights;
 	struct file *underlying;
 
 	/* See if the file in question is a capability. */
 	underlying = capsicum_unwrap(file, &rights);
-	if (!underlying)
+	if (!underlying) {
+		if (actual_rights)
+			*actual_rights = CAP_ALL;
 		return file;
+	}
 	if ((rights & required_rights) != required_rights)
 		return ERR_PTR(-ENOTCAPABLE);
+	if (actual_rights)
+		*actual_rights = rights;
 	return underlying;
 }
 

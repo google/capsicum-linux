@@ -787,9 +787,10 @@ int security_file_open(struct file *file, const struct cred *cred)
 }
 
 struct file *security_file_lookup(struct file *file,
-				  cap_rights_t required_rights)
+				cap_rights_t required_rights,
+				cap_rights_t *actual_rights)
 {
-	return security_ops->file_lookup(file, required_rights);
+	return security_ops->file_lookup(file, required_rights, actual_rights);
 }
 
 struct file *security_file_install(struct file *orig, unsigned int fd)

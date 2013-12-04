@@ -365,7 +365,8 @@ static int cap_file_open(struct file *file, const struct cred *cred)
 }
 
 static struct file *cap_file_lookup(struct file *orig,
-				    cap_rights_t required_rights)
+				cap_rights_t required_rights,
+				cap_rights_t *actual_rights)
 {
 	return orig;
 }

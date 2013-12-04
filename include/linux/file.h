@@ -54,13 +54,14 @@ extern struct file *fget_raw_no_unwrap(unsigned int fd,
 				cap_rights_t required_rights);
 extern struct file *fget_raw_light(unsigned int fd,
 				cap_rights_t required_rights,
+				cap_rights_t *actual_rights,
 				int *fput_needed);
 
 static inline struct fd fdget_raw(unsigned int fd,
 				cap_rights_t required_rights)
 {
 	int b;
-	struct file *f = fget_raw_light(fd, required_rights, &b);
+	struct file *f = fget_raw_light(fd, required_rights, NULL, &b);
 	return (struct fd){f,b};
 }
 
