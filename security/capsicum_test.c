@@ -82,7 +82,7 @@ TEST_F(new_cap, rewrap) {
 	 * will be incremented.
 	 */
 	struct file *f, *unwrapped_file;
-	u64 rights;
+	u64 rights = CAP_NONE;
 
 	int old_count, fd;
 

@@ -1,6 +1,8 @@
 #ifndef _UAPI_LINUX_CAPSICUM_H
 #define _UAPI_LINUX_CAPSICUM_H
 
+#include <linux/types.h>
+
 typedef __u64 cap_rights_t;
 
 /* TODO(drysdale): remove this and all uses. */
