@@ -447,7 +447,7 @@ struct socket *sockfd_lookup(int fd, int *err)
 }
 EXPORT_SYMBOL(sockfd_lookup);
 
-struct socket *sockfd_lookup_light(int fd, int *err, int *fput_needed)
+static struct socket *sockfd_lookup_light(int fd, int *err, int *fput_needed)
 {
 	struct file *file;
 	struct socket *sock;
@@ -464,7 +464,6 @@ struct socket *sockfd_lookup_light(int fd, int *err, int *fput_needed)
 	}
 	return NULL;
 }
-EXPORT_SYMBOL(sockfd_lookup_light);
 
 #define XATTR_SOCKPROTONAME_SUFFIX "sockprotoname"
 #define XATTR_NAME_SOCKPROTONAME (XATTR_SYSTEM_PREFIX XATTR_SOCKPROTONAME_SUFFIX)

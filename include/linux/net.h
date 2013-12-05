@@ -213,7 +213,6 @@ extern int	     sock_recvmsg(struct socket *sock, struct msghdr *msg,
 				  size_t size, int flags);
 extern struct file  *sock_alloc_file(struct socket *sock, int flags, const char *dname);
 extern struct socket *sockfd_lookup(int fd, int *err);
-extern struct socket *sockfd_lookup_light(int fd, int *err, int *fput_needed);
 extern struct socket *sock_from_file(struct file *file, int *err);
 #define		     sockfd_put(sock) fput(sock->file)
 extern int	     net_ratelimit(void);
