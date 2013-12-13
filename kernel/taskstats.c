@@ -431,7 +431,7 @@ static int cgroupstats_user_cmd(struct sk_buff *skb, struct genl_info *info)
 		return -EINVAL;
 
 	fd = nla_get_u32(info->attrs[CGROUPSTATS_CMD_ATTR_FD]);
-	f = fdget(fd, CAP_TODO);
+	f = fdget(fd, CAP_FSTAT);
 	if (IS_ERR(f.file))
 		return 0;
 

@@ -97,6 +97,6 @@ typedef __u64 cap_rights_t;
 #define CAP_MASK_VALID          0x007fffffffffffffULL
 
 /* All possible method rights. */
-#define CAP_ALL                 0xFfffffffffffffffULL
+#define CAP_ALL                 0xffffffffffffffffULL
 
 #endif /* _UAPI_LINUX_CAPSICUM_H */

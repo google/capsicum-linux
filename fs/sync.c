@@ -329,7 +329,7 @@ SYSCALL_DEFINE4(sync_file_range, int, fd, loff_t, offset, loff_t, nbytes,
 	else
 		endbyte--;		/* inclusive */
 
-	f = fdget(fd, CAP_TODO);
+	f = fdget(fd, CAP_FSYNC|CAP_SEEK);
 	if (IS_ERR(f.file)) {
 		ret = PTR_ERR(f.file);
 		goto out;

@@ -27,7 +27,7 @@
  */
 SYSCALL_DEFINE4(fadvise64_64, int, fd, loff_t, offset, loff_t, len, int, advice)
 {
-	struct fd f = fdget(fd, CAP_TODO);
+	struct fd f = fdget(fd, CAP_NONE);
 	struct address_space *mapping;
 	struct backing_dev_info *bdi;
 	loff_t endbyte;			/* inclusive */

@@ -12,6 +12,8 @@
 #define __MM_INTERNAL_H
 
 #include <linux/mm.h>
+#include <linux/mman.h>
+#include <linux/capsicum.h>
 
 void free_pgtables(struct mmu_gather *tlb, struct vm_area_struct *start_vma,
 		unsigned long floor, unsigned long ceiling);
@@ -76,6 +78,18 @@ static inline void get_page_foll(struct page *page)
 		VM_BUG_ON(atomic_read(&page->_count) <= 0);
 		atomic_inc(&page->_count);
 	}
+}
+
+static inline cap_rights_t mmap_rights(unsigned long prot, unsigned long flags)
+{
+	cap_rights_t rights = CAP_MMAP;
+	if (prot & PROT_READ)
+		rights |= CAP_READ;
+	if ((flags & MAP_SHARED) && (prot & PROT_WRITE))
+		rights |= CAP_WRITE;
+	if (prot & PROT_EXEC)
+		rights |= CAP_MAPEXEC;
+	return rights;
 }
 
 extern unsigned long highest_memmap_pfn;

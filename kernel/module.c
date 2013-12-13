@@ -2546,7 +2546,7 @@ static int copy_module_from_fd(int fd, struct load_info *info)
 	loff_t pos;
 	ssize_t bytes = 0;
 
-	file = fget(fd, CAP_TODO);
+	file = fget(fd, CAP_FEXECVE);
 	if (IS_ERR(file)) {
 		err = PTR_ERR(file);
 		if (err == -EBADF)
