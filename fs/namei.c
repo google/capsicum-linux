@@ -620,7 +620,7 @@ static __always_inline void set_root(struct nameidata *nd)
 		get_fs_root(current->fs, &nd->root);
 }
 
-static int link_path_walk(const char *, struct nameidata *);
+static int link_path_walk(const char *, struct nameidata *, cap_rights_t base_rights);
 
 static __always_inline void set_root_rcu(struct nameidata *nd)
 {
@@ -636,7 +636,9 @@ static __always_inline void set_root_rcu(struct nameidata *nd)
 	}
 }
 
-static __always_inline int __vfs_follow_link(struct nameidata *nd, const char *link)
+static __always_inline int __vfs_follow_link(struct nameidata *nd,
+					const char *link,
+					cap_rights_t base_rights)
 {
 	int ret;
 
@@ -652,7 +654,7 @@ static __always_inline int __vfs_follow_link(struct nameidata *nd, const char *l
 	}
 	nd->inode = nd->path.dentry->d_inode;
 
-	ret = link_path_walk(link, nd);
+	ret = link_path_walk(link, nd, base_rights);
 	return ret;
 fail:
 	path_put(&nd->path);
@@ -816,7 +818,7 @@ static int may_linkat(struct path *link)
 }
 
 static __always_inline int
-follow_link(struct path *link, struct nameidata *nd, void **p)
+follow_link(struct path *link, struct nameidata *nd, void **p, cap_rights_t base_rights)
 {
 	struct dentry *dentry = link->dentry;
 	int error;
@@ -850,7 +852,7 @@ follow_link(struct path *link, struct nameidata *nd, void **p)
 	error = 0;
 	s = nd_get_link(nd);
 	if (s) {
-		error = __vfs_follow_link(nd, s);
+		error = __vfs_follow_link(nd, s, base_rights);
 		if (unlikely(error))
 			put_link(nd, link, *p);
 	}
@@ -1566,7 +1568,8 @@ out_err:
  * Without that kind of total limit, nasty chains of consecutive
  * symlinks can cause almost arbitrarily long lookups.
  */
-static inline int nested_symlink(struct path *path, struct nameidata *nd)
+static inline int nested_symlink(struct path *path, struct nameidata *nd,
+				cap_rights_t base_rights)
 {
 	int res;
 
@@ -1584,7 +1587,7 @@ static inline int nested_symlink(struct path *path, struct nameidata *nd)
 		struct path link = *path;
 		void *cookie;
 
-		res = follow_link(&link, nd, &cookie);
+		res = follow_link(&link, nd, &cookie, base_rights);
 		if (res)
 			break;
 		res = walk_component(nd, path, LOOKUP_FOLLOW);
@@ -1748,13 +1751,14 @@ static inline unsigned long hash_name(const char *name, unsigned int *hashp)
  * Returns 0 and nd will have valid dentry and mnt on success.
  * Returns error and drops reference to input namei data on failure.
  */
-static int link_path_walk(const char *name, struct nameidata *nd)
+static int link_path_walk(const char *name, struct nameidata *nd,
+			cap_rights_t base_rights)
 {
 	struct path next;
 	int err;
-	
+
 	while (*name=='/') {
-		err = security_path_lookup(NULL, name);
+		err = security_path_lookup(base_rights, NULL, name);
 		if (err)
 			return err;
 		name++;
@@ -1772,7 +1776,7 @@ static int link_path_walk(const char *name, struct nameidata *nd)
  		if (err)
 			break;
 
-		err = security_path_lookup(nd->path.dentry, name);
+		err = security_path_lookup(base_rights, nd->path.dentry, name);
 		if (err)
 			break;
 
@@ -1823,7 +1827,7 @@ static int link_path_walk(const char *name, struct nameidata *nd)
 			return err;
 
 		if (err) {
-			err = nested_symlink(&next, nd);
+			err = nested_symlink(&next, nd, base_rights);
 			if (err)
 				return err;
 		}
@@ -1841,6 +1845,7 @@ static int path_init(int dfd, const char *name, unsigned int flags,
 {
 	int retval = 0;
 
+	*rights = CAP_ALL;
 	nd->last_type = LAST_ROOT; /* if there are only slashes... */
 	nd->flags = flags | LOOKUP_JUMPED;
 	nd->depth = 0;
@@ -1868,7 +1873,7 @@ static int path_init(int dfd, const char *name, unsigned int flags,
 
 	if (*name=='/') {
 
-		retval = security_path_lookup(NULL, "/");
+		retval = security_path_lookup(CAP_ALL, NULL, "/");
 		if (retval)
 			return retval;
 
@@ -1942,6 +1947,7 @@ static inline int lookup_last(struct nameidata *nd, struct path *path)
 static int path_lookupat(int dfd, const char *name,
 				unsigned int flags, struct nameidata *nd)
 {
+	cap_rights_t base_rights;
 	struct file *base = NULL;
 	struct path path;
 	int err;
@@ -1960,13 +1966,13 @@ static int path_lookupat(int dfd, const char *name,
 	 * be handled by restarting a traditional ref-walk (which will always
 	 * be able to complete).
 	 */
-	err = path_init(dfd, name, flags | LOOKUP_PARENT, nd, &base, NULL);
+	err = path_init(dfd, name, flags | LOOKUP_PARENT, nd, &base, &base_rights);
 
 	if (unlikely(err))
 		return err;
 
 	current->total_link_count = 0;
-	err = link_path_walk(name, nd);
+	err = link_path_walk(name, nd, base_rights);
 
 	if (!err && !(flags & LOOKUP_PARENT)) {
 		err = lookup_last(nd, &path);
@@ -1977,7 +1983,7 @@ static int path_lookupat(int dfd, const char *name,
 			if (unlikely(err))
 				break;
 			nd->flags |= LOOKUP_PARENT;
-			err = follow_link(&link, nd, &cookie);
+			err = follow_link(&link, nd, &cookie, base_rights);
 			if (err)
 				break;
 			err = lookup_last(nd, &path);
@@ -2979,7 +2985,7 @@ out:
 static struct file *path_openat(int dfd, struct filename *pathname,
 		struct nameidata *nd, const struct open_flags *op, int flags)
 {
-	cap_rights_t base_rights = CAP_ALL;
+	cap_rights_t base_rights;
 	struct file *base = NULL;
 	struct file *file;
 	struct path path;
@@ -3002,7 +3008,7 @@ static struct file *path_openat(int dfd, struct filename *pathname,
 		goto out;
 
 	current->total_link_count = 0;
-	error = link_path_walk(pathname->name, nd);
+	error = link_path_walk(pathname->name, nd, base_rights);
 	if (unlikely(error))
 		goto out;
 
@@ -3021,7 +3027,7 @@ static struct file *path_openat(int dfd, struct filename *pathname,
 			break;
 		nd->flags |= LOOKUP_PARENT;
 		nd->flags &= ~(LOOKUP_OPEN|LOOKUP_CREATE|LOOKUP_EXCL);
-		error = follow_link(&link, nd, &cookie);
+		error = follow_link(&link, nd, &cookie, base_rights);
 		if (unlikely(error))
 			break;
 		error = do_last(nd, &path, file, op, &opened, pathname);
@@ -4050,7 +4056,7 @@ int generic_readlink(struct dentry *dentry, char __user *buffer, int buflen)
 
 int vfs_follow_link(struct nameidata *nd, const char *link)
 {
-	return __vfs_follow_link(nd, link);
+	return __vfs_follow_link(nd, link, CAP_ALL);
 }
 
 /* get the link contents into pagecache */

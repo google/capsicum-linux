@@ -354,22 +354,21 @@ static struct file *capsicum_file_openat(cap_rights_t base_rights, struct file *
 }
 
 /*
- * In capability mode, we restrict processes' paths by denying absolute path
- * lookup, and allowing only downward lookups from file descriptors using
- * openat() and friends. We therefore prevent absolute lookups and upward
- * traversal (../) in capability mode.
+ * Prevent absolute lookups and upward traversal (../) when in capability
+ * mode or when the lookup is relative to a capability file descriptor.
  */
-static int capsicum_path_lookup(struct dentry *dentry, const char *name)
+static int capsicum_path_lookup(cap_rights_t base_rights,
+				struct dentry *dentry, const char *name)
 {
-	if (!capsicum_in_cap_mode())
+	if (!capsicum_in_cap_mode() && base_rights == CAP_ALL)
 		return 0;
 
 	if (name[0] == '.' && name[1] == '.' &&
 			(name[2] == '\0' || name[2] == '/'))
-		return -ECAPMODE;
+		return -ENOTCAPABLE;
 
 	if (name[0] == '/')
-		return -ECAPMODE;
+		return -ENOTCAPABLE;
 
 	return 0;
 }

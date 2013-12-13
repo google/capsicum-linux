@@ -798,9 +798,9 @@ struct file *security_file_openat(cap_rights_t base_rights, struct file *file)
 	return security_ops->file_openat(base_rights, file);
 }
 
-int security_path_lookup(struct dentry *dentry, const char *name)
+int security_path_lookup(cap_rights_t base_rights, struct dentry *dentry, const char *name)
 {
-	return security_ops->path_lookup(dentry, name);
+	return security_ops->path_lookup(base_rights, dentry, name);
 }
 
 int security_task_create(unsigned long clone_flags)

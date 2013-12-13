@@ -659,6 +659,8 @@ static inline void security_free_mnt_opts(struct security_mnt_opts *opts)
  *	Return 0 if permission is granted.
  * @path_lookup:
  *      Check permission before looking up a path segment.
+ *	@base_rights are the rights associated with the directory the lookup
+ *	is relative to.
  *      @dentry is the context of the lookup, or NULL for the first stage of
  *      an absolute lookup.
  *      @name is the rest of the path.
@@ -1574,7 +1576,8 @@ struct security_operations {
 				    struct fown_struct *fown, int sig);
 	int (*file_receive) (struct file *file);
 	int (*file_open) (struct file *file, const struct cred *cred);
-	int (*path_lookup) (struct dentry *dentry, const char *name);
+	int (*path_lookup) (cap_rights_t base_rights,
+			struct dentry *dentry, const char *name);
 	struct file *(*file_lookup) (struct file *orig,
 				     cap_rights_t required_rights,
 				     cap_rights_t *actual_rights);
@@ -1850,7 +1853,8 @@ int security_file_send_sigiotask(struct task_struct *tsk,
 				 struct fown_struct *fown, int sig);
 int security_file_receive(struct file *file);
 int security_file_open(struct file *file, const struct cred *cred);
-int security_path_lookup(struct dentry *dentry, const char *name);
+int security_path_lookup(cap_rights_t base_rights,
+			struct dentry *dentry, const char *name);
 struct file *security_file_lookup(struct file *orig,
 				cap_rights_t required_rights,
 				cap_rights_t *actual_rights);
@@ -2360,7 +2364,8 @@ static inline int security_fd_alloc(unsigned int fd)
 	return 0;
 }
 
-static inline int security_path_lookup(struct dentry *dentry, const char *name)
+static inline int security_path_lookup(cap_rights_t base_rights,
+				struct dentry *dentry, const char *name)
 {
 	return 0;
 }

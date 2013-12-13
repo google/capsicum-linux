@@ -376,7 +376,8 @@ static struct file *cap_file_openat(cap_rights_t base_rights, struct file *file)
 	return file;
 }
 
-static int cap_path_lookup(struct dentry *dentry, const char *name)
+static int cap_path_lookup(cap_rights_t base_rights,
+			struct dentry *dentry, const char *name)
 {
 	return 0;
 }
