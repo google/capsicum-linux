@@ -83,7 +83,7 @@ static int cmtp_sock_ioctl(struct socket *sock, unsigned int cmd, unsigned long 
 		if (copy_from_user(&ca, argp, sizeof(ca)))
 			return -EFAULT;
 
-		nsock = sockfd_lookup(ca.sock, &err);
+		nsock = sockfd_lookup(ca.sock, CAP_TODO, &err); /* ioctl(.., CMTPCONNADD, ...) */
 		if (!nsock)
 			return err;
 

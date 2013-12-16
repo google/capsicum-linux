@@ -419,6 +419,7 @@ EXPORT_SYMBOL(sock_from_file);
 /**
  *	sockfd_lookup - Go from a file number to its socket slot
  *	@fd: file handle
+ *	@required_rights: rights needed
  *	@err: pointer to an error code return
  *
  *	The file handle passed in is locked and the socket it is bound
@@ -429,12 +430,12 @@ EXPORT_SYMBOL(sock_from_file);
  *	On a success the socket object pointer is returned.
  */
 
-struct socket *sockfd_lookup(int fd, int *err)
+struct socket *sockfd_lookup(int fd, cap_rights_t required_rights, int *err)
 {
 	struct file *file;
 	struct socket *sock;
 
-	file = fget(fd, CAP_TODO);
+	file = fget(fd, required_rights);
 	if (IS_ERR(file)) {
 		*err = PTR_ERR(file);
 		return NULL;
@@ -447,13 +448,14 @@ struct socket *sockfd_lookup(int fd, int *err)
 }
 EXPORT_SYMBOL(sockfd_lookup);
 
-static struct socket *sockfd_lookup_light(int fd, int *err, int *fput_needed)
+static struct socket *sockfd_lookup_light(int fd, cap_rights_t required_rights, 
+					int *err, int *fput_needed)
 {
 	struct file *file;
 	struct socket *sock;
 
 	*err = -EBADF;
-	file = fget_light(fd, CAP_TODO, fput_needed);
+	file = fget_light(fd, required_rights, fput_needed);
 	if (!IS_ERR(file)) {
 		sock = sock_from_file(file, err);
 		if (sock)
@@ -1519,7 +1521,7 @@ SYSCALL_DEFINE3(bind, int, fd, struct sockaddr __user *, umyaddr, int, addrlen)
 	struct sockaddr_storage address;
 	int err, fput_needed;
 
-	sock = sockfd_lookup_light(fd, &err, &fput_needed);
+	sock = sockfd_lookup_light(fd, CAP_BIND, &err, &fput_needed);
 	if (sock) {
 		err = move_addr_to_kernel(umyaddr, addrlen, &address);
 		if (err >= 0) {
@@ -1548,7 +1550,7 @@ SYSCALL_DEFINE2(listen, int, fd, int, backlog)
 	int err, fput_needed;
 	int somaxconn;
 
-	sock = sockfd_lookup_light(fd, &err, &fput_needed);
+	sock = sockfd_lookup_light(fd, CAP_LISTEN, &err, &fput_needed);
 	if (sock) {
 		somaxconn = sock_net(sock->sk)->core.sysctl_somaxconn;
 		if ((unsigned int)backlog > somaxconn)
@@ -1589,7 +1591,7 @@ SYSCALL_DEFINE4(accept4, int, fd, struct sockaddr __user *, upeer_sockaddr,
 	if (SOCK_NONBLOCK != O_NONBLOCK && (flags & SOCK_NONBLOCK))
 		flags = (flags & ~SOCK_NONBLOCK) | O_NONBLOCK;
 
-	sock = sockfd_lookup_light(fd, &err, &fput_needed);
+	sock = sockfd_lookup_light(fd, CAP_ACCEPT, &err, &fput_needed);
 	if (!sock)
 		goto out;
 
@@ -1681,7 +1683,7 @@ SYSCALL_DEFINE3(connect, int, fd, struct sockaddr __user *, uservaddr,
 	struct sockaddr_storage address;
 	int err, fput_needed;
 
-	sock = sockfd_lookup_light(fd, &err, &fput_needed);
+	sock = sockfd_lookup_light(fd, CAP_CONNECT, &err, &fput_needed);
 	if (!sock)
 		goto out;
 	err = move_addr_to_kernel(uservaddr, addrlen, &address);
@@ -1713,7 +1715,7 @@ SYSCALL_DEFINE3(getsockname, int, fd, struct sockaddr __user *, usockaddr,
 	struct sockaddr_storage address;
 	int len, err, fput_needed;
 
-	sock = sockfd_lookup_light(fd, &err, &fput_needed);
+	sock = sockfd_lookup_light(fd, CAP_GETSOCKNAME, &err, &fput_needed);
 	if (!sock)
 		goto out;
 
@@ -1744,7 +1746,7 @@ SYSCALL_DEFINE3(getpeername, int, fd, struct sockaddr __user *, usockaddr,
 	struct sockaddr_storage address;
 	int len, err, fput_needed;
 
-	sock = sockfd_lookup_light(fd, &err, &fput_needed);
+	sock = sockfd_lookup_light(fd, CAP_GETPEERNAME, &err, &fput_needed);
 	if (sock != NULL) {
 		err = security_socket_getpeername(sock);
 		if (err) {
@@ -1779,10 +1781,13 @@ SYSCALL_DEFINE6(sendto, int, fd, void __user *, buff, size_t, len,
 	struct msghdr msg;
 	struct iovec iov;
 	int fput_needed;
+	cap_rights_t rights = CAP_WRITE;
 
 	if (len > INT_MAX)
 		len = INT_MAX;
-	sock = sockfd_lookup_light(fd, &err, &fput_needed);
+	if (addr)
+		rights |= CAP_CONNECT;
+	sock = sockfd_lookup_light(fd, rights, &err, &fput_needed);
 	if (!sock)
 		goto out;
 
@@ -1841,7 +1846,7 @@ SYSCALL_DEFINE6(recvfrom, int, fd, void __user *, ubuf, size_t, size,
 
 	if (size > INT_MAX)
 		size = INT_MAX;
-	sock = sockfd_lookup_light(fd, &err, &fput_needed);
+	sock = sockfd_lookup_light(fd, CAP_READ, &err, &fput_needed);
 	if (!sock)
 		goto out;
 
@@ -1893,7 +1898,7 @@ SYSCALL_DEFINE5(setsockopt, int, fd, int, level, int, optname,
 	if (optlen < 0)
 		return -EINVAL;
 
-	sock = sockfd_lookup_light(fd, &err, &fput_needed);
+	sock = sockfd_lookup_light(fd, CAP_SETSOCKOPT, &err, &fput_needed);
 	if (sock != NULL) {
 		err = security_socket_setsockopt(sock, level, optname);
 		if (err)
@@ -1924,7 +1929,7 @@ SYSCALL_DEFINE5(getsockopt, int, fd, int, level, int, optname,
 	int err, fput_needed;
 	struct socket *sock;
 
-	sock = sockfd_lookup_light(fd, &err, &fput_needed);
+	sock = sockfd_lookup_light(fd, CAP_GETSOCKOPT, &err, &fput_needed);
 	if (sock != NULL) {
 		err = security_socket_getsockopt(sock, level, optname);
 		if (err)
@@ -1953,7 +1958,7 @@ SYSCALL_DEFINE2(shutdown, int, fd, int, how)
 	int err, fput_needed;
 	struct socket *sock;
 
-	sock = sockfd_lookup_light(fd, &err, &fput_needed);
+	sock = sockfd_lookup_light(fd, CAP_SHUTDOWN, &err, &fput_needed);
 	if (sock != NULL) {
 		err = security_socket_shutdown(sock, how);
 		if (!err)
@@ -1975,10 +1980,12 @@ struct used_address {
 	unsigned int name_len;
 };
 
-static int ___sys_sendmsg(struct socket *sock, struct msghdr __user *msg,
+static int ___sys_sendmsg(struct socket *sock_noaddr, struct socket *sock_addr,
+			 struct msghdr __user *msg,
 			 struct msghdr *msg_sys, unsigned int flags,
 			 struct used_address *used_address)
 {
+	struct socket *sock;
 	struct compat_msghdr __user *msg_compat =
 	    (struct compat_msghdr __user *)msg;
 	struct sockaddr_storage address;
@@ -1995,6 +2002,9 @@ static int ___sys_sendmsg(struct socket *sock, struct msghdr __user *msg,
 			return -EFAULT;
 	} else if (copy_from_user(msg_sys, msg, sizeof(struct msghdr)))
 		return -EFAULT;
+	sock = (msg_sys->msg_name ? sock_addr : sock_noaddr);
+	if (!sock)
+		return -ENOTCAPABLE;
 
 	if (msg_sys->msg_iovlen > UIO_FASTIOV) {
 		err = -EMSGSIZE;
@@ -2094,15 +2104,20 @@ long __sys_sendmsg(int fd, struct msghdr __user *msg, unsigned flags)
 {
 	int fput_needed, err;
 	struct msghdr msg_sys;
-	struct socket *sock;
+	struct socket *sock_addr;
+	struct socket *sock_noaddr;
 
-	sock = sockfd_lookup_light(fd, &err, &fput_needed);
-	if (!sock)
+	sock_addr = sockfd_lookup_light(fd, CAP_WRITE|CAP_CONNECT, &err, &fput_needed);
+	if (sock_addr)
+		sock_noaddr = sock_addr;
+	else
+		sock_noaddr = sockfd_lookup_light(fd, CAP_WRITE, &err, &fput_needed);
+	if (!sock_noaddr)
 		goto out;
 
-	err = ___sys_sendmsg(sock, msg, &msg_sys, flags, NULL);
+	err = ___sys_sendmsg(sock_noaddr, sock_addr, msg, &msg_sys, flags, NULL);
 
-	fput_light(sock->file, fput_needed);
+	fput_light(sock_noaddr->file, fput_needed);
 out:
 	return err;
 }
@@ -2122,7 +2137,8 @@ int __sys_sendmmsg(int fd, struct mmsghdr __user *mmsg, unsigned int vlen,
 		   unsigned int flags)
 {
 	int fput_needed, err, datagrams;
-	struct socket *sock;
+	struct socket *sock_addr;
+	struct socket *sock_noaddr;
 	struct mmsghdr __user *entry;
 	struct compat_mmsghdr __user *compat_entry;
 	struct msghdr msg_sys;
@@ -2133,8 +2149,12 @@ int __sys_sendmmsg(int fd, struct mmsghdr __user *mmsg, unsigned int vlen,
 
 	datagrams = 0;
 
-	sock = sockfd_lookup_light(fd, &err, &fput_needed);
-	if (!sock)
+	sock_addr = sockfd_lookup_light(fd, CAP_WRITE|CAP_CONNECT, &err, &fput_needed);
+	if (sock_addr)
+		sock_noaddr = sock_addr;
+	else
+		sock_noaddr = sockfd_lookup_light(fd, CAP_WRITE, &err, &fput_needed);
+	if (!sock_noaddr)
 		return err;
 
 	used_address.name_len = UINT_MAX;
@@ -2144,14 +2164,15 @@ int __sys_sendmmsg(int fd, struct mmsghdr __user *mmsg, unsigned int vlen,
 
 	while (datagrams < vlen) {
 		if (MSG_CMSG_COMPAT & flags) {
-			err = ___sys_sendmsg(sock, (struct msghdr __user *)compat_entry,
+			err = ___sys_sendmsg(sock_noaddr, sock_addr,
+					     (struct msghdr __user *)compat_entry,
 					     &msg_sys, flags, &used_address);
 			if (err < 0)
 				break;
 			err = __put_user(err, &compat_entry->msg_len);
 			++compat_entry;
 		} else {
-			err = ___sys_sendmsg(sock,
+			err = ___sys_sendmsg(sock_noaddr, sock_addr,
 					     (struct msghdr __user *)entry,
 					     &msg_sys, flags, &used_address);
 			if (err < 0)
@@ -2165,7 +2186,7 @@ int __sys_sendmmsg(int fd, struct mmsghdr __user *mmsg, unsigned int vlen,
 		++datagrams;
 	}
 
-	fput_light(sock->file, fput_needed);
+	fput_light(sock_noaddr->file, fput_needed);
 
 	/* We only return an error if no datagrams were able to be sent */
 	if (datagrams != 0)
@@ -2280,7 +2301,7 @@ long __sys_recvmsg(int fd, struct msghdr __user *msg, unsigned flags)
 	struct msghdr msg_sys;
 	struct socket *sock;
 
-	sock = sockfd_lookup_light(fd, &err, &fput_needed);
+	sock = sockfd_lookup_light(fd, CAP_READ, &err, &fput_needed);
 	if (!sock)
 		goto out;
 
@@ -2320,7 +2341,7 @@ int __sys_recvmmsg(int fd, struct mmsghdr __user *mmsg, unsigned int vlen,
 
 	datagrams = 0;
 
-	sock = sockfd_lookup_light(fd, &err, &fput_needed);
+	sock = sockfd_lookup_light(fd, CAP_READ, &err, &fput_needed);
 	if (!sock)
 		return err;
 

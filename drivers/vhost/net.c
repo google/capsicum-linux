@@ -821,14 +821,14 @@ static int vhost_net_release(struct inode *inode, struct file *f)
 	return 0;
 }
 
-static struct socket *get_raw_socket(int fd)
+static struct socket *get_raw_socket(int fd, cap_rights_t required_rights)
 {
 	struct {
 		struct sockaddr_ll sa;
 		char  buf[MAX_ADDR_LEN];
 	} uaddr;
 	int uaddr_len = sizeof uaddr, r;
-	struct socket *sock = sockfd_lookup(fd, &r);
+	struct socket *sock = sockfd_lookup(fd, required_rights, &r);
 
 	if (!sock)
 		return ERR_PTR(-ENOTSOCK);
@@ -854,9 +854,9 @@ err:
 	return ERR_PTR(r);
 }
 
-static struct socket *get_tap_socket(int fd)
+static struct socket *get_tap_socket(int fd, cap_rights_t required_rights)
 {
-	struct file *file = fget(fd, CAP_TODO);
+	struct file *file = fget(fd, required_rights);
 	struct socket *sock;
 
 	if (IS_ERR(file))
@@ -870,17 +870,17 @@ static struct socket *get_tap_socket(int fd)
 	return sock;
 }
 
-static struct socket *get_socket(int fd)
+static struct socket *get_socket(int fd, cap_rights_t required_rights)
 {
 	struct socket *sock;
 
 	/* special case to disable backend */
 	if (fd == -1)
 		return NULL;
-	sock = get_raw_socket(fd);
+	sock = get_raw_socket(fd, required_rights);
 	if (!IS_ERR(sock))
 		return sock;
-	sock = get_tap_socket(fd);
+	sock = get_tap_socket(fd, required_rights);
 	if (!IS_ERR(sock))
 		return sock;
 	return ERR_PTR(-ENOTSOCK);
@@ -912,7 +912,7 @@ static long vhost_net_set_backend(struct vhost_net *n, unsigned index, int fd)
 		r = -EFAULT;
 		goto err_vq;
 	}
-	sock = get_socket(fd);
+	sock = get_socket(fd, CAP_TODO); /* ioctl(VHOST_NET_SET_BACKEND) */
 	if (IS_ERR(sock)) {
 		r = PTR_ERR(sock);
 		goto err_vq;

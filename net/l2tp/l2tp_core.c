@@ -185,7 +185,7 @@ struct sock *l2tp_tunnel_sock_lookup(struct l2tp_tunnel *tunnel)
 		 * of closing it.  Look the socket up using the fd to ensure
 		 * consistency.
 		 */
-		sock = sockfd_lookup(tunnel->fd, &err);
+		sock = sockfd_lookup(tunnel->fd, CAP_TODO|CAP_READ|CAP_WRITE, &err);
 		if (sock)
 			sk = sock->sk;
 	} else {
@@ -1633,7 +1633,7 @@ int l2tp_tunnel_create(struct net *net, int fd, int version, u32 tunnel_id, u32 
 		if (err < 0)
 			goto err;
 	} else {
-		sock = sockfd_lookup(fd, &err);
+		sock = sockfd_lookup(fd, CAP_TODO|CAP_READ|CAP_WRITE, &err);
 		if (!sock) {
 			pr_err("tunl %u: sockfd_lookup(fd=%d) returned %d\n",
 			       tunnel_id, fd, err);

@@ -24,6 +24,7 @@
 #include <linux/fcntl.h>	/* For O_CLOEXEC and O_NONBLOCK */
 #include <linux/kmemcheck.h>
 #include <linux/rcupdate.h>
+#include <linux/capsicum.h>
 #include <uapi/linux/net.h>
 
 struct poll_table_struct;
@@ -212,7 +213,7 @@ extern int   	     sock_sendmsg(struct socket *sock, struct msghdr *msg,
 extern int	     sock_recvmsg(struct socket *sock, struct msghdr *msg,
 				  size_t size, int flags);
 extern struct file  *sock_alloc_file(struct socket *sock, int flags, const char *dname);
-extern struct socket *sockfd_lookup(int fd, int *err);
+extern struct socket *sockfd_lookup(int fd, cap_rights_t required_rights, int *err);
 extern struct socket *sock_from_file(struct file *file, int *err);
 #define		     sockfd_put(sock) fput(sock->file)
 extern int	     net_ratelimit(void);
