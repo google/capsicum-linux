@@ -18,6 +18,7 @@ mount -t hostfs proc /tests -o "$TEST_DIR/test-files"
 mkdir -p /debug
 mount /debug
 mount / -o remount,rw
+ifconfig lo 127.0.0.1
 
 export TESTRUN="`grep -oP 'runtest=(\".*?\"|[^\s]+)' /proc/cmdline`"
 export TESTRUN=${TESTRUN#runtest=}
