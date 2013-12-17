@@ -357,7 +357,7 @@ static int autofs_dev_ioctl_setpipefd(struct file *fp,
 		mutex_unlock(&sbi->wq_mutex);
 		return -EBUSY;
 	} else {
-		struct file *pipe = fget(pipefd, CAP_TODO);
+		struct file *pipe = fget(pipefd, CAP_READ|CAP_WRITE|CAP_FSYNC);
 		if (IS_ERR(pipe)) {
 			err = PTR_ERR(pipe);
 			goto out;
@@ -649,7 +649,7 @@ static int _autofs_dev_ioctl(unsigned int command, struct autofs_dev_ioctl __use
 	 */
 	if (cmd != AUTOFS_DEV_IOCTL_OPENMOUNT_CMD &&
 	    cmd != AUTOFS_DEV_IOCTL_CLOSEMOUNT_CMD) {
-		fp = fget(param->ioctlfd, CAP_TODO);
+		fp = fget(param->ioctlfd, CAP_IOCTL|CAP_FSTAT);
 		if (IS_ERR(fp)) {
 			if (cmd == AUTOFS_DEV_IOCTL_ISMOUNTPOINT_CMD)
 				goto cont;

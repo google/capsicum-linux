@@ -1739,10 +1739,10 @@ SYSCALL_DEFINE6(splice, int, fd_in, loff_t __user *, off_in,
 		return 0;
 
 	error = -EBADF;
-	in = fdget(fd_in, CAP_TODO);
+	in = fdget(fd_in, CAP_READ|CAP_SEEK);
 	if (!IS_ERR(in.file)) {
 		if (in.file->f_mode & FMODE_READ) {
-			out = fdget(fd_out, CAP_TODO);
+			out = fdget(fd_out, CAP_WRITE|CAP_SEEK);
 			if (!IS_ERR(out.file)) {
 				if (out.file->f_mode & FMODE_WRITE)
 					error = do_splice(in.file, off_in,
@@ -2074,10 +2074,10 @@ SYSCALL_DEFINE4(tee, int, fdin, int, fdout, size_t, len, unsigned int, flags)
 		return 0;
 
 	error = -EBADF;
-	in = fdget(fdin, CAP_TODO);
+	in = fdget(fdin, CAP_READ);
 	if (!IS_ERR(in.file)) {
 		if (in.file->f_mode & FMODE_READ) {
-			struct fd out = fdget(fdout, CAP_TODO);
+			struct fd out = fdget(fdout, CAP_WRITE);
 			if (!IS_ERR(out.file)) {
 				if (out.file->f_mode & FMODE_WRITE)
 					error = do_tee(in.file, out.file,

@@ -184,7 +184,7 @@ struct dma_buf *dma_buf_get(int fd)
 {
 	struct file *file;
 
-	file = fget(fd, CAP_TODO);
+	file = fget(fd, CAP_MMAP|CAP_READ|CAP_WRITE);
 
 	if (IS_ERR(file))
 		return (struct dma_buf *)file;

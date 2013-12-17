@@ -1610,7 +1610,7 @@ static int snd_pcm_link(struct snd_pcm_substream *substream, int fd)
 	struct snd_pcm_file *pcm_file;
 	struct snd_pcm_substream *substream1;
 	struct snd_pcm_group *group;
-	struct fd f = fdget(fd, CAP_TODO);
+	struct fd f = fdget(fd, CAP_NONE);
 
 	if (IS_ERR(f.file)) {
 		res = PTR_ERR(f.file);
