@@ -291,9 +291,9 @@ static const struct file_operations timerfd_fops = {
 	.llseek		= noop_llseek,
 };
 
-static int timerfd_fget(int fd, struct fd *p)
+static int timerfd_fget(int fd, struct fd *p, cap_rights_t required_rights)
 {
-	struct fd f = fdget(fd, CAP_TODO);
+	struct fd f = fdget(fd, required_rights);
 	if (IS_ERR(f.file))
 		return PTR_ERR(f.file);
 	if (f.file->f_op != &timerfd_fops) {
@@ -358,7 +358,7 @@ static int do_timerfd_settime(int ufd, int flags,
 	    !timespec_valid(&new->it_interval))
 		return -EINVAL;
 
-	ret = timerfd_fget(ufd, &f);
+	ret = timerfd_fget(ufd, &f, CAP_WRITE | (old ? CAP_READ : 0));
 	if (ret)
 		return ret;
 	ctx = f.file->private_data;
@@ -396,8 +396,10 @@ static int do_timerfd_settime(int ufd, int flags,
 			hrtimer_forward_now(&ctx->t.tmr, ctx->tintv);
 	}
 
-	old->it_value = ktime_to_timespec(timerfd_get_remaining(ctx));
-	old->it_interval = ktime_to_timespec(ctx->tintv);
+	if (old) {
+		old->it_value = ktime_to_timespec(timerfd_get_remaining(ctx));
+		old->it_interval = ktime_to_timespec(ctx->tintv);
+	}
 
 	/*
 	 * Re-program the timer to the new value ...
@@ -413,7 +415,7 @@ static int do_timerfd_gettime(int ufd, struct itimerspec *t)
 {
 	struct fd f;
 	struct timerfd_ctx *ctx;
-	int ret = timerfd_fget(ufd, &f);
+	int ret = timerfd_fget(ufd, &f, CAP_READ);
 	if (ret)
 		return ret;
 	ctx = f.file->private_data;
@@ -450,7 +452,7 @@ SYSCALL_DEFINE4(timerfd_settime, int, ufd, int, flags,
 
 	if (copy_from_user(&new, utmr, sizeof(new)))
 		return -EFAULT;
-	ret = do_timerfd_settime(ufd, flags, &new, &old);
+	ret = do_timerfd_settime(ufd, flags, &new, otmr ? &old : NULL);
 	if (ret)
 		return ret;
 	if (otmr && copy_to_user(otmr, &old, sizeof(old)))
