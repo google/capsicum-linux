@@ -102,6 +102,9 @@ typedef __u64 cap_rights_t;
 /* Modify things monitored by inotify/fanotify FD */
 #define CAP_NOTIFY              0x0200000000000000ULL
 
+/* Allow entry to a namespace associated with a file descriptor */
+#define CAP_SETNS               0x0200000000000000ULL
+
 /* The mask of all valid method rights. */
 #define CAP_MASK_VALID          0x03ffffffffffffffULL
 

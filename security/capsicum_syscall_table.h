@@ -224,6 +224,7 @@ static int capsicum_run_syscall_table(int arch, int callnr, unsigned long *args)
 	case (__NR_umask):
 	case (__NR_uname):
 	case (__NR_unlinkat):
+	case (__NR_unshare):
 	case (__NR_utimensat):
 	case (__NR_vfork):
 	case (__NR_vmsplice):

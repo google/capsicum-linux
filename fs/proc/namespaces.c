@@ -284,7 +284,7 @@ struct file *proc_ns_fget(int fd)
 {
 	struct file *file;
 
-	file = fget(fd, CAP_TODO);
+	file = fget(fd, CAP_SETNS);
 	if (IS_ERR(file))
 		return file;
 
