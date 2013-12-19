@@ -93,8 +93,11 @@ typedef __u64 cap_rights_t;
 #define CAP_PDWAIT              0x0020000000000000ULL
 #define CAP_PDKILL              0x0040000000000000ULL
 
+/* Modify signalfd signal mask. */
+#define CAP_FSIGNAL             0x0080000000000000ULL
+
 /* The mask of all valid method rights. */
-#define CAP_MASK_VALID          0x007fffffffffffffULL
+#define CAP_MASK_VALID          0x00ffffffffffffffULL
 
 /* All possible method rights. */
 #define CAP_ALL                 0xffffffffffffffffULL
