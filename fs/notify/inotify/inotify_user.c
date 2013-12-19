@@ -741,7 +741,7 @@ SYSCALL_DEFINE3(inotify_add_watch, int, fd, const char __user *, pathname,
 	if (unlikely(!(mask & ALL_INOTIFY_BITS)))
 		return -EINVAL;
 
-	f = fdget(fd, CAP_TODO);
+	f = fdget(fd, CAP_NOTIFY);
 	if (unlikely(IS_ERR(f.file)))
 		return PTR_ERR(f.file);
 
@@ -779,7 +779,7 @@ SYSCALL_DEFINE2(inotify_rm_watch, int, fd, __s32, wd)
 	struct fd f;
 	int ret = 0;
 
-	f = fdget(fd, CAP_TODO);
+	f = fdget(fd, CAP_NOTIFY);
 	if (unlikely(IS_ERR(f.file)))
 		return PTR_ERR(f.file);
 

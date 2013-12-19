@@ -327,7 +327,7 @@ struct file *eventfd_fget(int fd)
 {
 	struct file *file;
 
-	file = fget(fd, CAP_TODO);
+	file = fget(fd, CAP_READ|CAP_WRITE|CAP_POLL_EVENT);
 	if (IS_ERR(file))
 		return file;
 	if (file->f_op != &eventfd_fops) {

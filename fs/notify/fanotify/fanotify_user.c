@@ -457,7 +457,7 @@ static int fanotify_find_path(int dfd, const char __user *filename,
 		 dfd, filename, flags);
 
 	if (filename == NULL) {
-		struct fd f = fdget(dfd, CAP_TODO);
+		struct fd f = fdget(dfd, CAP_FSTAT);
 
 		if (IS_ERR(f.file)) {
 			ret = PTR_ERR(f.file);
@@ -822,7 +822,7 @@ SYSCALL_DEFINE5(fanotify_mark, int, fanotify_fd, unsigned int, flags,
 #endif
 		return -EINVAL;
 
-	f = fdget(fanotify_fd, CAP_TODO);
+	f = fdget(fanotify_fd, CAP_NOTIFY);
 	if (unlikely(IS_ERR(f.file)))
 		return PTR_ERR(f.file);
 

@@ -96,8 +96,14 @@ typedef __u64 cap_rights_t;
 /* Modify signalfd signal mask. */
 #define CAP_FSIGNAL             0x0080000000000000ULL
 
+/* Modify epollfd set of FDs/events */
+#define CAP_EPOLL_CTL           0x0100000000000000ULL
+
+/* Modify things monitored by inotify/fanotify FD */
+#define CAP_NOTIFY              0x0200000000000000ULL
+
 /* The mask of all valid method rights. */
-#define CAP_MASK_VALID          0x00ffffffffffffffULL
+#define CAP_MASK_VALID          0x03ffffffffffffffULL
 
 /* All possible method rights. */
 #define CAP_ALL                 0xffffffffffffffffULL

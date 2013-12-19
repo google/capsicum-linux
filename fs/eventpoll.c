@@ -1803,7 +1803,7 @@ SYSCALL_DEFINE4(epoll_ctl, int, epfd, int, op, int, fd,
 		goto error_return;
 
 	/* Get the "struct file *" for the eventpoll file */
-	file = fget(epfd, CAP_POLL_EVENT);
+	file = fget(epfd, CAP_EPOLL_CTL);
 	if (IS_ERR(file)) {
 		error = PTR_ERR(file);
 		goto error_return;
@@ -1934,7 +1934,7 @@ SYSCALL_DEFINE4(epoll_wait, int, epfd, struct epoll_event __user *, events,
 		return -EFAULT;
 
 	/* Get the "struct file *" for the eventpoll file */
-	f = fdget(epfd, CAP_TODO);
+	f = fdget(epfd, CAP_POLL_EVENT);
 	if (IS_ERR(f.file))
 		return PTR_ERR(f.file);
 
