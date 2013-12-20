@@ -106,7 +106,7 @@ static long do_pdkill(struct task_struct *task, int signum)
 	info.si_errno = 0;
 	info.si_code = SI_USER;
 	info.si_pid = task_tgid_vnr(current);
-	info.si_uid = current_uid();
+	info.si_uid = from_kuid_munged(current_user_ns(), current_uid());
 
 	return do_send_sig_info(signum, &info, task, true);
 }
