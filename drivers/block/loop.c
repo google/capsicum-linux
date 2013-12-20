@@ -651,7 +651,7 @@ static int loop_change_fd(struct loop_device *lo, struct block_device *bdev,
 	if (!(lo->lo_flags & LO_FLAGS_READ_ONLY))
 		goto out;
 
-	file = fget(arg, CAP_TODO);
+	file = fget(arg, CAP_TODO); /* ioctl(..,LOOP_CHANGE_FD, arg) */
 	if (IS_ERR(file)) {
 		error = PTR_ERR(file);
 		goto out;
@@ -834,7 +834,7 @@ static int loop_set_fd(struct loop_device *lo, fmode_t mode,
 	/* This is safe, since we have a reference from open(). */
 	__module_get(THIS_MODULE);
 
-	file = fget(arg, CAP_TODO);
+	file = fget(arg, CAP_TODO); /* ioctl(.., LOOP_SET_FD, arg) */
 	if (IS_ERR(file)) {
 		error = PTR_ERR(file);
 		goto out;

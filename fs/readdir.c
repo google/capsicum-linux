@@ -108,7 +108,7 @@ SYSCALL_DEFINE3(old_readdir, unsigned int, fd,
 		struct old_linux_dirent __user *, dirent, unsigned int, count)
 {
 	int error;
-	struct fd f = fdget(fd, CAP_TODO|CAP_READ);
+	struct fd f = fdget(fd, CAP_READ);
 	struct readdir_callback buf = {
 		.ctx.actor = fillonedir,
 		.dirent = dirent

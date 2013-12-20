@@ -105,8 +105,11 @@ typedef __u64 cap_rights_t;
 /* Allow entry to a namespace associated with a file descriptor */
 #define CAP_SETNS               0x0200000000000000ULL
 
+/* Allow performance monitoring operations */
+#define CAP_PERFMON             0x0400000000000000ULL
+
 /* The mask of all valid method rights. */
-#define CAP_MASK_VALID          0x03ffffffffffffffULL
+#define CAP_MASK_VALID          0x07ffffffffffffffULL
 
 /* All possible method rights. */
 #define CAP_ALL                 0xffffffffffffffffULL

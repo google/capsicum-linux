@@ -471,6 +471,7 @@ typedef struct {
 	int		cmd_flags;
 	unsigned int	cmd_narg;
 	size_t		cmd_argsize;
+	cap_rights_t	cmd_rights;
 	int		(*cmd_getsize)(void *arg, size_t *sz);
 } pfm_cmd_desc_t;
 
@@ -4624,33 +4625,33 @@ pfm_exit_thread(struct task_struct *task)
 }
 
 /*
- * functions MUST be listed in the increasing order of their index (see permfon.h)
+ * functions MUST be listed in the increasing order of their index (see perfmon.h)
  */
-#define PFM_CMD(name, flags, arg_count, arg_type, getsz) { name, #name, flags, arg_count, sizeof(arg_type), getsz }
-#define PFM_CMD_S(name, flags) { name, #name, flags, 0, 0, NULL }
+#define PFM_CMD(name, flags, arg_count, arg_type, rights, getsz) { name, #name, flags, arg_count, sizeof(arg_type), rights, getsz }
+#define PFM_CMD_S(name, flags, rights) { name, #name, flags, 0, 0, rights, NULL }
 #define PFM_CMD_PCLRWS	(PFM_CMD_FD|PFM_CMD_ARG_RW|PFM_CMD_STOP)
 #define PFM_CMD_PCLRW	(PFM_CMD_FD|PFM_CMD_ARG_RW)
-#define PFM_CMD_NONE	{ NULL, "no-cmd", 0, 0, 0, NULL}
+#define PFM_CMD_NONE	{ NULL, "no-cmd", 0, 0, 0, CAP_NONE, NULL}
 
 static pfm_cmd_desc_t pfm_cmd_tab[]={
 /* 0  */PFM_CMD_NONE,
-/* 1  */PFM_CMD(pfm_write_pmcs, PFM_CMD_PCLRWS, PFM_CMD_ARG_MANY, pfarg_reg_t, NULL),
-/* 2  */PFM_CMD(pfm_write_pmds, PFM_CMD_PCLRWS, PFM_CMD_ARG_MANY, pfarg_reg_t, NULL),
-/* 3  */PFM_CMD(pfm_read_pmds, PFM_CMD_PCLRWS, PFM_CMD_ARG_MANY, pfarg_reg_t, NULL),
-/* 4  */PFM_CMD_S(pfm_stop, PFM_CMD_PCLRWS),
-/* 5  */PFM_CMD_S(pfm_start, PFM_CMD_PCLRWS),
+/* 1  */PFM_CMD(pfm_write_pmcs, PFM_CMD_PCLRWS, PFM_CMD_ARG_MANY, pfarg_reg_t, CAP_WRITE, NULL),
+/* 2  */PFM_CMD(pfm_write_pmds, PFM_CMD_PCLRWS, PFM_CMD_ARG_MANY, pfarg_reg_t, CAP_WRITE, NULL),
+/* 3  */PFM_CMD(pfm_read_pmds, PFM_CMD_PCLRWS, PFM_CMD_ARG_MANY, pfarg_reg_t, CAP_READ, NULL),
+/* 4  */PFM_CMD_S(pfm_stop, PFM_CMD_PCLRWS, CAP_PERFMON),
+/* 5  */PFM_CMD_S(pfm_start, PFM_CMD_PCLRWS, CAP_PERFMON),
 /* 6  */PFM_CMD_NONE,
 /* 7  */PFM_CMD_NONE,
-/* 8  */PFM_CMD(pfm_context_create, PFM_CMD_ARG_RW, 1, pfarg_context_t, pfm_ctx_getsize),
+/* 8  */PFM_CMD(pfm_context_create, PFM_CMD_ARG_RW, 1, pfarg_context_t, CAP_PERFMON, pfm_ctx_getsize),
 /* 9  */PFM_CMD_NONE,
-/* 10 */PFM_CMD_S(pfm_restart, PFM_CMD_PCLRW),
+/* 10 */PFM_CMD_S(pfm_restart, PFM_CMD_PCLRW, CAP_PERFMON),
 /* 11 */PFM_CMD_NONE,
-/* 12 */PFM_CMD(pfm_get_features, PFM_CMD_ARG_RW, 1, pfarg_features_t, NULL),
-/* 13 */PFM_CMD(pfm_debug, 0, 1, unsigned int, NULL),
+/* 12 */PFM_CMD(pfm_get_features, PFM_CMD_ARG_RW, 1, pfarg_features_t, CAP_READ, NULL),
+/* 13 */PFM_CMD(pfm_debug, 0, 1, unsigned int, CAP_PERFMON, NULL),
 /* 14 */PFM_CMD_NONE,
-/* 15 */PFM_CMD(pfm_get_pmc_reset, PFM_CMD_ARG_RW, PFM_CMD_ARG_MANY, pfarg_reg_t, NULL),
-/* 16 */PFM_CMD(pfm_context_load, PFM_CMD_PCLRWS, 1, pfarg_load_t, NULL),
-/* 17 */PFM_CMD_S(pfm_context_unload, PFM_CMD_PCLRWS),
+/* 15 */PFM_CMD(pfm_get_pmc_reset, PFM_CMD_ARG_RW, PFM_CMD_ARG_MANY, pfarg_reg_t, CAP_READ, NULL),
+/* 16 */PFM_CMD(pfm_context_load, PFM_CMD_PCLRWS, 1, pfarg_load_t, CAP_READ, NULL),
+/* 17 */PFM_CMD_S(pfm_context_unload, PFM_CMD_PCLRWS, CAP_READ),
 /* 18 */PFM_CMD_NONE,
 /* 19 */PFM_CMD_NONE,
 /* 20 */PFM_CMD_NONE,
@@ -4665,8 +4666,8 @@ static pfm_cmd_desc_t pfm_cmd_tab[]={
 /* 29 */PFM_CMD_NONE,
 /* 30 */PFM_CMD_NONE,
 /* 31 */PFM_CMD_NONE,
-/* 32 */PFM_CMD(pfm_write_ibrs, PFM_CMD_PCLRWS, PFM_CMD_ARG_MANY, pfarg_dbreg_t, NULL),
-/* 33 */PFM_CMD(pfm_write_dbrs, PFM_CMD_PCLRWS, PFM_CMD_ARG_MANY, pfarg_dbreg_t, NULL)
+/* 32 */PFM_CMD(pfm_write_ibrs, PFM_CMD_PCLRWS, PFM_CMD_ARG_MANY, pfarg_dbreg_t, CAP_WRITE, NULL),
+/* 33 */PFM_CMD(pfm_write_dbrs, PFM_CMD_PCLRWS, PFM_CMD_ARG_MANY, pfarg_dbreg_t, CAP_WRITE, NULL)
 };
 #define PFM_CMD_COUNT	(sizeof(pfm_cmd_tab)/sizeof(pfm_cmd_desc_t))
 
@@ -4872,7 +4873,7 @@ restart_args:
 
 	if (unlikely((cmd_flags & PFM_CMD_FD) == 0)) goto skip_fd;
 
-	f = fdget(fd, CAP_TODO);
+	f = fdget(fd, pfm_cmd_tab[cmd].cmd_rights);
 	if (unlikely(IS_ERR(f.file)) {
 		DPRINT(("invalid fd %d\n", fd));
 		ret = PTR_ERR(f.file);

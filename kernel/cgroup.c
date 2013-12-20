@@ -4005,7 +4005,7 @@ static int cgroup_write_event_control(struct cgroup *cgrp, struct cftype *cft,
 		goto fail;
 	}
 
-	cfile = fget(cfd, CAP_TODO);
+	cfile = fget(cfd, CAP_READ);
 	if (IS_ERR(cfile)) {
 		ret = PTR_ERR(cfile);
 		goto fail;
