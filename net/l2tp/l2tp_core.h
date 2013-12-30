@@ -11,6 +11,8 @@
 #ifndef _L2TP_CORE_H_
 #define _L2TP_CORE_H_
 
+#include <linux/capsicum.h>
+
 /* Just some random numbers */
 #define L2TP_TUNNEL_MAGIC	0x42114DDA
 #define L2TP_SESSION_MAGIC	0x0C04EB7D
@@ -235,7 +237,7 @@ out:
 	return tunnel;
 }
 
-extern struct sock *l2tp_tunnel_sock_lookup(struct l2tp_tunnel *tunnel);
+extern struct sock *l2tp_tunnel_sock_lookup(struct l2tp_tunnel *tunnel, cap_rights_t required_rights);
 extern void l2tp_tunnel_sock_put(struct sock *sk);
 extern struct l2tp_session *l2tp_session_find(struct net *net, struct l2tp_tunnel *tunnel, u32 session_id);
 extern struct l2tp_session *l2tp_session_find_nth(struct l2tp_tunnel *tunnel, int nth);

@@ -346,9 +346,51 @@ static int check_fcntl_cmd(unsigned cmd)
 	return 0;
 }
 
+static cap_rights_t fcntl_rights(unsigned int cmd)
+{
+	switch (cmd) {
+	case F_DUPFD:
+	case F_DUPFD_CLOEXEC:
+	case F_GETFD:
+	case F_SETFD:
+		return CAP_NONE;
+	case F_GETFL:
+	case F_SETFL:
+	case F_GETOWN:
+	case F_SETOWN:
+	case F_GETOWN_EX:
+	case F_SETOWN_EX:
+	case F_GETOWNER_UIDS:
+		return CAP_FCNTL;
+	case F_GETLK:
+	case F_SETLK:
+	case F_SETLKW:
+#if BITS_PER_LONG == 32
+	case F_GETLK64:
+	case F_SETLK64:
+	case F_SETLKW64:
+#endif
+		return CAP_FLOCK;
+	case F_GETSIG:
+	case F_SETSIG:
+		return CAP_POLL_EVENT|CAP_FSIGNAL;
+	case F_GETLEASE:
+	case F_SETLEASE:
+		return CAP_FLOCK|CAP_FSIGNAL;
+	case F_NOTIFY:
+		return CAP_NOTIFY;
+	case F_SETPIPE_SZ:
+		return CAP_SETSOCKOPT;
+	case F_GETPIPE_SZ:
+		return CAP_GETSOCKOPT;
+	default:
+		return CAP_ALL;
+	}
+}
+
 SYSCALL_DEFINE3(fcntl, unsigned int, fd, unsigned int, cmd, unsigned long, arg)
 {
-	struct fd f = fdget_raw(fd, CAP_TODO|CAP_FCNTL);
+	struct fd f = fdget_raw(fd, fcntl_rights(cmd));
 	long err = -EBADF;
 
 	if (IS_ERR(f.file)) {
@@ -375,7 +417,7 @@ out:
 SYSCALL_DEFINE3(fcntl64, unsigned int, fd, unsigned int, cmd,
 		unsigned long, arg)
 {	
-	struct fd f = fdget_raw(fd, CAP_FCNTL);
+	struct fd f = fdget_raw(fd, fcntl_rights(cmd));
 	long err = -EBADF;
 
 	if (IS_ERR(f.file)) {

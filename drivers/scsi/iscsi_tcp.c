@@ -651,7 +651,9 @@ iscsi_sw_tcp_conn_bind(struct iscsi_cls_session *cls_session,
 	int err;
 
 	/* lookup for existing socket */
-	sock = sockfd_lookup((int)transport_eph, CAP_TODO|CAP_BIND, &err);
+	sock = sockfd_lookup((int)transport_eph,
+			     (CAP_READ|CAP_WRITE|CAP_SEEK|CAP_GETSOCKNAME|
+			      CAP_GETPEERNAME|CAP_GETSOCKOPT), &err);
 	if (!sock) {
 		iscsi_conn_printk(KERN_ERR, conn,
 				  "sockfd_lookup failed %d\n", err);

@@ -1603,7 +1603,7 @@ static void binder_transaction(struct binder_proc *proc,
 				goto err_fd_not_allowed;
 			}
 
-			file = fget(fp->handle, CAP_TODO);
+			file = fget_raw_no_unwrap(fp->handle);
 			if (IS_ERR(file)) {
 				binder_user_error("%d:%d got transaction with invalid fd, %ld\n",
 					proc->pid, thread->pid, fp->handle);

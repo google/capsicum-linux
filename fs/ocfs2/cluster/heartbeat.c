@@ -1764,7 +1764,7 @@ static ssize_t o2hb_region_dev_write(struct o2hb_region *reg,
 	if (fd < 0 || fd >= INT_MAX)
 		goto out;
 
-	f = fdget(fd, CAP_TODO);
+	f = fdget(fd, CAP_FSTAT);
 	if (IS_ERR(f.file)) {
 		ret = PTR_ERR(f.file);
 		if (ret == -EBADF)

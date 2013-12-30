@@ -912,7 +912,7 @@ static long vhost_net_set_backend(struct vhost_net *n, unsigned index, int fd)
 		r = -EFAULT;
 		goto err_vq;
 	}
-	sock = get_socket(fd, CAP_TODO); /* ioctl(VHOST_NET_SET_BACKEND) */
+	sock = get_socket(fd, CAP_READ|CAP_WRITE);
 	if (IS_ERR(sock)) {
 		r = PTR_ERR(sock);
 		goto err_vq;

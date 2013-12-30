@@ -1072,6 +1072,26 @@ rw_common:
 	return 0;
 }
 
+static cap_rights_t aio_opcode_rights(int opcode)
+{
+	switch (opcode) {
+	case IOCB_CMD_PREAD:
+	case IOCB_CMD_PREADV:
+		return CAP_READ|CAP_SEEK;
+
+	case IOCB_CMD_PWRITE:
+	case IOCB_CMD_PWRITEV:
+		return CAP_WRITE|CAP_SEEK;
+
+	case IOCB_CMD_FSYNC:
+	case IOCB_CMD_FDSYNC:
+		return CAP_FSYNC;
+
+	default:
+		return CAP_READ|CAP_WRITE|CAP_SEEK|CAP_POLL_EVENT|CAP_FSYNC;
+	}
+}
+
 static int io_submit_one(struct kioctx *ctx, struct iocb __user *user_iocb,
 			 struct iocb *iocb, bool compat)
 {
@@ -1098,7 +1118,7 @@ static int io_submit_one(struct kioctx *ctx, struct iocb __user *user_iocb,
 	if (unlikely(!req))
 		return -EAGAIN;
 
-	req->ki_filp = fget(iocb->aio_fildes, CAP_TODO);
+	req->ki_filp = fget(iocb->aio_fildes, aio_opcode_rights(iocb->aio_lio_opcode));
 	if (unlikely(IS_ERR(req->ki_filp))) {
 		ret = PTR_ERR(req->ki_filp);
 		goto out_put_req;

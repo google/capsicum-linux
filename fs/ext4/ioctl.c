@@ -435,7 +435,7 @@ group_extend_out:
 			return -EFAULT;
 		me.moved_len = 0;
 
-		donor = fdget(me.donor_fd, CAP_TODO);
+		donor = fdget(me.donor_fd, CAP_WRITE|CAP_SEEK|CAP_FSTAT);
 		if (IS_ERR(donor.file))
 			return PTR_ERR(donor.file);
 

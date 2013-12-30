@@ -649,7 +649,7 @@ static int __nbd_ioctl(struct block_device *bdev, struct nbd_device *nbd,
 		int err;
 		if (nbd->file)
 			return -EBUSY;
-		file = fget(arg, CAP_TODO); /* ioctl(..,NBD_SET_SOCK,arg) */
+		file = fget(arg, CAP_READ|CAP_WRITE|CAP_SHUTDOWN);
 		if (!IS_ERR(file)) {
 			struct inode *inode = file_inode(file);
 			if (S_ISSOCK(inode->i_mode)) {
