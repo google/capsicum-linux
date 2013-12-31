@@ -540,7 +540,7 @@ static int ncp_fill_super(struct super_block *sb, void *raw_data, int silent)
 	    !gid_valid(data.gid))
 		goto out;
 	error = -EBADF;
-	ncp_filp = fget(data.ncp_fd);
+	ncp_filp = fget(data.ncp_fd, CAP_WRITE|CAP_FSTAT);
 	if (!ncp_filp)
 		goto out;
 	error = -ENOTSOCK;
@@ -579,7 +579,7 @@ static int ncp_fill_super(struct super_block *sb, void *raw_data, int silent)
 		struct socket *info_sock;
 
 		error = -EBADF;
-		server->info_filp = fget(data.info_fd);
+		server->info_filp = fget(data.info_fd, CAP_WRITE|CAP_FSTAT);
 		if (!server->info_filp)
 			goto out_bdi;
 		error = -ENOTSOCK;

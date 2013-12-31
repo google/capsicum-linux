@@ -860,7 +860,7 @@ static struct socket *get_tap_socket(int fd, cap_rights_t required_rights)
 	struct socket *sock;
 
 	if (IS_ERR(file))
-		return PTR_ERR(file);
+		return ERR_PTR(PTR_ERR(file));
 	sock = tun_get_socket(file);
 	if (!IS_ERR(sock))
 		return sock;
