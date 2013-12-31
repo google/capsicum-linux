@@ -33,6 +33,7 @@ modules.builtin
 *.lzo
 *.patch
 *.gcno
+build*
 
 #
 # Top-level generic files
@@ -50,8 +51,6 @@ modules.builtin
 # Debian directory (make deb-pkg)
 #
 /debian/
-build
-build-native
 *.deb
 *.diff
 
