@@ -69,7 +69,7 @@ static int bnep_sock_ioctl(struct socket *sock, unsigned int cmd, unsigned long 
 		if (copy_from_user(&ca, argp, sizeof(ca)))
 			return -EFAULT;
 
-		nsock = sockfd_lookup(ca.sock, CAP_TODO, &err); /* ioctl(..,BNEPCONNADD,..) */
+		nsock = sockfd_lookup(ca.sock, CAP_READ|CAP_WRITE, &err);
 		if (!nsock)
 			return err;
 

@@ -5,11 +5,6 @@
 
 typedef __u64 cap_rights_t;
 
-/* TODO(drysdale): remove this and all uses. */
-/* Temporary marker indicating internal file use whose necessary rights have not
- * yet been determined. */
-#define CAP_TODO                CAP_NONE
-
 /* General file I/O. */
 #define CAP_NONE                0x0000000000000000ULL   /* None required */
 #define CAP_READ                0x0000000000000001ULL   /* read/recv */
