@@ -184,7 +184,19 @@ static unsigned int procdesc_poll(struct file *f,
 		return 0;
 }
 
+static int procdesc_show_fdinfo(struct seq_file *m, struct file *f)
+{
+	struct procdesc *pd = procdesc_get(f);
+	pid_t pid;
+	if (!pd)
+		return -EINVAL;
+
+	pid = task_tgid_vnr(pd->task);
+	seq_printf(m, "pid:\t%d\n", pid);
+	return 0;
+}
 const struct file_operations procdesc_file_ops = {
 	.poll = procdesc_poll,
-	.release = procdesc_release
+	.release = procdesc_release,
+	.show_fdinfo = procdesc_show_fdinfo
 };
