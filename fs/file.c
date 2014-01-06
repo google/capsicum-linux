@@ -954,7 +954,7 @@ SYSCALL_DEFINE2(dup2, unsigned int, oldfd, unsigned int, newfd)
 SYSCALL_DEFINE1(dup, unsigned int, fildes)
 {
 	int ret = -EBADF;
-	struct file *file = fget_raw(fildes, CAP_NONE);
+	struct file *file = fget_raw_no_unwrap(fildes);
 
 	if (!IS_ERR(file)) {
 		ret = get_unused_fd();
