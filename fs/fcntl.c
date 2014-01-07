@@ -346,14 +346,21 @@ static int check_fcntl_cmd(unsigned cmd)
 	return 0;
 }
 
-static cap_rights_t fcntl_rights(unsigned int cmd)
+static bool fcntl_rights(unsigned int cmd, cap_rights_t *rights)
 {
 	switch (cmd) {
 	case F_DUPFD:
 	case F_DUPFD_CLOEXEC:
+		/*
+		 * Returning true (=>use wrapped file) implies that no rights
+		 * are needed.
+		 */
+		*rights = CAP_NONE;
+		return true;
 	case F_GETFD:
 	case F_SETFD:
-		return CAP_NONE;
+		*rights = CAP_NONE;
+		return false;
 	case F_GETFL:
 	case F_SETFL:
 	case F_GETOWN:
@@ -361,7 +368,8 @@ static cap_rights_t fcntl_rights(unsigned int cmd)
 	case F_GETOWN_EX:
 	case F_SETOWN_EX:
 	case F_GETOWNER_UIDS:
-		return CAP_FCNTL;
+		*rights = CAP_FCNTL;
+		return false;
 	case F_GETLK:
 	case F_SETLK:
 	case F_SETLKW:
@@ -370,28 +378,44 @@ static cap_rights_t fcntl_rights(unsigned int cmd)
 	case F_SETLK64:
 	case F_SETLKW64:
 #endif
-		return CAP_FLOCK;
+		*rights = CAP_FLOCK;
+		return false;
 	case F_GETSIG:
 	case F_SETSIG:
-		return CAP_POLL_EVENT|CAP_FSIGNAL;
+		*rights = CAP_POLL_EVENT|CAP_FSIGNAL;
+		return false;
 	case F_GETLEASE:
 	case F_SETLEASE:
-		return CAP_FLOCK|CAP_FSIGNAL;
+		*rights = CAP_FLOCK|CAP_FSIGNAL;
+		return false;
 	case F_NOTIFY:
-		return CAP_NOTIFY;
+		*rights = CAP_NOTIFY;
+		return false;
 	case F_SETPIPE_SZ:
-		return CAP_SETSOCKOPT;
+		*rights = CAP_SETSOCKOPT;
+		return false;
 	case F_GETPIPE_SZ:
-		return CAP_GETSOCKOPT;
+		*rights = CAP_GETSOCKOPT;
+		return false;
 	default:
-		return CAP_ALL;
+		*rights = CAP_ALL;
+		return false;
 	}
 }
 
 SYSCALL_DEFINE3(fcntl, unsigned int, fd, unsigned int, cmd, unsigned long, arg)
 {
-	struct fd f = fdget_raw(fd, fcntl_rights(cmd));
+	cap_rights_t rights;
+	bool use_wrapped = fcntl_rights(cmd, &rights);
+	struct fd f;
 	long err = -EBADF;
+
+	if (use_wrapped) {
+		f.file = fget_raw_no_unwrap(fd);
+		f.need_put = 1;
+	} else {
+		f = fdget_raw(fd, rights);
+	}
 
 	if (IS_ERR(f.file)) {
 		err = PTR_ERR(f.file);
@@ -417,8 +441,17 @@ out:
 SYSCALL_DEFINE3(fcntl64, unsigned int, fd, unsigned int, cmd,
 		unsigned long, arg)
 {	
-	struct fd f = fdget_raw(fd, fcntl_rights(cmd));
+	cap_rights_t rights;
+	bool use_wrapped = fcntl_rights(cmd, &rights);
+	struct fd f;
 	long err = -EBADF;
+
+	if (use_wrapped) {
+		f.file = fget_raw_no_unwrap(fd);
+		f.need_put = 1;
+	} else {
+		f = fdget_raw(fd, rights);
+	}
 
 	if (IS_ERR(f.file)) {
 		err = PTR_ERR(f.file);
