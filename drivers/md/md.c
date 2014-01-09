@@ -5989,9 +5989,11 @@ static int set_bitmap_file(struct mddev *mddev, int fd)
 		mddev->bitmap_info.file = fget(fd, CAP_READ);
 
 		if (IS_ERR(mddev->bitmap_info.file)) {
+			err = PTR_ERR(mddev->bitmap_info.file);
+			mddev->bitmap_info.file = NULL;
 			printk(KERN_ERR "%s: error: failed to get bitmap file\n",
 			       mdname(mddev));
-			return PTR_ERR(mddev->bitmap_info.file);
+			return err;
 		}
 
 		err = deny_bitmap_write_access(mddev->bitmap_info.file);
