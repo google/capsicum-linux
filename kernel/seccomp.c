@@ -531,6 +531,16 @@ long prctl_set_seccomp(unsigned long seccomp_mode, char __user *filter)
 #endif
 #ifdef CONFIG_SECURITY_CAPSICUM
 	case SECCOMP_MODE_CAPSICUM:
+		/*
+		 * Entering capability mode requires that the task have
+		 * CAP_SYS_ADMIN in its namespace or be running with no_new_privs.
+		 * This avoids scenarios where unprivileged tasks can affect the
+		 * behavior of privileged children.
+		 */
+		if (!current->no_new_privs &&
+		    security_capable_noaudit(current_cred(), current_user_ns(),
+					     CAP_SYS_ADMIN) != 0)
+			return -EACCES;
 		ret = 0;
 		break;
 #endif
