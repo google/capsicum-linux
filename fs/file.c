@@ -730,6 +730,8 @@ struct file *fget_raw_no_unwrap(unsigned int fd)
 		/* File object ref couldn't be taken */
 		if (!atomic_long_inc_not_zero(&file->f_count))
 			file = ERR_PTR(-EBADF);
+	} else {
+		file = ERR_PTR(-EBADF);
 	}
 	rcu_read_unlock();
 
