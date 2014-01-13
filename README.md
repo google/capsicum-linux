@@ -47,16 +47,22 @@ Capsicum support is currently included for x86_64 and user-mode Linux.  The
 configuration parameters that need to be enabled are:
 
  - `CONFIG_64BIT`: Capsicum support is currently only implemented for 64 bit mode.
+ - `CONFIG_PROCDESC`: enable Capsicum process-descriptor functionality.
  - `CONFIG_SECURITY`: enable Linux Security Module (LSM) support.
  - `CONFIG_SECURITY_PATH`: enable LSM hooks for path operations
  - `CONFIG_SECURITY_CAPSICUM`: enable the Capsicum LSM.
- - `CONFIG_PROCDESC`: enable Capsicum process-descriptor functionality.
+ - `CONFIG_DEFAULT_SECURITY_CAPSICUM`, `CONFIG_DEFAULT_SECURITY="capsicum"`: set Capsicum
+   as default LSM.
 
 User-mode Linux is used for Capsicum testing, and requires the following
 additional configuration parameters:
 
-- `CONFIG_DEBUG_FS`: enable debug filesystem.
+ - `CONFIG_DEBUG_FS`: enable debug filesystem.
 
+The following configuration options are also useful for development:
+
+ - `CONFIG_DEBUG_KMEMLEAK`: enable kernel memory leak detection.
+ - `CONFIG_DEBUG_BUGVERBOSE`: verbose bug reporting.
 
 Testing
 -------
@@ -74,3 +80,47 @@ These test scripts currently expect specific build configurations (replacing the
 
  - For native Linux (including VMs), the kernel should be built with
    ``make -j 5 O=`pwd`/build-native``
+
+
+UML Testing Setup
+-----------------
+
+Create a file to use as the disk for user-mode Linux (UML):
+
+    # Create (sparse) empty file
+    dd if=/dev/zero of=tools/testing/capsicum_tests/test.img bs=1 count=0 seek=500GB
+    # Make an ext3 filesystem in it
+    mke2fs -t ext3 -F tools/testing/capsicum_tests/test.img
+
+Mount the new file system somewhere:
+
+    sudo mount -o loop tools/testing/capsicum_tests/test.img /mnt
+
+Put an Ubuntu base system onto it:
+
+    sudo debootstrap --arch=amd64 raring /mnt http://archive.ubuntu.com/ubuntu
+
+Replace some key files:
+
+    sudo cp /mnt/sbin/init /mnt/sbin/init.orig
+    sudo cp tools/testing/capsicum_tests/test-files/init /mnt/sbin/init
+    sudo cp /mnt/etc/fstab /mnt/etc/fstab.orig
+    sudo cp tools/testing/capsicum_tests/test-files/fstab /mnt/etc/fstab
+    sudo umount /mnt
+
+Copy test binaries into the test directory:
+
+    pushd ${CAPSICUM-TEST} && make && popd
+    cp ${CAPSICUM-TEST}/capsicum-test test-files/
+    cp ${CAPSICUM-TEST}/mini-me test-files/
+    cp ${CAPSICUM-TEST}/mini-me.noexec test-files/
+
+Tests can then be run with the wrapper scripts:
+
+    cd tools/testing/capsicum_tests
+    ./run-test-on-last-build ./capsicum-test
+
+Under the covers the `init` script will mount `tools/testing/capsicum_tests/test-files/`
+as `/tests/` within the UML system, and will run tests from there.  The specific
+test command to run is communicated into the UML instance as a `runtest=<cmd>` parameter
+to the UML kernel (which the `init` script retrieves from `/proc/cmdline`).

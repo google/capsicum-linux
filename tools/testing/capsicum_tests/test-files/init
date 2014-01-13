@@ -12,7 +12,8 @@ mount /proc
 export TEST_DIR="`grep -oP 'cwd=\".*?\"' /proc/cmdline`"
 export TEST_DIR=${TEST_DIR#cwd=\"}
 export TEST_DIR=${TEST_DIR%\"}
-echo "Mounting test-files/ from $TEST_DIR"
+echo "Mounting test-files/ from $TEST_DIR at /tests"
+mkdir -p /tests
 mount -t hostfs proc /tests -o "$TEST_DIR/test-files"
 
 mkdir -p /debug
