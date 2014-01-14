@@ -16,7 +16,7 @@
  * the association between their DT compatible string and their
  * initialization function.
  *
- * @name: name that must be unique accross all IRQCHIP_DECLARE of the
+ * @name: name that must be unique across all IRQCHIP_DECLARE of the
  * same file.
  * @compstr: compatible string of the irqchip driver
  * @fn: initialization function
