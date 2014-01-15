@@ -69,10 +69,11 @@ static inline bool capsicum_in_cap_mode(void)
 			current->seccomp.mode == SECCOMP_MODE_CAPSICUM;
 }
 
-static inline int capsicum_is_cap(const struct file *file)
+inline int capsicum_is_cap(const struct file *file)
 {
 	return file->f_op == &capsicum_file_ops;
 }
+EXPORT_SYMBOL(capsicum_is_cap);
 
 /*
  * Allocate a capability object.
@@ -113,8 +114,7 @@ static void capsicum_cap_set(struct file *capf, struct file *underlying,
  * If rights is non-NULL, the capability's rights will be stored there too.
  * If cap is not a capability, returns NULL.
  */
-static struct file *capsicum_unwrap(const struct file *capf,
-				cap_rights_t *rights)
+struct file *capsicum_unwrap(const struct file *capf, cap_rights_t *rights)
 {
 	struct capsicum_capability *cap;
 
@@ -128,12 +128,13 @@ static struct file *capsicum_unwrap(const struct file *capf,
 
 	return cap->underlying;
 }
+EXPORT_SYMBOL(capsicum_unwrap);
 
 /*
  * Wrap a file in a new capability object and install the capability object into
  * the file descriptor table.
  */
-static int capsicum_install_fd(struct file *orig, cap_rights_t rights)
+int capsicum_install_fd(struct file *orig, cap_rights_t rights)
 {
 	int error, fd;
 	struct file *file;
@@ -161,6 +162,7 @@ err_put_unused_fd:
 	put_unused_fd(fd);
 	return error;
 }
+EXPORT_SYMBOL(capsicum_install_fd);
 
 /* Include the per-syscall processing code */
 #include "capsicum_syscall_table.h"
