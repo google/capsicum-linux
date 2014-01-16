@@ -413,9 +413,7 @@ config PROCDESC
 	help
 	  Process descriptors are file descriptors which represent a handle
 	  on another process. They are part of the Capsicum capability API
-	  (http://www.cl.cam.ac.uk/research/security/capsicum).
-
-	  They are currently enabled by default for testing.
+	  (Documentation/security/capsicum.txt).
 
 	  Say N if unsure.
 

@@ -122,11 +122,9 @@ config SECURITY_CAPSICUM
 	default y
 	depends on SECURITY
 	help
-	  Enable security primitives to support fine-grained capabilities on
-	  file descriptors.
-
-	  See http://www.cl.cam.ac.uk/research/security/capsicum/ for more
-	  information.  Currently this is on by default for developement.
+	  Enable the Capsicum LSM, which implements security primitives that
+	  support fine-grained capabilities on file descriptors; see
+	  Documentation/security/capsicum.txt for more details.
 
 	  If you are unsure as to whether this is required, answer N.
 
