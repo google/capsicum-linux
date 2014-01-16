@@ -813,6 +813,7 @@ struct file *fget_raw_light(unsigned int fd, cap_rights_t required_rights,
 
 	return file;
 }
+EXPORT_SYMBOL(fget_raw_light);
 
 void set_close_on_exec(unsigned int fd, int flag)
 {
