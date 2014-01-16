@@ -470,6 +470,11 @@ int security_path_chroot(struct path *path)
 {
 	return security_ops->path_chroot(path);
 }
+
+int security_path_lookup(cap_rights_t base_rights, struct dentry *dentry, const char *name)
+{
+	return security_ops->path_lookup(base_rights, dentry, name);
+}
 #endif
 
 int security_inode_create(struct inode *dir, struct dentry *dentry, umode_t mode)
@@ -796,11 +801,6 @@ struct file *security_file_lookup(struct file *file,
 struct file *security_file_openat(cap_rights_t base_rights, struct file *file)
 {
 	return security_ops->file_openat(base_rights, file);
-}
-
-int security_path_lookup(cap_rights_t base_rights, struct dentry *dentry, const char *name)
-{
-	return security_ops->path_lookup(base_rights, dentry, name);
 }
 
 int security_task_create(unsigned long clone_flags)

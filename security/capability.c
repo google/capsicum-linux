@@ -304,6 +304,13 @@ static int cap_path_chroot(struct path *root)
 {
 	return 0;
 }
+
+static int cap_path_lookup(cap_rights_t base_rights,
+			struct dentry *dentry, const char *name)
+{
+	return 0;
+}
+
 #endif
 
 static int cap_file_permission(struct file *file, int mask)
@@ -374,12 +381,6 @@ static struct file *cap_file_lookup(struct file *orig,
 static struct file *cap_file_openat(cap_rights_t base_rights, struct file *file)
 {
 	return file;
-}
-
-static int cap_path_lookup(cap_rights_t base_rights,
-			struct dentry *dentry, const char *name)
-{
-	return 0;
 }
 
 static int cap_task_create(unsigned long clone_flags)
@@ -1004,6 +1005,7 @@ void __init security_fixup_ops(struct security_operations *ops)
 	set_to_cap_if_null(ops, path_chmod);
 	set_to_cap_if_null(ops, path_chown);
 	set_to_cap_if_null(ops, path_chroot);
+	set_to_cap_if_null(ops, path_lookup);
 #endif
 	set_to_cap_if_null(ops, file_permission);
 	set_to_cap_if_null(ops, file_alloc_security);
@@ -1020,7 +1022,6 @@ void __init security_fixup_ops(struct security_operations *ops)
 	set_to_cap_if_null(ops, file_open);
 	set_to_cap_if_null(ops, file_lookup);
 	set_to_cap_if_null(ops, file_openat);
-	set_to_cap_if_null(ops, path_lookup);
 	set_to_cap_if_null(ops, task_create);
 	set_to_cap_if_null(ops, task_free);
 	set_to_cap_if_null(ops, cred_alloc_blank);

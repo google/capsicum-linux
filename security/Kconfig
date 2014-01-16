@@ -121,6 +121,7 @@ config SECURITY_CAPSICUM
 	bool "Capsicum capabilities"
 	default y
 	depends on SECURITY
+	depends on SECURITY_PATH
 	help
 	  Enable the Capsicum LSM, which implements security primitives that
 	  support fine-grained capabilities on file descriptors; see

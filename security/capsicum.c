@@ -355,6 +355,7 @@ static struct file *capsicum_file_openat(cap_rights_t base_rights, struct file *
 	return capf;
 }
 
+#ifdef CONFIG_SECURITY_PATH
 /*
  * Prevent absolute lookups and upward traversal (../) when in capability
  * mode or when the lookup is relative to a capability file descriptor.
@@ -374,6 +375,7 @@ static int capsicum_path_lookup(cap_rights_t base_rights,
 
 	return 0;
 }
+#endif
 
 static int __init capsicum_init(void)
 {
@@ -425,5 +427,7 @@ struct security_operations capsicum_security_ops = {
 	.name = "capsicum",
 	.file_lookup = capsicum_file_lookup,
 	.file_openat = capsicum_file_openat,
+#ifdef CONFIG_SECURITY_PATH
 	.path_lookup = capsicum_path_lookup,
+#endif
 };

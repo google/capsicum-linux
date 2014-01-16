@@ -396,6 +396,14 @@ static inline void security_free_mnt_opts(struct security_mnt_opts *opts)
  *	@dentry contains the dentry structure of the symbolic link.
  *	@old_name contains the pathname of file.
  *	Return 0 if permission is granted.
+ * @path_lookup:
+ *      Check permission before looking up a path segment.
+ *	@base_rights are the rights associated with the directory the lookup
+ *	is relative to.
+ *      @dentry is the context of the lookup, or NULL for the first stage of
+ *      an absolute lookup.
+ *      @name is the rest of the path.
+ *      Return 0 if permission is granted.
  * @inode_mkdir:
  *	Check permissions to create a new directory in the existing directory
  *	associated with inode structure @dir.
@@ -657,14 +665,6 @@ static inline void security_free_mnt_opts(struct security_mnt_opts *opts)
  *	to receive an open file descriptor via socket IPC.
  *	@file contains the file structure being received.
  *	Return 0 if permission is granted.
- * @path_lookup:
- *      Check permission before looking up a path segment.
- *	@base_rights are the rights associated with the directory the lookup
- *	is relative to.
- *      @dentry is the context of the lookup, or NULL for the first stage of
- *      an absolute lookup.
- *      @name is the rest of the path.
- *      Return 0 if permission is granted.
  * @file_lookup:
  *	This hook allows security modules to intercept file descriptor lookups
  *	to check whether a required set of rights are available for the file
@@ -1500,7 +1500,6 @@ struct security_operations {
 					struct qstr *name, void **ctx,
 					u32 *ctxlen);
 
-
 #ifdef CONFIG_SECURITY_PATH
 	int (*path_unlink) (struct path *dir, struct dentry *dentry);
 	int (*path_mkdir) (struct path *dir, struct dentry *dentry, umode_t mode);
@@ -1517,6 +1516,8 @@ struct security_operations {
 	int (*path_chmod) (struct path *path, umode_t mode);
 	int (*path_chown) (struct path *path, kuid_t uid, kgid_t gid);
 	int (*path_chroot) (struct path *path);
+	int (*path_lookup) (cap_rights_t base_rights,
+			struct dentry *dentry, const char *name);
 #endif
 
 	int (*inode_alloc_security) (struct inode *inode);
@@ -1576,8 +1577,6 @@ struct security_operations {
 				    struct fown_struct *fown, int sig);
 	int (*file_receive) (struct file *file);
 	int (*file_open) (struct file *file, const struct cred *cred);
-	int (*path_lookup) (cap_rights_t base_rights,
-			struct dentry *dentry, const char *name);
 	struct file *(*file_lookup) (struct file *orig,
 				     cap_rights_t required_rights,
 				     cap_rights_t *actual_rights);
@@ -1853,8 +1852,6 @@ int security_file_send_sigiotask(struct task_struct *tsk,
 				 struct fown_struct *fown, int sig);
 int security_file_receive(struct file *file);
 int security_file_open(struct file *file, const struct cred *cred);
-int security_path_lookup(cap_rights_t base_rights,
-			struct dentry *dentry, const char *name);
 struct file *security_file_lookup(struct file *orig,
 				cap_rights_t required_rights,
 				cap_rights_t *actual_rights);
@@ -3004,6 +3001,8 @@ int security_path_rename(struct path *old_dir, struct dentry *old_dentry,
 int security_path_chmod(struct path *path, umode_t mode);
 int security_path_chown(struct path *path, kuid_t uid, kgid_t gid);
 int security_path_chroot(struct path *path);
+int security_path_lookup(cap_rights_t base_rights,
+			struct dentry *dentry, const char *name);
 #else	/* CONFIG_SECURITY_PATH */
 static inline int security_path_unlink(struct path *dir, struct dentry *dentry)
 {
@@ -3064,6 +3063,12 @@ static inline int security_path_chown(struct path *path, kuid_t uid, kgid_t gid)
 }
 
 static inline int security_path_chroot(struct path *path)
+{
+	return 0;
+}
+
+static inline int security_path_lookup(cap_rights_t base_rights,
+				struct dentry *dentry, const char *name)
 {
 	return 0;
 }
