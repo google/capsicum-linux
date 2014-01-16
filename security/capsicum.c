@@ -427,5 +427,3 @@ struct security_operations capsicum_security_ops = {
 	.file_openat = capsicum_file_openat,
 	.path_lookup = capsicum_path_lookup,
 };
-
-#include "capsicum_test.c"
