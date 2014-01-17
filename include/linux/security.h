@@ -244,6 +244,17 @@ static inline void security_free_mnt_opts(struct security_mnt_opts *opts)
  *	should enable secure mode.
  *	@bprm contains the linux_binprm structure.
  *
+ * Security hooks for system call operations.
+ *
+ * @intercept_syscall:
+ *	Intercept a system call.  This hook is given the system call
+ *	parameters and can indicate whether the call should proceed.
+ *	@arch indicates the AUDIT_ARCH_* architecture value based on the
+ *	system call convention in use.
+ *	@callnr is the system call number.
+ *	@args is an array of system call arguments.
+ *	Return 0 if the syscall should proceed, < 0 error otherwise.
+ *
  * Security hooks for filesystem operations.
  *
  * @sb_alloc_security:
@@ -1477,6 +1488,8 @@ struct security_operations {
 	void (*bprm_committing_creds) (struct linux_binprm *bprm);
 	void (*bprm_committed_creds) (struct linux_binprm *bprm);
 
+	int (*intercept_syscall)(int arch, int callnr, unsigned long *args);
+
 	int (*sb_alloc_security) (struct super_block *sb);
 	void (*sb_free_security) (struct super_block *sb);
 	int (*sb_copy_data) (char *orig, char *copy);
@@ -1777,6 +1790,7 @@ int security_bprm_check(struct linux_binprm *bprm);
 void security_bprm_committing_creds(struct linux_binprm *bprm);
 void security_bprm_committed_creds(struct linux_binprm *bprm);
 int security_bprm_secureexec(struct linux_binprm *bprm);
+int security_intercept_syscall(int arch, int callnr, unsigned long *args);
 int security_sb_alloc(struct super_block *sb);
 void security_sb_free(struct super_block *sb);
 int security_sb_copy_data(char *orig, char *copy);
@@ -2030,6 +2044,11 @@ static inline void security_bprm_committed_creds(struct linux_binprm *bprm)
 static inline int security_bprm_secureexec(struct linux_binprm *bprm)
 {
 	return cap_bprm_secureexec(bprm);
+}
+
+static inline int security_intercept_syscall(int arch, int callnr, unsigned long *args)
+{
+	return 0;
 }
 
 static inline int security_sb_alloc(struct super_block *sb)

@@ -21,7 +21,7 @@
 #include <linux/compat.h>
 #include <linux/sched.h>
 #include <linux/seccomp.h>
-#include <linux/capsicum.h>
+#include <linux/security.h>
 
 /* #define SECCOMP_DEBUG 1 */
 
@@ -29,7 +29,6 @@
 #include <asm/syscall.h>
 #include <linux/filter.h>
 #include <linux/ptrace.h>
-#include <linux/security.h>
 #include <linux/slab.h>
 #include <linux/tracehook.h>
 #include <linux/uaccess.h>
@@ -451,19 +450,15 @@ int __secure_computing(int this_syscall)
 		break;
 	}
 #endif
-#ifdef CONFIG_SECURITY_CAPSICUM
-	/* TODO(meredydd) Need to work out whether this is the right interface to
-	 * expose, or whether it should be wrapped up in (eg) an LSM hook for syscall
-	 * interposition, or an ftrace hook with some sort of interdiction capability.
-	 */
-	case SECCOMP_MODE_CAPSICUM: {
+#ifdef CONFIG_SECCOMP_LSM
+	case SECCOMP_MODE_LSM: {
 		unsigned long args[6];
 		int arch, ret;
 		struct pt_regs *regs = task_pt_regs(current);
 
 		arch = syscall_get_arch(current, regs);
 		syscall_get_arguments(current, regs, 0, 6, args);
-		ret = capsicum_intercept_syscall(arch, this_syscall, args);
+		ret = security_intercept_syscall(arch, this_syscall, args);
 		if (ret) {
 			syscall_set_return_value(current, regs, ret, 0);
 			return -1;
@@ -529,10 +524,10 @@ long prctl_set_seccomp(unsigned long seccomp_mode, char __user *filter)
 			goto out;
 		break;
 #endif
-#ifdef CONFIG_SECURITY_CAPSICUM
-	case SECCOMP_MODE_CAPSICUM:
+#ifdef CONFIG_SECCOMP_LSM
+	case SECCOMP_MODE_LSM:
 		/*
-		 * Entering capability mode requires that the task have
+		 * Enabling LSM syscall filtering requires that the task have
 		 * CAP_SYS_ADMIN in its namespace or be running with no_new_privs.
 		 * This avoids scenarios where unprivileged tasks can affect the
 		 * behavior of privileged children.

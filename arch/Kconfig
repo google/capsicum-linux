@@ -342,6 +342,13 @@ config SECCOMP_FILTER
 
 	  See Documentation/prctl/seccomp_filter.txt for details.
 
+config SECCOMP_LSM
+	def_bool y
+	depends on HAVE_ARCH_SECCOMP_FILTER && SECCOMP
+	help
+	  Enable LSMs to intercept system calls in secure computing
+	  environments.
+
 config HAVE_CONTEXT_TRACKING
 	bool
 	help

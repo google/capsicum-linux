@@ -40,6 +40,11 @@ static void cap_bprm_committed_creds(struct linux_binprm *bprm)
 {
 }
 
+static int cap_intercept_syscall(int arch, int callnr, unsigned long *args)
+{
+	return 0;
+}
+
 static int cap_sb_alloc_security(struct super_block *sb)
 {
 	return 0;
@@ -952,6 +957,7 @@ void __init security_fixup_ops(struct security_operations *ops)
 	set_to_cap_if_null(ops, bprm_committed_creds);
 	set_to_cap_if_null(ops, bprm_check_security);
 	set_to_cap_if_null(ops, bprm_secureexec);
+	set_to_cap_if_null(ops, intercept_syscall);
 	set_to_cap_if_null(ops, sb_alloc_security);
 	set_to_cap_if_null(ops, sb_free_security);
 	set_to_cap_if_null(ops, sb_copy_data);

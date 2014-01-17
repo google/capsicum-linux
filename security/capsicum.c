@@ -66,7 +66,7 @@ extern struct security_operations capsicum_security_ops;
 static inline bool capsicum_in_cap_mode(void)
 {
 	return test_thread_flag(TIF_SECCOMP) &&
-			current->seccomp.mode == SECCOMP_MODE_CAPSICUM;
+			current->seccomp.mode == SECCOMP_MODE_LSM;
 }
 
 inline int capsicum_is_cap(const struct file *file)
@@ -425,6 +425,7 @@ struct file_operations capsicum_file_ops = {
 
 struct security_operations capsicum_security_ops = {
 	.name = "capsicum",
+	.intercept_syscall = capsicum_intercept_syscall,
 	.file_lookup = capsicum_file_lookup,
 	.file_openat = capsicum_file_openat,
 #ifdef CONFIG_SECURITY_PATH

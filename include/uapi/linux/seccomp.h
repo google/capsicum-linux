@@ -9,7 +9,7 @@
 #define SECCOMP_MODE_DISABLED	0 /* seccomp is not in use. */
 #define SECCOMP_MODE_STRICT	1 /* uses hard-coded filter. */
 #define SECCOMP_MODE_FILTER	2 /* uses user-supplied filter. */
-#define SECCOMP_MODE_CAPSICUM	3 /* uses Capsicum to filter & check. */
+#define SECCOMP_MODE_LSM	3 /* uses LSM hook to filter. */
 
 /*
  * All BPF programs must return a 32-bit value.
