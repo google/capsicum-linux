@@ -7,55 +7,49 @@
 # it under the terms of the GNU General Public License version 2, as
 # published by the Free Software Foundation.
 cd `dirname $0`
+CWD=`pwd`
+TARGET=linux
+BUILDSUBDIR=build
+BUILDCMD="$TARGET ARCH=um O=$BUILDSUBDIR"
+TOPDIR=../../..
+THREADS=5
+BUILD=false
+VERBOSE=false
+INVOKE=""
 
-if [ "$1" = "-v" ]; then
+while [ $# -gt 0 ]
+do
+    case $1 in
+        -b) BUILD=true;;
+        -v) VERBOSE=true;;
+        -gdb)
+            INVOKE="gdb --args";;
+        *) break;;
+    esac
     shift
-    export LOUD=true
-else
-    export LOUD=false
+done
+
+TESTS="$@"
+if [ "$TESTS" = "" ]; then
+  echo "You must specify a test command to run on the hosted system (/tests/ maps to test-files/)"
+  echo "Usage: $0 [options] <test-command>"
+  exit 1
 fi
 
-if [ "$1" = "-vm" -o "$1" = "-x86" ];  then
-    shift
-    export VM=true
-else
-    export VM=false
-fi
-
-if [ "$1" = "-kgdb" ]; then
-    shift
-    export KGDB=-kgdb
-    export TARGETS="bzImage vmlinux"
-else
-    export TARGETS=bzImage
-    export KGDB=""
-fi
-
-if [ "$1" = "-a" ]; then
-    shift
-    export TESTS="kt;kt procdesc;cap_new.test;procdesc.test;seccomp.test;fexecve_syscall.test"
-else
-    TESTS="$@"
-fi
-
-if expr match "$1" ".*\\.test\\|kt" >/dev/null ; then
-    make --no-print-directory -C test-files $1 || exit 1
-fi
-
-echo "Building..."
-
-if $VM ; then
-
-    make -C ../../../ -j14 $TARGETS O=build-native/ >/dev/null && (./run-vm-test-on-last-build $KGDB $TESTS 2>&1 | sed -n '/---- Executing: .* ----/,$p')
-
-else
-    if $LOUD; then
-
-	make -C ../../../ -j 14 linux ARCH=um O=build/ && ./run-test-on-last-build $TESTS
-
+if $BUILD ; then
+    echo "Building..."
+    if $VERBOSE ; then
+        make -C $TOPDIR -j $THREADS $BUILDCMD
     else
-
-	make -C ../../../ -j 14 linux ARCH=um O=build/ >/dev/null && (./run-test-on-last-build $TESTS 2>&1 | sed -n '/---- Executing: .* ----/,$p' | grep -Pav 'remove_umid_dir - remove_files_and_dir failed with err = -16|System halted.')
+        make -C $TOPDIR -j $THREADS $BUILDCMD > /dev/null
     fi
 fi
 
+TESTARGS="ubd0=test.img rw con0=fd:2 con1=fd:0,fd:1 con=pts mem=4096M security=capsicum cwd=\"$CWD\" runtest=\"$TESTS\""
+if $VERBOSE ; then
+    $INVOKE $TOPDIR/$BUILDSUBDIR/$TARGET $TESTARGS
+else
+    ($INVOKE $TOPDIR/$BUILDSUBDIR/$TARGET $TESTARGS 2>&1 | \
+        sed -n '/---- Executing: .* ----/,$p' | \
+        grep --perl-regexp --text --invert-match 'System halted.')
+fi
