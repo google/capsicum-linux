@@ -135,6 +135,7 @@ static int capsicum_run_syscall_table(int arch, int callnr, unsigned long *args)
 	case (__NR_getsid):
 	case (__NR_getsockname):
 	case (__NR_getsockopt):
+	case (__NR_gettid):
 	case (__NR_gettimeofday):
 	case (__NR_getuid):
 	case (__NR_ioctl):
