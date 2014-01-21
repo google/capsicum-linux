@@ -543,8 +543,34 @@ long prctl_set_seccomp(unsigned long seccomp_mode, char __user *filter)
 		goto out;
 	}
 
-	current->seccomp.mode = seccomp_mode;
-	set_thread_flag(TIF_SECCOMP);
+	if (seccomp_mode == SECCOMP_MODE_LSM) {
+		/*
+		 * SECCOMP_LSM mode has slightly different semantics: it affects
+		 * all threads associated with the process, not just the current
+		 * thread.
+		 */
+		struct pid *pid = task_tgid(current);
+		struct task_struct *p;
+
+		/* TODO(drysdale): check whether this is the right kind of synchronization */
+		task_lock(current->group_leader);
+		/* First check none of the threads are already in a different seccomp mode */
+		do_each_pid_thread(pid, PIDTYPE_PID, p) {
+			if (p->seccomp.mode && p->seccomp.mode != seccomp_mode)
+				goto out;
+		} while_each_pid_thread(pid, PIDTYPE_PID, p);
+
+		/* Now move them all to this mode */
+		do_each_pid_thread(pid, PIDTYPE_PID, p) {
+			struct thread_info *ti = task_thread_info(p);
+			p->seccomp.mode = seccomp_mode;
+			set_ti_thread_flag(ti, TIF_SECCOMP);
+		} while_each_pid_thread(pid, PIDTYPE_PID, p);
+		task_unlock(current->group_leader);
+	} else {
+		current->seccomp.mode = seccomp_mode;
+		set_thread_flag(TIF_SECCOMP);
+	}
 out:
 	return ret;
 }
