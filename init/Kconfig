@@ -412,8 +412,8 @@ config PROCDESC
 	default y
 	help
 	  Process descriptors are file descriptors which represent a handle
-	  on another process. They are part of the Capsicum capability API
-	  (Documentation/security/capsicum.txt).
+	  on another process. They are part of the Capsicum capability
+	  framework (Documentation/security/capsicum.txt).
 
 	  Say N if unsure.
 

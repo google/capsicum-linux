@@ -13,15 +13,16 @@ struct file;
 int capsicum_intercept_syscall(int arch, int callnr, unsigned long *args);
 
 /*
- * Wrap a file in a new capability object and install the capability object into
- * the file descriptor table. Return the new file descriptor or an error value.
+ * Wrap a file in a new Capsicum capability object and install the capability
+ * object into the file descriptor table. Return the new file descriptor or an
+ * error value.
  */
 int capsicum_install_fd(struct file *orig, cap_rights_t rights);
 
-/* Determine if a file is a capability. */
+/* Determine if a file is a Capsicum capability. */
 int capsicum_is_cap(const struct file *file);
 
-/* Return the underlying file for a capability. */
+/* Return the underlying file for a Capsicum capability. */
 struct file *capsicum_unwrap(const struct file *capf, cap_rights_t *rights);
 
 #endif

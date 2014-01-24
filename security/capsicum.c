@@ -1,5 +1,5 @@
 /*
- * Linux implementation of Capsicum, a capability API for UNIX.
+ * Main implementation of Capsicum, a capability framework for UNIX.
  *
  * Copyright (C) 2012-2013 The Chromium OS Authors <chromium-os-dev@chromium.org>
  *
@@ -7,24 +7,7 @@
  * it under the terms of the GNU General Public License version 2, as
  * published by the Free Software Foundation.
  *
- * Capsicum consists of:
- *
- *  - A "capability", which is a struct file which wraps an underlying
- *    struct file, with some permissions. Direct operations on this
- *    object are an error - it should be unwrapped (and access checks
- *    performed) before anyone tries to do anything with it.
- *  - An LSM hook which allows us transparently intercept the return
- *    value of fget(), so we can check permissions and return the actual
- *    underlying file object.
- *  - A seccomp mode which checks all system calls against a table, and
- *    determines whether they have the appropriate rights for any
- *    capability-wrapped file descriptors they're operating on.
- *  - An LSM hook to prevent upward directory traversal when using openat()
- *    and friends in capability mode.
- *  - A "process descriptor" mechanism which allows processes to
- *    refer to each other with file descriptors, which can then be
- *    capability-wrapped, allowing us to restrict access to the global PID
- *    namespace.
+ * See Documentation/security/capsicum.txt for information on Capsicum.
  */
 
 #include <linux/anon_inodes.h>
@@ -48,9 +31,9 @@
 #endif
 
 /*
- * Capability structure, holding the associated rights and underlying real file.
- * Capabilities are not stacked, i.e. underlying always points to a normal file
- * not another capability. Stored in file->private_data.
+ * Capsicum capability structure, holding the associated rights and underlying
+ * real file.  Capabilities are not stacked, i.e. underlying always points to a
+ * normal file not another capsicum_capability. Stored in file->private_data.
  */
 struct capsicum_capability {
 	cap_rights_t rights;
@@ -76,7 +59,7 @@ inline int capsicum_is_cap(const struct file *file)
 EXPORT_SYMBOL(capsicum_is_cap);
 
 /*
- * Allocate a capability object.
+ * Allocate a Capsicum capability object.
  */
 static struct file *capsicum_cap_alloc(void)
 {
@@ -95,8 +78,8 @@ static struct file *capsicum_cap_alloc(void)
 }
 
 /*
- * Initialise an already-allocated capability object. to point to the given
- * underlying file with the given rights.
+ * Initialise an already-allocated Capsicum capability object. to point to the
+ * given underlying file with the given rights.
  */
 static void capsicum_cap_set(struct file *capf, struct file *underlying,
 			cap_rights_t rights)
@@ -110,9 +93,9 @@ static void capsicum_cap_set(struct file *capf, struct file *underlying,
 }
 
 /*
- * Given a capability object, return the underlying file wrapped by that capability.
- * If rights is non-NULL, the capability's rights will be stored there too.
- * If cap is not a capability, returns NULL.
+ * Given a Capsicum capability object, return the underlying file wrapped by
+ * that capability.  If rights is non-NULL, the capability's rights will be
+ * stored there too.  If cap is not a capability, returns NULL.
  */
 struct file *capsicum_unwrap(const struct file *capf, cap_rights_t *rights)
 {
@@ -131,8 +114,9 @@ struct file *capsicum_unwrap(const struct file *capf, cap_rights_t *rights)
 EXPORT_SYMBOL(capsicum_unwrap);
 
 /*
- * Wrap a file in a new capability object and install the capability object into
- * the file descriptor table.
+ * Wrap a file in a new Capsicum capability object and install the capability
+ * object into the file descriptor table.  Returns the new file descriptor or an
+ * error.
  */
 int capsicum_install_fd(struct file *orig, cap_rights_t rights)
 {
@@ -249,8 +233,8 @@ out_err:
  */
 
 /*
- * When we release a capability, release our reference to the underlying
- * (wrapped) file as well.
+ * When we release a Capsicum capability, release our reference to the
+ * underlying (wrapped) file as well.
  */
 static int capsicum_release(struct inode *i, struct file *capf)
 {
@@ -296,8 +280,9 @@ static void capsicum_panic_not_unwrapped(void)
  */
 
 /*
- * We are looking up a file by its file descriptor. If it is a capability,
- * and has the required rights, we unwrap it and return the underlying file.
+ * We are looking up a file by its file descriptor. If it is a Capsicum
+ * capability, and has the required rights, we unwrap it and return the
+ * underlying file.
  *
  * If we were in capability mode and this call was triggered by a syscall, we
  * performed a rights check on entry to the syscall. This function checks that
@@ -311,7 +296,7 @@ static struct file *capsicum_file_lookup(struct file *file,
 	cap_rights_t rights;
 	struct file *underlying;
 
-	/* See if the file in question is a capability. */
+	/* See if the file in question is a Capsicum capability. */
 	underlying = capsicum_unwrap(file, &rights);
 	if (!underlying) {
 		if (actual_rights)
@@ -346,7 +331,7 @@ static struct file *capsicum_file_openat(cap_rights_t base_rights, struct file *
 	if ((base_rights & required_rights) != required_rights)
 		return ERR_PTR(-ENOTCAPABLE);
 
-	/* Now allocate the capability file descriptor wrapper */
+	/* Now allocate the Capsicum capability file wrapper */
 	capf = capsicum_cap_alloc();
 	if (IS_ERR(capf))
 		return capf;

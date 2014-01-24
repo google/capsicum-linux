@@ -8,14 +8,14 @@ highly granular way, reducing the attack surface in the event of subversion.
 Originally developed at the University of Cambridge Computer Laboratory, and
 initially implemented in FreeBSD 9.x, Capsicum extends the POSIX API, providing
 several new OS primitives to support object-capability security on UNIX-like
-operating systems:
+operating systems.
 
-Note that Capsicum capabilities are radically different to the POSIX.1e
-capabilities that are already available in Linux:
+Note that Capsicum capability file descriptors are radically different to the
+POSIX.1e capabilities that are already available in Linux:
  - POSIX.1e capabilities subdivide the root user's authority into different
    areas of functionality.
- - Capsicum object capabilities restrict individual file descriptors so that
-   only operations permitted by that FD's rights are allowed on that FD.
+ - Capsicum capabilities restrict individual file descriptors so that
+   only operations permitted by that particular FD's rights are allowed.
 
 
 Overview
@@ -49,34 +49,35 @@ fget() family of functions.
 All such operations in the kernel are annotated with information about the
 operations that are going to be performed on the retrieved struct file.  For
 example, a file that is retrieved for a read operation has its fget() call
-annotated with CAP_READ, indicating that any capability that reaches this
+annotated with CAP_READ, indicating that any capability FD that reaches this
 point needs to include the CAP_READ right to progress further.  If the
 appropriate right is not available, -ENOTCAPABLE is returned.
 
 This change is the most significant change to the kernel, as it affects all
-fd-to-file conversions.  However, for non-capabilities the run-time impact is
+FD-to-file conversions.  However, for non-capabilities the run-time impact is
 minimal as the additional required_rights parameter can be ignored.
 
 
 Capability Mode
 ---------------
 
-Capabilities with restricted rights are of little use on their own, as subverted
-code can simply open new file descriptors with full access.  To prevent this,
-Capsicum also provides capability mode, which disables a large number of system
-calls for the process (and which cannot be reversed).  Specifically, any system
-calls which allow access to a global namespace are disabled; this includes
-arbitrary filesystem access, IP:port ranges and PID spaces.
+Capability FDs with restricted rights are of little use on their own, as
+subverted code can simply open new file descriptors with full access.  To
+prevent this, Capsicum also provides capability mode, which disables a large
+number of system calls for the process (and which cannot be reversed).
+Specifically, any system calls which allow access to a global namespace are
+disabled; this includes arbitrary filesystem access, IP:port ranges and PID
+spaces.
 
 Capability mode is implemented using the existing secure computing framework
-from kernel/seccomp.c
+from kernel/seccomp.c, and a new LSM hook.
 
 
 Path Traversal
 --------------
 
 Capsicum does allow new files to be accessed beneath a directory for which the
-application has a suitable capability (one including the CAP_LOOKUP right),
+application has a suitable capability FD (one including the CAP_LOOKUP right),
 using the openat(2) system call.  To prevent escape from the directory, path
 traversals are policed for "/" and ".." components.
 
@@ -102,6 +103,8 @@ modifications:
 
 The remainder of the Capsicum functionality is implemented as a Linux Security
 Module (security/capsicum.c), using the following added LSM hooks:
+ - syscall_intercept: Allow policing of system calls at system call entry, for
+   processes that have activated secure computing (seccomp) mode.
  - file_lookup: Allow modification of the result of an fget() operation, so that
    a rights check can be performed and the normal file underlying a capability
    can be returned.
@@ -114,8 +117,8 @@ New System Calls
 ----------------
 
 Capsicum implements the following new system calls:
- - cap_new: create a capability
- - cap_getrights: return the rights associated with a capability
+ - cap_new: create a capability FD from a file descriptor
+ - cap_getrights: return the rights associated with a capability FD
  - fexecve: execve via a file descriptor
  - pdfork: fork and generate a process descriptor
  - pdgetpid: get the pid associated with a process descriptor

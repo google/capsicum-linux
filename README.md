@@ -18,11 +18,11 @@ The current functionality is based on the 3.11.1 upstream kernel.
 Functionality Overview
 ----------------------
 
-Capsicum introduces a new kind of file descriptor, a *capability*, which has a
-limited set of rights associated with it.  Operations on a capability that are
-not allowed by the associated rights are rejected (with `ENOTCAPABLE`).  New
-capabilities can only have a subset of the rights of an existing file
-descriptor/capability.
+Capsicum introduces a new kind of file descriptor, a *capability* file
+descriptor, which has a limited set of *rights* associated with it.  Operations
+on a capability FD that are not allowed by the associated rights are rejected
+(with `ENOTCAPABLE`), and the rights associated with a capability FD can only
+be narrowed, not widened.
 
 Capsicum also introduces *capability mode*, which disables (with `ECAPMODE`)
 all syscalls that access any kind of global namespace.
@@ -30,7 +30,7 @@ all syscalls that access any kind of global namespace.
 Taken together, these features allow userspace code to effectively sandbox
 itself, by:
 
- - creating capabilities (with limited rights) to files and sockets that are
+ - creating capability FDs (with limited rights) for files and sockets that are
    definitely needed by the process
  - closing all other file descriptors
  - entering capability mode (which means that new, non-capability, file

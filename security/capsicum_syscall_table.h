@@ -1,5 +1,5 @@
 /*
- * System call permission table for Capsicum, a capability API for UNIX.
+ * System call permission table for Capsicum, a capability framework for UNIX.
  *
  * Copyright (C) 2012 The Chromium OS Authors <chromium-os-dev@chromium.org>
  *
