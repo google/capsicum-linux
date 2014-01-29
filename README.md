@@ -68,7 +68,7 @@ Testing
 -------
 
 The capsicum-linux currently includes test scripts in the
-`tools/testing/capsicum_tests/` directory, although the (user-space) tests themselves are
+`tools/testing/capsicum/` directory, although the (user-space) tests themselves are
 in the separate [capsicum-test](https://github.com/google/capsicum-test) repository.
 
 These test scripts currently expect specific build configurations (replacing the
@@ -88,13 +88,13 @@ UML Testing Setup
 Create a file to use as the disk for user-mode Linux (UML):
 
     # Create (sparse) empty file
-    dd if=/dev/zero of=tools/testing/capsicum_tests/test.img bs=1 count=0 seek=500GB
+    dd if=/dev/zero of=tools/testing/capsicum/test.img bs=1 count=0 seek=500GB
     # Make an ext3 filesystem in it
-    mke2fs -t ext3 -F tools/testing/capsicum_tests/test.img
+    mke2fs -t ext3 -F tools/testing/capsicum/test.img
 
 Mount the new file system somewhere:
 
-    sudo mount -o loop tools/testing/capsicum_tests/test.img /mnt
+    sudo mount -o loop tools/testing/capsicum/test.img /mnt
 
 Put an Ubuntu base system onto it:
 
@@ -103,9 +103,9 @@ Put an Ubuntu base system onto it:
 Replace some key files:
 
     sudo cp /mnt/sbin/init /mnt/sbin/init.orig
-    sudo cp tools/testing/capsicum_tests/test-files/init /mnt/sbin/init
+    sudo cp tools/testing/capsicum/test-files/init /mnt/sbin/init
     sudo cp /mnt/etc/fstab /mnt/etc/fstab.orig
-    sudo cp tools/testing/capsicum_tests/test-files/fstab /mnt/etc/fstab
+    sudo cp tools/testing/capsicum/test-files/fstab /mnt/etc/fstab
     sudo umount /mnt
 
 Copy test binaries into the test directory:
@@ -117,10 +117,10 @@ Copy test binaries into the test directory:
 
 Tests can then be run with the wrapper scripts:
 
-    cd tools/testing/capsicum_tests
+    cd tools/testing/capsicum
     ./run-test-on-last-build ./capsicum-test
 
-Under the covers the `init` script will mount `tools/testing/capsicum_tests/test-files/`
+Under the covers the `init` script will mount `tools/testing/capsicum/test-files/`
 as `/tests/` within the UML system, and will run tests from there.  The specific
 test command to run is communicated into the UML instance as a `runtest=<cmd>` parameter
 to the UML kernel (which the `init` script retrieves from `/proc/cmdline`).
