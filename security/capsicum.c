@@ -121,6 +121,7 @@ EXPORT_SYMBOL(capsicum_unwrap);
 int capsicum_install_fd(struct file *orig, cap_rights_t rights)
 {
 	int error, fd;
+	struct file *capf;
 	struct file *file;
 
 	error = get_unused_fd();
@@ -128,17 +129,18 @@ int capsicum_install_fd(struct file *orig, cap_rights_t rights)
 		return error;
 	fd = error;
 
-	file = capsicum_cap_alloc();
-	if (IS_ERR(file)) {
-		error = PTR_ERR(file);
+	capf = capsicum_cap_alloc();
+	if (IS_ERR(capf)) {
+		error = PTR_ERR(capf);
 		goto err_put_unused_fd;
 	}
 
-	if (capsicum_is_cap(orig))
-		orig = capsicum_unwrap(orig, NULL);
+	file = capsicum_unwrap(orig, NULL);
+	if (file)
+		orig = file;
 	get_file(orig);
-	capsicum_cap_set(file, orig, rights);
-	fd_install(fd, file);
+	capsicum_cap_set(capf, orig, rights);
+	fd_install(fd, capf);
 
 	return fd;
 
@@ -214,11 +216,10 @@ SYSCALL_DEFINE2(cap_getrights, unsigned int, fd, u64 __user *, rightsp)
 		goto out_err;
 	}
 
-	if (!capsicum_is_cap(file)) {
+	if (capsicum_unwrap(file, &rights) == NULL) {
 		result = -EINVAL;
 		goto out_err;
 	}
-	capsicum_unwrap(file, &rights);
 	rcu_read_unlock();
 	put_user(rights, rightsp);
 	return 0;
@@ -279,6 +280,7 @@ static void capsicum_panic_not_unwrapped(void)
  * LSM hook functions.
  */
 
+
 /*
  * We are looking up a file by its file descriptor. If it is a Capsicum
  * capability, and has the required rights, we unwrap it and return the
@@ -328,6 +330,7 @@ static struct file *capsicum_file_openat(cap_rights_t base_rights, struct file *
 		required_rights |= CAP_WRITE;
 	if (file->f_flags & O_TRUNC)
 		required_rights |= CAP_WRITE;
+
 	if ((base_rights & required_rights) != required_rights)
 		return ERR_PTR(-ENOTCAPABLE);
 
