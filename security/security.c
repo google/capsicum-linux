@@ -808,11 +808,6 @@ struct file *security_file_install(cap_rights_t base_rights, struct file *file)
 	return security_ops->file_install(base_rights, file);
 }
 
-struct file *security_file_openat(cap_rights_t base_rights, struct file *file)
-{
-	return security_ops->file_openat(base_rights, file);
-}
-
 int security_task_create(unsigned long clone_flags)
 {
 	return security_ops->task_create(clone_flags);

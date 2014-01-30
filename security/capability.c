@@ -388,11 +388,6 @@ static struct file *cap_file_install(cap_rights_t base_rights, struct file *file
 	return file;
 }
 
-static struct file *cap_file_openat(cap_rights_t base_rights, struct file *file)
-{
-	return file;
-}
-
 static int cap_task_create(unsigned long clone_flags)
 {
 	return 0;
@@ -1033,7 +1028,6 @@ void __init security_fixup_ops(struct security_operations *ops)
 	set_to_cap_if_null(ops, file_open);
 	set_to_cap_if_null(ops, file_lookup);
 	set_to_cap_if_null(ops, file_install);
-	set_to_cap_if_null(ops, file_openat);
 	set_to_cap_if_null(ops, task_create);
 	set_to_cap_if_null(ops, task_free);
 	set_to_cap_if_null(ops, cred_alloc_blank);

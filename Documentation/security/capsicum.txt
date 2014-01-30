@@ -112,9 +112,6 @@ Module (security/capsicum.c), using the following added LSM hooks:
    into the file descriptor table, in cases where the new file is derived
    from another file (that may be a Capsicum capability and so have rights
    associated with it).
- - file_openat: Special case of file_install_fd to allow modification of the
-   result of an openat(2) operation, so that any rights can be appropriately
-   inherited from the directory fd.
  - path_lookup: Check whether a path segment lookup is allowed.
 
 

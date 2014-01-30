@@ -2983,6 +2983,23 @@ out:
 	return error;
 }
 
+static void openat_rights(cap_rights_t *rights, unsigned int flags)
+{
+	if (flags & O_RDONLY)
+		(*rights) |= CAP_READ;
+	if (flags & O_WRONLY) {
+		(*rights) |= CAP_WRITE;
+		if (flags & (O_APPEND | O_TRUNC))
+			(*rights) |= CAP_SEEK;
+	}
+	if (flags & O_CREAT)
+		(*rights) |= CAP_CREATE;
+	if (flags & O_TRUNC)
+		(*rights) |= CAP_FTRUNCATE;
+	if (flags & (O_DSYNC| FASYNC))
+		(*rights) |= CAP_FSYNC;
+}
+
 static struct file *path_openat(int dfd, struct filename *pathname,
 		struct nameidata *nd, const struct open_flags *op, int flags)
 {
@@ -3004,6 +3021,7 @@ static struct file *path_openat(int dfd, struct filename *pathname,
 		goto out;
 	}
 
+	openat_rights(&dfd_rights, file->f_flags);
 	error = path_init(dfd, pathname->name, flags | LOOKUP_PARENT, nd, &base, &dfd_rights);
 	if (unlikely(error))
 		goto out;
@@ -3035,7 +3053,7 @@ static struct file *path_openat(int dfd, struct filename *pathname,
 		put_link(nd, &link, cookie);
 	}
 	if (!error) {
-		struct file *repl_file = security_file_openat(dfd_rights, file);
+		struct file *repl_file = security_file_install(dfd_rights, file);
 		if (IS_ERR(repl_file)) {
 			error = PTR_ERR(repl_file);
 			goto out;

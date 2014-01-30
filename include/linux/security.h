@@ -697,15 +697,6 @@ static inline void security_free_mnt_opts(struct security_mnt_opts *opts)
  *	new file is derived from; CAP_ALL for non-capabilities.
  *	@file is the newly opened struct file.
  *	Return PTR_ERR holding the struct file to be used.
- * @file_openat:
- *	This hook allows security modules to intercept openat() operations
- *	to perform security checks and to potentially substitute a different
- *	file for the newly opened file
- *	@base_rights is the rights associated with the directory relative to
- *	which the file has been opened; CAP_ALL for non-relative open()s and
- *	non-capabilities.
- *	@file is the newly opened struct file.
- *	Return PTR_ERR holding the struct file to be used.
  * @file_open
  *	Save open-time permission checking state for later use upon
  *	file_permission, and recheck access if anything has changed
@@ -1604,8 +1595,6 @@ struct security_operations {
 				     cap_rights_t *actual_rights);
 	struct file *(*file_install) (cap_rights_t base_rights,
 				      struct file *file);
-	struct file *(*file_openat) (cap_rights_t base_rights,
-				     struct file *file);
 
 	int (*task_create) (unsigned long clone_flags);
 	void (*task_free) (struct task_struct *task);
@@ -1883,8 +1872,6 @@ struct file *security_file_lookup(struct file *orig,
 				cap_rights_t *actual_rights);
 struct file *security_file_install(cap_rights_t base_rights,
 				   struct file *file);
-struct file *security_file_openat(cap_rights_t base_rights,
-				  struct file *file);
 int security_task_create(unsigned long clone_flags);
 void security_task_free(struct task_struct *task);
 int security_cred_alloc_blank(struct cred *cred, gfp_t gfp);
