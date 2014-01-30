@@ -803,6 +803,11 @@ struct file *security_file_lookup(struct file *file,
 	return security_ops->file_lookup(file, required_rights, actual_rights);
 }
 
+struct file *security_file_install(cap_rights_t base_rights, struct file *file)
+{
+	return security_ops->file_install(base_rights, file);
+}
+
 struct file *security_file_openat(cap_rights_t base_rights, struct file *file)
 {
 	return security_ops->file_openat(base_rights, file);
