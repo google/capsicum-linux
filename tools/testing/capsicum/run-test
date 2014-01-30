@@ -43,6 +43,10 @@ if $BUILD ; then
     else
         make -C $TOPDIR -j $THREADS $BUILDCMD > /dev/null
     fi
+    rc=$?
+    if [ $rc != 0 ]; then
+        exit $rc
+    fi
 fi
 
 TESTARGS="ubd0=test.img rw con0=fd:2 con1=fd:0,fd:1 con=pts mem=4096M security=capsicum cwd=\"$CWD\" runtest=\"$TESTS\""
