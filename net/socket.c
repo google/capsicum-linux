@@ -448,7 +448,7 @@ struct socket *sockfd_lookup(int fd, cap_rights_t required_rights, int *err)
 }
 EXPORT_SYMBOL(sockfd_lookup);
 
-static struct socket *sockfd_lookup_light(int fd, cap_rights_t required_rights, 
+static struct socket *sockfd_lookup_light(int fd, cap_rights_t required_rights,
 					int *err, int *fput_needed)
 {
 	struct file *file;
@@ -456,6 +456,27 @@ static struct socket *sockfd_lookup_light(int fd, cap_rights_t required_rights,
 
 	*err = -EBADF;
 	file = fget_light(fd, required_rights, fput_needed);
+	if (!IS_ERR(file)) {
+		sock = sock_from_file(file, err);
+		if (sock)
+			return sock;
+		fput_light(file, *fput_needed);
+	} else {
+		*err = PTR_ERR(file);
+	}
+	return NULL;
+}
+
+static struct socket *
+sockfd_lookup_light_rights(int fd, cap_rights_t required_rights,
+			cap_rights_t *actual_rights,
+			int *err, int *fput_needed)
+{
+	struct file *file;
+	struct socket *sock;
+
+	*err = -EBADF;
+	file = fget_raw_light(fd, required_rights, actual_rights, fput_needed);
 	if (!IS_ERR(file)) {
 		sock = sock_from_file(file, err);
 		if (sock)
@@ -1582,8 +1603,10 @@ SYSCALL_DEFINE4(accept4, int, fd, struct sockaddr __user *, upeer_sockaddr,
 {
 	struct socket *sock, *newsock;
 	struct file *newfile;
+	struct file *installfile;
 	int err, len, newfd, fput_needed;
 	struct sockaddr_storage address;
+	cap_rights_t rights;
 
 	if (flags & ~(SOCK_CLOEXEC | SOCK_NONBLOCK))
 		return -EINVAL;
@@ -1591,7 +1614,7 @@ SYSCALL_DEFINE4(accept4, int, fd, struct sockaddr __user *, upeer_sockaddr,
 	if (SOCK_NONBLOCK != O_NONBLOCK && (flags & SOCK_NONBLOCK))
 		flags = (flags & ~SOCK_NONBLOCK) | O_NONBLOCK;
 
-	sock = sockfd_lookup_light(fd, CAP_ACCEPT, &err, &fput_needed);
+	sock = sockfd_lookup_light_rights(fd, CAP_ACCEPT, &rights, &err, &fput_needed);
 	if (!sock)
 		goto out;
 
@@ -1645,7 +1668,12 @@ SYSCALL_DEFINE4(accept4, int, fd, struct sockaddr __user *, upeer_sockaddr,
 
 	/* File flags are not inherited via accept() unlike another OSes. */
 
-	fd_install(newfd, newfile);
+	installfile = security_file_install(rights, sock->file);
+	if (IS_ERR(installfile)) {
+		err = PTR_ERR(installfile);
+		goto out_fd;
+	}
+	fd_install(newfd, installfile);
 	err = newfd;
 
 out_put:

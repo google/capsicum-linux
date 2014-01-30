@@ -343,6 +343,21 @@ static struct file *capsicum_file_openat(cap_rights_t base_rights, struct file *
 	return capf;
 }
 
+static struct file *capsicum_file_install(cap_rights_t base_rights, struct file *file)
+{
+	struct file *capf;
+	if (base_rights == CAP_ALL)
+		return file;
+
+	/* Now allocate the Capsicum capability file wrapper */
+	capf = capsicum_cap_alloc();
+	if (IS_ERR(capf))
+		return capf;
+
+	capsicum_cap_set(capf, file, base_rights);
+	return capf;
+}
+
 #ifdef CONFIG_SECURITY_PATH
 /*
  * Prevent absolute lookups and upward traversal (../) when in capability
@@ -419,4 +434,5 @@ struct security_operations capsicum_security_ops = {
 #ifdef CONFIG_SECURITY_PATH
 	.path_lookup = capsicum_path_lookup,
 #endif
+	.file_install = capsicum_file_install,
 };
