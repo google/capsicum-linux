@@ -312,24 +312,27 @@ static struct file *capsicum_file_lookup(struct file *file,
 	return underlying;
 }
 
-
 static struct file *capsicum_file_openat(cap_rights_t base_rights, struct file *file)
 {
-	cap_rights_t required_rights;
+	cap_rights_t required_rights = 0;
 	struct file *capf;
 	if (base_rights == CAP_ALL)
 		return file;
 
 	/* Now check the directory capability has the appropriate rights */
-	required_rights = (file->f_flags & O_WRONLY) ? CAP_WRITE : CAP_READ;
-	if (file->f_flags & O_RDWR)
-		required_rights |= (CAP_READ|CAP_WRITE);
+	if (file->f_flags & O_RDONLY)
+		required_rights |= CAP_READ;
+	if (file->f_flags & O_WRONLY) {
+		required_rights |= CAP_WRITE;
+		if (file->f_flags & (O_APPEND | O_TRUNC))
+			required_rights |= CAP_SEEK;
+	}
 	if (file->f_flags & O_CREAT)
-		required_rights |= CAP_WRITE;
-	if (file->f_flags & O_EXCL)
-		required_rights |= CAP_WRITE;
+		required_rights |= CAP_CREATE;
 	if (file->f_flags & O_TRUNC)
-		required_rights |= CAP_WRITE;
+		required_rights |= CAP_FTRUNCATE;
+	if (file->f_flags & (O_DSYNC| FASYNC))
+		required_rights |= CAP_FSYNC;
 
 	if ((base_rights & required_rights) != required_rights)
 		return ERR_PTR(-ENOTCAPABLE);
