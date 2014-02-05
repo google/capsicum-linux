@@ -85,6 +85,12 @@ static inline bool is_noslot_pfn(pfn_t pfn)
 	return pfn == KVM_PFN_NOSLOT;
 }
 
+/*
+ * architectures with KVM_HVA_ERR_BAD other than PAGE_OFFSET (e.g. s390)
+ * provide own defines and kvm_is_error_hva
+ */
+#ifndef KVM_HVA_ERR_BAD
+
 #define KVM_HVA_ERR_BAD		(PAGE_OFFSET)
 #define KVM_HVA_ERR_RO_BAD	(PAGE_OFFSET + PAGE_SIZE)
 
@@ -92,6 +98,8 @@ static inline bool kvm_is_error_hva(unsigned long addr)
 {
 	return addr >= PAGE_OFFSET;
 }
+
+#endif
 
 #define KVM_ERR_PTR_BAD_PAGE	(ERR_PTR(-ENOENT))
 
@@ -134,7 +142,7 @@ struct kvm;
 struct kvm_vcpu;
 extern struct kmem_cache *kvm_vcpu_cache;
 
-extern raw_spinlock_t kvm_lock;
+extern spinlock_t kvm_lock;
 extern struct list_head vm_list;
 
 struct kvm_io_range {
@@ -160,8 +168,12 @@ enum kvm_bus {
 
 int kvm_io_bus_write(struct kvm *kvm, enum kvm_bus bus_idx, gpa_t addr,
 		     int len, const void *val);
+int kvm_io_bus_write_cookie(struct kvm *kvm, enum kvm_bus bus_idx, gpa_t addr,
+			    int len, const void *val, long cookie);
 int kvm_io_bus_read(struct kvm *kvm, enum kvm_bus bus_idx, gpa_t addr, int len,
 		    void *val);
+int kvm_io_bus_read_cookie(struct kvm *kvm, enum kvm_bus bus_idx, gpa_t addr,
+			   int len, void *val, long cookie);
 int kvm_io_bus_register_dev(struct kvm *kvm, enum kvm_bus bus_idx, gpa_t addr,
 			    int len, struct kvm_io_device *dev);
 int kvm_io_bus_unregister_dev(struct kvm *kvm, enum kvm_bus bus_idx,
@@ -177,8 +189,7 @@ struct kvm_async_pf {
 	gva_t gva;
 	unsigned long addr;
 	struct kvm_arch_async_pf arch;
-	struct page *page;
-	bool done;
+	bool   wakeup_all;
 };
 
 void kvm_clear_async_pf_completion_queue(struct kvm_vcpu *vcpu);
@@ -496,9 +507,11 @@ int kvm_set_memory_region(struct kvm *kvm,
 			  struct kvm_userspace_memory_region *mem);
 int __kvm_set_memory_region(struct kvm *kvm,
 			    struct kvm_userspace_memory_region *mem);
-void kvm_arch_free_memslot(struct kvm_memory_slot *free,
+void kvm_arch_free_memslot(struct kvm *kvm, struct kvm_memory_slot *free,
 			   struct kvm_memory_slot *dont);
-int kvm_arch_create_memslot(struct kvm_memory_slot *slot, unsigned long npages);
+int kvm_arch_create_memslot(struct kvm *kvm, struct kvm_memory_slot *slot,
+			    unsigned long npages);
+void kvm_arch_memslots_updated(struct kvm *kvm);
 int kvm_arch_prepare_memory_region(struct kvm *kvm,
 				struct kvm_memory_slot *memslot,
 				struct kvm_userspace_memory_region *mem,
@@ -520,6 +533,7 @@ int gfn_to_page_many_atomic(struct kvm *kvm, gfn_t gfn, struct page **pages,
 
 struct page *gfn_to_page(struct kvm *kvm, gfn_t gfn);
 unsigned long gfn_to_hva(struct kvm *kvm, gfn_t gfn);
+unsigned long gfn_to_hva_prot(struct kvm *kvm, gfn_t gfn, bool *writable);
 unsigned long gfn_to_hva_memslot(struct kvm_memory_slot *slot, gfn_t gfn);
 void kvm_release_page_clean(struct page *page);
 void kvm_release_page_dirty(struct page *page);
@@ -657,6 +671,25 @@ static inline void kvm_arch_free_vm(struct kvm *kvm)
 }
 #endif
 
+#ifdef __KVM_HAVE_ARCH_NONCOHERENT_DMA
+void kvm_arch_register_noncoherent_dma(struct kvm *kvm);
+void kvm_arch_unregister_noncoherent_dma(struct kvm *kvm);
+bool kvm_arch_has_noncoherent_dma(struct kvm *kvm);
+#else
+static inline void kvm_arch_register_noncoherent_dma(struct kvm *kvm)
+{
+}
+
+static inline void kvm_arch_unregister_noncoherent_dma(struct kvm *kvm)
+{
+}
+
+static inline bool kvm_arch_has_noncoherent_dma(struct kvm *kvm)
+{
+	return false;
+}
+#endif
+
 static inline wait_queue_head_t *kvm_arch_vcpu_wq(struct kvm_vcpu *vcpu)
 {
 #ifdef __KVM_HAVE_ARCH_WQP
@@ -733,9 +766,6 @@ void kvm_unregister_irq_ack_notifier(struct kvm *kvm,
 int kvm_request_irq_source_id(struct kvm *kvm);
 void kvm_free_irq_source_id(struct kvm *kvm, int irq_source_id);
 
-/* For vcpu->arch.iommu_flags */
-#define KVM_IOMMU_CACHE_COHERENCY	0x1
-
 #ifdef CONFIG_KVM_DEVICE_ASSIGNMENT
 int kvm_iommu_map_pages(struct kvm *kvm, struct kvm_memory_slot *slot);
 void kvm_iommu_unmap_pages(struct kvm *kvm, struct kvm_memory_slot *slot);
@@ -775,7 +805,7 @@ static inline void kvm_guest_enter(void)
 
 	/* KVM does not hold any references to rcu protected data when it
 	 * switches CPU into a guest mode. In fact switching to a guest mode
-	 * is very similar to exiting to userspase from rcu point of view. In
+	 * is very similar to exiting to userspace from rcu point of view. In
 	 * addition CPU may stay in a guest mode for quite a long time (up to
 	 * one time slice). Lets treat guest mode as quiescent state, just like
 	 * we do with user-mode execution.
@@ -826,13 +856,6 @@ __gfn_to_hva_memslot(struct kvm_memory_slot *slot, gfn_t gfn)
 static inline int memslot_id(struct kvm *kvm, gfn_t gfn)
 {
 	return gfn_to_memslot(kvm, gfn)->id;
-}
-
-static inline gfn_t gfn_to_index(gfn_t gfn, gfn_t base_gfn, int level)
-{
-	/* KVM_HPAGE_GFN_SHIFT(PT_PAGE_TABLE_LEVEL) must be 0. */
-	return (gfn >> KVM_HPAGE_GFN_SHIFT(level)) -
-		(base_gfn >> KVM_HPAGE_GFN_SHIFT(level));
 }
 
 static inline gfn_t
@@ -1052,6 +1075,7 @@ struct kvm_device *kvm_device_from_filp(struct file *filp);
 
 extern struct kvm_device_ops kvm_mpic_ops;
 extern struct kvm_device_ops kvm_xics_ops;
+extern struct kvm_device_ops kvm_vfio_ops;
 
 #ifdef CONFIG_HAVE_KVM_CPU_RELAX_INTERCEPT
 

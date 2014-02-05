@@ -1039,7 +1039,7 @@ static int fimc_runtime_resume(struct device *dev)
 
 	dbg("fimc%d: state: 0x%lx", fimc->id, fimc->state);
 
-	/* Enable clocks and perform basic initalization */
+	/* Enable clocks and perform basic initialization */
 	clk_enable(fimc->clock[CLK_GATE]);
 	fimc_hw_reset(fimc);
 
@@ -1110,6 +1110,8 @@ static int fimc_remove(struct platform_device *pdev)
 	struct fimc_dev *fimc = platform_get_drvdata(pdev);
 
 	pm_runtime_disable(&pdev->dev);
+	if (!pm_runtime_status_suspended(&pdev->dev))
+		clk_disable(fimc->clock[CLK_GATE]);
 	pm_runtime_set_suspended(&pdev->dev);
 
 	fimc_unregister_capture_subdev(fimc);

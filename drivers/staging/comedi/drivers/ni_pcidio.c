@@ -50,6 +50,7 @@ comedi_nonfree_firmware tarball available from http://www.comedi.org
 /* #define DEBUG 1 */
 /* #define DEBUG_FLAGS */
 
+#include <linux/module.h>
 #include <linux/delay.h>
 #include <linux/interrupt.h>
 #include <linux/sched.h>
@@ -405,9 +406,9 @@ static irqreturn_t nidio_interrupt(int irq, void *d)
 	struct mite_struct *mite = devpriv->mite;
 
 	/* int i, j; */
-	long int AuxData = 0;
-	short data1 = 0;
-	short data2 = 0;
+	unsigned int auxdata = 0;
+	unsigned short data1 = 0;
+	unsigned short data2 = 0;
 	int flags;
 	int status;
 	int work = 0;
@@ -480,11 +481,11 @@ static irqreturn_t nidio_interrupt(int irq, void *d)
 					      );
 					goto out;
 				}
-				AuxData =
+				auxdata =
 				    readl(devpriv->mite->daq_io_addr +
 					  Group_1_FIFO);
-				data1 = AuxData & 0xffff;
-				data2 = (AuxData & 0xffff0000) >> 16;
+				data1 = auxdata & 0xffff;
+				data2 = (auxdata & 0xffff0000) >> 16;
 				comedi_buf_put(async, data1);
 				comedi_buf_put(async, data2);
 				/* DPRINTK("read:%d, %d\n",data1,data2); */
@@ -639,45 +640,31 @@ static void debug_int(struct comedi_device *dev)
 
 static int ni_pcidio_insn_config(struct comedi_device *dev,
 				 struct comedi_subdevice *s,
-				 struct comedi_insn *insn, unsigned int *data)
+				 struct comedi_insn *insn,
+				 unsigned int *data)
 {
 	struct nidio96_private *devpriv = dev->private;
+	int ret;
 
-	if (insn->n != 1)
-		return -EINVAL;
-	switch (data[0]) {
-	case INSN_CONFIG_DIO_OUTPUT:
-		s->io_bits |= 1 << CR_CHAN(insn->chanspec);
-		break;
-	case INSN_CONFIG_DIO_INPUT:
-		s->io_bits &= ~(1 << CR_CHAN(insn->chanspec));
-		break;
-	case INSN_CONFIG_DIO_QUERY:
-		data[1] =
-		    (s->
-		     io_bits & (1 << CR_CHAN(insn->chanspec))) ? COMEDI_OUTPUT :
-		    COMEDI_INPUT;
-		return insn->n;
-		break;
-	default:
-		return -EINVAL;
-	}
+	ret = comedi_dio_insn_config(dev, s, insn, data, 0);
+	if (ret)
+		return ret;
+
 	writel(s->io_bits, devpriv->mite->daq_io_addr + Port_Pin_Directions(0));
 
-	return 1;
+	return insn->n;
 }
 
 static int ni_pcidio_insn_bits(struct comedi_device *dev,
 			       struct comedi_subdevice *s,
-			       struct comedi_insn *insn, unsigned int *data)
+			       struct comedi_insn *insn,
+			       unsigned int *data)
 {
 	struct nidio96_private *devpriv = dev->private;
 
-	if (data[0]) {
-		s->state &= ~data[0];
-		s->state |= (data[0] & data[1]);
+	if (comedi_dio_update_state(s, data))
 		writel(s->state, devpriv->mite->daq_io_addr + Port_IO(0));
-	}
+
 	data[1] = readl(devpriv->mite->daq_io_addr + Port_IO(0));
 
 	return insn->n;
@@ -1108,10 +1095,9 @@ static int nidio_auto_attach(struct comedi_device *dev,
 	if (ret)
 		return ret;
 
-	devpriv = kzalloc(sizeof(*devpriv), GFP_KERNEL);
+	devpriv = comedi_alloc_devpriv(dev, sizeof(*devpriv));
 	if (!devpriv)
 		return -ENOMEM;
-	dev->private = devpriv;
 
 	spin_lock_init(&devpriv->mite_channel_lock);
 

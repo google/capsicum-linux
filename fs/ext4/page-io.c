@@ -123,10 +123,6 @@ static void ext4_release_io_end(ext4_io_end_t *io_end)
 		ext4_finish_bio(bio);
 		bio_put(bio);
 	}
-	if (io_end->flag & EXT4_IO_END_DIRECT)
-		inode_dio_done(io_end->inode);
-	if (io_end->iocb)
-		aio_complete(io_end->iocb, io_end->result, 0);
 	kmem_cache_free(io_end_cachep, io_end);
 }
 
@@ -201,22 +197,18 @@ static void dump_completed_IO(struct inode *inode, struct list_head *head)
 static void ext4_add_complete_io(ext4_io_end_t *io_end)
 {
 	struct ext4_inode_info *ei = EXT4_I(io_end->inode);
+	struct ext4_sb_info *sbi = EXT4_SB(io_end->inode->i_sb);
 	struct workqueue_struct *wq;
 	unsigned long flags;
 
-	BUG_ON(!(io_end->flag & EXT4_IO_END_UNWRITTEN));
+	/* Only reserved conversions from writeback should enter here */
+	WARN_ON(!(io_end->flag & EXT4_IO_END_UNWRITTEN));
+	WARN_ON(!io_end->handle && sbi->s_journal);
 	spin_lock_irqsave(&ei->i_completed_io_lock, flags);
-	if (io_end->handle) {
-		wq = EXT4_SB(io_end->inode->i_sb)->rsv_conversion_wq;
-		if (list_empty(&ei->i_rsv_conversion_list))
-			queue_work(wq, &ei->i_rsv_conversion_work);
-		list_add_tail(&io_end->list, &ei->i_rsv_conversion_list);
-	} else {
-		wq = EXT4_SB(io_end->inode->i_sb)->unrsv_conversion_wq;
-		if (list_empty(&ei->i_unrsv_conversion_list))
-			queue_work(wq, &ei->i_unrsv_conversion_work);
-		list_add_tail(&io_end->list, &ei->i_unrsv_conversion_list);
-	}
+	wq = sbi->rsv_conversion_wq;
+	if (list_empty(&ei->i_rsv_conversion_list))
+		queue_work(wq, &ei->i_rsv_conversion_work);
+	list_add_tail(&io_end->list, &ei->i_rsv_conversion_list);
 	spin_unlock_irqrestore(&ei->i_completed_io_lock, flags);
 }
 
@@ -254,13 +246,6 @@ void ext4_end_io_rsv_work(struct work_struct *work)
 	struct ext4_inode_info *ei = container_of(work, struct ext4_inode_info,
 						  i_rsv_conversion_work);
 	ext4_do_flush_completed_IO(&ei->vfs_inode, &ei->i_rsv_conversion_list);
-}
-
-void ext4_end_io_unrsv_work(struct work_struct *work)
-{
-	struct ext4_inode_info *ei = container_of(work, struct ext4_inode_info,
-						  i_unrsv_conversion_work);
-	ext4_do_flush_completed_IO(&ei->vfs_inode, &ei->i_unrsv_conversion_list);
 }
 
 ext4_io_end_t *ext4_init_io_end(struct inode *inode, gfp_t flags)

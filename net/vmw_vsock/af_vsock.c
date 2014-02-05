@@ -96,8 +96,7 @@
 #include <linux/wait.h>
 #include <linux/workqueue.h>
 #include <net/sock.h>
-
-#include "af_vsock.h"
+#include <net/af_vsock.h>
 
 static int __vsock_bind(struct sock *sk, struct sockaddr_vm *addr);
 static void vsock_sk_destruct(struct sock *sk);
@@ -1662,8 +1661,6 @@ vsock_stream_recvmsg(struct kiocb *kiocb,
 	sk = sock->sk;
 	vsk = vsock_sk(sk);
 	err = 0;
-
-	msg->msg_namelen = 0;
 
 	lock_sock(sk);
 

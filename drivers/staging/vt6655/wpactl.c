@@ -96,7 +96,7 @@ static int wpa_init_wpadev(PSDevice pDevice)
 
 	wpadev_priv = netdev_priv(pDevice->wpadev);
 	*wpadev_priv = *pDevice;
-	memcpy(pDevice->wpadev->dev_addr, dev->dev_addr, ETH_ALEN);
+	eth_hw_addr_inherit(pDevice->wpadev, dev);
 	pDevice->wpadev->base_addr = dev->base_addr;
 	pDevice->wpadev->irq = dev->irq;
 	pDevice->wpadev->mem_start = dev->mem_start;
@@ -394,7 +394,7 @@ int wpa_set_keys(PSDevice pDevice, void *ctx, bool fcpfkernel)
 
 		} else {
 			// Key Table Full
-			if (!compare_ether_addr(&param->addr[0], pDevice->abyBSSID)) {
+			if (ether_addr_equal(param->addr, pDevice->abyBSSID)) {
 				//DBG_PRN_WLAN03(("return NDIS_STATUS_INVALID_DATA -Key Table Full.2\n"));
 				//spin_unlock_irq(&pDevice->lock);
 				return -EINVAL;

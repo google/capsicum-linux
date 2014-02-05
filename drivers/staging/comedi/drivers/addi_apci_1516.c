@@ -22,6 +22,7 @@
  * more details.
  */
 
+#include <linux/module.h>
 #include <linux/pci.h>
 
 #include "../comedidev.h"
@@ -89,16 +90,10 @@ static int apci1516_do_insn_bits(struct comedi_device *dev,
 				 struct comedi_insn *insn,
 				 unsigned int *data)
 {
-	unsigned int mask = data[0];
-	unsigned int bits = data[1];
-
 	s->state = inw(dev->iobase + APCI1516_DO_REG);
-	if (mask) {
-		s->state &= ~mask;
-		s->state |= (bits & mask);
 
+	if (comedi_dio_update_state(s, data))
 		outw(s->state, dev->iobase + APCI1516_DO_REG);
-	}
 
 	data[1] = s->state;
 
@@ -136,10 +131,9 @@ static int apci1516_auto_attach(struct comedi_device *dev,
 	dev->board_ptr = this_board;
 	dev->board_name = this_board->name;
 
-	devpriv = kzalloc(sizeof(*devpriv), GFP_KERNEL);
+	devpriv = comedi_alloc_devpriv(dev, sizeof(*devpriv));
 	if (!devpriv)
 		return -ENOMEM;
-	dev->private = devpriv;
 
 	ret = comedi_pci_enable(dev);
 	if (ret)

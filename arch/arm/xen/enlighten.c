@@ -21,6 +21,8 @@
 #include <linux/of.h>
 #include <linux/of_irq.h>
 #include <linux/of_address.h>
+#include <linux/cpuidle.h>
+#include <linux/cpufreq.h>
 
 #include <linux/mm.h>
 
@@ -94,7 +96,7 @@ static int remap_pte_fn(pte_t *ptep, pgtable_t token, unsigned long addr,
 	struct remap_data *info = data;
 	struct page *page = info->pages[info->index++];
 	unsigned long pfn = page_to_pfn(page);
-	pte_t pte = pfn_pte(pfn, info->prot);
+	pte_t pte = pte_mkspecial(pfn_pte(pfn, info->prot));
 
 	if (map_foreign_page(pfn, info->fgmfn, info->domid))
 		return -EFAULT;
@@ -222,10 +224,10 @@ static int __init xen_guest_init(void)
 	}
 	if (of_address_to_resource(node, GRANT_TABLE_PHYSADDR, &res))
 		return 0;
-	xen_hvm_resume_frames = res.start >> PAGE_SHIFT;
+	xen_hvm_resume_frames = res.start;
 	xen_events_irq = irq_of_parse_and_map(node, 0);
 	pr_info("Xen %s support found, events_irq=%d gnttab_frame_pfn=%lx\n",
-			version, xen_events_irq, xen_hvm_resume_frames);
+			version, xen_events_irq, (xen_hvm_resume_frames >> PAGE_SHIFT));
 	xen_domain_type = XEN_HVM_DOMAIN;
 
 	xen_setup_features();
@@ -267,18 +269,28 @@ static int __init xen_guest_init(void)
 	if (!xen_initial_domain())
 		xenbus_probe(NULL);
 
+	/*
+	 * Making sure board specific code will not set up ops for
+	 * cpu idle and cpu freq.
+	 */
+	disable_cpuidle();
+	disable_cpufreq();
+
 	return 0;
 }
 core_initcall(xen_guest_init);
 
 static int __init xen_pm_init(void)
 {
+	if (!xen_domain())
+		return -ENODEV;
+
 	pm_power_off = xen_power_off;
 	arm_pm_restart = xen_restart;
 
 	return 0;
 }
-subsys_initcall(xen_pm_init);
+late_initcall(xen_pm_init);
 
 static irqreturn_t xen_arm_callback(int irq, void *arg)
 {

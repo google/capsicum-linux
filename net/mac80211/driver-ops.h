@@ -1072,4 +1072,44 @@ static inline void drv_ipv6_addr_change(struct ieee80211_local *local,
 }
 #endif
 
+static inline void
+drv_channel_switch_beacon(struct ieee80211_sub_if_data *sdata,
+			  struct cfg80211_chan_def *chandef)
+{
+	struct ieee80211_local *local = sdata->local;
+
+	if (local->ops->channel_switch_beacon) {
+		trace_drv_channel_switch_beacon(local, sdata, chandef);
+		local->ops->channel_switch_beacon(&local->hw, &sdata->vif,
+						  chandef);
+	}
+}
+
+static inline int drv_join_ibss(struct ieee80211_local *local,
+				struct ieee80211_sub_if_data *sdata)
+{
+	int ret = 0;
+
+	might_sleep();
+	check_sdata_in_driver(sdata);
+
+	trace_drv_join_ibss(local, sdata, &sdata->vif.bss_conf);
+	if (local->ops->join_ibss)
+		ret = local->ops->join_ibss(&local->hw, &sdata->vif);
+	trace_drv_return_int(local, ret);
+	return ret;
+}
+
+static inline void drv_leave_ibss(struct ieee80211_local *local,
+				  struct ieee80211_sub_if_data *sdata)
+{
+	might_sleep();
+	check_sdata_in_driver(sdata);
+
+	trace_drv_leave_ibss(local, sdata);
+	if (local->ops->leave_ibss)
+		local->ops->leave_ibss(&local->hw, &sdata->vif);
+	trace_drv_return_void(local);
+}
+
 #endif /* __MAC80211_DRIVER_OPS */

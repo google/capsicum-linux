@@ -118,6 +118,9 @@ int PIPEnsControlOut(struct vnt_private *pDevice, u8 byRequest, u16 wValue,
 	if (pDevice->Flags & fMP_CONTROL_READS)
 		return STATUS_FAILURE;
 
+	if (pDevice->pControlURB->hcpriv)
+		return STATUS_FAILURE;
+
 	MP_SET_FLAG(pDevice, fMP_CONTROL_WRITES);
 
 	pDevice->sUsbCtlRequest.bRequestType = 0x40;
@@ -175,6 +178,9 @@ int PIPEnsControlIn(struct vnt_private *pDevice, u8 byRequest, u16 wValue,
 	return STATUS_FAILURE;
 
 	if (pDevice->Flags & fMP_CONTROL_WRITES)
+		return STATUS_FAILURE;
+
+	if (pDevice->pControlURB->hcpriv)
 		return STATUS_FAILURE;
 
 	MP_SET_FLAG(pDevice, fMP_CONTROL_READS);
@@ -421,7 +427,7 @@ static void s_nsInterruptUsbIoCompleteRead(struct urb *urb)
  *
  */
 
-int PIPEnsBulkInUsbRead(struct vnt_private *pDevice, PRCB pRCB)
+int PIPEnsBulkInUsbRead(struct vnt_private *pDevice, struct vnt_rcb *pRCB)
 {
 	int ntStatus = 0;
 	struct urb *pUrb;
@@ -479,7 +485,7 @@ int PIPEnsBulkInUsbRead(struct vnt_private *pDevice, PRCB pRCB)
 
 static void s_nsBulkInUsbIoCompleteRead(struct urb *urb)
 {
-	PRCB pRCB = (PRCB)urb->context;
+	struct vnt_rcb *pRCB = (struct vnt_rcb *)urb->context;
 	struct vnt_private *pDevice = pRCB->pDevice;
 	unsigned long   bytesRead;
 	int bIndicateReceive = false;
@@ -546,7 +552,8 @@ static void s_nsBulkInUsbIoCompleteRead(struct urb *urb)
  *
  */
 
-int PIPEnsSendBulkOut(struct vnt_private *pDevice, PUSB_SEND_CONTEXT pContext)
+int PIPEnsSendBulkOut(struct vnt_private *pDevice,
+				struct vnt_usb_send_context *pContext)
 {
 	int status;
 	struct urb          *pUrb;
@@ -628,14 +635,13 @@ static void s_nsBulkOutIoCompleteWrite(struct urb *urb)
 	int status;
 	CONTEXT_TYPE ContextType;
 	unsigned long ulBufLen;
-	PUSB_SEND_CONTEXT pContext;
+	struct vnt_usb_send_context *pContext;
 
     DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO"---->s_nsBulkOutIoCompleteWrite\n");
     //
     // The context given to IoSetCompletionRoutine is an USB_CONTEXT struct
     //
-    pContext = (PUSB_SEND_CONTEXT) urb->context;
-    ASSERT( NULL != pContext );
+	pContext = (struct vnt_usb_send_context *)urb->context;
 
     pDevice = pContext->pDevice;
     ContextType = pContext->Type;
@@ -656,8 +662,6 @@ static void s_nsBulkOutIoCompleteWrite(struct urb *urb)
         DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO"Write %d bytes\n",(int)ulBufLen);
         pDevice->ulBulkOutBytesWrite += ulBufLen;
         pDevice->ulBulkOutContCRCError = 0;
-	pDevice->nTxDataTimeCout = 0;
-
     } else {
         DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO"BULK Out failed %d\n", status);
         pDevice->ulBulkOutError++;

@@ -68,7 +68,7 @@ EXPORT_SYMBOL_GPL(perf_num_counters);
 
 static struct pmu_hw_events *cpu_pmu_get_cpu_events(void)
 {
-	return &__get_cpu_var(cpu_hw_events);
+	return this_cpu_ptr(&cpu_hw_events);
 }
 
 static void cpu_pmu_free_irq(struct arm_pmu *cpu_pmu)
@@ -118,7 +118,8 @@ static int cpu_pmu_request_irq(struct arm_pmu *cpu_pmu, irq_handler_t handler)
 			continue;
 		}
 
-		err = request_irq(irq, handler, IRQF_NOBALANCING, "arm-pmu",
+		err = request_irq(irq, handler,
+				  IRQF_NOBALANCING | IRQF_NO_THREAD, "arm-pmu",
 				  cpu_pmu);
 		if (err) {
 			pr_err("unable to request IRQ%d for ARM PMU counters\n",
@@ -253,7 +254,7 @@ static int probe_current_pmu(struct arm_pmu *pmu)
 static int cpu_pmu_device_probe(struct platform_device *pdev)
 {
 	const struct of_device_id *of_id;
-	int (*init_fn)(struct arm_pmu *);
+	const int (*init_fn)(struct arm_pmu *);
 	struct device_node *node = pdev->dev.of_node;
 	struct arm_pmu *pmu;
 	int ret = -ENODEV;

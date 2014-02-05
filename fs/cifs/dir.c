@@ -32,6 +32,7 @@
 #include "cifsproto.h"
 #include "cifs_debug.h"
 #include "cifs_fs_sb.h"
+#include "cifs_unicode.h"
 
 static void
 renew_parental_timestamps(struct dentry *direntry)
@@ -192,7 +193,7 @@ check_name(struct dentry *direntry)
 static int
 cifs_do_create(struct inode *inode, struct dentry *direntry, unsigned int xid,
 	       struct tcon_link *tlink, unsigned oflags, umode_t mode,
-	       __u32 *oplock, struct cifs_fid *fid, int *created)
+	       __u32 *oplock, struct cifs_fid *fid)
 {
 	int rc = -ENOENT;
 	int create_options = CREATE_NOT_DIR;
@@ -348,7 +349,6 @@ cifs_do_create(struct inode *inode, struct dentry *direntry, unsigned int xid,
 				.device	= 0,
 		};
 
-		*created |= FILE_CREATED;
 		if (cifs_sb->mnt_cifs_flags & CIFS_MOUNT_SET_UID) {
 			args.uid = current_fsuid();
 			if (inode->i_mode & S_ISGID)
@@ -479,12 +479,15 @@ cifs_atomic_open(struct inode *inode, struct dentry *direntry,
 	cifs_add_pending_open(&fid, tlink, &open);
 
 	rc = cifs_do_create(inode, direntry, xid, tlink, oflags, mode,
-			    &oplock, &fid, opened);
+			    &oplock, &fid);
 
 	if (rc) {
 		cifs_del_pending_open(&open);
 		goto out;
 	}
+
+	if ((oflags & (O_CREAT | O_EXCL)) == (O_CREAT | O_EXCL))
+		*opened |= FILE_CREATED;
 
 	rc = finish_open(file, direntry, generic_file_open, opened);
 	if (rc) {
@@ -499,6 +502,7 @@ cifs_atomic_open(struct inode *inode, struct dentry *direntry,
 		if (server->ops->close)
 			server->ops->close(xid, tcon, &fid);
 		cifs_del_pending_open(&open);
+		fput(file);
 		rc = -ENOMEM;
 	}
 
@@ -527,7 +531,6 @@ int cifs_create(struct inode *inode, struct dentry *direntry, umode_t mode,
 	struct TCP_Server_Info *server;
 	struct cifs_fid fid;
 	__u32 oplock;
-	int created = FILE_CREATED;
 
 	cifs_dbg(FYI, "cifs_create parent inode = 0x%p name is: %s and dentry = 0x%p\n",
 		 inode, direntry->d_name.name, direntry);
@@ -544,7 +547,7 @@ int cifs_create(struct inode *inode, struct dentry *direntry, umode_t mode,
 		server->ops->new_lease_key(&fid);
 
 	rc = cifs_do_create(inode, direntry, xid, tlink, oflags, mode,
-			    &oplock, &fid, &created);
+			    &oplock, &fid);
 	if (!rc && server->ops->close)
 		server->ops->close(xid, tcon, &fid);
 
@@ -754,7 +757,7 @@ cifs_lookup(struct inode *parent_dir_inode, struct dentry *direntry,
 	/*	if it was once a directory (but how can we tell?) we could do
 		shrink_dcache_parent(direntry); */
 	} else if (rc != -EACCES) {
-		cifs_dbg(VFS, "Unexpected lookup error %d\n", rc);
+		cifs_dbg(FYI, "Unexpected lookup error %d\n", rc);
 		/* We special case check for Access Denied - since that
 		is a common return code */
 	}
@@ -834,12 +837,17 @@ static int cifs_ci_hash(const struct dentry *dentry, struct qstr *q)
 {
 	struct nls_table *codepage = CIFS_SB(dentry->d_sb)->local_nls;
 	unsigned long hash;
-	int i;
+	wchar_t c;
+	int i, charlen;
 
 	hash = init_name_hash();
-	for (i = 0; i < q->len; i++)
-		hash = partial_name_hash(nls_tolower(codepage, q->name[i]),
-					 hash);
+	for (i = 0; i < q->len; i += charlen) {
+		charlen = codepage->char2uni(&q->name[i], q->len - i, &c);
+		/* error out if we can't convert the character */
+		if (unlikely(charlen < 0))
+			return charlen;
+		hash = partial_name_hash(cifs_toupper(c), hash);
+	}
 	q->hash = end_name_hash(hash);
 
 	return 0;
@@ -849,11 +857,47 @@ static int cifs_ci_compare(const struct dentry *parent, const struct dentry *den
 		unsigned int len, const char *str, const struct qstr *name)
 {
 	struct nls_table *codepage = CIFS_SB(parent->d_sb)->local_nls;
+	wchar_t c1, c2;
+	int i, l1, l2;
 
-	if ((name->len == len) &&
-	    (nls_strnicmp(codepage, name->name, str, len) == 0))
-		return 0;
-	return 1;
+	/*
+	 * We make the assumption here that uppercase characters in the local
+	 * codepage are always the same length as their lowercase counterparts.
+	 *
+	 * If that's ever not the case, then this will fail to match it.
+	 */
+	if (name->len != len)
+		return 1;
+
+	for (i = 0; i < len; i += l1) {
+		/* Convert characters in both strings to UTF-16. */
+		l1 = codepage->char2uni(&str[i], len - i, &c1);
+		l2 = codepage->char2uni(&name->name[i], name->len - i, &c2);
+
+		/*
+		 * If we can't convert either character, just declare it to
+		 * be 1 byte long and compare the original byte.
+		 */
+		if (unlikely(l1 < 0 && l2 < 0)) {
+			if (str[i] != name->name[i])
+				return 1;
+			l1 = 1;
+			continue;
+		}
+
+		/*
+		 * Here, we again ass|u|me that upper/lowercase versions of
+		 * a character are the same length in the local NLS.
+		 */
+		if (l1 != l2)
+			return 1;
+
+		/* Now compare uppercase versions of these characters */
+		if (cifs_toupper(c1) != cifs_toupper(c2))
+			return 1;
+	}
+
+	return 0;
 }
 
 const struct dentry_operations cifs_ci_dentry_ops = {

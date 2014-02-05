@@ -1295,7 +1295,7 @@ skip_countries:
 			 usb_rcvintpipe(usb_dev, epctrl->bEndpointAddress),
 			 acm->ctrl_buffer, ctrlsize, acm_ctrl_irq, acm,
 			 /* works around buggy devices */
-			 epctrl->bInterval ? epctrl->bInterval : 0xff);
+			 epctrl->bInterval ? epctrl->bInterval : 16);
 	acm->ctrlurb->transfer_flags |= URB_NO_TRANSFER_DMA_MAP;
 	acm->ctrlurb->transfer_dma = acm->ctrl_dma;
 
@@ -1515,6 +1515,8 @@ static int acm_reset_resume(struct usb_interface *intf)
 
 static const struct usb_device_id acm_ids[] = {
 	/* quirky and broken devices */
+	{ USB_DEVICE(0x17ef, 0x7000), /* Lenovo USB modem */
+	.driver_info = NO_UNION_NORMAL, },/* has no union descriptor */
 	{ USB_DEVICE(0x0870, 0x0001), /* Metricom GS Modem */
 	.driver_info = NO_UNION_NORMAL, /* has no union descriptor */
 	},

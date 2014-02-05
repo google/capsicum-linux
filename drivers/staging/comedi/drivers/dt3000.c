@@ -50,6 +50,7 @@ AO commands are not supported.
 
 #define DEBUG 1
 
+#include <linux/module.h>
 #include <linux/pci.h>
 #include <linux/delay.h>
 #include <linux/interrupt.h>
@@ -330,7 +331,7 @@ static void dt3k_ai_empty_fifo(struct comedi_device *dev,
 	int rear;
 	int count;
 	int i;
-	short data;
+	unsigned short data;
 
 	front = readw(devpriv->io_addr + DPR_AD_Buf_Front);
 	count = front - devpriv->ai_front;
@@ -641,45 +642,35 @@ static void dt3k_dio_config(struct comedi_device *dev, int bits)
 
 static int dt3k_dio_insn_config(struct comedi_device *dev,
 				struct comedi_subdevice *s,
-				struct comedi_insn *insn, unsigned int *data)
+				struct comedi_insn *insn,
+				unsigned int *data)
 {
-	int mask;
+	unsigned int chan = CR_CHAN(insn->chanspec);
+	unsigned int mask;
+	int ret;
 
-	mask = (CR_CHAN(insn->chanspec) < 4) ? 0x0f : 0xf0;
+	if (chan < 4)
+		mask = 0x0f;
+	else
+		mask = 0xf0;
 
-	switch (data[0]) {
-	case INSN_CONFIG_DIO_OUTPUT:
-		s->io_bits |= mask;
-		break;
-	case INSN_CONFIG_DIO_INPUT:
-		s->io_bits &= ~mask;
-		break;
-	case INSN_CONFIG_DIO_QUERY:
-		data[1] =
-		    (s->
-		     io_bits & (1 << CR_CHAN(insn->chanspec))) ? COMEDI_OUTPUT :
-		    COMEDI_INPUT;
-		return insn->n;
-		break;
-	default:
-		return -EINVAL;
-		break;
-	}
-	mask = (s->io_bits & 0x01) | ((s->io_bits & 0x10) >> 3);
-	dt3k_dio_config(dev, mask);
+	ret = comedi_dio_insn_config(dev, s, insn, data, mask);
+	if (ret)
+		return ret;
+
+	dt3k_dio_config(dev, (s->io_bits & 0x01) | ((s->io_bits & 0x10) >> 3));
 
 	return insn->n;
 }
 
 static int dt3k_dio_insn_bits(struct comedi_device *dev,
 			      struct comedi_subdevice *s,
-			      struct comedi_insn *insn, unsigned int *data)
+			      struct comedi_insn *insn,
+			      unsigned int *data)
 {
-	if (data[0]) {
-		s->state &= ~data[0];
-		s->state |= data[1] & data[0];
+	if (comedi_dio_update_state(s, data))
 		dt3k_writesingle(dev, SUBS_DOUT, 0, s->state);
-	}
+
 	data[1] = dt3k_readsingle(dev, SUBS_DIN, 0, 0);
 
 	return insn->n;
@@ -722,10 +713,9 @@ static int dt3000_auto_attach(struct comedi_device *dev,
 	dev->board_ptr = this_board;
 	dev->board_name = this_board->name;
 
-	devpriv = kzalloc(sizeof(*devpriv), GFP_KERNEL);
+	devpriv = comedi_alloc_devpriv(dev, sizeof(*devpriv));
 	if (!devpriv)
 		return -ENOMEM;
-	dev->private = devpriv;
 
 	ret = comedi_pci_enable(dev);
 	if (ret < 0)

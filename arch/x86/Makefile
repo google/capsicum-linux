@@ -16,6 +16,10 @@ endif
 # e.g.: obj-y += foo_$(BITS).o
 export BITS
 
+ifdef CONFIG_X86_NEED_RELOCS
+        LDFLAGS_vmlinux := --emit-relocs
+endif
+
 ifeq ($(CONFIG_X86_32),y)
         BITS := 32
         UTS_MACHINE := i386
@@ -25,11 +29,10 @@ ifeq ($(CONFIG_X86_32),y)
         KBUILD_AFLAGS += $(biarch)
         KBUILD_CFLAGS += $(biarch)
 
-        ifdef CONFIG_RELOCATABLE
-                LDFLAGS_vmlinux := --emit-relocs
-        endif
-
         KBUILD_CFLAGS += -msoft-float -mregparm=3 -freg-struct-return
+
+        # Don't autogenerate MMX or SSE instructions
+        KBUILD_CFLAGS += -mno-mmx -mno-sse
 
         # Never want PIC in a 32-bit kernel, prevent breakage with GCC built
         # with nonstandard options
@@ -57,8 +60,11 @@ else
         KBUILD_AFLAGS += -m64
         KBUILD_CFLAGS += -m64
 
+        # Don't autogenerate MMX or SSE instructions
+        KBUILD_CFLAGS += -mno-mmx -mno-sse
+
 	# Use -mpreferred-stack-boundary=3 if supported.
-	KBUILD_CFLAGS += $(call cc-option,-mno-sse -mpreferred-stack-boundary=3)
+	KBUILD_CFLAGS += $(call cc-option,-mpreferred-stack-boundary=3)
 
         # FIXME - should be integrated in Makefile.cpu (Makefile_32.cpu)
         cflags-$(CONFIG_MK8) += $(call cc-option,-march=k8)

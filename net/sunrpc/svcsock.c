@@ -291,12 +291,14 @@ static int svc_one_sock_name(struct svc_sock *svsk, char *buf, int remaining)
 				&inet_sk(sk)->inet_rcv_saddr,
 				inet_sk(sk)->inet_num);
 		break;
+#if IS_ENABLED(CONFIG_IPV6)
 	case PF_INET6:
 		len = snprintf(buf, remaining, "ipv6 %s %pI6 %d\n",
 				proto_name,
-				&inet6_sk(sk)->rcv_saddr,
+				&sk->sk_v6_rcv_saddr,
 				inet_sk(sk)->inet_num);
 		break;
+#endif
 	default:
 		len = snprintf(buf, remaining, "*unknown-%d*\n",
 				sk->sk_family);
@@ -442,7 +444,7 @@ static void svc_tcp_write_space(struct sock *sk)
 {
 	struct socket *sock = sk->sk_socket;
 
-	if (sk_stream_wspace(sk) >= sk_stream_min_wspace(sk) && sock)
+	if (sk_stream_is_writeable(sk) && sock)
 		clear_bit(SOCK_NOSPACE, &sock->flags);
 	svc_write_space(sk);
 }

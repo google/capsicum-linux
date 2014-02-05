@@ -62,6 +62,7 @@ unsigned disabled_cpus;
 
 /* Processor that is doing the boot up */
 unsigned int boot_cpu_physical_apicid = -1U;
+EXPORT_SYMBOL_GPL(boot_cpu_physical_apicid);
 
 /*
  * The highest APIC ID seen during enumeration.
@@ -913,7 +914,7 @@ static void local_apic_timer_interrupt(void)
  * [ if a single-CPU system runs an SMP kernel then we call the local
  *   interrupt as well. Thus we cannot inline the local irq ... ]
  */
-void __irq_entry smp_apic_timer_interrupt(struct pt_regs *regs)
+__visible void __irq_entry smp_apic_timer_interrupt(struct pt_regs *regs)
 {
 	struct pt_regs *old_regs = set_irq_regs(regs);
 
@@ -932,7 +933,7 @@ void __irq_entry smp_apic_timer_interrupt(struct pt_regs *regs)
 	set_irq_regs(old_regs);
 }
 
-void __irq_entry smp_trace_apic_timer_interrupt(struct pt_regs *regs)
+__visible void __irq_entry smp_trace_apic_timer_interrupt(struct pt_regs *regs)
 {
 	struct pt_regs *old_regs = set_irq_regs(regs);
 
@@ -1946,14 +1947,14 @@ static inline void __smp_spurious_interrupt(void)
 		"should never happen.\n", smp_processor_id());
 }
 
-void smp_spurious_interrupt(struct pt_regs *regs)
+__visible void smp_spurious_interrupt(struct pt_regs *regs)
 {
 	entering_irq();
 	__smp_spurious_interrupt();
 	exiting_irq();
 }
 
-void smp_trace_spurious_interrupt(struct pt_regs *regs)
+__visible void smp_trace_spurious_interrupt(struct pt_regs *regs)
 {
 	entering_irq();
 	trace_spurious_apic_entry(SPURIOUS_APIC_VECTOR);
@@ -2002,14 +2003,14 @@ static inline void __smp_error_interrupt(struct pt_regs *regs)
 
 }
 
-void smp_error_interrupt(struct pt_regs *regs)
+__visible void smp_error_interrupt(struct pt_regs *regs)
 {
 	entering_irq();
 	__smp_error_interrupt(regs);
 	exiting_irq();
 }
 
-void smp_trace_error_interrupt(struct pt_regs *regs)
+__visible void smp_trace_error_interrupt(struct pt_regs *regs)
 {
 	entering_irq();
 	trace_error_apic_entry(ERROR_APIC_VECTOR);
@@ -2107,7 +2108,7 @@ void disconnect_bsp_APIC(int virt_wire_setup)
 	apic_write(APIC_LVT1, value);
 }
 
-void generic_processor_info(int apicid, int version)
+int generic_processor_info(int apicid, int version)
 {
 	int cpu, max = nr_cpu_ids;
 	bool boot_cpu_detected = physid_isset(boot_cpu_physical_apicid,
@@ -2127,7 +2128,7 @@ void generic_processor_info(int apicid, int version)
 			"  Processor %d/0x%x ignored.\n", max, thiscpu, apicid);
 
 		disabled_cpus++;
-		return;
+		return -ENODEV;
 	}
 
 	if (num_processors >= nr_cpu_ids) {
@@ -2138,7 +2139,7 @@ void generic_processor_info(int apicid, int version)
 			"  Processor %d/0x%x ignored.\n", max, thiscpu, apicid);
 
 		disabled_cpus++;
-		return;
+		return -EINVAL;
 	}
 
 	num_processors++;
@@ -2183,6 +2184,8 @@ void generic_processor_info(int apicid, int version)
 #endif
 	set_cpu_possible(cpu, true);
 	set_cpu_present(cpu, true);
+
+	return cpu;
 }
 
 int hard_smp_processor_id(void)

@@ -42,7 +42,6 @@
 #include <linux/dma-mapping.h>
 #include <linux/of_device.h>
 #include <linux/of_platform.h>
-#include <linux/of_i2c.h>
 #include <sysdev/fsl_soc.h>
 #include <asm/cpm.h>
 
@@ -448,7 +447,7 @@ static int cpm_i2c_setup(struct cpm_i2c *cpm)
 
 	init_waitqueue_head(&cpm->i2c_wait);
 
-	cpm->irq = of_irq_to_resource(ofdev->dev.of_node, 0, NULL);
+	cpm->irq = irq_of_parse_and_map(ofdev->dev.of_node, 0);
 	if (!cpm->irq)
 		return -EINVAL;
 
@@ -680,11 +679,6 @@ static int cpm_i2c_probe(struct platform_device *ofdev)
 
 	dev_dbg(&ofdev->dev, "hw routines for %s registered.\n",
 		cpm->adap.name);
-
-	/*
-	 * register OF I2C devices
-	 */
-	of_i2c_register_devices(&cpm->adap);
 
 	return 0;
 out_shut:

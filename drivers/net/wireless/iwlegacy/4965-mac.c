@@ -574,9 +574,11 @@ il4965_translate_rx_status(struct il_priv *il, u32 decrypt_in)
 	return decrypt_out;
 }
 
+#define SMALL_PACKET_SIZE 256
+
 static void
 il4965_pass_packet_to_mac80211(struct il_priv *il, struct ieee80211_hdr *hdr,
-			       u16 len, u32 ampdu_status, struct il_rx_buf *rxb,
+			       u32 len, u32 ampdu_status, struct il_rx_buf *rxb,
 			       struct ieee80211_rx_status *stats)
 {
 	struct sk_buff *skb;
@@ -598,21 +600,25 @@ il4965_pass_packet_to_mac80211(struct il_priv *il, struct ieee80211_hdr *hdr,
 	    il_set_decrypted_flag(il, hdr, ampdu_status, stats))
 		return;
 
-	skb = dev_alloc_skb(128);
+	skb = dev_alloc_skb(SMALL_PACKET_SIZE);
 	if (!skb) {
 		IL_ERR("dev_alloc_skb failed\n");
 		return;
 	}
 
-	skb_add_rx_frag(skb, 0, rxb->page, (void *)hdr - rxb_addr(rxb), len,
-			len);
+	if (len <= SMALL_PACKET_SIZE) {
+		memcpy(skb_put(skb, len), hdr, len);
+	} else {
+		skb_add_rx_frag(skb, 0, rxb->page, (void *)hdr - rxb_addr(rxb),
+				len, PAGE_SIZE << il->hw_params.rx_page_order);
+		il->alloc_rxb_page--;
+		rxb->page = NULL;
+	}
 
 	il_update_stats(il, false, fc, len);
 	memcpy(IEEE80211_SKB_RXCB(skb), stats, sizeof(*stats));
 
 	ieee80211_rx(il->hw, skb);
-	il->alloc_rxb_page--;
-	rxb->page = NULL;
 }
 
 /* Called for N_RX (legacy ABG frames), or
@@ -6700,7 +6706,6 @@ out_free_eeprom:
 out_iounmap:
 	iounmap(il->hw_base);
 out_pci_release_regions:
-	pci_set_drvdata(pdev, NULL);
 	pci_release_regions(pdev);
 out_pci_disable_device:
 	pci_disable_device(pdev);
@@ -6781,7 +6786,6 @@ il4965_pci_remove(struct pci_dev *pdev)
 	iounmap(il->hw_base);
 	pci_release_regions(pdev);
 	pci_disable_device(pdev);
-	pci_set_drvdata(pdev, NULL);
 
 	il4965_uninit_drv(il);
 

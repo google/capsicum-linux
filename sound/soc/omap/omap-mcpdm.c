@@ -480,9 +480,6 @@ static int asoc_mcpdm_probe(struct platform_device *pdev)
 	mcpdm->dma_data[1].filter_data = "up_link";
 
 	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "mpu");
-	if (res == NULL)
-		return -ENOMEM;
-
 	mcpdm->io_base = devm_ioremap_resource(&pdev->dev, res);
 	if (IS_ERR(mcpdm->io_base))
 		return PTR_ERR(mcpdm->io_base);
@@ -493,14 +490,9 @@ static int asoc_mcpdm_probe(struct platform_device *pdev)
 
 	mcpdm->dev = &pdev->dev;
 
-	return snd_soc_register_component(&pdev->dev, &omap_mcpdm_component,
-					  &omap_mcpdm_dai, 1);
-}
-
-static int asoc_mcpdm_remove(struct platform_device *pdev)
-{
-	snd_soc_unregister_component(&pdev->dev);
-	return 0;
+	return devm_snd_soc_register_component(&pdev->dev,
+					       &omap_mcpdm_component,
+					       &omap_mcpdm_dai, 1);
 }
 
 static const struct of_device_id omap_mcpdm_of_match[] = {
@@ -517,7 +509,6 @@ static struct platform_driver asoc_mcpdm_driver = {
 	},
 
 	.probe	= asoc_mcpdm_probe,
-	.remove	= asoc_mcpdm_remove,
 };
 
 module_platform_driver(asoc_mcpdm_driver);

@@ -24,6 +24,7 @@ struct perf_top {
 	u64		   exact_samples;
 	u64		   guest_us_samples, guest_kernel_samples;
 	int		   print_entries, count_filter, delay_secs;
+	int		   max_stack;
 	bool		   hide_kernel_symbols, hide_user_symbols, zero;
 	bool		   use_tui, use_stdio;
 	bool		   kptr_restrict_warned;
@@ -38,6 +39,8 @@ struct perf_top {
 	const char	   *sym_filter;
 	float		   min_percent;
 };
+
+#define CONSOLE_CLEAR "[H[2J"
 
 size_t perf_top__header_snprintf(struct perf_top *top, char *bf, size_t size);
 void perf_top__reset_sample_counters(struct perf_top *top);

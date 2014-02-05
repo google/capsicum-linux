@@ -52,10 +52,8 @@
 drm_dma_handle_t *drm_pci_alloc(struct drm_device * dev, size_t size, size_t align)
 {
 	drm_dma_handle_t *dmah;
-#if 1
 	unsigned long addr;
 	size_t sz;
-#endif
 
 	/* pci_alloc_consistent only guarantees alignment to the smallest
 	 * PAGE_SIZE order which is greater than or equal to the requested size.
@@ -82,7 +80,7 @@ drm_dma_handle_t *drm_pci_alloc(struct drm_device * dev, size_t size, size_t ali
 	/* Reserve */
 	for (addr = (unsigned long)dmah->vaddr, sz = size;
 	     sz > 0; addr += PAGE_SIZE, sz -= PAGE_SIZE) {
-		SetPageReserved(virt_to_page(addr));
+		SetPageReserved(virt_to_page((void *)addr));
 	}
 
 	return dmah;
@@ -97,17 +95,15 @@ EXPORT_SYMBOL(drm_pci_alloc);
  */
 void __drm_pci_free(struct drm_device * dev, drm_dma_handle_t * dmah)
 {
-#if 1
 	unsigned long addr;
 	size_t sz;
-#endif
 
 	if (dmah->vaddr) {
 		/* XXX - Is virt_to_page() legal for consistent mem? */
 		/* Unreserve */
 		for (addr = (unsigned long)dmah->vaddr, sz = dmah->size;
 		     sz > 0; addr += PAGE_SIZE, sz -= PAGE_SIZE) {
-			ClearPageReserved(virt_to_page(addr));
+			ClearPageReserved(virt_to_page((void *)addr));
 		}
 		dma_free_coherent(&dev->pdev->dev, dmah->size, dmah->vaddr,
 				  dmah->busaddr);
@@ -276,15 +272,24 @@ static int drm_pci_agp_init(struct drm_device *dev)
 			DRM_ERROR("Cannot initialize the agpgart module.\n");
 			return -EINVAL;
 		}
-		if (drm_core_has_MTRR(dev)) {
-			if (dev->agp)
-				dev->agp->agp_mtrr = arch_phys_wc_add(
-					dev->agp->agp_info.aper_base,
-					dev->agp->agp_info.aper_size *
-					1024 * 1024);
+		if (dev->agp) {
+			dev->agp->agp_mtrr = arch_phys_wc_add(
+				dev->agp->agp_info.aper_base,
+				dev->agp->agp_info.aper_size *
+				1024 * 1024);
 		}
 	}
 	return 0;
+}
+
+static void drm_pci_agp_destroy(struct drm_device *dev)
+{
+	if (drm_core_has_AGP(dev) && dev->agp) {
+		arch_phys_wc_del(dev->agp->agp_mtrr);
+		drm_agp_clear(dev);
+		drm_agp_destroy(dev->agp);
+		dev->agp = NULL;
+	}
 }
 
 static struct drm_bus drm_pci_bus = {
@@ -295,6 +300,7 @@ static struct drm_bus drm_pci_bus = {
 	.set_unique = drm_pci_set_unique,
 	.irq_by_busid = drm_pci_irq_by_busid,
 	.agp_init = drm_pci_agp_init,
+	.agp_destroy = drm_pci_agp_destroy,
 };
 
 /**
@@ -316,74 +322,36 @@ int drm_get_pci_dev(struct pci_dev *pdev, const struct pci_device_id *ent,
 
 	DRM_DEBUG("\n");
 
-	dev = kzalloc(sizeof(*dev), GFP_KERNEL);
+	dev = drm_dev_alloc(driver, &pdev->dev);
 	if (!dev)
 		return -ENOMEM;
 
 	ret = pci_enable_device(pdev);
 	if (ret)
-		goto err_g1;
+		goto err_free;
 
 	dev->pdev = pdev;
-	dev->dev = &pdev->dev;
-
-	dev->pci_device = pdev->device;
-	dev->pci_vendor = pdev->vendor;
-
 #ifdef __alpha__
 	dev->hose = pdev->sysdata;
 #endif
 
-	mutex_lock(&drm_global_mutex);
-
-	if ((ret = drm_fill_in_dev(dev, ent, driver))) {
-		printk(KERN_ERR "DRM: Fill_in_dev failed.\n");
-		goto err_g2;
-	}
-
-	if (drm_core_check_feature(dev, DRIVER_MODESET)) {
+	if (drm_core_check_feature(dev, DRIVER_MODESET))
 		pci_set_drvdata(pdev, dev);
-		ret = drm_get_minor(dev, &dev->control, DRM_MINOR_CONTROL);
-		if (ret)
-			goto err_g2;
-	}
 
-	if ((ret = drm_get_minor(dev, &dev->primary, DRM_MINOR_LEGACY)))
-		goto err_g3;
-
-	if (dev->driver->load) {
-		ret = dev->driver->load(dev, ent->driver_data);
-		if (ret)
-			goto err_g4;
-	}
-
-	/* setup the grouping for the legacy output */
-	if (drm_core_check_feature(dev, DRIVER_MODESET)) {
-		ret = drm_mode_group_init_legacy_group(dev,
-						&dev->primary->mode_group);
-		if (ret)
-			goto err_g4;
-	}
-
-	list_add_tail(&dev->driver_item, &driver->device_list);
+	ret = drm_dev_register(dev, ent->driver_data);
+	if (ret)
+		goto err_pci;
 
 	DRM_INFO("Initialized %s %d.%d.%d %s for %s on minor %d\n",
 		 driver->name, driver->major, driver->minor, driver->patchlevel,
 		 driver->date, pci_name(pdev), dev->primary->index);
 
-	mutex_unlock(&drm_global_mutex);
 	return 0;
 
-err_g4:
-	drm_put_minor(&dev->primary);
-err_g3:
-	if (drm_core_check_feature(dev, DRIVER_MODESET))
-		drm_put_minor(&dev->control);
-err_g2:
+err_pci:
 	pci_disable_device(pdev);
-err_g1:
-	kfree(dev);
-	mutex_unlock(&drm_global_mutex);
+err_free:
+	drm_dev_free(dev);
 	return ret;
 }
 EXPORT_SYMBOL(drm_get_pci_dev);

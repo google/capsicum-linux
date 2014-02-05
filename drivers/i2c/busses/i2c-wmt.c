@@ -21,7 +21,6 @@
 #include <linux/module.h>
 #include <linux/of.h>
 #include <linux/of_address.h>
-#include <linux/of_i2c.h>
 #include <linux/of_irq.h>
 #include <linux/platform_device.h>
 
@@ -159,7 +158,7 @@ static int wmt_i2c_write(struct i2c_adapter *adap, struct i2c_msg *pmsg,
 		writew(val, i2c_dev->base + REG_CR);
 	}
 
-	INIT_COMPLETION(i2c_dev->complete);
+	reinit_completion(&i2c_dev->complete);
 
 	if (i2c_dev->mode == I2C_MODE_STANDARD)
 		tcr_val = TCR_STANDARD_MODE;
@@ -248,7 +247,7 @@ static int wmt_i2c_read(struct i2c_adapter *adap, struct i2c_msg *pmsg,
 		writew(val, i2c_dev->base + REG_CR);
 	}
 
-	INIT_COMPLETION(i2c_dev->complete);
+	reinit_completion(&i2c_dev->complete);
 
 	if (i2c_dev->mode == I2C_MODE_STANDARD)
 		tcr_val = TCR_STANDARD_MODE;
@@ -350,6 +349,7 @@ static int wmt_i2c_reset_hardware(struct wmt_i2c_dev *i2c_dev)
 	err = clk_set_rate(i2c_dev->clk, 20000000);
 	if (err) {
 		dev_err(i2c_dev->dev, "failed to set clock = 20Mhz\n");
+		clk_disable_unprepare(i2c_dev->clk);
 		return err;
 	}
 
@@ -438,8 +438,6 @@ static int wmt_i2c_probe(struct platform_device *pdev)
 	}
 
 	platform_set_drvdata(pdev, i2c_dev);
-
-	of_i2c_register_devices(adap);
 
 	return 0;
 }

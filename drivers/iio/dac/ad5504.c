@@ -100,7 +100,6 @@ static int ad5504_read_raw(struct iio_dev *indio_dev,
 			   long m)
 {
 	struct ad5504_state *st = iio_priv(indio_dev);
-	unsigned long scale_uv;
 	int ret;
 
 	switch (m) {
@@ -113,11 +112,9 @@ static int ad5504_read_raw(struct iio_dev *indio_dev,
 
 		return IIO_VAL_INT;
 	case IIO_CHAN_INFO_SCALE:
-		scale_uv = (st->vref_mv * 1000) >> chan->scan_type.realbits;
-		*val =  scale_uv / 1000;
-		*val2 = (scale_uv % 1000) * 1000;
-		return IIO_VAL_INT_PLUS_MICRO;
-
+		*val = st->vref_mv;
+		*val2 = chan->scan_type.realbits;
+		return IIO_VAL_FRACTIONAL_LOG2;
 	}
 	return -EINVAL;
 }
@@ -248,8 +245,10 @@ static const struct iio_chan_spec_ext_info ad5504_ext_info[] = {
 		.name = "powerdown",
 		.read = ad5504_read_dac_powerdown,
 		.write = ad5504_write_dac_powerdown,
+		.shared = IIO_SEPARATE,
 	},
-	IIO_ENUM("powerdown_mode", true, &ad5504_powerdown_mode_enum),
+	IIO_ENUM("powerdown_mode", IIO_SHARED_BY_TYPE,
+		 &ad5504_powerdown_mode_enum),
 	IIO_ENUM_AVAILABLE("powerdown_mode", &ad5504_powerdown_mode_enum),
 	{ },
 };
@@ -281,16 +280,14 @@ static int ad5504_probe(struct spi_device *spi)
 	struct regulator *reg;
 	int ret, voltage_uv = 0;
 
-	indio_dev = iio_device_alloc(sizeof(*st));
-	if (indio_dev == NULL) {
-		ret = -ENOMEM;
-		goto error_ret;
-	}
-	reg = regulator_get(&spi->dev, "vcc");
+	indio_dev = devm_iio_device_alloc(&spi->dev, sizeof(*st));
+	if (!indio_dev)
+		return -ENOMEM;
+	reg = devm_regulator_get(&spi->dev, "vcc");
 	if (!IS_ERR(reg)) {
 		ret = regulator_enable(reg);
 		if (ret)
-			goto error_put_reg;
+			return ret;
 
 		ret = regulator_get_voltage(reg);
 		if (ret < 0)
@@ -321,7 +318,7 @@ static int ad5504_probe(struct spi_device *spi)
 	indio_dev->modes = INDIO_DIRECT_MODE;
 
 	if (spi->irq) {
-		ret = request_threaded_irq(spi->irq,
+		ret = devm_request_threaded_irq(&spi->dev, spi->irq,
 					   NULL,
 					   &ad5504_event_handler,
 					   IRQF_TRIGGER_FALLING | IRQF_ONESHOT,
@@ -333,22 +330,14 @@ static int ad5504_probe(struct spi_device *spi)
 
 	ret = iio_device_register(indio_dev);
 	if (ret)
-		goto error_free_irq;
+		goto error_disable_reg;
 
 	return 0;
 
-error_free_irq:
-	if (spi->irq)
-		free_irq(spi->irq, indio_dev);
 error_disable_reg:
 	if (!IS_ERR(reg))
 		regulator_disable(reg);
-error_put_reg:
-	if (!IS_ERR(reg))
-		regulator_put(reg);
 
-	iio_device_free(indio_dev);
-error_ret:
 	return ret;
 }
 
@@ -358,14 +347,9 @@ static int ad5504_remove(struct spi_device *spi)
 	struct ad5504_state *st = iio_priv(indio_dev);
 
 	iio_device_unregister(indio_dev);
-	if (spi->irq)
-		free_irq(spi->irq, indio_dev);
 
-	if (!IS_ERR(st->reg)) {
+	if (!IS_ERR(st->reg))
 		regulator_disable(st->reg);
-		regulator_put(st->reg);
-	}
-	iio_device_free(indio_dev);
 
 	return 0;
 }

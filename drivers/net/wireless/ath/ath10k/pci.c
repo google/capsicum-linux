@@ -32,15 +32,13 @@
 #include "ce.h"
 #include "pci.h"
 
-unsigned int ath10k_target_ps;
+static unsigned int ath10k_target_ps;
 module_param(ath10k_target_ps, uint, 0644);
 MODULE_PARM_DESC(ath10k_target_ps, "Enable ath10k Target (SoC) PS option");
 
-#define QCA988X_1_0_DEVICE_ID	(0xabcd)
 #define QCA988X_2_0_DEVICE_ID	(0x003c)
 
 static DEFINE_PCI_DEVICE_TABLE(ath10k_pci_id_table) = {
-	{ PCI_VDEVICE(ATHEROS, QCA988X_1_0_DEVICE_ID) }, /* PCI-E QCA988X V1 */
 	{ PCI_VDEVICE(ATHEROS, QCA988X_2_0_DEVICE_ID) }, /* PCI-E QCA988X V2 */
 	{0}
 };
@@ -50,49 +48,155 @@ static int ath10k_pci_diag_read_access(struct ath10k *ar, u32 address,
 
 static void ath10k_pci_process_ce(struct ath10k *ar);
 static int ath10k_pci_post_rx(struct ath10k *ar);
-static int ath10k_pci_post_rx_pipe(struct hif_ce_pipe_info *pipe_info,
+static int ath10k_pci_post_rx_pipe(struct ath10k_pci_pipe *pipe_info,
 					     int num);
-static void ath10k_pci_rx_pipe_cleanup(struct hif_ce_pipe_info *pipe_info);
+static void ath10k_pci_rx_pipe_cleanup(struct ath10k_pci_pipe *pipe_info);
 static void ath10k_pci_stop_ce(struct ath10k *ar);
+static void ath10k_pci_device_reset(struct ath10k *ar);
+static int ath10k_pci_reset_target(struct ath10k *ar);
+static int ath10k_pci_start_intr(struct ath10k *ar);
+static void ath10k_pci_stop_intr(struct ath10k *ar);
 
 static const struct ce_attr host_ce_config_wlan[] = {
-	/* host->target HTC control and raw streams */
-	{ /* CE0 */ CE_ATTR_FLAGS, 0, 16, 256, 0, NULL,},
-	/* could be moved to share CE3 */
-	/* target->host HTT + HTC control */
-	{ /* CE1 */ CE_ATTR_FLAGS, 0, 0, 512, 512, NULL,},
-	/* target->host WMI */
-	{ /* CE2 */ CE_ATTR_FLAGS, 0, 0, 2048, 32, NULL,},
-	/* host->target WMI */
-	{ /* CE3 */ CE_ATTR_FLAGS, 0, 32, 2048, 0, NULL,},
-	/* host->target HTT */
-	{ /* CE4 */ CE_ATTR_FLAGS | CE_ATTR_DIS_INTR, 0,
-		    CE_HTT_H2T_MSG_SRC_NENTRIES, 256, 0, NULL,},
-	/* unused */
-	{ /* CE5 */ CE_ATTR_FLAGS, 0, 0, 0, 0, NULL,},
-	/* Target autonomous hif_memcpy */
-	{ /* CE6 */ CE_ATTR_FLAGS, 0, 0, 0, 0, NULL,},
-	/* ce_diag, the Diagnostic Window */
-	{ /* CE7 */ CE_ATTR_FLAGS, 0, 2, DIAG_TRANSFER_LIMIT, 2, NULL,},
+	/* CE0: host->target HTC control and raw streams */
+	{
+		.flags = CE_ATTR_FLAGS,
+		.src_nentries = 16,
+		.src_sz_max = 256,
+		.dest_nentries = 0,
+	},
+
+	/* CE1: target->host HTT + HTC control */
+	{
+		.flags = CE_ATTR_FLAGS,
+		.src_nentries = 0,
+		.src_sz_max = 512,
+		.dest_nentries = 512,
+	},
+
+	/* CE2: target->host WMI */
+	{
+		.flags = CE_ATTR_FLAGS,
+		.src_nentries = 0,
+		.src_sz_max = 2048,
+		.dest_nentries = 32,
+	},
+
+	/* CE3: host->target WMI */
+	{
+		.flags = CE_ATTR_FLAGS,
+		.src_nentries = 32,
+		.src_sz_max = 2048,
+		.dest_nentries = 0,
+	},
+
+	/* CE4: host->target HTT */
+	{
+		.flags = CE_ATTR_FLAGS | CE_ATTR_DIS_INTR,
+		.src_nentries = CE_HTT_H2T_MSG_SRC_NENTRIES,
+		.src_sz_max = 256,
+		.dest_nentries = 0,
+	},
+
+	/* CE5: unused */
+	{
+		.flags = CE_ATTR_FLAGS,
+		.src_nentries = 0,
+		.src_sz_max = 0,
+		.dest_nentries = 0,
+	},
+
+	/* CE6: target autonomous hif_memcpy */
+	{
+		.flags = CE_ATTR_FLAGS,
+		.src_nentries = 0,
+		.src_sz_max = 0,
+		.dest_nentries = 0,
+	},
+
+	/* CE7: ce_diag, the Diagnostic Window */
+	{
+		.flags = CE_ATTR_FLAGS,
+		.src_nentries = 2,
+		.src_sz_max = DIAG_TRANSFER_LIMIT,
+		.dest_nentries = 2,
+	},
 };
 
 /* Target firmware's Copy Engine configuration. */
 static const struct ce_pipe_config target_ce_config_wlan[] = {
-	/* host->target HTC control and raw streams */
-	{ /* CE0 */ 0, PIPEDIR_OUT, 32, 256, CE_ATTR_FLAGS, 0,},
-	/* target->host HTT + HTC control */
-	{ /* CE1 */ 1, PIPEDIR_IN, 32, 512, CE_ATTR_FLAGS, 0,},
-	/* target->host WMI */
-	{ /* CE2 */ 2, PIPEDIR_IN, 32, 2048, CE_ATTR_FLAGS, 0,},
-	/* host->target WMI */
-	{ /* CE3 */ 3, PIPEDIR_OUT, 32, 2048, CE_ATTR_FLAGS, 0,},
-	/* host->target HTT */
-	{ /* CE4 */ 4, PIPEDIR_OUT, 256, 256, CE_ATTR_FLAGS, 0,},
+	/* CE0: host->target HTC control and raw streams */
+	{
+		.pipenum = 0,
+		.pipedir = PIPEDIR_OUT,
+		.nentries = 32,
+		.nbytes_max = 256,
+		.flags = CE_ATTR_FLAGS,
+		.reserved = 0,
+	},
+
+	/* CE1: target->host HTT + HTC control */
+	{
+		.pipenum = 1,
+		.pipedir = PIPEDIR_IN,
+		.nentries = 32,
+		.nbytes_max = 512,
+		.flags = CE_ATTR_FLAGS,
+		.reserved = 0,
+	},
+
+	/* CE2: target->host WMI */
+	{
+		.pipenum = 2,
+		.pipedir = PIPEDIR_IN,
+		.nentries = 32,
+		.nbytes_max = 2048,
+		.flags = CE_ATTR_FLAGS,
+		.reserved = 0,
+	},
+
+	/* CE3: host->target WMI */
+	{
+		.pipenum = 3,
+		.pipedir = PIPEDIR_OUT,
+		.nentries = 32,
+		.nbytes_max = 2048,
+		.flags = CE_ATTR_FLAGS,
+		.reserved = 0,
+	},
+
+	/* CE4: host->target HTT */
+	{
+		.pipenum = 4,
+		.pipedir = PIPEDIR_OUT,
+		.nentries = 256,
+		.nbytes_max = 256,
+		.flags = CE_ATTR_FLAGS,
+		.reserved = 0,
+	},
+
 	/* NB: 50% of src nentries, since tx has 2 frags */
-	/* unused */
-	{ /* CE5 */ 5, PIPEDIR_OUT, 32, 2048, CE_ATTR_FLAGS, 0,},
-	/* Reserved for target autonomous hif_memcpy */
-	{ /* CE6 */ 6, PIPEDIR_INOUT, 32, 4096, CE_ATTR_FLAGS, 0,},
+
+	/* CE5: unused */
+	{
+		.pipenum = 5,
+		.pipedir = PIPEDIR_OUT,
+		.nentries = 32,
+		.nbytes_max = 2048,
+		.flags = CE_ATTR_FLAGS,
+		.reserved = 0,
+	},
+
+	/* CE6: Reserved for target autonomous hif_memcpy */
+	{
+		.pipenum = 6,
+		.pipedir = PIPEDIR_INOUT,
+		.nentries = 32,
+		.nbytes_max = 4096,
+		.flags = CE_ATTR_FLAGS,
+		.reserved = 0,
+	},
+
 	/* CE7 used only by Host */
 };
 
@@ -110,7 +214,7 @@ static int ath10k_pci_diag_read_mem(struct ath10k *ar, u32 address, void *data,
 	unsigned int completed_nbytes, orig_nbytes, remaining_bytes;
 	unsigned int id;
 	unsigned int flags;
-	struct ce_state *ce_diag;
+	struct ath10k_ce_pipe *ce_diag;
 	/* Host buffer address in CE space */
 	u32 ce_data;
 	dma_addr_t ce_data_base = 0;
@@ -274,7 +378,7 @@ static int ath10k_pci_diag_write_mem(struct ath10k *ar, u32 address,
 	unsigned int completed_nbytes, orig_nbytes, remaining_bytes;
 	unsigned int id;
 	unsigned int flags;
-	struct ce_state *ce_diag;
+	struct ath10k_ce_pipe *ce_diag;
 	void *data_buf = NULL;
 	u32 ce_data;	/* Host buffer address in CE space */
 	dma_addr_t ce_data_base = 0;
@@ -433,7 +537,7 @@ static void ath10k_pci_wait(struct ath10k *ar)
 		ath10k_warn("Unable to wakeup target\n");
 }
 
-void ath10k_do_pci_wake(struct ath10k *ar)
+int ath10k_do_pci_wake(struct ath10k *ar)
 {
 	struct ath10k_pci *ar_pci = ath10k_pci_priv(ar);
 	void __iomem *pci_addr = ar_pci->mem;
@@ -449,18 +553,19 @@ void ath10k_do_pci_wake(struct ath10k *ar)
 	atomic_inc(&ar_pci->keep_awake_count);
 
 	if (ar_pci->verified_awake)
-		return;
+		return 0;
 
 	for (;;) {
 		if (ath10k_pci_target_is_awake(ar)) {
 			ar_pci->verified_awake = true;
-			break;
+			return 0;
 		}
 
 		if (tot_delay > PCIE_WAKE_TIMEOUT) {
-			ath10k_warn("target takes too long to wake up (awake count %d)\n",
+			ath10k_warn("target took longer %d us to wake up (awake count %d)\n",
+				    PCIE_WAKE_TIMEOUT,
 				    atomic_read(&ar_pci->keep_awake_count));
-			break;
+			return -ETIMEDOUT;
 		}
 
 		udelay(curr_delay);
@@ -489,7 +594,7 @@ void ath10k_do_pci_sleep(struct ath10k *ar)
  * FIXME: Handle OOM properly.
  */
 static inline
-struct ath10k_pci_compl *get_free_compl(struct hif_ce_pipe_info *pipe_info)
+struct ath10k_pci_compl *get_free_compl(struct ath10k_pci_pipe *pipe_info)
 {
 	struct ath10k_pci_compl *compl = NULL;
 
@@ -507,39 +612,28 @@ exit:
 }
 
 /* Called by lower (CE) layer when a send to Target completes. */
-static void ath10k_pci_ce_send_done(struct ce_state *ce_state,
-				    void *transfer_context,
-				    u32 ce_data,
-				    unsigned int nbytes,
-				    unsigned int transfer_id)
+static void ath10k_pci_ce_send_done(struct ath10k_ce_pipe *ce_state)
 {
 	struct ath10k *ar = ce_state->ar;
 	struct ath10k_pci *ar_pci = ath10k_pci_priv(ar);
-	struct hif_ce_pipe_info *pipe_info =  &ar_pci->pipe_info[ce_state->id];
+	struct ath10k_pci_pipe *pipe_info =  &ar_pci->pipe_info[ce_state->id];
 	struct ath10k_pci_compl *compl;
-	bool process = false;
+	void *transfer_context;
+	u32 ce_data;
+	unsigned int nbytes;
+	unsigned int transfer_id;
 
-	do {
-		/*
-		 * For the send completion of an item in sendlist, just
-		 * increment num_sends_allowed. The upper layer callback will
-		 * be triggered when last fragment is done with send.
-		 */
-		if (transfer_context == CE_SENDLIST_ITEM_CTXT) {
-			spin_lock_bh(&pipe_info->pipe_lock);
-			pipe_info->num_sends_allowed++;
-			spin_unlock_bh(&pipe_info->pipe_lock);
-			continue;
-		}
-
+	while (ath10k_ce_completed_send_next(ce_state, &transfer_context,
+					     &ce_data, &nbytes,
+					     &transfer_id) == 0) {
 		compl = get_free_compl(pipe_info);
 		if (!compl)
 			break;
 
-		compl->send_or_recv = HIF_CE_COMPLETE_SEND;
+		compl->state = ATH10K_PCI_COMPL_SEND;
 		compl->ce_state = ce_state;
 		compl->pipe_info = pipe_info;
-		compl->transfer_context = transfer_context;
+		compl->skb = transfer_context;
 		compl->nbytes = nbytes;
 		compl->transfer_id = transfer_id;
 		compl->flags = 0;
@@ -550,46 +644,36 @@ static void ath10k_pci_ce_send_done(struct ce_state *ce_state,
 		spin_lock_bh(&ar_pci->compl_lock);
 		list_add_tail(&compl->list, &ar_pci->compl_process);
 		spin_unlock_bh(&ar_pci->compl_lock);
-
-		process = true;
-	} while (ath10k_ce_completed_send_next(ce_state,
-							   &transfer_context,
-							   &ce_data, &nbytes,
-							   &transfer_id) == 0);
-
-	/*
-	 * If only some of the items within a sendlist have completed,
-	 * don't invoke completion processing until the entire sendlist
-	 * has been sent.
-	 */
-	if (!process)
-		return;
+	}
 
 	ath10k_pci_process_ce(ar);
 }
 
 /* Called by lower (CE) layer when data is received from the Target. */
-static void ath10k_pci_ce_recv_data(struct ce_state *ce_state,
-				    void *transfer_context, u32 ce_data,
-				    unsigned int nbytes,
-				    unsigned int transfer_id,
-				    unsigned int flags)
+static void ath10k_pci_ce_recv_data(struct ath10k_ce_pipe *ce_state)
 {
 	struct ath10k *ar = ce_state->ar;
 	struct ath10k_pci *ar_pci = ath10k_pci_priv(ar);
-	struct hif_ce_pipe_info *pipe_info =  &ar_pci->pipe_info[ce_state->id];
+	struct ath10k_pci_pipe *pipe_info =  &ar_pci->pipe_info[ce_state->id];
 	struct ath10k_pci_compl *compl;
 	struct sk_buff *skb;
+	void *transfer_context;
+	u32 ce_data;
+	unsigned int nbytes;
+	unsigned int transfer_id;
+	unsigned int flags;
 
-	do {
+	while (ath10k_ce_completed_recv_next(ce_state, &transfer_context,
+					     &ce_data, &nbytes, &transfer_id,
+					     &flags) == 0) {
 		compl = get_free_compl(pipe_info);
 		if (!compl)
 			break;
 
-		compl->send_or_recv = HIF_CE_COMPLETE_RECV;
+		compl->state = ATH10K_PCI_COMPL_RECV;
 		compl->ce_state = ce_state;
 		compl->pipe_info = pipe_info;
-		compl->transfer_context = transfer_context;
+		compl->skb = transfer_context;
 		compl->nbytes = nbytes;
 		compl->transfer_id = transfer_id;
 		compl->flags = flags;
@@ -604,12 +688,7 @@ static void ath10k_pci_ce_recv_data(struct ce_state *ce_state,
 		spin_lock_bh(&ar_pci->compl_lock);
 		list_add_tail(&compl->list, &ar_pci->compl_process);
 		spin_unlock_bh(&ar_pci->compl_lock);
-
-	} while (ath10k_ce_completed_recv_next(ce_state,
-							   &transfer_context,
-							   &ce_data, &nbytes,
-							   &transfer_id,
-							   &flags) == 0);
+	}
 
 	ath10k_pci_process_ce(ar);
 }
@@ -621,14 +700,11 @@ static int ath10k_pci_hif_send_head(struct ath10k *ar, u8 pipe_id,
 {
 	struct ath10k_skb_cb *skb_cb = ATH10K_SKB_CB(nbuf);
 	struct ath10k_pci *ar_pci = ath10k_pci_priv(ar);
-	struct hif_ce_pipe_info *pipe_info = &(ar_pci->pipe_info[pipe_id]);
-	struct ce_state *ce_hdl = pipe_info->ce_hdl;
-	struct ce_sendlist sendlist;
+	struct ath10k_pci_pipe *pipe_info = &(ar_pci->pipe_info[pipe_id]);
+	struct ath10k_ce_pipe *ce_hdl = pipe_info->ce_hdl;
 	unsigned int len;
 	u32 flags = 0;
 	int ret;
-
-	memset(&sendlist, 0, sizeof(struct ce_sendlist));
 
 	len = min(bytes, nbuf->len);
 	bytes -= len;
@@ -644,19 +720,8 @@ static int ath10k_pci_hif_send_head(struct ath10k *ar, u8 pipe_id,
 			"ath10k tx: data: ",
 			nbuf->data, nbuf->len);
 
-	ath10k_ce_sendlist_buf_add(&sendlist, skb_cb->paddr, len, flags);
-
-	/* Make sure we have resources to handle this request */
-	spin_lock_bh(&pipe_info->pipe_lock);
-	if (!pipe_info->num_sends_allowed) {
-		ath10k_warn("Pipe: %d is full\n", pipe_id);
-		spin_unlock_bh(&pipe_info->pipe_lock);
-		return -ENOSR;
-	}
-	pipe_info->num_sends_allowed--;
-	spin_unlock_bh(&pipe_info->pipe_lock);
-
-	ret = ath10k_ce_sendlist_send(ce_hdl, nbuf, &sendlist, transfer_id);
+	ret = ath10k_ce_send(ce_hdl, nbuf, skb_cb->paddr, len, transfer_id,
+			     flags);
 	if (ret)
 		ath10k_warn("CE send failed: %p\n", nbuf);
 
@@ -666,14 +731,7 @@ static int ath10k_pci_hif_send_head(struct ath10k *ar, u8 pipe_id,
 static u16 ath10k_pci_hif_get_free_queue_number(struct ath10k *ar, u8 pipe)
 {
 	struct ath10k_pci *ar_pci = ath10k_pci_priv(ar);
-	struct hif_ce_pipe_info *pipe_info = &(ar_pci->pipe_info[pipe]);
-	int ret;
-
-	spin_lock_bh(&pipe_info->pipe_lock);
-	ret = pipe_info->num_sends_allowed;
-	spin_unlock_bh(&pipe_info->pipe_lock);
-
-	return ret;
+	return ath10k_ce_num_free_src_entries(ar_pci->pipe_info[pipe].ce_hdl);
 }
 
 static void ath10k_pci_hif_dump_area(struct ath10k *ar)
@@ -718,6 +776,8 @@ static void ath10k_pci_hif_dump_area(struct ath10k *ar)
 			   reg_dump_values[i + 1],
 			   reg_dump_values[i + 2],
 			   reg_dump_values[i + 3]);
+
+	ieee80211_queue_work(ar->hw, &ar->restart_work);
 }
 
 static void ath10k_pci_hif_send_complete_check(struct ath10k *ar, u8 pipe,
@@ -744,8 +804,8 @@ static void ath10k_pci_hif_send_complete_check(struct ath10k *ar, u8 pipe,
 	ath10k_ce_per_engine_service(ar, pipe);
 }
 
-static void ath10k_pci_hif_post_init(struct ath10k *ar,
-				     struct ath10k_hif_cb *callbacks)
+static void ath10k_pci_hif_set_callbacks(struct ath10k *ar,
+					 struct ath10k_hif_cb *callbacks)
 {
 	struct ath10k_pci *ar_pci = ath10k_pci_priv(ar);
 
@@ -758,9 +818,9 @@ static void ath10k_pci_hif_post_init(struct ath10k *ar,
 static int ath10k_pci_start_ce(struct ath10k *ar)
 {
 	struct ath10k_pci *ar_pci = ath10k_pci_priv(ar);
-	struct ce_state *ce_diag = ar_pci->ce_diag;
+	struct ath10k_ce_pipe *ce_diag = ar_pci->ce_diag;
 	const struct ce_attr *attr;
-	struct hif_ce_pipe_info *pipe_info;
+	struct ath10k_pci_pipe *pipe_info;
 	struct ath10k_pci_compl *compl;
 	int i, pipe_num, completions, disable_interrupts;
 
@@ -786,7 +846,6 @@ static int ath10k_pci_start_ce(struct ath10k *ar)
 						   ath10k_pci_ce_send_done,
 						   disable_interrupts);
 			completions += attr->src_nentries;
-			pipe_info->num_sends_allowed = attr->src_nentries - 1;
 		}
 
 		if (attr->dest_nentries) {
@@ -799,15 +858,14 @@ static int ath10k_pci_start_ce(struct ath10k *ar)
 			continue;
 
 		for (i = 0; i < completions; i++) {
-			compl = kmalloc(sizeof(struct ath10k_pci_compl),
-					GFP_KERNEL);
+			compl = kmalloc(sizeof(*compl), GFP_KERNEL);
 			if (!compl) {
 				ath10k_warn("No memory for completion state\n");
 				ath10k_pci_stop_ce(ar);
 				return -ENOMEM;
 			}
 
-			compl->send_or_recv = HIF_CE_COMPLETE_FREE;
+			compl->state = ATH10K_PCI_COMPL_FREE;
 			list_add_tail(&compl->list, &pipe_info->compl_free);
 		}
 	}
@@ -834,7 +892,7 @@ static void ath10k_pci_stop_ce(struct ath10k *ar)
 	 * their associated resources */
 	spin_lock_bh(&ar_pci->compl_lock);
 	list_for_each_entry(compl, &ar_pci->compl_process, list) {
-		skb = (struct sk_buff *)compl->transfer_context;
+		skb = compl->skb;
 		ATH10K_SKB_CB(skb)->is_aborted = true;
 	}
 	spin_unlock_bh(&ar_pci->compl_lock);
@@ -844,7 +902,7 @@ static void ath10k_pci_cleanup_ce(struct ath10k *ar)
 {
 	struct ath10k_pci *ar_pci = ath10k_pci_priv(ar);
 	struct ath10k_pci_compl *compl, *tmp;
-	struct hif_ce_pipe_info *pipe_info;
+	struct ath10k_pci_pipe *pipe_info;
 	struct sk_buff *netbuf;
 	int pipe_num;
 
@@ -855,7 +913,7 @@ static void ath10k_pci_cleanup_ce(struct ath10k *ar)
 
 	list_for_each_entry_safe(compl, tmp, &ar_pci->compl_process, list) {
 		list_del(&compl->list);
-		netbuf = (struct sk_buff *)compl->transfer_context;
+		netbuf = compl->skb;
 		dev_kfree_skb_any(netbuf);
 		kfree(compl);
 	}
@@ -906,12 +964,14 @@ static void ath10k_pci_process_ce(struct ath10k *ar)
 		list_del(&compl->list);
 		spin_unlock_bh(&ar_pci->compl_lock);
 
-		if (compl->send_or_recv == HIF_CE_COMPLETE_SEND) {
+		switch (compl->state) {
+		case ATH10K_PCI_COMPL_SEND:
 			cb->tx_completion(ar,
-					  compl->transfer_context,
+					  compl->skb,
 					  compl->transfer_id);
 			send_done = 1;
-		} else {
+			break;
+		case ATH10K_PCI_COMPL_RECV:
 			ret = ath10k_pci_post_rx_pipe(compl->pipe_info, 1);
 			if (ret) {
 				ath10k_warn("Unable to post recv buffer for pipe: %d\n",
@@ -919,7 +979,7 @@ static void ath10k_pci_process_ce(struct ath10k *ar)
 				break;
 			}
 
-			skb = (struct sk_buff *)compl->transfer_context;
+			skb = compl->skb;
 			nbytes = compl->nbytes;
 
 			ath10k_dbg(ATH10K_DBG_PCI,
@@ -938,16 +998,23 @@ static void ath10k_pci_process_ce(struct ath10k *ar)
 					    nbytes,
 					    skb->len + skb_tailroom(skb));
 			}
+			break;
+		case ATH10K_PCI_COMPL_FREE:
+			ath10k_warn("free completion cannot be processed\n");
+			break;
+		default:
+			ath10k_warn("invalid completion state (%d)\n",
+				    compl->state);
+			break;
 		}
 
-		compl->send_or_recv = HIF_CE_COMPLETE_FREE;
+		compl->state = ATH10K_PCI_COMPL_FREE;
 
 		/*
 		 * Add completion back to the pipe's free list.
 		 */
 		spin_lock_bh(&compl->pipe_info->pipe_lock);
 		list_add_tail(&compl->list, &compl->pipe_info->compl_free);
-		compl->pipe_info->num_sends_allowed += send_done;
 		spin_unlock_bh(&compl->pipe_info->pipe_lock);
 	}
 
@@ -1031,12 +1098,12 @@ static void ath10k_pci_hif_get_default_pipe(struct ath10k *ar,
 						 &dl_is_polled);
 }
 
-static int ath10k_pci_post_rx_pipe(struct hif_ce_pipe_info *pipe_info,
+static int ath10k_pci_post_rx_pipe(struct ath10k_pci_pipe *pipe_info,
 				   int num)
 {
 	struct ath10k *ar = pipe_info->hif_ce_state;
 	struct ath10k_pci *ar_pci = ath10k_pci_priv(ar);
-	struct ce_state *ce_state = pipe_info->ce_hdl;
+	struct ath10k_ce_pipe *ce_state = pipe_info->ce_hdl;
 	struct sk_buff *skb;
 	dma_addr_t ce_data;
 	int i, ret = 0;
@@ -1091,7 +1158,7 @@ err:
 static int ath10k_pci_post_rx(struct ath10k *ar)
 {
 	struct ath10k_pci *ar_pci = ath10k_pci_priv(ar);
-	struct hif_ce_pipe_info *pipe_info;
+	struct ath10k_pci_pipe *pipe_info;
 	const struct ce_attr *attr;
 	int pipe_num, ret = 0;
 
@@ -1141,11 +1208,11 @@ static int ath10k_pci_hif_start(struct ath10k *ar)
 	return 0;
 }
 
-static void ath10k_pci_rx_pipe_cleanup(struct hif_ce_pipe_info *pipe_info)
+static void ath10k_pci_rx_pipe_cleanup(struct ath10k_pci_pipe *pipe_info)
 {
 	struct ath10k *ar;
 	struct ath10k_pci *ar_pci;
-	struct ce_state *ce_hdl;
+	struct ath10k_ce_pipe *ce_hdl;
 	u32 buf_sz;
 	struct sk_buff *netbuf;
 	u32 ce_data;
@@ -1173,11 +1240,11 @@ static void ath10k_pci_rx_pipe_cleanup(struct hif_ce_pipe_info *pipe_info)
 	}
 }
 
-static void ath10k_pci_tx_pipe_cleanup(struct hif_ce_pipe_info *pipe_info)
+static void ath10k_pci_tx_pipe_cleanup(struct ath10k_pci_pipe *pipe_info)
 {
 	struct ath10k *ar;
 	struct ath10k_pci *ar_pci;
-	struct ce_state *ce_hdl;
+	struct ath10k_ce_pipe *ce_hdl;
 	struct sk_buff *netbuf;
 	u32 ce_data;
 	unsigned int nbytes;
@@ -1200,15 +1267,14 @@ static void ath10k_pci_tx_pipe_cleanup(struct hif_ce_pipe_info *pipe_info)
 
 	while (ath10k_ce_cancel_send_next(ce_hdl, (void **)&netbuf,
 					  &ce_data, &nbytes, &id) == 0) {
-		if (netbuf != CE_SENDLIST_ITEM_CTXT)
-			/*
-			 * Indicate the completion to higer layer to free
-			 * the buffer
-			 */
-			ATH10K_SKB_CB(netbuf)->is_aborted = true;
-			ar_pci->msg_callbacks_current.tx_completion(ar,
-								    netbuf,
-								    id);
+		/*
+		 * Indicate the completion to higer layer to free
+		 * the buffer
+		 */
+		ATH10K_SKB_CB(netbuf)->is_aborted = true;
+		ar_pci->msg_callbacks_current.tx_completion(ar,
+							    netbuf,
+							    id);
 	}
 }
 
@@ -1226,7 +1292,7 @@ static void ath10k_pci_buffer_cleanup(struct ath10k *ar)
 	int pipe_num;
 
 	for (pipe_num = 0; pipe_num < ar_pci->ce_count; pipe_num++) {
-		struct hif_ce_pipe_info *pipe_info;
+		struct ath10k_pci_pipe *pipe_info;
 
 		pipe_info = &ar_pci->pipe_info[pipe_num];
 		ath10k_pci_rx_pipe_cleanup(pipe_info);
@@ -1237,7 +1303,7 @@ static void ath10k_pci_buffer_cleanup(struct ath10k *ar)
 static void ath10k_pci_ce_deinit(struct ath10k *ar)
 {
 	struct ath10k_pci *ar_pci = ath10k_pci_priv(ar);
-	struct hif_ce_pipe_info *pipe_info;
+	struct ath10k_pci_pipe *pipe_info;
 	int pipe_num;
 
 	for (pipe_num = 0; pipe_num < ar_pci->ce_count; pipe_num++) {
@@ -1250,9 +1316,24 @@ static void ath10k_pci_ce_deinit(struct ath10k *ar)
 	}
 }
 
+static void ath10k_pci_disable_irqs(struct ath10k *ar)
+{
+	struct ath10k_pci *ar_pci = ath10k_pci_priv(ar);
+	int i;
+
+	for (i = 0; i < max(1, ar_pci->num_msi_intrs); i++)
+		disable_irq(ar_pci->pdev->irq + i);
+}
+
 static void ath10k_pci_hif_stop(struct ath10k *ar)
 {
+	struct ath10k_pci *ar_pci = ath10k_pci_priv(ar);
+
 	ath10k_dbg(ATH10K_DBG_PCI, "%s\n", __func__);
+
+	/* Irqs are never explicitly re-enabled. They are implicitly re-enabled
+	 * by ath10k_pci_start_intr(). */
+	ath10k_pci_disable_irqs(ar);
 
 	ath10k_pci_stop_ce(ar);
 
@@ -1263,7 +1344,8 @@ static void ath10k_pci_hif_stop(struct ath10k *ar)
 	ath10k_pci_process_ce(ar);
 	ath10k_pci_cleanup_ce(ar);
 	ath10k_pci_buffer_cleanup(ar);
-	ath10k_pci_ce_deinit(ar);
+
+	ar_pci->started = 0;
 }
 
 static int ath10k_pci_hif_exchange_bmi_msg(struct ath10k *ar,
@@ -1271,8 +1353,10 @@ static int ath10k_pci_hif_exchange_bmi_msg(struct ath10k *ar,
 					   void *resp, u32 *resp_len)
 {
 	struct ath10k_pci *ar_pci = ath10k_pci_priv(ar);
-	struct ce_state *ce_tx = ar_pci->pipe_info[BMI_CE_NUM_TO_TARG].ce_hdl;
-	struct ce_state *ce_rx = ar_pci->pipe_info[BMI_CE_NUM_TO_HOST].ce_hdl;
+	struct ath10k_pci_pipe *pci_tx = &ar_pci->pipe_info[BMI_CE_NUM_TO_TARG];
+	struct ath10k_pci_pipe *pci_rx = &ar_pci->pipe_info[BMI_CE_NUM_TO_HOST];
+	struct ath10k_ce_pipe *ce_tx = pci_tx->ce_hdl;
+	struct ath10k_ce_pipe *ce_rx = pci_rx->ce_hdl;
 	dma_addr_t req_paddr = 0;
 	dma_addr_t resp_paddr = 0;
 	struct bmi_xfer xfer = {};
@@ -1356,13 +1440,16 @@ err_dma:
 	return ret;
 }
 
-static void ath10k_pci_bmi_send_done(struct ce_state *ce_state,
-				     void *transfer_context,
-				     u32 data,
-				     unsigned int nbytes,
-				     unsigned int transfer_id)
+static void ath10k_pci_bmi_send_done(struct ath10k_ce_pipe *ce_state)
 {
-	struct bmi_xfer *xfer = transfer_context;
+	struct bmi_xfer *xfer;
+	u32 ce_data;
+	unsigned int nbytes;
+	unsigned int transfer_id;
+
+	if (ath10k_ce_completed_send_next(ce_state, (void **)&xfer, &ce_data,
+					  &nbytes, &transfer_id))
+		return;
 
 	if (xfer->wait_for_resp)
 		return;
@@ -1370,14 +1457,17 @@ static void ath10k_pci_bmi_send_done(struct ce_state *ce_state,
 	complete(&xfer->done);
 }
 
-static void ath10k_pci_bmi_recv_data(struct ce_state *ce_state,
-				     void *transfer_context,
-				     u32 data,
-				     unsigned int nbytes,
-				     unsigned int transfer_id,
-				     unsigned int flags)
+static void ath10k_pci_bmi_recv_data(struct ath10k_ce_pipe *ce_state)
 {
-	struct bmi_xfer *xfer = transfer_context;
+	struct bmi_xfer *xfer;
+	u32 ce_data;
+	unsigned int nbytes;
+	unsigned int transfer_id;
+	unsigned int flags;
+
+	if (ath10k_ce_completed_recv_next(ce_state, (void **)&xfer, &ce_data,
+					  &nbytes, &transfer_id, &flags))
+		return;
 
 	if (!xfer->wait_for_resp) {
 		ath10k_warn("unexpected: BMI data received; ignoring\n");
@@ -1657,7 +1747,7 @@ static int ath10k_pci_init_config(struct ath10k *ar)
 static int ath10k_pci_ce_init(struct ath10k *ar)
 {
 	struct ath10k_pci *ar_pci = ath10k_pci_priv(ar);
-	struct hif_ce_pipe_info *pipe_info;
+	struct ath10k_pci_pipe *pipe_info;
 	const struct ce_attr *attr;
 	int pipe_num;
 
@@ -1735,6 +1825,124 @@ static void ath10k_pci_fw_interrupt_handler(struct ath10k *ar)
 	ath10k_pci_sleep(ar);
 }
 
+static int ath10k_pci_hif_power_up(struct ath10k *ar)
+{
+	struct ath10k_pci *ar_pci = ath10k_pci_priv(ar);
+	int ret;
+
+	ret = ath10k_pci_start_intr(ar);
+	if (ret) {
+		ath10k_err("could not start interrupt handling (%d)\n", ret);
+		goto err;
+	}
+
+	/*
+	 * Bring the target up cleanly.
+	 *
+	 * The target may be in an undefined state with an AUX-powered Target
+	 * and a Host in WoW mode. If the Host crashes, loses power, or is
+	 * restarted (without unloading the driver) then the Target is left
+	 * (aux) powered and running. On a subsequent driver load, the Target
+	 * is in an unexpected state. We try to catch that here in order to
+	 * reset the Target and retry the probe.
+	 */
+	ath10k_pci_device_reset(ar);
+
+	ret = ath10k_pci_reset_target(ar);
+	if (ret)
+		goto err_irq;
+
+	if (!test_bit(ATH10K_PCI_FEATURE_SOC_POWER_SAVE, ar_pci->features))
+		/* Force AWAKE forever */
+		ath10k_do_pci_wake(ar);
+
+	ret = ath10k_pci_ce_init(ar);
+	if (ret)
+		goto err_ps;
+
+	ret = ath10k_pci_init_config(ar);
+	if (ret)
+		goto err_ce;
+
+	ret = ath10k_pci_wake_target_cpu(ar);
+	if (ret) {
+		ath10k_err("could not wake up target CPU (%d)\n", ret);
+		goto err_ce;
+	}
+
+	return 0;
+
+err_ce:
+	ath10k_pci_ce_deinit(ar);
+err_ps:
+	if (!test_bit(ATH10K_PCI_FEATURE_SOC_POWER_SAVE, ar_pci->features))
+		ath10k_do_pci_sleep(ar);
+err_irq:
+	ath10k_pci_stop_intr(ar);
+err:
+	return ret;
+}
+
+static void ath10k_pci_hif_power_down(struct ath10k *ar)
+{
+	struct ath10k_pci *ar_pci = ath10k_pci_priv(ar);
+
+	ath10k_pci_stop_intr(ar);
+
+	ath10k_pci_ce_deinit(ar);
+	if (!test_bit(ATH10K_PCI_FEATURE_SOC_POWER_SAVE, ar_pci->features))
+		ath10k_do_pci_sleep(ar);
+}
+
+#ifdef CONFIG_PM
+
+#define ATH10K_PCI_PM_CONTROL 0x44
+
+static int ath10k_pci_hif_suspend(struct ath10k *ar)
+{
+	struct ath10k_pci *ar_pci = ath10k_pci_priv(ar);
+	struct pci_dev *pdev = ar_pci->pdev;
+	u32 val;
+
+	pci_read_config_dword(pdev, ATH10K_PCI_PM_CONTROL, &val);
+
+	if ((val & 0x000000ff) != 0x3) {
+		pci_save_state(pdev);
+		pci_disable_device(pdev);
+		pci_write_config_dword(pdev, ATH10K_PCI_PM_CONTROL,
+				       (val & 0xffffff00) | 0x03);
+	}
+
+	return 0;
+}
+
+static int ath10k_pci_hif_resume(struct ath10k *ar)
+{
+	struct ath10k_pci *ar_pci = ath10k_pci_priv(ar);
+	struct pci_dev *pdev = ar_pci->pdev;
+	u32 val;
+
+	pci_read_config_dword(pdev, ATH10K_PCI_PM_CONTROL, &val);
+
+	if ((val & 0x000000ff) != 0) {
+		pci_restore_state(pdev);
+		pci_write_config_dword(pdev, ATH10K_PCI_PM_CONTROL,
+				       val & 0xffffff00);
+		/*
+		 * Suspend/Resume resets the PCI configuration space,
+		 * so we have to re-disable the RETRY_TIMEOUT register (0x41)
+		 * to keep PCI Tx retries from interfering with C3 CPU state
+		 */
+		pci_read_config_dword(pdev, 0x40, &val);
+
+		if ((val & 0x0000ff00) != 0)
+			pci_write_config_dword(pdev, 0x40, val & 0xffff00ff);
+	}
+
+	return 0;
+}
+#endif
+
 static const struct ath10k_hif_ops ath10k_pci_hif_ops = {
 	.send_head		= ath10k_pci_hif_send_head,
 	.exchange_bmi_msg	= ath10k_pci_hif_exchange_bmi_msg,
@@ -1743,13 +1951,19 @@ static const struct ath10k_hif_ops ath10k_pci_hif_ops = {
 	.map_service_to_pipe	= ath10k_pci_hif_map_service_to_pipe,
 	.get_default_pipe	= ath10k_pci_hif_get_default_pipe,
 	.send_complete_check	= ath10k_pci_hif_send_complete_check,
-	.init			= ath10k_pci_hif_post_init,
+	.set_callbacks		= ath10k_pci_hif_set_callbacks,
 	.get_free_queue_number	= ath10k_pci_hif_get_free_queue_number,
+	.power_up		= ath10k_pci_hif_power_up,
+	.power_down		= ath10k_pci_hif_power_down,
+#ifdef CONFIG_PM
+	.suspend		= ath10k_pci_hif_suspend,
+	.resume			= ath10k_pci_hif_resume,
+#endif
 };
 
 static void ath10k_pci_ce_tasklet(unsigned long ptr)
 {
-	struct hif_ce_pipe_info *pipe = (struct hif_ce_pipe_info *)ptr;
+	struct ath10k_pci_pipe *pipe = (struct ath10k_pci_pipe *)ptr;
 	struct ath10k_pci *ar_pci = pipe->ar_pci;
 
 	ath10k_ce_per_engine_service(ar_pci->ar, pipe->pipe_num);
@@ -1872,8 +2086,13 @@ static int ath10k_pci_start_intr_msix(struct ath10k *ar, int num)
 	ret = request_irq(ar_pci->pdev->irq + MSI_ASSIGN_FW,
 			  ath10k_pci_msi_fw_handler,
 			  IRQF_SHARED, "ath10k_pci", ar);
-	if (ret)
+	if (ret) {
+		ath10k_warn("request_irq(%d) failed %d\n",
+			    ar_pci->pdev->irq + MSI_ASSIGN_FW, ret);
+
+		pci_disable_msi(ar_pci->pdev);
 		return ret;
+	}
 
 	for (i = MSI_ASSIGN_CE_INITIAL; i <= MSI_ASSIGN_CE_MAX; i++) {
 		ret = request_irq(ar_pci->pdev->irq + i,
@@ -2059,20 +2278,15 @@ static int ath10k_pci_reset_target(struct ath10k *ar)
 	return 0;
 }
 
-static void ath10k_pci_device_reset(struct ath10k_pci *ar_pci)
+static void ath10k_pci_device_reset(struct ath10k *ar)
 {
-	struct ath10k *ar = ar_pci->ar;
-	void __iomem *mem = ar_pci->mem;
 	int i;
 	u32 val;
 
 	if (!SOC_GLOBAL_RESET_ADDRESS)
 		return;
 
-	if (!mem)
-		return;
-
-	ath10k_pci_reg_write32(mem, PCIE_SOC_WAKE_ADDRESS,
+	ath10k_pci_reg_write32(ar, PCIE_SOC_WAKE_ADDRESS,
 			       PCIE_SOC_WAKE_V_MASK);
 	for (i = 0; i < ATH_PCI_RESET_WAIT_MAX; i++) {
 		if (ath10k_pci_target_is_awake(ar))
@@ -2081,12 +2295,12 @@ static void ath10k_pci_device_reset(struct ath10k_pci *ar_pci)
 	}
 
 	/* Put Target, including PCIe, into RESET. */
-	val = ath10k_pci_reg_read32(mem, SOC_GLOBAL_RESET_ADDRESS);
+	val = ath10k_pci_reg_read32(ar, SOC_GLOBAL_RESET_ADDRESS);
 	val |= 1;
-	ath10k_pci_reg_write32(mem, SOC_GLOBAL_RESET_ADDRESS, val);
+	ath10k_pci_reg_write32(ar, SOC_GLOBAL_RESET_ADDRESS, val);
 
 	for (i = 0; i < ATH_PCI_RESET_WAIT_MAX; i++) {
-		if (ath10k_pci_reg_read32(mem, RTC_STATE_ADDRESS) &
+		if (ath10k_pci_reg_read32(ar, RTC_STATE_ADDRESS) &
 					  RTC_STATE_COLD_RESET_MASK)
 			break;
 		msleep(1);
@@ -2094,16 +2308,16 @@ static void ath10k_pci_device_reset(struct ath10k_pci *ar_pci)
 
 	/* Pull Target, including PCIe, out of RESET. */
 	val &= ~1;
-	ath10k_pci_reg_write32(mem, SOC_GLOBAL_RESET_ADDRESS, val);
+	ath10k_pci_reg_write32(ar, SOC_GLOBAL_RESET_ADDRESS, val);
 
 	for (i = 0; i < ATH_PCI_RESET_WAIT_MAX; i++) {
-		if (!(ath10k_pci_reg_read32(mem, RTC_STATE_ADDRESS) &
+		if (!(ath10k_pci_reg_read32(ar, RTC_STATE_ADDRESS) &
 					    RTC_STATE_COLD_RESET_MASK))
 			break;
 		msleep(1);
 	}
 
-	ath10k_pci_reg_write32(mem, PCIE_SOC_WAKE_ADDRESS, PCIE_SOC_WAKE_RESET);
+	ath10k_pci_reg_write32(ar, PCIE_SOC_WAKE_ADDRESS, PCIE_SOC_WAKE_RESET);
 }
 
 static void ath10k_pci_dump_features(struct ath10k_pci *ar_pci)
@@ -2116,10 +2330,10 @@ static void ath10k_pci_dump_features(struct ath10k_pci *ar_pci)
 
 		switch (i) {
 		case ATH10K_PCI_FEATURE_MSI_X:
-			ath10k_dbg(ATH10K_DBG_PCI, "device supports MSI-X\n");
+			ath10k_dbg(ATH10K_DBG_BOOT, "device supports MSI-X\n");
 			break;
-		case ATH10K_PCI_FEATURE_HW_1_0_WARKAROUND:
-			ath10k_dbg(ATH10K_DBG_PCI, "QCA988X_1.0 workaround enabled\n");
+		case ATH10K_PCI_FEATURE_SOC_POWER_SAVE:
+			ath10k_dbg(ATH10K_DBG_BOOT, "QCA98XX SoC power save enabled\n");
 			break;
 		}
 	}
@@ -2132,7 +2346,7 @@ static int ath10k_pci_probe(struct pci_dev *pdev,
 	int ret = 0;
 	struct ath10k *ar;
 	struct ath10k_pci *ar_pci;
-	u32 lcr_val;
+	u32 lcr_val, chip_id;
 
 	ath10k_dbg(ATH10K_DBG_PCI, "%s\n", __func__);
 
@@ -2144,31 +2358,26 @@ static int ath10k_pci_probe(struct pci_dev *pdev,
 	ar_pci->dev = &pdev->dev;
 
 	switch (pci_dev->device) {
-	case QCA988X_1_0_DEVICE_ID:
-		set_bit(ATH10K_PCI_FEATURE_HW_1_0_WARKAROUND, ar_pci->features);
-		break;
 	case QCA988X_2_0_DEVICE_ID:
 		set_bit(ATH10K_PCI_FEATURE_MSI_X, ar_pci->features);
 		break;
 	default:
 		ret = -ENODEV;
-		ath10k_err("Unkown device ID: %d\n", pci_dev->device);
+		ath10k_err("Unknown device ID: %d\n", pci_dev->device);
 		goto err_ar_pci;
 	}
 
+	if (ath10k_target_ps)
+		set_bit(ATH10K_PCI_FEATURE_SOC_POWER_SAVE, ar_pci->features);
+
 	ath10k_pci_dump_features(ar_pci);
 
-	ar = ath10k_core_create(ar_pci, ar_pci->dev, ATH10K_BUS_PCI,
-				&ath10k_pci_hif_ops);
+	ar = ath10k_core_create(ar_pci, ar_pci->dev, &ath10k_pci_hif_ops);
 	if (!ar) {
 		ath10k_err("ath10k_core_create failed!\n");
 		ret = -EINVAL;
 		goto err_ar_pci;
 	}
-
-	/* Enable QCA988X_1.0 HW workarounds */
-	if (test_bit(ATH10K_PCI_FEATURE_HW_1_0_WARKAROUND, ar_pci->features))
-		spin_lock_init(&ar_pci->hw_v1_workaround_lock);
 
 	ar_pci->ar = ar;
 	ar_pci->fw_indicator_address = FW_INDICATOR_ADDRESS;
@@ -2239,64 +2448,27 @@ static int ath10k_pci_probe(struct pci_dev *pdev,
 
 	spin_lock_init(&ar_pci->ce_lock);
 
-	ar_pci->cacheline_sz = dma_get_cache_alignment();
-
-	ret = ath10k_pci_start_intr(ar);
+	ret = ath10k_do_pci_wake(ar);
 	if (ret) {
-		ath10k_err("could not start interrupt handling (%d)\n", ret);
-		goto err_iomap;
+		ath10k_err("Failed to get chip id: %d\n", ret);
+		return ret;
 	}
 
-	/*
-	 * Bring the target up cleanly.
-	 *
-	 * The target may be in an undefined state with an AUX-powered Target
-	 * and a Host in WoW mode. If the Host crashes, loses power, or is
-	 * restarted (without unloading the driver) then the Target is left
-	 * (aux) powered and running. On a subsequent driver load, the Target
-	 * is in an unexpected state. We try to catch that here in order to
-	 * reset the Target and retry the probe.
-	 */
-	ath10k_pci_device_reset(ar_pci);
+	chip_id = ath10k_pci_read32(ar,
+				    RTC_SOC_BASE_ADDRESS + SOC_CHIP_ID_ADDRESS);
 
-	ret = ath10k_pci_reset_target(ar);
-	if (ret)
-		goto err_intr;
+	ath10k_do_pci_sleep(ar);
 
-	if (ath10k_target_ps) {
-		ath10k_dbg(ATH10K_DBG_PCI, "on-chip power save enabled\n");
-	} else {
-		/* Force AWAKE forever */
-		ath10k_dbg(ATH10K_DBG_PCI, "on-chip power save disabled\n");
-		ath10k_do_pci_wake(ar);
-	}
+	ath10k_dbg(ATH10K_DBG_BOOT, "boot pci_mem 0x%p\n", ar_pci->mem);
 
-	ret = ath10k_pci_ce_init(ar);
-	if (ret)
-		goto err_intr;
-
-	ret = ath10k_pci_init_config(ar);
-	if (ret)
-		goto err_ce;
-
-	ret = ath10k_pci_wake_target_cpu(ar);
-	if (ret) {
-		ath10k_err("could not wake up target CPU (%d)\n", ret);
-		goto err_ce;
-	}
-
-	ret = ath10k_core_register(ar);
+	ret = ath10k_core_register(ar, chip_id);
 	if (ret) {
 		ath10k_err("could not register driver core (%d)\n", ret);
-		goto err_ce;
+		goto err_iomap;
 	}
 
 	return 0;
 
-err_ce:
-	ath10k_pci_ce_deinit(ar);
-err_intr:
-	ath10k_pci_stop_intr(ar);
 err_iomap:
 	pci_iounmap(pdev, mem);
 err_master:
@@ -2306,7 +2478,6 @@ err_region:
 err_device:
 	pci_disable_device(pdev);
 err_ar:
-	pci_set_drvdata(pdev, NULL);
 	ath10k_core_destroy(ar);
 err_ar_pci:
 	/* call HIF PCI free here */
@@ -2333,9 +2504,7 @@ static void ath10k_pci_remove(struct pci_dev *pdev)
 	tasklet_kill(&ar_pci->msi_fw_err);
 
 	ath10k_core_unregister(ar);
-	ath10k_pci_stop_intr(ar);
 
-	pci_set_drvdata(pdev, NULL);
 	pci_iounmap(pdev, ar_pci->mem);
 	pci_release_region(pdev, BAR_NUM);
 	pci_clear_master(pdev);
@@ -2345,128 +2514,6 @@ static void ath10k_pci_remove(struct pci_dev *pdev)
 	kfree(ar_pci);
 }
 
-#if defined(CONFIG_PM_SLEEP)
-
-#define ATH10K_PCI_PM_CONTROL 0x44
-
-static int ath10k_pci_suspend(struct device *device)
-{
-	struct pci_dev *pdev = to_pci_dev(device);
-	struct ath10k *ar = pci_get_drvdata(pdev);
-	struct ath10k_pci *ar_pci;
-	u32 val;
-	int ret, retval;
-
-	ath10k_dbg(ATH10K_DBG_PCI, "%s\n", __func__);
-
-	if (!ar)
-		return -ENODEV;
-
-	ar_pci = ath10k_pci_priv(ar);
-	if (!ar_pci)
-		return -ENODEV;
-
-	if (ath10k_core_target_suspend(ar))
-		return -EBUSY;
-
-	ret = wait_event_interruptible_timeout(ar->event_queue,
-						ar->is_target_paused == true,
-						1 * HZ);
-	if (ret < 0) {
-		ath10k_warn("suspend interrupted (%d)\n", ret);
-		retval = ret;
-		goto resume;
-	} else if (ret == 0) {
-		ath10k_warn("suspend timed out - target pause event never came\n");
-		retval = EIO;
-		goto resume;
-	}
-
-	/*
-	 * reset is_target_paused and host can check that in next time,
-	 * or it will always be TRUE and host just skip the waiting
-	 * condition, it causes target assert due to host already
-	 * suspend
-	 */
-	ar->is_target_paused = false;
-
-	pci_read_config_dword(pdev, ATH10K_PCI_PM_CONTROL, &val);
-
-	if ((val & 0x000000ff) != 0x3) {
-		pci_save_state(pdev);
-		pci_disable_device(pdev);
-		pci_write_config_dword(pdev, ATH10K_PCI_PM_CONTROL,
-				       (val & 0xffffff00) | 0x03);
-	}
-
-	return 0;
-resume:
-	ret = ath10k_core_target_resume(ar);
-	if (ret)
-		ath10k_warn("could not resume (%d)\n", ret);
-
-	return retval;
-}
-
-static int ath10k_pci_resume(struct device *device)
-{
-	struct pci_dev *pdev = to_pci_dev(device);
-	struct ath10k *ar = pci_get_drvdata(pdev);
-	struct ath10k_pci *ar_pci;
-	int ret;
-	u32 val;
-
-	ath10k_dbg(ATH10K_DBG_PCI, "%s\n", __func__);
-
-	if (!ar)
-		return -ENODEV;
-	ar_pci = ath10k_pci_priv(ar);
-
-	if (!ar_pci)
-		return -ENODEV;
-
-	ret = pci_enable_device(pdev);
-	if (ret) {
-		ath10k_warn("cannot enable PCI device: %d\n", ret);
-		return ret;
-	}
-
-	pci_read_config_dword(pdev, ATH10K_PCI_PM_CONTROL, &val);
-
-	if ((val & 0x000000ff) != 0) {
-		pci_restore_state(pdev);
-		pci_write_config_dword(pdev, ATH10K_PCI_PM_CONTROL,
-				       val & 0xffffff00);
-		/*
-		 * Suspend/Resume resets the PCI configuration space,
-		 * so we have to re-disable the RETRY_TIMEOUT register (0x41)
-		 * to keep PCI Tx retries from interfering with C3 CPU state
-		 */
-		pci_read_config_dword(pdev, 0x40, &val);
-
-		if ((val & 0x0000ff00) != 0)
-			pci_write_config_dword(pdev, 0x40, val & 0xffff00ff);
-	}
-
-	ret = ath10k_core_target_resume(ar);
-	if (ret)
-		ath10k_warn("target resume failed: %d\n", ret);
-
-	return ret;
-}
-
-static SIMPLE_DEV_PM_OPS(ath10k_dev_pm_ops,
-			 ath10k_pci_suspend,
-			 ath10k_pci_resume);
-
-#define ATH10K_PCI_PM_OPS (&ath10k_dev_pm_ops)
-
-#else
-
-#define ATH10K_PCI_PM_OPS NULL
-
-#endif /* CONFIG_PM_SLEEP */
-
 MODULE_DEVICE_TABLE(pci, ath10k_pci_id_table);
 
 static struct pci_driver ath10k_pci_driver = {
@@ -2474,7 +2521,6 @@ static struct pci_driver ath10k_pci_driver = {
 	.id_table = ath10k_pci_id_table,
 	.probe = ath10k_pci_probe,
 	.remove = ath10k_pci_remove,
-	.driver.pm = ATH10K_PCI_PM_OPS,
 };
 
 static int __init ath10k_pci_init(void)
@@ -2499,9 +2545,6 @@ module_exit(ath10k_pci_exit);
 MODULE_AUTHOR("Qualcomm Atheros");
 MODULE_DESCRIPTION("Driver support for Atheros QCA988X PCIe devices");
 MODULE_LICENSE("Dual BSD/GPL");
-MODULE_FIRMWARE(QCA988X_HW_1_0_FW_DIR "/" QCA988X_HW_1_0_FW_FILE);
-MODULE_FIRMWARE(QCA988X_HW_1_0_FW_DIR "/" QCA988X_HW_1_0_OTP_FILE);
-MODULE_FIRMWARE(QCA988X_HW_1_0_FW_DIR "/" QCA988X_HW_1_0_BOARD_DATA_FILE);
 MODULE_FIRMWARE(QCA988X_HW_2_0_FW_DIR "/" QCA988X_HW_2_0_FW_FILE);
 MODULE_FIRMWARE(QCA988X_HW_2_0_FW_DIR "/" QCA988X_HW_2_0_OTP_FILE);
 MODULE_FIRMWARE(QCA988X_HW_2_0_FW_DIR "/" QCA988X_HW_2_0_BOARD_DATA_FILE);

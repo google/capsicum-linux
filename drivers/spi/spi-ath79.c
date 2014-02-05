@@ -221,7 +221,7 @@ static int ath79_spi_probe(struct platform_device *pdev)
 	sp = spi_master_get_devdata(master);
 	platform_set_drvdata(pdev, sp);
 
-	pdata = pdev->dev.platform_data;
+	pdata = dev_get_platdata(&pdev->dev);
 
 	master->bits_per_word_mask = SPI_BPW_RANGE_MASK(1, 32);
 	master->setup = ath79_spi_setup;
@@ -231,7 +231,7 @@ static int ath79_spi_probe(struct platform_device *pdev)
 		master->num_chipselect = pdata->num_chipselect;
 	}
 
-	sp->bitbang.master = spi_master_get(master);
+	sp->bitbang.master = master;
 	sp->bitbang.chipselect = ath79_spi_chipselect;
 	sp->bitbang.txrx_word[SPI_MODE_0] = ath79_spi_txrx_mode0;
 	sp->bitbang.setup_transfer = spi_bitbang_setup_transfer;

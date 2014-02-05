@@ -112,15 +112,16 @@
  */
 static int iwl_rxq_space(const struct iwl_rxq *rxq)
 {
-	int s = rxq->read - rxq->write;
+	/* Make sure RX_QUEUE_SIZE is a power of 2 */
+	BUILD_BUG_ON(RX_QUEUE_SIZE & (RX_QUEUE_SIZE - 1));
 
-	if (s <= 0)
-		s += RX_QUEUE_SIZE;
-	/* keep some buffer to not confuse full and empty queue */
-	s -= 2;
-	if (s < 0)
-		s = 0;
-	return s;
+	/*
+	 * There can be up to (RX_QUEUE_SIZE - 1) free slots, to avoid ambiguity
+	 * between empty and completely full queues.
+	 * The following is equivalent to modulo by RX_QUEUE_SIZE and is well
+	 * defined for negative dividends.
+	 */
+	return (rxq->read - rxq->write - 1) & (RX_QUEUE_SIZE - 1);
 }
 
 /*
@@ -488,6 +489,10 @@ static void iwl_pcie_rx_hw_init(struct iwl_trans *trans, struct iwl_rxq *rxq)
 
 	/* Set interrupt coalescing timer to default (2048 usecs) */
 	iwl_write8(trans, CSR_INT_COALESCING, IWL_HOST_INT_TIMEOUT_DEF);
+
+	/* W/A for interrupt coalescing bug in 7260 and 3160 */
+	if (trans->cfg->host_interrupt_operation_mode)
+		iwl_set_bit(trans, CSR_INT_COALESCING, IWL_HOST_INT_OPER_MODE);
 }
 
 static void iwl_pcie_rx_init_rxb_lists(struct iwl_rxq *rxq)
@@ -793,14 +798,15 @@ static void iwl_pcie_irq_handle_error(struct iwl_trans *trans)
 	}
 
 	iwl_pcie_dump_csr(trans);
-	iwl_pcie_dump_fh(trans, NULL);
+	iwl_dump_fh(trans, NULL);
 
+	/* set the ERROR bit before we wake up the caller */
 	set_bit(STATUS_FW_ERROR, &trans_pcie->status);
 	clear_bit(STATUS_HCMD_ACTIVE, &trans_pcie->status);
 	wake_up(&trans_pcie->wait_command_queue);
 
 	local_bh_disable();
-	iwl_op_mode_nic_error(trans->op_mode);
+	iwl_nic_error(trans);
 	local_bh_enable();
 }
 
@@ -1120,6 +1126,7 @@ static irqreturn_t iwl_pcie_isr(int irq, void *data)
 	struct iwl_trans *trans = data;
 	struct iwl_trans_pcie *trans_pcie = IWL_TRANS_GET_PCIE_TRANS(trans);
 	u32 inta, inta_mask;
+	irqreturn_t ret = IRQ_NONE;
 
 	lockdep_assert_held(&trans_pcie->irq_lock);
 
@@ -1168,10 +1175,8 @@ static irqreturn_t iwl_pcie_isr(int irq, void *data)
 	/* the thread will service interrupts and re-enable them */
 	if (likely(inta))
 		return IRQ_WAKE_THREAD;
-	else if (test_bit(STATUS_INT_ENABLED, &trans_pcie->status) &&
-		 !trans_pcie->inta)
-		iwl_enable_interrupts(trans);
-	return IRQ_HANDLED;
+
+	ret = IRQ_HANDLED;
 
 none:
 	/* re-enable interrupts here since we don't have anything to service. */
@@ -1180,7 +1185,7 @@ none:
 	    !trans_pcie->inta)
 		iwl_enable_interrupts(trans);
 
-	return IRQ_NONE;
+	return ret;
 }
 
 /* interrupt handler using ict table, with this interrupt driver will
@@ -1199,6 +1204,7 @@ irqreturn_t iwl_pcie_isr_ict(int irq, void *data)
 	u32 val = 0;
 	u32 read;
 	unsigned long flags;
+	irqreturn_t ret = IRQ_NONE;
 
 	if (!trans)
 		return IRQ_NONE;
@@ -1211,7 +1217,7 @@ irqreturn_t iwl_pcie_isr_ict(int irq, void *data)
 	 * use legacy interrupt.
 	 */
 	if (unlikely(!trans_pcie->use_ict)) {
-		irqreturn_t ret = iwl_pcie_isr(irq, data);
+		ret = iwl_pcie_isr(irq, data);
 		spin_unlock_irqrestore(&trans_pcie->irq_lock, flags);
 		return ret;
 	}
@@ -1280,17 +1286,9 @@ irqreturn_t iwl_pcie_isr_ict(int irq, void *data)
 	if (likely(inta)) {
 		spin_unlock_irqrestore(&trans_pcie->irq_lock, flags);
 		return IRQ_WAKE_THREAD;
-	} else if (test_bit(STATUS_INT_ENABLED, &trans_pcie->status) &&
-		 !trans_pcie->inta) {
-		/* Allow interrupt if was disabled by this handler and
-		 * no tasklet was schedules, We should not enable interrupt,
-		 * tasklet will enable it.
-		 */
-		iwl_enable_interrupts(trans);
 	}
 
-	spin_unlock_irqrestore(&trans_pcie->irq_lock, flags);
-	return IRQ_HANDLED;
+	ret = IRQ_HANDLED;
 
  none:
 	/* re-enable interrupts here since we don't have anything to service.
@@ -1301,5 +1299,5 @@ irqreturn_t iwl_pcie_isr_ict(int irq, void *data)
 		iwl_enable_interrupts(trans);
 
 	spin_unlock_irqrestore(&trans_pcie->irq_lock, flags);
-	return IRQ_NONE;
+	return ret;
 }

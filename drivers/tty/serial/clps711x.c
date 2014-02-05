@@ -438,8 +438,7 @@ static int uart_clps711x_probe(struct platform_device *pdev)
 	s->uart_clk = devm_clk_get(&pdev->dev, "uart");
 	if (IS_ERR(s->uart_clk)) {
 		dev_err(&pdev->dev, "Can't get UART clocks\n");
-		ret = PTR_ERR(s->uart_clk);
-		goto err_out;
+		return PTR_ERR(s->uart_clk);
 	}
 
 	s->uart.owner		= THIS_MODULE;
@@ -460,8 +459,7 @@ static int uart_clps711x_probe(struct platform_device *pdev)
 	ret = uart_register_driver(&s->uart);
 	if (ret) {
 		dev_err(&pdev->dev, "Registering UART driver failed\n");
-		devm_clk_put(&pdev->dev, s->uart_clk);
-		goto err_out;
+		return ret;
 	}
 
 	for (i = 0; i < UART_CLPS711X_NR; i++) {
@@ -478,11 +476,6 @@ static int uart_clps711x_probe(struct platform_device *pdev)
 	}
 
 	return 0;
-
-err_out:
-	platform_set_drvdata(pdev, NULL);
-
-	return ret;
 }
 
 static int uart_clps711x_remove(struct platform_device *pdev)
@@ -493,9 +486,7 @@ static int uart_clps711x_remove(struct platform_device *pdev)
 	for (i = 0; i < UART_CLPS711X_NR; i++)
 		uart_remove_one_port(&s->uart, &s->port[i]);
 
-	devm_clk_put(&pdev->dev, s->uart_clk);
 	uart_unregister_driver(&s->uart);
-	platform_set_drvdata(pdev, NULL);
 
 	return 0;
 }

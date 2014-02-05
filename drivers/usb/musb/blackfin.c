@@ -19,7 +19,7 @@
 #include <linux/platform_device.h>
 #include <linux/dma-mapping.h>
 #include <linux/prefetch.h>
-#include <linux/usb/nop-usb-xceiv.h>
+#include <linux/usb/usb_phy_gen_xceiv.h>
 
 #include <asm/cacheflush.h>
 
@@ -451,7 +451,7 @@ static u64 bfin_dmamask = DMA_BIT_MASK(32);
 static int bfin_probe(struct platform_device *pdev)
 {
 	struct resource musb_resources[2];
-	struct musb_hdrc_platform_data	*pdata = pdev->dev.platform_data;
+	struct musb_hdrc_platform_data	*pdata = dev_get_platdata(&pdev->dev);
 	struct platform_device		*musb;
 	struct bfin_glue		*glue;
 
@@ -561,23 +561,16 @@ static int bfin_resume(struct device *dev)
 
 	return 0;
 }
-
-static struct dev_pm_ops bfin_pm_ops = {
-	.suspend	= bfin_suspend,
-	.resume		= bfin_resume,
-};
-
-#define DEV_PM_OPS	&bfin_pm_ops
-#else
-#define DEV_PM_OPS	NULL
 #endif
+
+static SIMPLE_DEV_PM_OPS(bfin_pm_ops, bfin_suspend, bfin_resume);
 
 static struct platform_driver bfin_driver = {
 	.probe		= bfin_probe,
 	.remove		= __exit_p(bfin_remove),
 	.driver		= {
 		.name	= "musb-blackfin",
-		.pm	= DEV_PM_OPS,
+		.pm	= &bfin_pm_ops,
 	},
 };
 

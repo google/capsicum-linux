@@ -52,6 +52,8 @@
 #define AR9300_PAPRD_SCALE_2		0x70000000
 #define AR9300_PAPRD_SCALE_2_S		28
 
+#define AR9300_EEP_ANTDIV_CONTROL_DEFAULT_VALUE 0xc9
+
 /* Delta from which to start power to pdadc table */
 /* This offset is used in both open loop and closed loop power control
  * schemes. In open loop power control, it is not really needed, but for
@@ -334,6 +336,8 @@ struct ar9300_eeprom {
 
 s32 ar9003_hw_get_tx_gain_idx(struct ath_hw *ah);
 s32 ar9003_hw_get_rx_gain_idx(struct ath_hw *ah);
+u32 ar9003_hw_ant_ctrl_common_get(struct ath_hw *ah, bool is2ghz);
+u32 ar9003_hw_ant_ctrl_common_2_get(struct ath_hw *ah, bool is2ghz);
 
 u8 *ar9003_get_spur_chan_ptr(struct ath_hw *ah, bool is_2ghz);
 

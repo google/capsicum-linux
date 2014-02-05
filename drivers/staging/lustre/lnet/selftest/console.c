@@ -797,7 +797,7 @@ lstcon_group_info(char *name, lstcon_ndlist_ent_t *gents_p,
 		return rc;
 	}
 
-	if (dents_up != 0) {
+	if (dents_up) {
 		/* verbose query */
 		rc = lstcon_nodes_getent(&grp->grp_ndl_list,
 					 index_p, count_p, dents_up);
@@ -1773,7 +1773,7 @@ lstcon_session_info(lst_sid_t *sid_up, int *key_up, unsigned *featp,
 }
 
 int
-lstcon_session_end()
+lstcon_session_end(void)
 {
 	lstcon_rpc_trans_t *trans;
 	lstcon_group_t     *grp;

@@ -65,12 +65,14 @@
 #include <linux/usb/chipidea.h>
 #include <linux/usb/of.h>
 #include <linux/phy.h>
+#include <linux/regulator/consumer.h>
 
 #include "ci.h"
 #include "udc.h"
 #include "bits.h"
 #include "host.h"
 #include "debug.h"
+#include "otg.h"
 
 /* Controller register map */
 static uintptr_t ci_regs_nolpm[] = {
@@ -170,6 +172,27 @@ u8 hw_port_test_get(struct ci_hdrc *ci)
 	return hw_read(ci, OP_PORTSC, PORTSC_PTC) >> __ffs(PORTSC_PTC);
 }
 
+/* The PHY enters/leaves low power mode */
+static void ci_hdrc_enter_lpm(struct ci_hdrc *ci, bool enable)
+{
+	enum ci_hw_regs reg = ci->hw_bank.lpm ? OP_DEVLC : OP_PORTSC;
+	bool lpm = !!(hw_read(ci, reg, PORTSC_PHCD(ci->hw_bank.lpm)));
+
+	if (enable && !lpm) {
+		hw_write(ci, reg, PORTSC_PHCD(ci->hw_bank.lpm),
+				PORTSC_PHCD(ci->hw_bank.lpm));
+	} else  if (!enable && lpm) {
+		hw_write(ci, reg, PORTSC_PHCD(ci->hw_bank.lpm),
+				0);
+		/* 
+		 * The controller needs at least 1ms to reflect
+		 * PHY's status, the PHY also needs some time (less
+		 * than 1ms) to leave low power mode.
+		 */
+		usleep_range(1500, 2000);
+	}
+}
+
 static int hw_device_init(struct ci_hdrc *ci, void __iomem *base)
 {
 	u32 reg;
@@ -196,6 +219,14 @@ static int hw_device_init(struct ci_hdrc *ci, void __iomem *base)
 
 	if (ci->hw_ep_max > ENDPT_MAX)
 		return -ENODEV;
+
+	ci_hdrc_enter_lpm(ci, false);
+
+	/* Disable all interrupts bits */
+	hw_write(ci, OP_USBINTR, 0xffffffff, 0);
+
+	/* Clear all interrupts status bits*/
+	hw_write(ci, OP_USBSTS, 0xffffffff, 0xffffffff);
 
 	dev_dbg(ci->dev, "ChipIdea HDRC found, lpm: %d; cap: %p op: %p\n",
 		ci->hw_bank.lpm, ci->hw_bank.cap, ci->hw_bank.op);
@@ -264,8 +295,6 @@ int hw_device_reset(struct ci_hdrc *ci, u32 mode)
 	while (hw_read(ci, OP_USBCMD, USBCMD_RST))
 		udelay(10);		/* not RTOS friendly */
 
-	hw_phymode_configure(ci);
-
 	if (ci->platdata->notify_event)
 		ci->platdata->notify_event(ci,
 			CI_HDRC_CONTROLLER_RESET_EVENT);
@@ -289,37 +318,35 @@ int hw_device_reset(struct ci_hdrc *ci, u32 mode)
 }
 
 /**
- * ci_otg_role - pick role based on ID pin state
+ * hw_wait_reg: wait the register value
+ *
+ * Sometimes, it needs to wait register value before going on.
+ * Eg, when switch to device mode, the vbus value should be lower
+ * than OTGSC_BSV before connects to host.
+ *
  * @ci: the controller
+ * @reg: register index
+ * @mask: mast bit
+ * @value: the bit value to wait
+ * @timeout_ms: timeout in millisecond
+ *
+ * This function returns an error code if timeout
  */
-static enum ci_role ci_otg_role(struct ci_hdrc *ci)
+int hw_wait_reg(struct ci_hdrc *ci, enum ci_hw_regs reg, u32 mask,
+				u32 value, unsigned int timeout_ms)
 {
-	u32 sts = hw_read(ci, OP_OTGSC, ~0);
-	enum ci_role role = sts & OTGSC_ID
-		? CI_ROLE_GADGET
-		: CI_ROLE_HOST;
+	unsigned long elapse = jiffies + msecs_to_jiffies(timeout_ms);
 
-	return role;
-}
-
-/**
- * ci_role_work - perform role changing based on ID pin
- * @work: work struct
- */
-static void ci_role_work(struct work_struct *work)
-{
-	struct ci_hdrc *ci = container_of(work, struct ci_hdrc, work);
-	enum ci_role role = ci_otg_role(ci);
-
-	if (role != ci->role) {
-		dev_dbg(ci->dev, "switching from %s to %s\n",
-			ci_role(ci)->name, ci->roles[role]->name);
-
-		ci_role_stop(ci);
-		ci_role_start(ci, role);
+	while (hw_read(ci, reg, mask) != value) {
+		if (time_after(jiffies, elapse)) {
+			dev_err(ci->dev, "timeout waiting for %08x in %d\n",
+					mask, reg);
+			return -ETIMEDOUT;
+		}
+		msleep(20);
 	}
 
-	enable_irq(ci->irq);
+	return 0;
 }
 
 static irqreturn_t ci_irq(int irq, void *data)
@@ -331,17 +358,65 @@ static irqreturn_t ci_irq(int irq, void *data)
 	if (ci->is_otg)
 		otgsc = hw_read(ci, OP_OTGSC, ~0);
 
+	/*
+	 * Handle id change interrupt, it indicates device/host function
+	 * switch.
+	 */
+	if (ci->is_otg && (otgsc & OTGSC_IDIE) && (otgsc & OTGSC_IDIS)) {
+		ci->id_event = true;
+		ci_clear_otg_interrupt(ci, OTGSC_IDIS);
+		disable_irq_nosync(ci->irq);
+		queue_work(ci->wq, &ci->work);
+		return IRQ_HANDLED;
+	}
+
+	/*
+	 * Handle vbus change interrupt, it indicates device connection
+	 * and disconnection events.
+	 */
+	if (ci->is_otg && (otgsc & OTGSC_BSVIE) && (otgsc & OTGSC_BSVIS)) {
+		ci->b_sess_valid_event = true;
+		ci_clear_otg_interrupt(ci, OTGSC_BSVIS);
+		disable_irq_nosync(ci->irq);
+		queue_work(ci->wq, &ci->work);
+		return IRQ_HANDLED;
+	}
+
+	/* Handle device/host interrupt */
 	if (ci->role != CI_ROLE_END)
 		ret = ci_role(ci)->irq(ci);
 
-	if (ci->is_otg && (otgsc & OTGSC_IDIS)) {
-		hw_write(ci, OP_OTGSC, OTGSC_IDIS, OTGSC_IDIS);
-		disable_irq_nosync(ci->irq);
-		queue_work(ci->wq, &ci->work);
-		ret = IRQ_HANDLED;
+	return ret;
+}
+
+static int ci_get_platdata(struct device *dev,
+		struct ci_hdrc_platform_data *platdata)
+{
+	if (!platdata->phy_mode)
+		platdata->phy_mode = of_usb_get_phy_mode(dev->of_node);
+
+	if (!platdata->dr_mode)
+		platdata->dr_mode = of_usb_get_dr_mode(dev->of_node);
+
+	if (platdata->dr_mode == USB_DR_MODE_UNKNOWN)
+		platdata->dr_mode = USB_DR_MODE_OTG;
+
+	if (platdata->dr_mode != USB_DR_MODE_PERIPHERAL) {
+		/* Get the vbus regulator */
+		platdata->reg_vbus = devm_regulator_get(dev, "vbus");
+		if (PTR_ERR(platdata->reg_vbus) == -EPROBE_DEFER) {
+			return -EPROBE_DEFER;
+		} else if (PTR_ERR(platdata->reg_vbus) == -ENODEV) {
+			/* no vbus regualator is needed */
+			platdata->reg_vbus = NULL;
+		} else if (IS_ERR(platdata->reg_vbus)) {
+			dev_err(dev, "Getting regulator error: %ld\n",
+				PTR_ERR(platdata->reg_vbus));
+			return PTR_ERR(platdata->reg_vbus);
+		}
 	}
 
-	return ret;
+	return 0;
 }
 
 static DEFINE_IDA(ci_ida);
@@ -352,6 +427,10 @@ struct platform_device *ci_hdrc_add_device(struct device *dev,
 {
 	struct platform_device *pdev;
 	int id, ret;
+
+	ret = ci_get_platdata(dev, platdata);
+	if (ret)
+		return ERR_PTR(ret);
 
 	id = ida_simple_get(&ci_ida, 0, 0, GFP_KERNEL);
 	if (id < 0)
@@ -398,6 +477,56 @@ void ci_hdrc_remove_device(struct platform_device *pdev)
 }
 EXPORT_SYMBOL_GPL(ci_hdrc_remove_device);
 
+static inline void ci_role_destroy(struct ci_hdrc *ci)
+{
+	ci_hdrc_gadget_destroy(ci);
+	ci_hdrc_host_destroy(ci);
+	if (ci->is_otg)
+		ci_hdrc_otg_destroy(ci);
+}
+
+static void ci_get_otg_capable(struct ci_hdrc *ci)
+{
+	if (ci->platdata->flags & CI_HDRC_DUAL_ROLE_NOT_OTG)
+		ci->is_otg = false;
+	else
+		ci->is_otg = (hw_read(ci, CAP_DCCPARAMS,
+				DCCPARAMS_DC | DCCPARAMS_HC)
+					== (DCCPARAMS_DC | DCCPARAMS_HC));
+	if (ci->is_otg) {
+		dev_dbg(ci->dev, "It is OTG capable controller\n");
+		ci_disable_otg_interrupt(ci, OTGSC_INT_EN_BITS);
+		ci_clear_otg_interrupt(ci, OTGSC_INT_STATUS_BITS);
+	}
+}
+
+static int ci_usb_phy_init(struct ci_hdrc *ci)
+{
+	if (ci->platdata->phy) {
+		ci->transceiver = ci->platdata->phy;
+		return usb_phy_init(ci->transceiver);
+	} else {
+		ci->global_phy = true;
+		ci->transceiver = usb_get_phy(USB_PHY_TYPE_USB2);
+		if (IS_ERR(ci->transceiver))
+			ci->transceiver = NULL;
+
+		return 0;
+	}
+}
+
+static void ci_usb_phy_destroy(struct ci_hdrc *ci)
+{
+	if (!ci->transceiver)
+		return;
+
+	otg_set_peripheral(ci->transceiver->otg, NULL);
+	if (ci->global_phy)
+		usb_put_phy(ci->transceiver);
+	else
+		usb_phy_shutdown(ci->transceiver);
+}
+
 static int ci_hdrc_probe(struct platform_device *pdev)
 {
 	struct device	*dev = &pdev->dev;
@@ -412,9 +541,6 @@ static int ci_hdrc_probe(struct platform_device *pdev)
 		return -ENODEV;
 	}
 
-	if (!dev->of_node && dev->parent)
-		dev->of_node = dev->parent->of_node;
-
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	base = devm_ioremap_resource(dev, res);
 	if (IS_ERR(base))
@@ -428,10 +554,6 @@ static int ci_hdrc_probe(struct platform_device *pdev)
 
 	ci->dev = dev;
 	ci->platdata = dev->platform_data;
-	if (ci->platdata->phy)
-		ci->transceiver = ci->platdata->phy;
-	else
-		ci->global_phy = true;
 
 	ret = hw_device_init(ci, base);
 	if (ret < 0) {
@@ -439,29 +561,24 @@ static int ci_hdrc_probe(struct platform_device *pdev)
 		return -ENODEV;
 	}
 
+	ret = ci_usb_phy_init(ci);
+	if (ret) {
+		dev_err(dev, "unable to init phy: %d\n", ret);
+		return ret;
+	}
+
 	ci->hw_bank.phys = res->start;
 
 	ci->irq = platform_get_irq(pdev, 0);
 	if (ci->irq < 0) {
 		dev_err(dev, "missing IRQ\n");
-		return -ENODEV;
+		ret = -ENODEV;
+		goto destroy_phy;
 	}
 
-	INIT_WORK(&ci->work, ci_role_work);
-	ci->wq = create_singlethread_workqueue("ci_otg");
-	if (!ci->wq) {
-		dev_err(dev, "can't create workqueue\n");
-		return -ENODEV;
-	}
+	ci_get_otg_capable(ci);
 
-	if (!ci->platdata->phy_mode)
-		ci->platdata->phy_mode = of_usb_get_phy_mode(dev->of_node);
-
-	if (!ci->platdata->dr_mode)
-		ci->platdata->dr_mode = of_usb_get_dr_mode(dev->of_node);
-
-	if (ci->platdata->dr_mode == USB_DR_MODE_UNKNOWN)
-		ci->platdata->dr_mode = USB_DR_MODE_OTG;
+	hw_phymode_configure(ci);
 
 	dr_mode = ci->platdata->dr_mode;
 	/* initialize role(s) before the interrupt is requested */
@@ -475,30 +592,64 @@ static int ci_hdrc_probe(struct platform_device *pdev)
 		ret = ci_hdrc_gadget_init(ci);
 		if (ret)
 			dev_info(dev, "doesn't support gadget\n");
+		if (!ret && ci->transceiver) {
+			ret = otg_set_peripheral(ci->transceiver->otg,
+							&ci->gadget);
+			/*
+			 * If we implement all USB functions using chipidea drivers,
+			 * it doesn't need to call above API, meanwhile, if we only
+			 * use gadget function, calling above API is useless.
+			 */
+			if (ret && ret != -ENOTSUPP)
+				goto destroy_phy;
+		}
 	}
 
 	if (!ci->roles[CI_ROLE_HOST] && !ci->roles[CI_ROLE_GADGET]) {
 		dev_err(dev, "no supported roles\n");
 		ret = -ENODEV;
-		goto rm_wq;
+		goto destroy_phy;
+	}
+
+	if (ci->is_otg) {
+		ret = ci_hdrc_otg_init(ci);
+		if (ret) {
+			dev_err(dev, "init otg fails, ret = %d\n", ret);
+			goto stop;
+		}
 	}
 
 	if (ci->roles[CI_ROLE_HOST] && ci->roles[CI_ROLE_GADGET]) {
-		ci->is_otg = true;
-		/* ID pin needs 1ms debouce time, we delay 2ms for safe */
-		mdelay(2);
-		ci->role = ci_otg_role(ci);
+		if (ci->is_otg) {
+			/*
+			 * ID pin needs 1ms debouce time,
+			 * we delay 2ms for safe.
+			 */
+			mdelay(2);
+			ci->role = ci_otg_role(ci);
+			ci_enable_otg_interrupt(ci, OTGSC_IDIE);
+		} else {
+			/*
+			 * If the controller is not OTG capable, but support
+			 * role switch, the defalt role is gadget, and the
+			 * user can switch it through debugfs.
+			 */
+			ci->role = CI_ROLE_GADGET;
+		}
 	} else {
 		ci->role = ci->roles[CI_ROLE_HOST]
 			? CI_ROLE_HOST
 			: CI_ROLE_GADGET;
 	}
 
+	/* only update vbus status for peripheral */
+	if (ci->role == CI_ROLE_GADGET)
+		ci_handle_vbus_change(ci);
+
 	ret = ci_role_start(ci, ci->role);
 	if (ret) {
 		dev_err(dev, "can't start %s role\n", ci_role(ci)->name);
-		ret = -ENODEV;
-		goto rm_wq;
+		goto stop;
 	}
 
 	platform_set_drvdata(pdev, ci);
@@ -507,19 +658,15 @@ static int ci_hdrc_probe(struct platform_device *pdev)
 	if (ret)
 		goto stop;
 
-	if (ci->is_otg)
-		hw_write(ci, OP_OTGSC, OTGSC_IDIE, OTGSC_IDIE);
-
 	ret = dbg_create_files(ci);
 	if (!ret)
 		return 0;
 
 	free_irq(ci->irq, ci);
 stop:
-	ci_role_stop(ci);
-rm_wq:
-	flush_workqueue(ci->wq);
-	destroy_workqueue(ci->wq);
+	ci_role_destroy(ci);
+destroy_phy:
+	ci_usb_phy_destroy(ci);
 
 	return ret;
 }
@@ -529,10 +676,11 @@ static int ci_hdrc_remove(struct platform_device *pdev)
 	struct ci_hdrc *ci = platform_get_drvdata(pdev);
 
 	dbg_remove_files(ci);
-	flush_workqueue(ci->wq);
-	destroy_workqueue(ci->wq);
 	free_irq(ci->irq, ci);
-	ci_role_stop(ci);
+	ci_role_destroy(ci);
+	ci_hdrc_enter_lpm(ci, true);
+	ci_usb_phy_destroy(ci);
+	kfree(ci->hw_bank.regmap);
 
 	return 0;
 }
@@ -548,7 +696,6 @@ static struct platform_driver ci_hdrc_driver = {
 module_platform_driver(ci_hdrc_driver);
 
 MODULE_ALIAS("platform:ci_hdrc");
-MODULE_ALIAS("platform:ci13xxx");
 MODULE_LICENSE("GPL v2");
 MODULE_AUTHOR("David Lopo <dlopo@chipidea.mips.com>");
 MODULE_DESCRIPTION("ChipIdea HDRC Driver");

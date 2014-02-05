@@ -32,7 +32,6 @@
 #include <linux/irqreturn.h>
 #include <uapi/linux/pci.h>
 
-/* Include the ID list */
 #include <linux/pci_ids.h>
 
 /*
@@ -42,9 +41,10 @@
  *
  *	7:3 = slot
  *	2:0 = function
- * PCI_DEVFN(), PCI_SLOT(), and PCI_FUNC() are defined uapi/linux/pci.h
+ *
+ * PCI_DEVFN(), PCI_SLOT(), and PCI_FUNC() are defined in uapi/linux/pci.h.
  * In the interest of not exposing interfaces to user-space unnecessarily,
- * the following kernel only defines are being added here.
+ * the following kernel-only defines are being added here.
  */
 #define PCI_DEVID(bus, devfn)  ((((u16)bus) << 8) | devfn)
 /* return bus from PCI devid = ((u16)bus_number) << 8) | devfn */
@@ -153,10 +153,10 @@ enum pcie_reset_state {
 	/* Reset is NOT asserted (Use to deassert reset) */
 	pcie_deassert_reset = (__force pcie_reset_state_t) 1,
 
-	/* Use #PERST to reset PCI-E device */
+	/* Use #PERST to reset PCIe device */
 	pcie_warm_reset = (__force pcie_reset_state_t) 2,
 
-	/* Use PCI-E Hot Reset to reset device */
+	/* Use PCIe Hot Reset to reset device */
 	pcie_hot_reset = (__force pcie_reset_state_t) 3
 };
 
@@ -181,6 +181,19 @@ typedef unsigned short __bitwise pci_bus_flags_t;
 enum pci_bus_flags {
 	PCI_BUS_FLAGS_NO_MSI   = (__force pci_bus_flags_t) 1,
 	PCI_BUS_FLAGS_NO_MMRBC = (__force pci_bus_flags_t) 2,
+};
+
+/* These values come from the PCI Express Spec */
+enum pcie_link_width {
+	PCIE_LNK_WIDTH_RESRV	= 0x00,
+	PCIE_LNK_X1		= 0x01,
+	PCIE_LNK_X2		= 0x02,
+	PCIE_LNK_X4		= 0x04,
+	PCIE_LNK_X8		= 0x08,
+	PCIE_LNK_X12		= 0x0C,
+	PCIE_LNK_X16		= 0x10,
+	PCIE_LNK_X32		= 0x20,
+	PCIE_LNK_WIDTH_UNKNOWN  = 0xFF,
 };
 
 /* Based on the PCI Hotplug Spec, but some values are made up by us */
@@ -246,13 +259,13 @@ struct pci_dev {
 	unsigned int	class;		/* 3 bytes: (base,sub,prog-if) */
 	u8		revision;	/* PCI revision, low byte of class word */
 	u8		hdr_type;	/* PCI header type (`multi' flag masked out) */
-	u8		pcie_cap;	/* PCI-E capability offset */
+	u8		pcie_cap;	/* PCIe capability offset */
 	u8		msi_cap;	/* MSI capability offset */
 	u8		msix_cap;	/* MSI-X capability offset */
-	u8		pcie_mpss:3;	/* PCI-E Max Payload Size Supported */
+	u8		pcie_mpss:3;	/* PCIe Max Payload Size Supported */
 	u8		rom_base_reg;	/* which config register controls the ROM */
-	u8		pin;  		/* which interrupt pin this device uses */
-	u16		pcie_flags_reg;	/* cached PCI-E Capabilities Register */
+	u8		pin;		/* which interrupt pin this device uses */
+	u16		pcie_flags_reg;	/* cached PCIe Capabilities Register */
 
 	struct pci_driver *driver;	/* which driver has allocated this device */
 	u64		dma_mask;	/* Mask of the bits of bus address this
@@ -287,7 +300,7 @@ struct pci_dev {
 	unsigned int	d3cold_delay;	/* D3cold->D0 transition time in ms */
 
 #ifdef CONFIG_PCIEASPM
-	struct pcie_link_state	*link_state;	/* ASPM link state. */
+	struct pcie_link_state	*link_state;	/* ASPM link state */
 #endif
 
 	pci_channel_state_t error_state;	/* current connectivity state */
@@ -304,7 +317,7 @@ struct pci_dev {
 
 	bool match_driver;		/* Skip attaching driver */
 	/* These fields are used by common fixups */
-	unsigned int	transparent:1;	/* Transparent PCI bridge */
+	unsigned int	transparent:1;	/* Subtractive decode PCI bridge */
 	unsigned int	multifunction:1;/* Part of multi-function device */
 	/* keep track of device state */
 	unsigned int	is_added:1;
@@ -313,12 +326,10 @@ struct pci_dev {
 	unsigned int	block_cfg_access:1;	/* config space access is blocked */
 	unsigned int	broken_parity_status:1;	/* Device generates false positive parity */
 	unsigned int	irq_reroute_variant:2;	/* device needs IRQ rerouting variant */
-	unsigned int 	msi_enabled:1;
+	unsigned int	msi_enabled:1;
 	unsigned int	msix_enabled:1;
 	unsigned int	ari_enabled:1;	/* ARI forwarding */
 	unsigned int	is_managed:1;
-	unsigned int	is_pcie:1;	/* Obsolete. Will be removed.
-					   Use pci_is_pcie() instead */
 	unsigned int    needs_freset:1; /* Dev requires fundamental reset */
 	unsigned int	state_saved:1;
 	unsigned int	is_physfn:1;
@@ -360,7 +371,6 @@ static inline struct pci_dev *pci_physfn(struct pci_dev *dev)
 	if (dev->is_virtfn)
 		dev = dev->physfn;
 #endif
-
 	return dev;
 }
 
@@ -433,6 +443,7 @@ struct pci_bus {
 	struct resource busn_res;	/* bus numbers routed to this bus */
 
 	struct pci_ops	*ops;		/* configuration access functions */
+	struct msi_chip	*msi;		/* MSI controller */
 	void		*sysdata;	/* hook for sys-specific extension */
 	struct proc_dir_entry *procdir;	/* directory entry in /proc/bus/pci */
 
@@ -444,7 +455,7 @@ struct pci_bus {
 	char		name[48];
 
 	unsigned short  bridge_ctl;	/* manage NO_ISA/FBB/et al behaviors */
-	pci_bus_flags_t bus_flags;	/* Inherited by child busses */
+	pci_bus_flags_t bus_flags;	/* inherited by child buses */
 	struct device		*bridge;
 	struct device		dev;
 	struct bin_attribute	*legacy_io; /* legacy I/O for this bus */
@@ -456,12 +467,25 @@ struct pci_bus {
 #define to_pci_bus(n)	container_of(n, struct pci_bus, dev)
 
 /*
- * Returns true if the pci bus is root (behind host-pci bridge),
+ * Returns true if the PCI bus is root (behind host-PCI bridge),
  * false otherwise
+ *
+ * Some code assumes that "bus->self == NULL" means that bus is a root bus.
+ * This is incorrect because "virtual" buses added for SR-IOV (via
+ * virtfn_add_bus()) have "bus->self == NULL" but are not root buses.
  */
 static inline bool pci_is_root_bus(struct pci_bus *pbus)
 {
 	return !(pbus->parent);
+}
+
+static inline struct pci_dev *pci_upstream_bridge(struct pci_dev *dev)
+{
+	dev = pci_physfn(dev);
+	if (pci_is_root_bus(dev->bus))
+		return NULL;
+
+	return dev->bus->self;
 }
 
 #ifdef CONFIG_PCI_MSI
@@ -485,7 +509,7 @@ static inline bool pci_dev_msi_enabled(struct pci_dev *pci_dev) { return false; 
 #define PCIBIOS_BUFFER_TOO_SMALL	0x89
 
 /*
- * Translate above to generic errno for passing back through non-pci.
+ * Translate above to generic errno for passing back through non-PCI code.
  */
 static inline int pcibios_err_to_errno(int err)
 {
@@ -536,11 +560,12 @@ struct pci_dynids {
 	struct list_head list;      /* for IDs added at runtime */
 };
 
-/* ---------------------------------------------------------------- */
-/** PCI Error Recovery System (PCI-ERS).  If a PCI device driver provides
- *  a set of callbacks in struct pci_error_handlers, then that device driver
- *  will be notified of PCI bus errors, and will be driven to recovery
- *  when an error occurs.
+
+/*
+ * PCI Error Recovery System (PCI-ERS).  If a PCI device driver provides
+ * a set of callbacks in struct pci_error_handlers, that device driver
+ * will be notified of PCI bus errors, and will be driven to recovery
+ * when an error occurs.
  */
 
 typedef unsigned int __bitwise pci_ers_result_t;
@@ -584,7 +609,6 @@ struct pci_error_handlers {
 	void (*resume)(struct pci_dev *dev);
 };
 
-/* ---------------------------------------------------------------- */
 
 struct module;
 struct pci_driver {
@@ -675,7 +699,7 @@ struct pci_driver {
 /* these external functions are only available when PCI support is enabled */
 #ifdef CONFIG_PCI
 
-void pcie_bus_configure_settings(struct pci_bus *bus, u8 smpss);
+void pcie_bus_configure_settings(struct pci_bus *bus);
 
 enum pcie_bus_config_types {
 	PCIE_BUS_TUNE_OFF,
@@ -688,10 +712,10 @@ extern enum pcie_bus_config_types pcie_bus_config;
 
 extern struct bus_type pci_bus_type;
 
-/* Do NOT directly access these two variables, unless you are arch specific pci
- * code, or pci core code. */
+/* Do NOT directly access these two variables, unless you are arch-specific PCI
+ * code, or PCI core code. */
 extern struct list_head pci_root_buses;	/* list of all known PCI buses */
-/* Some device drivers need know if pci is initiated */
+/* Some device drivers need know if PCI is initiated */
 int no_pci_devices(void);
 
 void pcibios_resource_survey_bus(struct pci_bus *bus);
@@ -699,7 +723,7 @@ void pcibios_add_bus(struct pci_bus *bus);
 void pcibios_remove_bus(struct pci_bus *bus);
 void pcibios_fixup_bus(struct pci_bus *);
 int __must_check pcibios_enable_device(struct pci_dev *, int mask);
-/* Architecture specific versions may override this (weak) */
+/* Architecture-specific versions may override this (weak) */
 char *pcibios_setup(char *str);
 
 /* Used only when drivers/pci/setup.c is used */
@@ -914,6 +938,7 @@ bool pci_check_and_unmask_intx(struct pci_dev *dev);
 void pci_msi_off(struct pci_dev *dev);
 int pci_set_dma_max_seg_size(struct pci_dev *dev, unsigned int size);
 int pci_set_dma_seg_boundary(struct pci_dev *dev, unsigned long mask);
+int pci_wait_for_pending_transaction(struct pci_dev *dev);
 int pcix_get_max_mmrbc(struct pci_dev *dev);
 int pcix_get_mmrbc(struct pci_dev *dev);
 int pcix_set_mmrbc(struct pci_dev *dev, int mmrbc);
@@ -921,13 +946,21 @@ int pcie_get_readrq(struct pci_dev *dev);
 int pcie_set_readrq(struct pci_dev *dev, int rq);
 int pcie_get_mps(struct pci_dev *dev);
 int pcie_set_mps(struct pci_dev *dev, int mps);
+int pcie_get_minimum_link(struct pci_dev *dev, enum pci_bus_speed *speed,
+			  enum pcie_link_width *width);
 int __pci_reset_function(struct pci_dev *dev);
 int __pci_reset_function_locked(struct pci_dev *dev);
 int pci_reset_function(struct pci_dev *dev);
+int pci_probe_reset_slot(struct pci_slot *slot);
+int pci_reset_slot(struct pci_slot *slot);
+int pci_probe_reset_bus(struct pci_bus *bus);
+int pci_reset_bus(struct pci_bus *bus);
+void pci_reset_bridge_secondary_bus(struct pci_dev *dev);
 void pci_update_resource(struct pci_dev *dev, int resno);
 int __must_check pci_assign_resource(struct pci_dev *dev, int i);
 int __must_check pci_reassign_resource(struct pci_dev *dev, int i, resource_size_t add_size, resource_size_t align);
 int pci_select_bars(struct pci_dev *dev, unsigned long flags);
+bool pci_device_is_present(struct pci_dev *pdev);
 
 /* ROM control related routines */
 int pci_enable_rom(struct pci_dev *pdev);
@@ -1003,6 +1036,7 @@ int pci_claim_resource(struct pci_dev *, int);
 void pci_assign_unassigned_resources(void);
 void pci_assign_unassigned_bridge_resources(struct pci_dev *bridge);
 void pci_assign_unassigned_bus_resources(struct pci_bus *bus);
+void pci_assign_unassigned_root_bus_resources(struct pci_bus *bus);
 void pdev_enable_device(struct pci_dev *);
 int pci_enable_resources(struct pci_dev *, int mask);
 void pci_fixup_irqs(u8 (*)(struct pci_dev *, u8 *),
@@ -1043,7 +1077,6 @@ int __must_check pci_bus_alloc_resource(struct pci_bus *bus,
 						  resource_size_t,
 						  resource_size_t),
 			void *alignf_data);
-void pci_enable_bridges(struct pci_bus *bus);
 
 /* Proper probing supporting hot-pluggable devices */
 int __must_check __pci_register_driver(struct pci_driver *, struct module *,
@@ -1225,7 +1258,7 @@ void pci_cfg_access_unlock(struct pci_dev *dev);
 
 /*
  * PCI domain support.  Sometimes called PCI segment (eg by ACPI),
- * a PCI domain is defined to be a set of PCI busses which share
+ * a PCI domain is defined to be a set of PCI buses which share
  * configuration space.
  */
 #ifdef CONFIG_PCI_DOMAINS
@@ -1535,65 +1568,65 @@ enum pci_fixup_pass {
 /* Anonymous variables would be nice... */
 #define DECLARE_PCI_FIXUP_SECTION(section, name, vendor, device, class,	\
 				  class_shift, hook)			\
-	static const struct pci_fixup __pci_fixup_##name __used		\
+	static const struct pci_fixup __PASTE(__pci_fixup_##name,__LINE__) __used	\
 	__attribute__((__section__(#section), aligned((sizeof(void *)))))    \
 		= { vendor, device, class, class_shift, hook };
 
 #define DECLARE_PCI_FIXUP_CLASS_EARLY(vendor, device, class,		\
 					 class_shift, hook)		\
 	DECLARE_PCI_FIXUP_SECTION(.pci_fixup_early,			\
-		vendor##device##hook, vendor, device, class, class_shift, hook)
+		hook, vendor, device, class, class_shift, hook)
 #define DECLARE_PCI_FIXUP_CLASS_HEADER(vendor, device, class,		\
 					 class_shift, hook)		\
 	DECLARE_PCI_FIXUP_SECTION(.pci_fixup_header,			\
-		vendor##device##hook, vendor, device, class, class_shift, hook)
+		hook, vendor, device, class, class_shift, hook)
 #define DECLARE_PCI_FIXUP_CLASS_FINAL(vendor, device, class,		\
 					 class_shift, hook)		\
 	DECLARE_PCI_FIXUP_SECTION(.pci_fixup_final,			\
-		vendor##device##hook, vendor, device, class, class_shift, hook)
+		hook, vendor, device, class, class_shift, hook)
 #define DECLARE_PCI_FIXUP_CLASS_ENABLE(vendor, device, class,		\
 					 class_shift, hook)		\
 	DECLARE_PCI_FIXUP_SECTION(.pci_fixup_enable,			\
-		vendor##device##hook, vendor, device, class, class_shift, hook)
+		hook, vendor, device, class, class_shift, hook)
 #define DECLARE_PCI_FIXUP_CLASS_RESUME(vendor, device, class,		\
 					 class_shift, hook)		\
 	DECLARE_PCI_FIXUP_SECTION(.pci_fixup_resume,			\
-		resume##vendor##device##hook, vendor, device, class,	\
+		resume##hook, vendor, device, class,	\
 		class_shift, hook)
 #define DECLARE_PCI_FIXUP_CLASS_RESUME_EARLY(vendor, device, class,	\
 					 class_shift, hook)		\
 	DECLARE_PCI_FIXUP_SECTION(.pci_fixup_resume_early,		\
-		resume_early##vendor##device##hook, vendor, device,	\
+		resume_early##hook, vendor, device,	\
 		class, class_shift, hook)
 #define DECLARE_PCI_FIXUP_CLASS_SUSPEND(vendor, device, class,		\
 					 class_shift, hook)		\
 	DECLARE_PCI_FIXUP_SECTION(.pci_fixup_suspend,			\
-		suspend##vendor##device##hook, vendor, device, class,	\
+		suspend##hook, vendor, device, class,	\
 		class_shift, hook)
 
 #define DECLARE_PCI_FIXUP_EARLY(vendor, device, hook)			\
 	DECLARE_PCI_FIXUP_SECTION(.pci_fixup_early,			\
-		vendor##device##hook, vendor, device, PCI_ANY_ID, 0, hook)
+		hook, vendor, device, PCI_ANY_ID, 0, hook)
 #define DECLARE_PCI_FIXUP_HEADER(vendor, device, hook)			\
 	DECLARE_PCI_FIXUP_SECTION(.pci_fixup_header,			\
-		vendor##device##hook, vendor, device, PCI_ANY_ID, 0, hook)
+		hook, vendor, device, PCI_ANY_ID, 0, hook)
 #define DECLARE_PCI_FIXUP_FINAL(vendor, device, hook)			\
 	DECLARE_PCI_FIXUP_SECTION(.pci_fixup_final,			\
-		vendor##device##hook, vendor, device, PCI_ANY_ID, 0, hook)
+		hook, vendor, device, PCI_ANY_ID, 0, hook)
 #define DECLARE_PCI_FIXUP_ENABLE(vendor, device, hook)			\
 	DECLARE_PCI_FIXUP_SECTION(.pci_fixup_enable,			\
-		vendor##device##hook, vendor, device, PCI_ANY_ID, 0, hook)
+		hook, vendor, device, PCI_ANY_ID, 0, hook)
 #define DECLARE_PCI_FIXUP_RESUME(vendor, device, hook)			\
 	DECLARE_PCI_FIXUP_SECTION(.pci_fixup_resume,			\
-		resume##vendor##device##hook, vendor, device,		\
+		resume##hook, vendor, device,		\
 		PCI_ANY_ID, 0, hook)
 #define DECLARE_PCI_FIXUP_RESUME_EARLY(vendor, device, hook)		\
 	DECLARE_PCI_FIXUP_SECTION(.pci_fixup_resume_early,		\
-		resume_early##vendor##device##hook, vendor, device,	\
+		resume_early##hook, vendor, device,	\
 		PCI_ANY_ID, 0, hook)
 #define DECLARE_PCI_FIXUP_SUSPEND(vendor, device, hook)			\
 	DECLARE_PCI_FIXUP_SECTION(.pci_fixup_suspend,			\
-		suspend##vendor##device##hook, vendor, device,		\
+		suspend##hook, vendor, device,		\
 		PCI_ANY_ID, 0, hook)
 
 #ifdef CONFIG_PCI_QUIRKS
@@ -1639,7 +1672,7 @@ extern u8 pci_cache_line_size;
 extern unsigned long pci_hotplug_io_size;
 extern unsigned long pci_hotplug_mem_size;
 
-/* Architecture specific versions may override these (weak) */
+/* Architecture-specific versions may override these (weak) */
 int pcibios_add_platform_entries(struct pci_dev *dev);
 void pcibios_disable_device(struct pci_dev *dev);
 void pcibios_set_master(struct pci_dev *dev);
@@ -1647,6 +1680,10 @@ int pcibios_set_pcie_reset_state(struct pci_dev *dev,
 				 enum pcie_reset_state state);
 int pcibios_add_device(struct pci_dev *dev);
 void pcibios_release_device(struct pci_dev *dev);
+
+#ifdef CONFIG_HIBERNATE_CALLBACKS
+extern struct dev_pm_ops pcibios_pm_ops;
+#endif
 
 #ifdef CONFIG_PCI_MMCONFIG
 void __init pci_mmcfg_early_init(void);
@@ -1723,11 +1760,11 @@ static inline int pci_pcie_cap(struct pci_dev *dev)
  * pci_is_pcie - check if the PCI device is PCI Express capable
  * @dev: PCI device
  *
- * Retrun true if the PCI device is PCI Express capable, false otherwise.
+ * Returns: true if the PCI device is PCI Express capable, false otherwise.
  */
 static inline bool pci_is_pcie(struct pci_dev *dev)
 {
-	return !!pci_pcie_cap(dev);
+	return pci_pcie_cap(dev);
 }
 
 /**

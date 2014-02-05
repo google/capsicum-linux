@@ -161,9 +161,15 @@ static int mxs_pwm_probe(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, mxs);
 
-	stmp_reset_block(mxs->base);
+	ret = stmp_reset_block(mxs->base);
+	if (ret)
+		goto pwm_remove;
 
 	return 0;
+
+pwm_remove:
+	pwmchip_remove(&mxs->chip);
+	return ret;
 }
 
 static int mxs_pwm_remove(struct platform_device *pdev)
@@ -183,7 +189,7 @@ static struct platform_driver mxs_pwm_driver = {
 	.driver = {
 		.name = "mxs-pwm",
 		.owner = THIS_MODULE,
-		.of_match_table = of_match_ptr(mxs_pwm_dt_ids),
+		.of_match_table = mxs_pwm_dt_ids,
 	},
 	.probe = mxs_pwm_probe,
 	.remove = mxs_pwm_remove,

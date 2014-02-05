@@ -621,7 +621,7 @@ int cfg80211_mlme_mgmt_tx(struct cfg80211_registered_device *rdev,
 }
 
 bool cfg80211_rx_mgmt(struct wireless_dev *wdev, int freq, int sig_mbm,
-		      const u8 *buf, size_t len, gfp_t gfp)
+		      const u8 *buf, size_t len, u32 flags, gfp_t gfp)
 {
 	struct wiphy *wiphy = wdev->wiphy;
 	struct cfg80211_registered_device *rdev = wiphy_to_dev(wiphy);
@@ -664,7 +664,7 @@ bool cfg80211_rx_mgmt(struct wireless_dev *wdev, int freq, int sig_mbm,
 		/* Indicate the received Action frame to user space */
 		if (nl80211_send_mgmt(rdev, wdev, reg->nlportid,
 				      freq, sig_mbm,
-				      buf, len, gfp))
+				      buf, len, flags, gfp))
 			continue;
 
 		result = true;
@@ -707,11 +707,13 @@ void cfg80211_dfs_channels_update_work(struct work_struct *work)
 			if (c->dfs_state != NL80211_DFS_UNAVAILABLE)
 				continue;
 
-			timeout = c->dfs_state_entered +
-				  IEEE80211_DFS_MIN_NOP_TIME_MS;
+			timeout = c->dfs_state_entered + msecs_to_jiffies(
+					IEEE80211_DFS_MIN_NOP_TIME_MS);
 
 			if (time_after_eq(jiffies, timeout)) {
 				c->dfs_state = NL80211_DFS_USABLE;
+				c->dfs_state_entered = jiffies;
+
 				cfg80211_chandef_create(&chandef, c,
 							NL80211_CHAN_NO_HT);
 

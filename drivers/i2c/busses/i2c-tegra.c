@@ -25,7 +25,6 @@
 #include <linux/interrupt.h>
 #include <linux/delay.h>
 #include <linux/slab.h>
-#include <linux/of_i2c.h>
 #include <linux/of_device.h>
 #include <linux/module.h>
 #include <linux/clk/tegra.h>
@@ -545,7 +544,7 @@ static int tegra_i2c_xfer_msg(struct tegra_i2c_dev *i2c_dev,
 	i2c_dev->msg_buf_remaining = msg->len;
 	i2c_dev->msg_err = I2C_ERR_NONE;
 	i2c_dev->msg_read = (msg->flags & I2C_M_RD);
-	INIT_COMPLETION(i2c_dev->msg_complete);
+	reinit_completion(&i2c_dev->msg_complete);
 
 	packet_header = (0 << PACKET_HEADER0_HEADER_SIZE_SHIFT) |
 			PACKET_HEADER0_PROTOCOL_I2C |
@@ -801,8 +800,6 @@ static int tegra_i2c_probe(struct platform_device *pdev)
 		dev_err(&pdev->dev, "Failed to add I2C adapter\n");
 		return ret;
 	}
-
-	of_i2c_register_devices(&i2c_dev->adapter);
 
 	return 0;
 }

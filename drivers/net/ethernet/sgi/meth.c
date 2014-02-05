@@ -212,9 +212,8 @@ static void meth_check_link(struct net_device *dev)
 static int meth_init_tx_ring(struct meth_private *priv)
 {
 	/* Init TX ring */
-	priv->tx_ring = dma_alloc_coherent(NULL, TX_RING_BUFFER_SIZE,
-	                                   &priv->tx_ring_dma,
-					   GFP_ATOMIC | __GFP_ZERO);
+	priv->tx_ring = dma_zalloc_coherent(NULL, TX_RING_BUFFER_SIZE,
+					    &priv->tx_ring_dma, GFP_ATOMIC);
 	if (!priv->tx_ring)
 		return -ENOMEM;
 
@@ -840,7 +839,7 @@ static int meth_probe(struct platform_device *pdev)
 	dev->watchdog_timeo	= timeout;
 	dev->irq		= MACE_ETHERNET_IRQ;
 	dev->base_addr		= (unsigned long)&mace->eth;
-	memcpy(dev->dev_addr, o2meth_eaddr, 6);
+	memcpy(dev->dev_addr, o2meth_eaddr, ETH_ALEN);
 
 	priv = netdev_priv(dev);
 	spin_lock_init(&priv->meth_lock);

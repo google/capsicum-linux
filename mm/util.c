@@ -7,6 +7,9 @@
 #include <linux/security.h>
 #include <linux/swap.h>
 #include <linux/swapops.h>
+#include <linux/mman.h>
+#include <linux/hugetlb.h>
+
 #include <asm/uaccess.h>
 
 #include "internal.h"
@@ -387,19 +390,29 @@ struct address_space *page_mapping(struct page *page)
 {
 	struct address_space *mapping = page->mapping;
 
-	VM_BUG_ON(PageSlab(page));
-#ifdef CONFIG_SWAP
+	/* This happens if someone calls flush_dcache_page on slab page */
+	if (unlikely(PageSlab(page)))
+		return NULL;
+
 	if (unlikely(PageSwapCache(page))) {
 		swp_entry_t entry;
 
 		entry.val = page_private(page);
 		mapping = swap_address_space(entry);
-	} else
-#endif
-	if ((unsigned long)mapping & PAGE_MAPPING_ANON)
+	} else if ((unsigned long)mapping & PAGE_MAPPING_ANON)
 		mapping = NULL;
 	return mapping;
 }
+
+/*
+ * Committed memory limit enforced when OVERCOMMIT_NEVER policy is used
+ */
+unsigned long vm_commit_limit(void)
+{
+	return ((totalram_pages - hugetlb_total_pages())
+		* sysctl_overcommit_ratio / 100) + total_swap_pages;
+}
+
 
 /* Tracepoints definitions. */
 EXPORT_TRACEPOINT_SYMBOL(kmalloc);

@@ -200,6 +200,58 @@ int unregister_qdisc(struct Qdisc_ops *qops)
 }
 EXPORT_SYMBOL(unregister_qdisc);
 
+/* Get default qdisc if not otherwise specified */
+void qdisc_get_default(char *name, size_t len)
+{
+	read_lock(&qdisc_mod_lock);
+	strlcpy(name, default_qdisc_ops->id, len);
+	read_unlock(&qdisc_mod_lock);
+}
+
+static struct Qdisc_ops *qdisc_lookup_default(const char *name)
+{
+	struct Qdisc_ops *q = NULL;
+
+	for (q = qdisc_base; q; q = q->next) {
+		if (!strcmp(name, q->id)) {
+			if (!try_module_get(q->owner))
+				q = NULL;
+			break;
+		}
+	}
+
+	return q;
+}
+
+/* Set new default qdisc to use */
+int qdisc_set_default(const char *name)
+{
+	const struct Qdisc_ops *ops;
+
+	if (!capable(CAP_NET_ADMIN))
+		return -EPERM;
+
+	write_lock(&qdisc_mod_lock);
+	ops = qdisc_lookup_default(name);
+	if (!ops) {
+		/* Not found, drop lock and try to load module */
+		write_unlock(&qdisc_mod_lock);
+		request_module("sch_%s", name);
+		write_lock(&qdisc_mod_lock);
+
+		ops = qdisc_lookup_default(name);
+	}
+
+	if (ops) {
+		/* Set new default */
+		module_put(default_qdisc_ops->owner);
+		default_qdisc_ops = ops;
+	}
+	write_unlock(&qdisc_mod_lock);
+
+	return ops ? 0 : -ENOENT;
+}
+
 /* We know handle. Find qdisc among all qdisc's attached to device
    (root qdisc, all its children, children of children etc.)
  */
@@ -685,9 +737,11 @@ void qdisc_tree_decrease_qlen(struct Qdisc *sch, unsigned int n)
 	const struct Qdisc_class_ops *cops;
 	unsigned long cl;
 	u32 parentid;
+	int drops;
 
 	if (n == 0)
 		return;
+	drops = max_t(int, n, 0);
 	while ((parentid = sch->parent)) {
 		if (TC_H_MAJ(parentid) == TC_H_MAJ(TC_H_INGRESS))
 			return;
@@ -704,6 +758,7 @@ void qdisc_tree_decrease_qlen(struct Qdisc *sch, unsigned int n)
 			cops->put(sch, cl);
 		}
 		sch->q.qlen -= n;
+		sch->qstats.drops += drops;
 	}
 }
 EXPORT_SYMBOL(qdisc_tree_decrease_qlen);
@@ -1854,6 +1909,7 @@ static int __init pktsched_init(void)
 		return err;
 	}
 
+	register_qdisc(&pfifo_fast_ops);
 	register_qdisc(&pfifo_qdisc_ops);
 	register_qdisc(&bfifo_qdisc_ops);
 	register_qdisc(&pfifo_head_drop_qdisc_ops);

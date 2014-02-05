@@ -2172,16 +2172,13 @@ static int velocity_poll(struct napi_struct *napi, int budget)
 	unsigned int rx_done;
 	unsigned long flags;
 
-	spin_lock_irqsave(&vptr->lock, flags);
 	/*
 	 * Do rx and tx twice for performance (taken from the VIA
 	 * out-of-tree driver).
 	 */
-	rx_done = velocity_rx_srv(vptr, budget / 2);
+	rx_done = velocity_rx_srv(vptr, budget);
+	spin_lock_irqsave(&vptr->lock, flags);
 	velocity_tx_srv(vptr);
-	rx_done += velocity_rx_srv(vptr, budget - rx_done);
-	velocity_tx_srv(vptr);
-
 	/* If budget not fully consumed, exit the polling mode */
 	if (rx_done < budget) {
 		napi_complete(napi);
@@ -2342,6 +2339,8 @@ static int velocity_change_mtu(struct net_device *dev, int new_mtu)
 		if (ret < 0)
 			goto out_free_tmp_vptr_1;
 
+		napi_disable(&vptr->napi);
+
 		spin_lock_irqsave(&vptr->lock, flags);
 
 		netif_stop_queue(dev);
@@ -2362,6 +2361,8 @@ static int velocity_change_mtu(struct net_device *dev, int new_mtu)
 
 		velocity_give_many_rx_descs(vptr);
 
+		napi_enable(&vptr->napi);
+
 		mac_enable_int(vptr->mac_regs);
 		netif_start_queue(dev);
 
@@ -2375,6 +2376,23 @@ out_free_tmp_vptr_1:
 out_0:
 	return ret;
 }
+
+#ifdef CONFIG_NET_POLL_CONTROLLER
+/**
+ *  velocity_poll_controller		-	Velocity Poll controller function
+ *  @dev: network device
+ *
+ *
+ *  Used by NETCONSOLE and other diagnostic tools to allow network I/P
+ *  with interrupts disabled.
+ */
+static void velocity_poll_controller(struct net_device *dev)
+{
+	disable_irq(dev->irq);
+	velocity_intr(dev->irq, dev);
+	enable_irq(dev->irq);
+}
+#endif
 
 /**
  *	velocity_mii_ioctl		-	MII ioctl handler
@@ -2641,6 +2659,9 @@ static const struct net_device_ops velocity_netdev_ops = {
 	.ndo_do_ioctl		= velocity_ioctl,
 	.ndo_vlan_rx_add_vid	= velocity_vlan_rx_add_vid,
 	.ndo_vlan_rx_kill_vid	= velocity_vlan_rx_kill_vid,
+#ifdef CONFIG_NET_POLL_CONTROLLER
+	.ndo_poll_controller = velocity_poll_controller,
+#endif
 };
 
 /**

@@ -1304,7 +1304,9 @@ static int tulip_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 {
 	struct tulip_private *tp;
 	/* See note below on the multiport cards. */
-	static unsigned char last_phys_addr[6] = {0x00, 'L', 'i', 'n', 'u', 'x'};
+	static unsigned char last_phys_addr[ETH_ALEN] = {
+		0x00, 'L', 'i', 'n', 'u', 'x'
+	};
 	static int last_irq;
 	static int multiport_cnt;	/* For four-port boards w/one EEPROM */
 	int i, irq;
@@ -1627,8 +1629,8 @@ static int tulip_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 		dev->dev_addr[i] = last_phys_addr[i] + 1;
 #if defined(CONFIG_SPARC)
 		addr = of_get_property(dp, "local-mac-address", &len);
-		if (addr && len == 6)
-			memcpy(dev->dev_addr, addr, 6);
+		if (addr && len == ETH_ALEN)
+			memcpy(dev->dev_addr, addr, ETH_ALEN);
 #endif
 #if defined(__i386__) || defined(__x86_64__)	/* Patch up x86 BIOS bug. */
 		if (last_irq)
@@ -1937,7 +1939,6 @@ static void tulip_remove_one(struct pci_dev *pdev)
 	pci_iounmap(pdev, tp->base_addr);
 	free_netdev (dev);
 	pci_release_regions (pdev);
-	pci_set_drvdata (pdev, NULL);
 
 	/* pci_power_off (pdev, -1); */
 }

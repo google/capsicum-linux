@@ -432,7 +432,7 @@ struct platform_device *platform_device_register_full(
 		goto err_alloc;
 
 	pdev->dev.parent = pdevinfo->parent;
-	ACPI_HANDLE_SET(&pdev->dev, pdevinfo->acpi_node.handle);
+	ACPI_COMPANION_SET(&pdev->dev, pdevinfo->acpi_node.companion);
 
 	if (pdevinfo->dma_mask) {
 		/*
@@ -463,7 +463,7 @@ struct platform_device *platform_device_register_full(
 	ret = platform_device_add(pdev);
 	if (ret) {
 err:
-		ACPI_HANDLE_SET(&pdev->dev, NULL);
+		ACPI_COMPANION_SET(&pdev->dev, NULL);
 		kfree(pdev->dev.dma_mask);
 
 err_alloc:
@@ -487,6 +487,11 @@ static int platform_drv_probe(struct device *_dev)
 	ret = drv->probe(dev);
 	if (ret && ACPI_HANDLE(_dev))
 		acpi_dev_pm_detach(_dev, true);
+
+	if (drv->prevent_deferred_probe && ret == -EPROBE_DEFER) {
+		dev_warn(_dev, "probe deferral not supported\n");
+		ret = -ENXIO;
+	}
 
 	return ret;
 }
@@ -553,8 +558,7 @@ EXPORT_SYMBOL_GPL(platform_driver_unregister);
 /**
  * platform_driver_probe - register driver for non-hotpluggable device
  * @drv: platform driver structure
- * @probe: the driver probe routine, probably from an __init section,
- *         must not return -EPROBE_DEFER.
+ * @probe: the driver probe routine, probably from an __init section
  *
  * Use this instead of platform_driver_register() when you know the device
  * is not hotpluggable and has already been registered, and you want to
@@ -565,8 +569,7 @@ EXPORT_SYMBOL_GPL(platform_driver_unregister);
  * into system-on-chip processors, where the controller devices have been
  * configured as part of board setup.
  *
- * This is incompatible with deferred probing so probe() must not
- * return -EPROBE_DEFER.
+ * Note that this is incompatible with deferred probing.
  *
  * Returns zero if the driver registered and bound to a device, else returns
  * a negative error code and with the driver not registered.
@@ -575,6 +578,12 @@ int __init_or_module platform_driver_probe(struct platform_driver *drv,
 		int (*probe)(struct platform_device *))
 {
 	int retval, code;
+
+	/*
+	 * Prevent driver from requesting probe deferral to avoid further
+	 * futile probe attempts.
+	 */
+	drv->prevent_deferred_probe = true;
 
 	/* make sure driver won't have bind/unbind attributes */
 	drv->driver.suppress_bind_attrs = true;
@@ -672,11 +681,13 @@ static ssize_t modalias_show(struct device *dev, struct device_attribute *a,
 
 	return (len >= PAGE_SIZE) ? (PAGE_SIZE - 1) : len;
 }
+static DEVICE_ATTR_RO(modalias);
 
-static struct device_attribute platform_dev_attrs[] = {
-	__ATTR_RO(modalias),
-	__ATTR_NULL,
+static struct attribute *platform_dev_attrs[] = {
+	&dev_attr_modalias.attr,
+	NULL,
 };
+ATTRIBUTE_GROUPS(platform_dev);
 
 static int platform_uevent(struct device *dev, struct kobj_uevent_env *env)
 {
@@ -893,7 +904,7 @@ static const struct dev_pm_ops platform_dev_pm_ops = {
 
 struct bus_type platform_bus_type = {
 	.name		= "platform",
-	.dev_attrs	= platform_dev_attrs,
+	.dev_groups	= platform_dev_groups,
 	.match		= platform_match,
 	.uevent		= platform_uevent,
 	.pm		= &platform_dev_pm_ops,
@@ -1054,7 +1065,7 @@ void __init early_platform_driver_register_all(char *class_str)
  * @epdrv: early platform driver structure
  * @id: id to match against
  */
-static  __init struct platform_device *
+static struct platform_device * __init
 early_platform_match(struct early_platform_driver *epdrv, int id)
 {
 	struct platform_device *pd;
@@ -1072,7 +1083,7 @@ early_platform_match(struct early_platform_driver *epdrv, int id)
  * @epdrv: early platform driver structure
  * @id: return true if id or above exists
  */
-static  __init int early_platform_left(struct early_platform_driver *epdrv,
+static int __init early_platform_left(struct early_platform_driver *epdrv,
 				       int id)
 {
 	struct platform_device *pd;

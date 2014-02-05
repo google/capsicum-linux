@@ -511,7 +511,7 @@ static int __ctrl_set_metering(struct fimc_is *is, unsigned int value)
 		break;
 	default:
 		return -EINVAL;
-	};
+	}
 
 	__is_set_isp_metering(is, IS_METERING_CONFIG_CMD, val);
 	return 0;
@@ -672,6 +672,8 @@ int fimc_isp_subdev_create(struct fimc_isp *isp)
 	mutex_init(&isp->subdev_lock);
 
 	v4l2_subdev_init(sd, &fimc_is_subdev_ops);
+
+	sd->owner = THIS_MODULE;
 	sd->grp_id = GRP_ID_FIMC_IS;
 	sd->flags |= V4L2_SUBDEV_FL_HAS_DEVNODE;
 	snprintf(sd->name, sizeof(sd->name), "FIMC-IS-ISP");

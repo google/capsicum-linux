@@ -79,6 +79,7 @@ enum {
 			       (1ull << MLX4_EVENT_TYPE_SRQ_QP_LAST_WQE)    | \
 			       (1ull << MLX4_EVENT_TYPE_SRQ_LIMIT)	    | \
 			       (1ull << MLX4_EVENT_TYPE_CMD)		    | \
+			       (1ull << MLX4_EVENT_TYPE_OP_REQUIRED)	    | \
 			       (1ull << MLX4_EVENT_TYPE_COMM_CHANNEL)       | \
 			       (1ull << MLX4_EVENT_TYPE_FLR_EVENT)	    | \
 			       (1ull << MLX4_EVENT_TYPE_FATAL_WARNING))
@@ -629,6 +630,14 @@ static int mlx4_eq_int(struct mlx4_dev *dev, struct mlx4_eq *eq)
 			mlx4_warn(dev, "EQ overrun on EQN %d\n", eq->eqn);
 			break;
 
+		case MLX4_EVENT_TYPE_OP_REQUIRED:
+			atomic_inc(&priv->opreq_count);
+			/* FW commands can't be executed from interrupt context
+			 * working in deferred task
+			 */
+			queue_work(mlx4_wq, &priv->opreq_task);
+			break;
+
 		case MLX4_EVENT_TYPE_COMM_CHANNEL:
 			if (!mlx4_is_master(dev)) {
 				mlx4_warn(dev, "Received comm channel event "
@@ -927,7 +936,6 @@ static int mlx4_create_eq(struct mlx4_dev *dev, int nent,
 	if (err)
 		goto err_out_free_mtt;
 
-	memset(eq_context, 0, sizeof *eq_context);
 	eq_context->flags	  = cpu_to_be32(MLX4_EQ_STATUS_OK   |
 						MLX4_EQ_STATE_ARMED);
 	eq_context->log_eq_size	  = ilog2(eq->nent);

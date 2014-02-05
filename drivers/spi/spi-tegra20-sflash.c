@@ -173,7 +173,7 @@ static unsigned tegra_sflash_calculate_curr_xfer_param(
 	unsigned remain_len = t->len - tsd->cur_pos;
 	unsigned max_word;
 
-	tsd->bytes_per_word = (t->bits_per_word - 1) / 8 + 1;
+	tsd->bytes_per_word = DIV_ROUND_UP(t->bits_per_word, 8);
 	max_word = remain_len / tsd->bytes_per_word;
 	if (max_word > SPI_FIFO_DEPTH)
 		max_word = SPI_FIFO_DEPTH;
@@ -335,17 +335,11 @@ static int tegra_sflash_transfer_one_message(struct spi_master *master,
 	struct spi_device *spi = msg->spi;
 	int ret;
 
-	ret = pm_runtime_get_sync(tsd->dev);
-	if (ret < 0) {
-		dev_err(tsd->dev, "pm_runtime_get() failed, err = %d\n", ret);
-		return ret;
-	}
-
 	msg->status = 0;
 	msg->actual_length = 0;
 	single_xfer = list_is_singular(&msg->transfers);
 	list_for_each_entry(xfer, &msg->transfers, transfer_list) {
-		INIT_COMPLETION(tsd->xfer_completion);
+		reinit_completion(&tsd->xfer_completion);
 		ret = tegra_sflash_start_transfer_one(spi, xfer,
 					is_first_msg, single_xfer);
 		if (ret < 0) {
@@ -380,7 +374,6 @@ exit:
 	tegra_sflash_writel(tsd, tsd->def_command_reg, SPI_COMMAND);
 	msg->status = ret;
 	spi_finalize_current_message(master);
-	pm_runtime_put(tsd->dev);
 	return ret;
 }
 
@@ -477,6 +470,7 @@ static int tegra_sflash_probe(struct platform_device *pdev)
 	master->mode_bits = SPI_CPOL | SPI_CPHA;
 	master->setup = tegra_sflash_setup;
 	master->transfer_one_message = tegra_sflash_transfer_one_message;
+	master->auto_runtime_pm = true;
 	master->num_chipselect = MAX_CHIP_SELECT;
 	master->bus_num = -1;
 
@@ -535,7 +529,7 @@ static int tegra_sflash_probe(struct platform_device *pdev)
 	pm_runtime_put(&pdev->dev);
 
 	master->dev.of_node = pdev->dev.of_node;
-	ret = spi_register_master(master);
+	ret = devm_spi_register_master(&pdev->dev, master);
 	if (ret < 0) {
 		dev_err(&pdev->dev, "can not register to master err %d\n", ret);
 		goto exit_pm_disable;
@@ -559,7 +553,6 @@ static int tegra_sflash_remove(struct platform_device *pdev)
 	struct tegra_sflash_data	*tsd = spi_master_get_devdata(master);
 
 	free_irq(tsd->irq, tsd);
-	spi_unregister_master(master);
 
 	pm_runtime_disable(&pdev->dev);
 	if (!pm_runtime_status_suspended(&pdev->dev))

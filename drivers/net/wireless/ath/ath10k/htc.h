@@ -276,6 +276,7 @@ struct ath10k_htc_ops {
 struct ath10k_htc_ep_ops {
 	void (*ep_tx_complete)(struct ath10k *, struct sk_buff *);
 	void (*ep_rx_complete)(struct ath10k *, struct sk_buff *);
+	void (*ep_tx_credits)(struct ath10k *);
 };
 
 /* service connection information */
@@ -315,15 +316,11 @@ struct ath10k_htc_ep {
 	int ul_is_polled; /* call HIF to get tx completions */
 	int dl_is_polled; /* call HIF to fetch rx (not implemented) */
 
-	struct sk_buff_head tx_queue;
-
 	u8 seq_no; /* for debugging */
 	int tx_credits;
 	int tx_credit_size;
 	int tx_credits_per_max_message;
 	bool tx_credit_flow_enabled;
-
-	struct work_struct send_work;
 };
 
 struct ath10k_htc_svc_tx_credits {
@@ -335,7 +332,7 @@ struct ath10k_htc {
 	struct ath10k *ar;
 	struct ath10k_htc_ep endpoint[ATH10K_HTC_EP_COUNT];
 
-	/* protects endpoint and stopping fields */
+	/* protects endpoint and stopped fields */
 	spinlock_t tx_lock;
 
 	struct ath10k_htc_ops htc_ops;
@@ -349,11 +346,10 @@ struct ath10k_htc {
 	struct ath10k_htc_svc_tx_credits service_tx_alloc[ATH10K_HTC_EP_COUNT];
 	int target_credit_size;
 
-	bool stopping;
+	bool stopped;
 };
 
-struct ath10k_htc *ath10k_htc_create(struct ath10k *ar,
-				     struct ath10k_htc_ops *htc_ops);
+int ath10k_htc_init(struct ath10k *ar);
 int ath10k_htc_wait_target(struct ath10k_htc *htc);
 int ath10k_htc_start(struct ath10k_htc *htc);
 int ath10k_htc_connect_service(struct ath10k_htc *htc,
@@ -362,7 +358,6 @@ int ath10k_htc_connect_service(struct ath10k_htc *htc,
 int ath10k_htc_send(struct ath10k_htc *htc, enum ath10k_htc_ep_id eid,
 		    struct sk_buff *packet);
 void ath10k_htc_stop(struct ath10k_htc *htc);
-void ath10k_htc_destroy(struct ath10k_htc *htc);
 struct sk_buff *ath10k_htc_alloc_skb(int size);
 
 #endif

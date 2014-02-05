@@ -146,7 +146,7 @@ unsigned int nf_iterate(struct list_head *head,
 		/* Optimization: we don't need to hold module
 		   reference here, since function can't sleep. --RR */
 repeat:
-		verdict = (*elemp)->hook(hook, skb, indev, outdev, okfn);
+		verdict = (*elemp)->hook(*elemp, skb, indev, outdev, okfn);
 		if (verdict != NF_ACCEPT) {
 #ifdef CONFIG_NETFILTER_DEBUG
 			if (unlikely((verdict & NF_VERDICT_MASK)
@@ -234,12 +234,13 @@ EXPORT_SYMBOL(skb_make_writable);
 /* This does not belong here, but locally generated errors need it if connection
    tracking in use: without this, connection may not be in hash table, and hence
    manufactured ICMP or RST packets will not be associated with it. */
-void (*ip_ct_attach)(struct sk_buff *, struct sk_buff *) __rcu __read_mostly;
+void (*ip_ct_attach)(struct sk_buff *, const struct sk_buff *)
+		__rcu __read_mostly;
 EXPORT_SYMBOL(ip_ct_attach);
 
-void nf_ct_attach(struct sk_buff *new, struct sk_buff *skb)
+void nf_ct_attach(struct sk_buff *new, const struct sk_buff *skb)
 {
-	void (*attach)(struct sk_buff *, struct sk_buff *);
+	void (*attach)(struct sk_buff *, const struct sk_buff *);
 
 	if (skb->nfct) {
 		rcu_read_lock();

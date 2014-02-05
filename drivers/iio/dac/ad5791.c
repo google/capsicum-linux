@@ -270,9 +270,9 @@ static int ad5791_read_raw(struct iio_dev *indio_dev,
 		*val >>= chan->scan_type.shift;
 		return IIO_VAL_INT;
 	case IIO_CHAN_INFO_SCALE:
-		*val = 0;
-		*val2 = (((u64)st->vref_mv) * 1000000ULL) >> chan->scan_type.realbits;
-		return IIO_VAL_INT_PLUS_MICRO;
+		*val = st->vref_mv;
+		*val2 = (1 << chan->scan_type.realbits) - 1;
+		return IIO_VAL_FRACTIONAL;
 	case IIO_CHAN_INFO_OFFSET:
 		val64 = (((u64)st->vref_neg_mv) << chan->scan_type.realbits);
 		do_div(val64, st->vref_mv);
@@ -287,11 +287,12 @@ static int ad5791_read_raw(struct iio_dev *indio_dev,
 static const struct iio_chan_spec_ext_info ad5791_ext_info[] = {
 	{
 		.name = "powerdown",
-		.shared = true,
+		.shared = IIO_SHARED_BY_TYPE,
 		.read = ad5791_read_dac_powerdown,
 		.write = ad5791_write_dac_powerdown,
 	},
-	IIO_ENUM("powerdown_mode", true, &ad5791_powerdown_mode_enum),
+	IIO_ENUM("powerdown_mode", IIO_SHARED_BY_TYPE,
+		 &ad5791_powerdown_mode_enum),
 	IIO_ENUM_AVAILABLE("powerdown_mode", &ad5791_powerdown_mode_enum),
 	{ },
 };
@@ -349,17 +350,15 @@ static int ad5791_probe(struct spi_device *spi)
 	struct ad5791_state *st;
 	int ret, pos_voltage_uv = 0, neg_voltage_uv = 0;
 
-	indio_dev = iio_device_alloc(sizeof(*st));
-	if (indio_dev == NULL) {
-		ret = -ENOMEM;
-		goto error_ret;
-	}
+	indio_dev = devm_iio_device_alloc(&spi->dev, sizeof(*st));
+	if (!indio_dev)
+		return -ENOMEM;
 	st = iio_priv(indio_dev);
-	st->reg_vdd = regulator_get(&spi->dev, "vdd");
+	st->reg_vdd = devm_regulator_get(&spi->dev, "vdd");
 	if (!IS_ERR(st->reg_vdd)) {
 		ret = regulator_enable(st->reg_vdd);
 		if (ret)
-			goto error_put_reg_pos;
+			return ret;
 
 		ret = regulator_get_voltage(st->reg_vdd);
 		if (ret < 0)
@@ -368,11 +367,11 @@ static int ad5791_probe(struct spi_device *spi)
 		pos_voltage_uv = ret;
 	}
 
-	st->reg_vss = regulator_get(&spi->dev, "vss");
+	st->reg_vss = devm_regulator_get(&spi->dev, "vss");
 	if (!IS_ERR(st->reg_vss)) {
 		ret = regulator_enable(st->reg_vss);
 		if (ret)
-			goto error_put_reg_neg;
+			goto error_disable_reg_pos;
 
 		ret = regulator_get_voltage(st->reg_vss);
 		if (ret < 0)
@@ -428,19 +427,9 @@ static int ad5791_probe(struct spi_device *spi)
 error_disable_reg_neg:
 	if (!IS_ERR(st->reg_vss))
 		regulator_disable(st->reg_vss);
-error_put_reg_neg:
-	if (!IS_ERR(st->reg_vss))
-		regulator_put(st->reg_vss);
-
 error_disable_reg_pos:
 	if (!IS_ERR(st->reg_vdd))
 		regulator_disable(st->reg_vdd);
-error_put_reg_pos:
-	if (!IS_ERR(st->reg_vdd))
-		regulator_put(st->reg_vdd);
-	iio_device_free(indio_dev);
-error_ret:
-
 	return ret;
 }
 
@@ -450,16 +439,11 @@ static int ad5791_remove(struct spi_device *spi)
 	struct ad5791_state *st = iio_priv(indio_dev);
 
 	iio_device_unregister(indio_dev);
-	if (!IS_ERR(st->reg_vdd)) {
+	if (!IS_ERR(st->reg_vdd))
 		regulator_disable(st->reg_vdd);
-		regulator_put(st->reg_vdd);
-	}
 
-	if (!IS_ERR(st->reg_vss)) {
+	if (!IS_ERR(st->reg_vss))
 		regulator_disable(st->reg_vss);
-		regulator_put(st->reg_vss);
-	}
-	iio_device_free(indio_dev);
 
 	return 0;
 }

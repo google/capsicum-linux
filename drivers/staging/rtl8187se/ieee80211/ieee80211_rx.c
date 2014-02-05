@@ -14,7 +14,7 @@
  ******************************************************************************
 
   Few modifications for Realtek's Wi-Fi drivers by
-  Andrea Merello <andreamrl@tiscali.it>
+  Andrea Merello <andrea.merello@gmail.com>
 
   A special thanks goes to Realtek for their support !
 
@@ -858,7 +858,7 @@ static inline void ieee80211_extract_country_ie(
 
 }
 
-int
+static int
 ieee80211_TranslateToDbm(
 	unsigned char SignalStrengthIndex	// 0-100 index.
 	)

@@ -47,10 +47,8 @@ static int exynos_drm_load(struct drm_device *dev, unsigned long flags)
 	int nr;
 
 	private = kzalloc(sizeof(struct exynos_drm_private), GFP_KERNEL);
-	if (!private) {
-		DRM_ERROR("failed to allocate private\n");
+	if (!private)
 		return -ENOMEM;
-	}
 
 	INIT_LIST_HEAD(&private->pageflip_event_list);
 	dev->dev_private = (void *)private;
@@ -175,28 +173,37 @@ static int exynos_drm_open(struct drm_device *dev, struct drm_file *file)
 static void exynos_drm_preclose(struct drm_device *dev,
 					struct drm_file *file)
 {
-	struct exynos_drm_private *private = dev->dev_private;
-	struct drm_pending_vblank_event *e, *t;
-	unsigned long flags;
-
-	/* release events of current file */
-	spin_lock_irqsave(&dev->event_lock, flags);
-	list_for_each_entry_safe(e, t, &private->pageflip_event_list,
-			base.link) {
-		if (e->base.file_priv == file) {
-			list_del(&e->base.link);
-			e->base.destroy(&e->base);
-		}
-	}
-	spin_unlock_irqrestore(&dev->event_lock, flags);
-
 	exynos_drm_subdrv_close(dev, file);
 }
 
 static void exynos_drm_postclose(struct drm_device *dev, struct drm_file *file)
 {
+	struct exynos_drm_private *private = dev->dev_private;
+	struct drm_pending_vblank_event *v, *vt;
+	struct drm_pending_event *e, *et;
+	unsigned long flags;
+
 	if (!file->driver_priv)
 		return;
+
+	/* Release all events not unhandled by page flip handler. */
+	spin_lock_irqsave(&dev->event_lock, flags);
+	list_for_each_entry_safe(v, vt, &private->pageflip_event_list,
+			base.link) {
+		if (v->base.file_priv == file) {
+			list_del(&v->base.link);
+			drm_vblank_put(dev, v->pipe);
+			v->base.destroy(&v->base);
+		}
+	}
+
+	/* Release all events handled by page flip handler but not freed. */
+	list_for_each_entry_safe(e, et, &file->event_list, link) {
+		list_del(&e->link);
+		e->destroy(e);
+	}
+	spin_unlock_irqrestore(&dev->event_lock, flags);
+
 
 	kfree(file->driver_priv);
 	file->driver_priv = NULL;
@@ -213,7 +220,7 @@ static const struct vm_operations_struct exynos_drm_gem_vm_ops = {
 	.close = drm_gem_vm_close,
 };
 
-static struct drm_ioctl_desc exynos_ioctls[] = {
+static const struct drm_ioctl_desc exynos_ioctls[] = {
 	DRM_IOCTL_DEF_DRV(EXYNOS_GEM_CREATE, exynos_drm_gem_create_ioctl,
 			DRM_UNLOCKED | DRM_AUTH),
 	DRM_IOCTL_DEF_DRV(EXYNOS_GEM_MAP_OFFSET,
@@ -266,17 +273,17 @@ static struct drm_driver exynos_drm_driver = {
 	.get_vblank_counter	= drm_vblank_count,
 	.enable_vblank		= exynos_drm_crtc_enable_vblank,
 	.disable_vblank		= exynos_drm_crtc_disable_vblank,
-	.gem_init_object	= exynos_drm_gem_init_object,
 	.gem_free_object	= exynos_drm_gem_free_object,
 	.gem_vm_ops		= &exynos_drm_gem_vm_ops,
 	.dumb_create		= exynos_drm_gem_dumb_create,
 	.dumb_map_offset	= exynos_drm_gem_dumb_map_offset,
-	.dumb_destroy		= exynos_drm_gem_dumb_destroy,
+	.dumb_destroy		= drm_gem_dumb_destroy,
 	.prime_handle_to_fd	= drm_gem_prime_handle_to_fd,
 	.prime_fd_to_handle	= drm_gem_prime_fd_to_handle,
 	.gem_prime_export	= exynos_dmabuf_prime_export,
 	.gem_prime_import	= exynos_dmabuf_prime_import,
 	.ioctls			= exynos_ioctls,
+	.num_ioctls		= ARRAY_SIZE(exynos_ioctls),
 	.fops			= &exynos_drm_driver_fops,
 	.name	= DRIVER_NAME,
 	.desc	= DRIVER_DESC,
@@ -287,8 +294,11 @@ static struct drm_driver exynos_drm_driver = {
 
 static int exynos_drm_platform_probe(struct platform_device *pdev)
 {
-	pdev->dev.coherent_dma_mask = DMA_BIT_MASK(32);
-	exynos_drm_driver.num_ioctls = DRM_ARRAY_SIZE(exynos_ioctls);
+	int ret;
+
+	ret = dma_set_coherent_mask(&pdev->dev, DMA_BIT_MASK(32));
+	if (ret)
+		return ret;
 
 	return drm_platform_init(&exynos_drm_driver, pdev);
 }

@@ -319,8 +319,8 @@ int mwifiex_bss_start(struct mwifiex_private *priv, struct cfg80211_bss *bss,
 		if (bss_desc && bss_desc->ssid.ssid_len &&
 		    (!mwifiex_ssid_cmp(&priv->curr_bss_params.bss_descriptor.
 				       ssid, &bss_desc->ssid))) {
-			kfree(bss_desc);
-			return 0;
+			ret = 0;
+			goto done;
 		}
 
 		/* Exit Adhoc mode first */
@@ -638,8 +638,9 @@ int mwifiex_set_tx_power(struct mwifiex_private *priv,
 		txp_cfg->mode = cpu_to_le32(1);
 		pg_tlv = (struct mwifiex_types_power_group *)
 			 (buf + sizeof(struct host_cmd_ds_txpwr_cfg));
-		pg_tlv->type = TLV_TYPE_POWER_GROUP;
-		pg_tlv->length = 4 * sizeof(struct mwifiex_power_group);
+		pg_tlv->type = cpu_to_le16(TLV_TYPE_POWER_GROUP);
+		pg_tlv->length =
+			cpu_to_le16(4 * sizeof(struct mwifiex_power_group));
 		pg = (struct mwifiex_power_group *)
 		     (buf + sizeof(struct host_cmd_ds_txpwr_cfg)
 		      + sizeof(struct mwifiex_types_power_group));
@@ -797,15 +798,16 @@ static int mwifiex_set_wps_ie(struct mwifiex_private *priv,
 			       u8 *ie_data_ptr, u16 ie_len)
 {
 	if (ie_len) {
+		if (ie_len > MWIFIEX_MAX_VSIE_LEN) {
+			dev_dbg(priv->adapter->dev,
+				"info: failed to copy WPS IE, too big\n");
+			return -1;
+		}
+
 		priv->wps_ie = kzalloc(MWIFIEX_MAX_VSIE_LEN, GFP_KERNEL);
 		if (!priv->wps_ie)
 			return -ENOMEM;
-		if (ie_len > sizeof(priv->wps_ie)) {
-			dev_dbg(priv->adapter->dev,
-				"info: failed to copy WPS IE, too big\n");
-			kfree(priv->wps_ie);
-			return -1;
-		}
+
 		memcpy(priv->wps_ie, ie_data_ptr, ie_len);
 		priv->wps_ie_len = ie_len;
 		dev_dbg(priv->adapter->dev, "cmd: Set wps_ie_len=%d IE=%#x\n",

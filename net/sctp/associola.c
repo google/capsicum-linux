@@ -28,10 +28,7 @@
  *
  * Please send any bug reports or fixes you make to the
  * email address(es):
- *    lksctp developers <lksctp-developers@lists.sourceforge.net>
- *
- * Or submit a bug report through the following website:
- *    http://www.sf.net/projects/lksctp
+ *    lksctp developers <linux-sctp@vger.kernel.org>
  *
  * Written or modified by:
  *    La Monte H.P. Yarroll <piggy@acm.org>
@@ -43,9 +40,6 @@
  *    Daisy Chang	    <daisyc@us.ibm.com>
  *    Ryan Layer	    <rmlayer@us.ibm.com>
  *    Kevin Gao             <kevin.gao@intel.com>
- *
- * Any bugs reported given to us we will try to fix... any fixes shared will
- * be incorporated into the next SCTP release.
  */
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
@@ -160,8 +154,7 @@ static struct sctp_association *sctp_association_init(struct sctp_association *a
 
 	asoc->timeouts[SCTP_EVENT_TIMEOUT_HEARTBEAT] = 0;
 	asoc->timeouts[SCTP_EVENT_TIMEOUT_SACK] = asoc->sackdelay;
-	asoc->timeouts[SCTP_EVENT_TIMEOUT_AUTOCLOSE] =
-		min_t(unsigned long, sp->autoclose, net->sctp.max_autoclose) * HZ;
+	asoc->timeouts[SCTP_EVENT_TIMEOUT_AUTOCLOSE] = sp->autoclose * HZ;
 
 	/* Initializes the timers */
 	for (i = SCTP_EVENT_TIMEOUT_NONE; i < SCTP_NUM_TIMEOUT_TYPES; ++i)
@@ -296,8 +289,6 @@ static struct sctp_association *sctp_association_init(struct sctp_association *a
 	if (asoc->base.sk->sk_family == PF_INET6)
 		asoc->peer.ipv6_address = 1;
 	INIT_LIST_HEAD(&asoc->asocs);
-
-	asoc->autoclose = sp->autoclose;
 
 	asoc->default_stream = sp->default_stream;
 	asoc->default_ppid = sp->default_ppid;
@@ -608,7 +599,7 @@ void sctp_assoc_rm_peer(struct sctp_association *asoc,
 
 		/* Start a T3 timer here in case it wasn't running so
 		 * that these migrated packets have a chance to get
-		 * retrnasmitted.
+		 * retransmitted.
 		 */
 		if (!timer_pending(&active->T3_rtx_timer))
 			if (!mod_timer(&active->T3_rtx_timer,
@@ -671,7 +662,7 @@ struct sctp_transport *sctp_assoc_add_peer(struct sctp_association *asoc,
 	/* Set the path max_retrans.  */
 	peer->pathmaxrxt = asoc->pathmaxrxt;
 
-	/* And the partial failure retrnas threshold */
+	/* And the partial failure retrans threshold */
 	peer->pf_retrans = asoc->pf_retrans;
 
 	/* Initialize the peer's SACK delay timeout based on the
@@ -913,8 +904,8 @@ void sctp_assoc_control_transport(struct sctp_association *asoc,
 		if (!first || t->last_time_heard > first->last_time_heard) {
 			second = first;
 			first = t;
-		}
-		if (!second || t->last_time_heard > second->last_time_heard)
+		} else if (!second ||
+			   t->last_time_heard > second->last_time_heard)
 			second = t;
 	}
 
@@ -935,6 +926,8 @@ void sctp_assoc_control_transport(struct sctp_association *asoc,
 		first = asoc->peer.primary_path;
 	}
 
+	if (!second)
+		second = first;
 	/* If we failed to find a usable transport, just camp on the
 	 * primary, even if it is inactive.
 	 */

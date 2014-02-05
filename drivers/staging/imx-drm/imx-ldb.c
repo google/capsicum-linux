@@ -359,10 +359,8 @@ static int imx_ldb_get_clk(struct imx_ldb *ldb, int chno)
 
 	sprintf(clkname, "di%d_pll", chno);
 	ldb->clk_pll[chno] = devm_clk_get(ldb->dev, clkname);
-	if (IS_ERR(ldb->clk_pll[chno]))
-		return PTR_ERR(ldb->clk_pll[chno]);
 
-	return 0;
+	return PTR_ERR_OR_ZERO(ldb->clk_pll[chno]);
 }
 
 static int imx_ldb_register(struct imx_ldb_channel *imx_ldb_ch)
@@ -421,7 +419,7 @@ static const char *imx_ldb_bit_mappings[] = {
 	[LVDS_BIT_MAP_JEIDA] = "jeida",
 };
 
-const int of_get_data_mapping(struct device_node *np)
+static const int of_get_data_mapping(struct device_node *np)
 {
 	const char *bm;
 	int ret, i;
@@ -466,8 +464,7 @@ static int imx_ldb_probe(struct platform_device *pdev)
 {
 	struct device_node *np = pdev->dev.of_node;
 	const struct of_device_id *of_id =
-			of_match_device(of_match_ptr(imx_ldb_dt_ids),
-					&pdev->dev);
+			of_match_device(imx_ldb_dt_ids, &pdev->dev);
 	struct device_node *child;
 	const u8 *edidp;
 	struct imx_ldb *imx_ldb;
@@ -497,7 +494,7 @@ static int imx_ldb_probe(struct platform_device *pdev)
 		imx_ldb->ldb_ctrl |= LDB_SPLIT_MODE_EN;
 
 	/*
-	 * There are three diferent possible clock mux configurations:
+	 * There are three different possible clock mux configurations:
 	 * i.MX53:  ipu1_di0_sel, ipu1_di1_sel
 	 * i.MX6q:  ipu1_di0_sel, ipu1_di1_sel, ipu2_di0_sel, ipu2_di1_sel
 	 * i.MX6dl: ipu1_di0_sel, ipu1_di1_sel, lcdif_sel
@@ -623,3 +620,4 @@ module_platform_driver(imx_ldb_driver);
 MODULE_DESCRIPTION("i.MX LVDS driver");
 MODULE_AUTHOR("Sascha Hauer, Pengutronix");
 MODULE_LICENSE("GPL");
+MODULE_ALIAS("platform:" DRIVER_NAME);

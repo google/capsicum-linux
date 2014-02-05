@@ -1,5 +1,6 @@
 config SUPERH
 	def_bool y
+	select ARCH_MIGHT_HAVE_PC_PARPORT
 	select EXPERT
 	select CLKDEV_LOOKUP
 	select HAVE_IDE if HAS_IOPORT
@@ -26,7 +27,6 @@ config SUPERH
 	select ARCH_WANT_IPC_PARSE_VERSION
 	select HAVE_SYSCALL_TRACEPOINTS
 	select HAVE_REGS_AND_STACK_ACCESS_API
-	select HAVE_GENERIC_HARDIRQS
 	select MAY_HAVE_SPARSE_IRQ
 	select IRQ_FORCED_THREADING
 	select RTC_LIB
@@ -643,9 +643,9 @@ config KEXEC
 
 	  It is an ongoing process to be certain the hardware in a machine
 	  is properly shutdown, so do not be surprised if this code does not
-	  initially work for you.  It may help to enable device hotplugging
-	  support.  As of this writing the exact hardware interface is
-	  strongly in flux, so no good recommendation can be made.
+	  initially work for you.  As of this writing the exact hardware
+	  interface is strongly in flux, so no good recommendation can be
+	  made.
 
 config CRASH_DUMP
 	bool "kernel crash dumps (EXPERIMENTAL)"
@@ -712,7 +712,6 @@ config CC_STACKPROTECTOR
 config SMP
 	bool "Symmetric multi-processing support"
 	depends on SYS_SUPPORTS_SMP
-	select USE_GENERIC_SMP_HELPERS
 	---help---
 	  This enables support for systems with more than one CPU. If you have
 	  a system with only one CPU, like most personal computers, say N. If

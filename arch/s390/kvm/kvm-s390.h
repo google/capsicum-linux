@@ -24,9 +24,11 @@
 
 typedef int (*intercept_handler_t)(struct kvm_vcpu *vcpu);
 
+/* declare vfacilities extern */
+extern unsigned long *vfacilities;
+
 /* negativ values are error codes, positive values for internal conditions */
-#define SIE_INTERCEPT_RERUNVCPU		(1<<0)
-#define SIE_INTERCEPT_UCONTROL		(1<<1)
+#define SIE_INTERCEPT_UCONTROL		(1<<0)
 int kvm_handle_sie_intercept(struct kvm_vcpu *vcpu);
 
 #define VM_EVENT(d_kvm, d_loglevel, d_string, d_args...)\
@@ -88,8 +90,10 @@ static inline void kvm_s390_get_base_disp_sse(struct kvm_vcpu *vcpu,
 
 static inline void kvm_s390_get_regs_rre(struct kvm_vcpu *vcpu, int *r1, int *r2)
 {
-	*r1 = (vcpu->arch.sie_block->ipb & 0x00f00000) >> 20;
-	*r2 = (vcpu->arch.sie_block->ipb & 0x000f0000) >> 16;
+	if (r1)
+		*r1 = (vcpu->arch.sie_block->ipb & 0x00f00000) >> 20;
+	if (r2)
+		*r2 = (vcpu->arch.sie_block->ipb & 0x000f0000) >> 16;
 }
 
 static inline u64 kvm_s390_get_base_disp_rsy(struct kvm_vcpu *vcpu)
@@ -110,6 +114,13 @@ static inline u64 kvm_s390_get_base_disp_rs(struct kvm_vcpu *vcpu)
 	u32 disp2 = ((vcpu->arch.sie_block->ipb & 0x0fff0000) >> 16);
 
 	return (base2 ? vcpu->run->s.regs.gprs[base2] : 0) + disp2;
+}
+
+/* Set the condition code in the guest program status word */
+static inline void kvm_s390_set_psw_cc(struct kvm_vcpu *vcpu, unsigned long cc)
+{
+	vcpu->arch.sie_block->gpsw.mask &= ~(3UL << 44);
+	vcpu->arch.sie_block->gpsw.mask |= cc << 44;
 }
 
 int kvm_s390_handle_wait(struct kvm_vcpu *vcpu);

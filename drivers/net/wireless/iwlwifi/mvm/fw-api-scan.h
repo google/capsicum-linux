@@ -137,6 +137,8 @@ struct iwl_ssid_ie {
  *@SCAN_FLAGS_DELAYED_SCAN_LOWBAND:
  *@SCAN_FLAGS_DELAYED_SCAN_HIGHBAND:
  *@SCAN_FLAGS_FRAGMENTED_SCAN:
+ *@SCAN_FLAGS_PASSIVE2ACTIVE: use active scan on channels that was active
+ *	in the past hour, even if they are marked as passive.
  */
 enum iwl_scan_flags {
 	SCAN_FLAGS_PERIODIC_SCAN		= BIT(0),
@@ -144,6 +146,7 @@ enum iwl_scan_flags {
 	SCAN_FLAGS_DELAYED_SCAN_LOWBAND		= BIT(2),
 	SCAN_FLAGS_DELAYED_SCAN_HIGHBAND	= BIT(3),
 	SCAN_FLAGS_FRAGMENTED_SCAN		= BIT(4),
+	SCAN_FLAGS_PASSIVE2ACTIVE		= BIT(5),
 };
 
 /**
@@ -178,7 +181,7 @@ enum iwl_scan_type {
  * @quiet_time: in msecs, dwell this time for active scan on quiet channels
  * @quiet_plcp_th: quiet PLCP threshold (channel is quiet if less than
  *	this number of packets were received (typically 1)
- * @passive2active: is auto switching from passive to active allowed (0 or 1)
+ * @passive2active: is auto switching from passive to active during scan allowed
  * @rxchain_sel_flags: RXON_RX_CHAIN_*
  * @max_out_time: in usecs, max out of serving channel time
  * @suspend_time: how long to pause scan when returning to service channel:
@@ -353,6 +356,7 @@ struct iwl_scan_complete_notif {
 /* scan offload */
 #define IWL_MAX_SCAN_CHANNELS		40
 #define IWL_SCAN_MAX_BLACKLIST_LEN	64
+#define IWL_SCAN_SHORT_BLACKLIST_LEN	16
 #define IWL_SCAN_MAX_PROFILES		11
 #define SCAN_OFFLOAD_PROBE_REQ_SIZE	512
 
@@ -364,6 +368,12 @@ struct iwl_scan_complete_notif {
 
 #define IWL_FULL_SCAN_MULTIPLIER 5
 #define IWL_FAST_SCHED_SCAN_ITERATIONS 3
+
+enum scan_framework_client {
+	SCAN_CLIENT_SCHED_SCAN		= BIT(0),
+	SCAN_CLIENT_NETDETECT		= BIT(1),
+	SCAN_CLIENT_ASSET_TRACKING	= BIT(2),
+};
 
 /**
  * struct iwl_scan_offload_cmd - SCAN_REQUEST_FIXED_PART_API_S_VER_6
@@ -446,11 +456,12 @@ struct iwl_scan_offload_cfg {
  * iwl_scan_offload_blacklist - SCAN_OFFLOAD_BLACKLIST_S
  * @ssid:		MAC address to filter out
  * @reported_rssi:	AP rssi reported to the host
+ * @client_bitmap: clients ignore this entry  - enum scan_framework_client
  */
 struct iwl_scan_offload_blacklist {
 	u8 ssid[ETH_ALEN];
 	u8 reported_rssi;
-	u8 reserved;
+	u8 client_bitmap;
 } __packed;
 
 enum iwl_scan_offload_network_type {
@@ -472,6 +483,7 @@ enum iwl_scan_offload_band_selection {
  * @aut_alg:		authentication olgorithm to match - bitmap
  * @network_type:	enum iwl_scan_offload_network_type
  * @band_selection:	enum iwl_scan_offload_band_selection
+ * @client_bitmap:	clients waiting for match - enum scan_framework_client
  */
 struct iwl_scan_offload_profile {
 	u8 ssid_index;
@@ -479,7 +491,8 @@ struct iwl_scan_offload_profile {
 	u8 auth_alg;
 	u8 network_type;
 	u8 band_selection;
-	u8 reserved[3];
+	u8 client_bitmap;
+	u8 reserved[2];
 } __packed;
 
 /**
@@ -488,13 +501,18 @@ struct iwl_scan_offload_profile {
  * @profiles:		profiles to search for match
  * @blacklist_len:	length of blacklist
  * @num_profiles:	num of profiles in the list
+ * @match_notify:	clients waiting for match found notification
+ * @pass_match:		clients waiting for the results
+ * @active_clients:	active clients bitmap - enum scan_framework_client
  */
 struct iwl_scan_offload_profile_cfg {
-	struct iwl_scan_offload_blacklist blacklist[IWL_SCAN_MAX_BLACKLIST_LEN];
 	struct iwl_scan_offload_profile profiles[IWL_SCAN_MAX_PROFILES];
 	u8 blacklist_len;
 	u8 num_profiles;
-	u8 reserved[2];
+	u8 match_notify;
+	u8 pass_match;
+	u8 active_clients;
+	u8 reserved[3];
 } __packed;
 
 /**
@@ -556,5 +574,16 @@ struct iwl_scan_offload_complete {
 	u8 status;
 	u8 reserved;
 } __packed;
+
+/**
+ * iwl_sched_scan_results - SCAN_OFFLOAD_MATCH_FOUND_NTF_API_S_VER_1
+ * @ssid_bitmap:	SSIDs indexes found in this iteration
+ * @client_bitmap:	clients that are active and wait for this notification
+ */
+struct iwl_sched_scan_results {
+	__le16 ssid_bitmap;
+	u8 client_bitmap;
+	u8 reserved;
+};
 
 #endif

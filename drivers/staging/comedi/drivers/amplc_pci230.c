@@ -184,6 +184,7 @@ Support for PCI230+/260+, more triggered scan functionality, and workarounds
 for (or detection of) various hardware problems added by Ian Abbott.
 */
 
+#include <linux/module.h>
 #include <linux/pci.h>
 #include <linux/delay.h>
 #include <linux/interrupt.h>
@@ -572,14 +573,14 @@ static const struct comedi_lrange pci230_ao_range = { 2, {
 /* PCI230 daccon bipolar flag for each analogue output range. */
 static const unsigned char pci230_ao_bipolar[2] = { 0, 1 };
 
-static short pci230_ai_read(struct comedi_device *dev)
+static unsigned short pci230_ai_read(struct comedi_device *dev)
 {
 	const struct pci230_board *thisboard = comedi_board(dev);
 	struct pci230_private *devpriv = dev->private;
-	short data;
+	unsigned short data;
 
 	/* Read sample. */
-	data = (short)inw(dev->iobase + PCI230_ADCDATA);
+	data = inw(dev->iobase + PCI230_ADCDATA);
 	/* PCI230 is 12 bit - stored in upper bits of 16 bit register (lower
 	 * four bits reserved for expansion). */
 	/* PCI230+ is 16 bit AI. */
@@ -594,7 +595,7 @@ static short pci230_ai_read(struct comedi_device *dev)
 }
 
 static inline unsigned short pci230_ao_mangle_datum(struct comedi_device *dev,
-						    short datum)
+						    unsigned short datum)
 {
 	const struct pci230_board *thisboard = comedi_board(dev);
 	struct pci230_private *devpriv = dev->private;
@@ -608,11 +609,12 @@ static inline unsigned short pci230_ao_mangle_datum(struct comedi_device *dev,
 	 * four bits reserved for expansion). */
 	/* PCI230+ is also 12 bit AO. */
 	datum <<= (16 - thisboard->ao_bits);
-	return (unsigned short)datum;
+	return datum;
 }
 
 static inline void pci230_ao_write_nofifo(struct comedi_device *dev,
-					  short datum, unsigned int chan)
+					  unsigned short datum,
+					  unsigned int chan)
 {
 	struct pci230_private *devpriv = dev->private;
 
@@ -626,8 +628,8 @@ static inline void pci230_ao_write_nofifo(struct comedi_device *dev,
 								PCI230_DACOUT2));
 }
 
-static inline void pci230_ao_write_fifo(struct comedi_device *dev, short datum,
-					unsigned int chan)
+static inline void pci230_ao_write_fifo(struct comedi_device *dev,
+					unsigned short datum, unsigned int chan)
 {
 	struct pci230_private *devpriv = dev->private;
 
@@ -1164,7 +1166,7 @@ static void pci230_handle_ao_nofifo(struct comedi_device *dev,
 				    struct comedi_subdevice *s)
 {
 	struct pci230_private *devpriv = dev->private;
-	short data;
+	unsigned short data;
 	int i, ret;
 	struct comedi_async *async = s->async;
 	struct comedi_cmd *cmd = &async->cmd;
@@ -1257,7 +1259,7 @@ static int pci230_handle_ao_fifo(struct comedi_device *dev,
 		/* Process scans. */
 		for (n = 0; n < num_scans; n++) {
 			for (i = 0; i < cmd->chanlist_len; i++) {
-				short datum;
+				unsigned short datum;
 
 				comedi_buf_get(async, &datum);
 				pci230_ao_write_fifo(dev, datum,
@@ -2615,10 +2617,9 @@ static int pci230_alloc_private(struct comedi_device *dev)
 {
 	struct pci230_private *devpriv;
 
-	devpriv = kzalloc(sizeof(*devpriv), GFP_KERNEL);
+	devpriv = comedi_alloc_devpriv(dev, sizeof(*devpriv));
 	if (!devpriv)
 		return -ENOMEM;
-	dev->private = devpriv;
 
 	spin_lock_init(&devpriv->isr_spinlock);
 	spin_lock_init(&devpriv->res_spinlock);

@@ -19,6 +19,7 @@
 #include <sound/tlv.h>
 
 #include <linux/mfd/arizona/core.h>
+#include <linux/mfd/arizona/gpio.h>
 #include <linux/mfd/arizona/registers.h>
 
 #include "arizona.h"
@@ -199,9 +200,16 @@ int arizona_init_spk(struct snd_soc_codec *codec)
 	if (ret != 0)
 		return ret;
 
-	ret = snd_soc_dapm_new_controls(&codec->dapm, &arizona_spkr, 1);
-	if (ret != 0)
-		return ret;
+	switch (arizona->type) {
+	case WM8997:
+		break;
+	default:
+		ret = snd_soc_dapm_new_controls(&codec->dapm,
+						&arizona_spkr, 1);
+		if (ret != 0)
+			return ret;
+		break;
+	}
 
 	ret = arizona_request_irq(arizona, ARIZONA_IRQ_SPK_SHUTDOWN_WARN,
 				  "Thermal warning", arizona_thermal_warn,
@@ -222,6 +230,41 @@ int arizona_init_spk(struct snd_soc_codec *codec)
 	return 0;
 }
 EXPORT_SYMBOL_GPL(arizona_init_spk);
+
+int arizona_init_gpio(struct snd_soc_codec *codec)
+{
+	struct arizona_priv *priv = snd_soc_codec_get_drvdata(codec);
+	struct arizona *arizona = priv->arizona;
+	int i;
+
+	switch (arizona->type) {
+	case WM5110:
+		snd_soc_dapm_disable_pin(&codec->dapm, "DRC2 Signal Activity");
+		break;
+	default:
+		break;
+	}
+
+	snd_soc_dapm_disable_pin(&codec->dapm, "DRC1 Signal Activity");
+
+	for (i = 0; i < ARRAY_SIZE(arizona->pdata.gpio_defaults); i++) {
+		switch (arizona->pdata.gpio_defaults[i] & ARIZONA_GPN_FN_MASK) {
+		case ARIZONA_GP_FN_DRC1_SIGNAL_DETECT:
+			snd_soc_dapm_enable_pin(&codec->dapm,
+						"DRC1 Signal Activity");
+			break;
+		case ARIZONA_GP_FN_DRC2_SIGNAL_DETECT:
+			snd_soc_dapm_enable_pin(&codec->dapm,
+						"DRC2 Signal Activity");
+			break;
+		default:
+			break;
+		}
+	}
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(arizona_init_gpio);
 
 const char *arizona_mixer_texts[ARIZONA_NUM_MIXER_INPUTS] = {
 	"None",
@@ -516,6 +559,26 @@ const struct soc_enum arizona_ng_hold =
 	SOC_ENUM_SINGLE(ARIZONA_NOISE_GATE_CONTROL, ARIZONA_NGATE_HOLD_SHIFT,
 			4, arizona_ng_hold_text);
 EXPORT_SYMBOL_GPL(arizona_ng_hold);
+
+static const char * const arizona_in_dmic_osr_text[] = {
+	"1.536MHz", "3.072MHz", "6.144MHz",
+};
+
+const struct soc_enum arizona_in_dmic_osr[] = {
+	SOC_ENUM_SINGLE(ARIZONA_IN1L_CONTROL, ARIZONA_IN1_OSR_SHIFT,
+			ARRAY_SIZE(arizona_in_dmic_osr_text),
+			arizona_in_dmic_osr_text),
+	SOC_ENUM_SINGLE(ARIZONA_IN2L_CONTROL, ARIZONA_IN2_OSR_SHIFT,
+			ARRAY_SIZE(arizona_in_dmic_osr_text),
+			arizona_in_dmic_osr_text),
+	SOC_ENUM_SINGLE(ARIZONA_IN3L_CONTROL, ARIZONA_IN3_OSR_SHIFT,
+			ARRAY_SIZE(arizona_in_dmic_osr_text),
+			arizona_in_dmic_osr_text),
+	SOC_ENUM_SINGLE(ARIZONA_IN4L_CONTROL, ARIZONA_IN4_OSR_SHIFT,
+			ARRAY_SIZE(arizona_in_dmic_osr_text),
+			arizona_in_dmic_osr_text),
+};
+EXPORT_SYMBOL_GPL(arizona_in_dmic_osr);
 
 static void arizona_in_set_vu(struct snd_soc_codec *codec, int ena)
 {
@@ -1414,21 +1477,25 @@ static void arizona_enable_fll(struct arizona_fll *fll,
 {
 	struct arizona *arizona = fll->arizona;
 	int ret;
+	bool use_sync = false;
 
 	/*
 	 * If we have both REFCLK and SYNCCLK then enable both,
 	 * otherwise apply the SYNCCLK settings to REFCLK.
 	 */
-	if (fll->ref_src >= 0 && fll->ref_src != fll->sync_src) {
+	if (fll->ref_src >= 0 && fll->ref_freq &&
+	    fll->ref_src != fll->sync_src) {
 		regmap_update_bits(arizona->regmap, fll->base + 5,
 				   ARIZONA_FLL1_OUTDIV_MASK,
 				   ref->outdiv << ARIZONA_FLL1_OUTDIV_SHIFT);
 
 		arizona_apply_fll(arizona, fll->base, ref, fll->ref_src,
 				  false);
-		if (fll->sync_src >= 0)
+		if (fll->sync_src >= 0) {
 			arizona_apply_fll(arizona, fll->base + 0x10, sync,
 					  fll->sync_src, true);
+			use_sync = true;
+		}
 	} else if (fll->sync_src >= 0) {
 		regmap_update_bits(arizona->regmap, fll->base + 5,
 				   ARIZONA_FLL1_OUTDIV_MASK,
@@ -1448,7 +1515,7 @@ static void arizona_enable_fll(struct arizona_fll *fll,
 	 * Increase the bandwidth if we're not using a low frequency
 	 * sync source.
 	 */
-	if (fll->sync_src >= 0 && fll->sync_freq > 100000)
+	if (use_sync && fll->sync_freq > 100000)
 		regmap_update_bits(arizona->regmap, fll->base + 0x17,
 				   ARIZONA_FLL1_SYNC_BW, 0);
 	else
@@ -1462,9 +1529,10 @@ static void arizona_enable_fll(struct arizona_fll *fll,
 	try_wait_for_completion(&fll->ok);
 
 	regmap_update_bits(arizona->regmap, fll->base + 1,
+			   ARIZONA_FLL1_FREERUN, 0);
+	regmap_update_bits(arizona->regmap, fll->base + 1,
 			   ARIZONA_FLL1_ENA, ARIZONA_FLL1_ENA);
-	if (fll->ref_src >= 0 && fll->sync_src >= 0 &&
-	    fll->ref_src != fll->sync_src)
+	if (use_sync)
 		regmap_update_bits(arizona->regmap, fll->base + 0x11,
 				   ARIZONA_FLL1_SYNC_ENA,
 				   ARIZONA_FLL1_SYNC_ENA);
@@ -1480,6 +1548,8 @@ static void arizona_disable_fll(struct arizona_fll *fll)
 	struct arizona *arizona = fll->arizona;
 	bool change;
 
+	regmap_update_bits(arizona->regmap, fll->base + 1,
+			   ARIZONA_FLL1_FREERUN, ARIZONA_FLL1_FREERUN);
 	regmap_update_bits_check(arizona->regmap, fll->base + 1,
 				 ARIZONA_FLL1_ENA, 0, &change);
 	regmap_update_bits(arizona->regmap, fll->base + 0x11,
@@ -1498,10 +1568,12 @@ int arizona_set_fll_refclk(struct arizona_fll *fll, int source,
 	if (fll->ref_src == source && fll->ref_freq == Fref)
 		return 0;
 
-	if (fll->fout && Fref > 0) {
-		ret = arizona_calc_fll(fll, &ref, Fref, fll->fout);
-		if (ret != 0)
-			return ret;
+	if (fll->fout) {
+		if (Fref > 0) {
+			ret = arizona_calc_fll(fll, &ref, Fref, fll->fout);
+			if (ret != 0)
+				return ret;
+		}
 
 		if (fll->sync_src >= 0) {
 			ret = arizona_calc_fll(fll, &sync, fll->sync_freq,

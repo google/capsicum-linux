@@ -222,7 +222,8 @@ static u32 __mesh_plink_deactivate(struct sta_info *sta)
 	mesh_path_flush_by_nexthop(sta);
 
 	ieee80211_mps_sta_status_update(sta);
-	changed |= ieee80211_mps_local_status_update(sdata);
+	changed |= ieee80211_mps_set_sta_local_pm(sta,
+			NL80211_MESH_POWER_UNKNOWN);
 
 	return changed;
 }
@@ -379,7 +380,7 @@ static void mesh_sta_info_init(struct ieee80211_sub_if_data *sdata,
 	u32 rates, basic_rates = 0, changed = 0;
 
 	sband = local->hw.wiphy->bands[band];
-	rates = ieee80211_sta_get_rates(local, elems, band, &basic_rates);
+	rates = ieee80211_sta_get_rates(sdata, elems, band, &basic_rates);
 
 	spin_lock_bh(&sta->lock);
 	sta->last_rx = jiffies;

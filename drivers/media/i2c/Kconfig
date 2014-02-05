@@ -206,6 +206,18 @@ config VIDEO_ADV7604
 	  To compile this driver as a module, choose M here: the
 	  module will be called adv7604.
 
+config VIDEO_ADV7842
+	tristate "Analog Devices ADV7842 decoder"
+	depends on VIDEO_V4L2 && I2C && VIDEO_V4L2_SUBDEV_API
+	---help---
+	  Support for the Analog Devices ADV7842 video decoder.
+
+	  This is a Analog Devices Component/Graphics/SD Digitizer
+	  with 2:1 Multiplexed HDMI Receiver.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called adv7842.
+
 config VIDEO_BT819
 	tristate "BT819A VideoStream decoder"
 	depends on VIDEO_V4L2 && I2C
@@ -417,6 +429,17 @@ config VIDEO_ADV7393
 	  To compile this driver as a module, choose M here: the
 	  module will be called adv7393.
 
+config VIDEO_ADV7511
+	tristate "Analog Devices ADV7511 encoder"
+	depends on VIDEO_V4L2 && I2C && VIDEO_V4L2_SUBDEV_API
+	---help---
+	  Support for the Analog Devices ADV7511 video encoder.
+
+	  This is a Analog Devices HDMI transmitter.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called adv7511.
+
 config VIDEO_AD9389B
 	tristate "Analog Devices AD9389B encoder"
 	depends on VIDEO_V4L2 && I2C && VIDEO_V4L2_SUBDEV_API
@@ -598,6 +621,15 @@ config VIDEO_AS3645A
 	  This is a driver for the AS3645A and LM3555 flash controllers. It has
 	  build in control for flash, torch and indicator LEDs.
 
+config VIDEO_LM3560
+	tristate "LM3560 dual flash driver support"
+	depends on I2C && VIDEO_V4L2 && MEDIA_CONTROLLER
+	depends on MEDIA_CAMERA_SUPPORT
+	select REGMAP_I2C
+	---help---
+	  This is a driver for the lm3560 dual flash controllers. It controls
+	  flash, torch LEDs.
+
 comment "Video improvement chips"
 
 config VIDEO_UPD64031A
@@ -623,7 +655,7 @@ config VIDEO_UPD64083
 	  To compile this driver as a module, choose M here: the
 	  module will be called upd64083.
 
-comment "Miscelaneous helper chips"
+comment "Miscellaneous helper chips"
 
 config VIDEO_THS7303
 	tristate "THS7303/53 Video Amplifier"

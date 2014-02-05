@@ -1205,7 +1205,7 @@ repeat:
 						gfp & GFP_RECLAIM_MASK);
 		if (error)
 			goto decused;
-		error = radix_tree_preload(gfp & GFP_RECLAIM_MASK);
+		error = radix_tree_maybe_preload(gfp & GFP_RECLAIM_MASK);
 		if (!error) {
 			error = shmem_add_to_page_cache(page, mapping, index,
 							gfp, NULL);
@@ -2615,13 +2615,15 @@ int shmem_fill_super(struct super_block *sb, void *data, int silent)
 	 * tmpfs instance, limiting inodes to one per page of lowmem;
 	 * but the internal instance is left unlimited.
 	 */
-	if (!(sb->s_flags & MS_NOUSER)) {
+	if (!(sb->s_flags & MS_KERNMOUNT)) {
 		sbinfo->max_blocks = shmem_default_max_blocks();
 		sbinfo->max_inodes = shmem_default_max_inodes();
 		if (shmem_parse_options(data, sbinfo, false)) {
 			err = -EINVAL;
 			goto failed;
 		}
+	} else {
+		sb->s_flags |= MS_NOUSER;
 	}
 	sb->s_export_op = &shmem_export_ops;
 	sb->s_flags |= MS_NOSEC;
@@ -2817,6 +2819,10 @@ int __init shmem_init(void)
 {
 	int error;
 
+	/* If rootfs called this, don't re-init */
+	if (shmem_inode_cachep)
+		return 0;
+
 	error = bdi_init(&shmem_backing_dev_info);
 	if (error)
 		goto out4;
@@ -2831,8 +2837,7 @@ int __init shmem_init(void)
 		goto out2;
 	}
 
-	shm_mnt = vfs_kern_mount(&shmem_fs_type, MS_NOUSER,
-				 shmem_fs_type.name, NULL);
+	shm_mnt = kern_mount(&shmem_fs_type);
 	if (IS_ERR(shm_mnt)) {
 		error = PTR_ERR(shm_mnt);
 		printk(KERN_ERR "Could not kern_mount tmpfs\n");
@@ -2913,13 +2918,8 @@ static struct dentry_operations anon_ops = {
 	.d_dname = simple_dname
 };
 
-/**
- * shmem_file_setup - get an unlinked file living in tmpfs
- * @name: name for dentry (to be seen in /proc/<pid>/maps
- * @size: size to be set for the file
- * @flags: VM_NORESERVE suppresses pre-accounting of the entire object size
- */
-struct file *shmem_file_setup(const char *name, loff_t size, unsigned long flags)
+static struct file *__shmem_file_setup(const char *name, loff_t size,
+				       unsigned long flags, unsigned int i_flags)
 {
 	struct file *res;
 	struct inode *inode;
@@ -2952,6 +2952,7 @@ struct file *shmem_file_setup(const char *name, loff_t size, unsigned long flags
 	if (!inode)
 		goto put_dentry;
 
+	inode->i_flags |= i_flags;
 	d_instantiate(path.dentry, inode);
 	inode->i_size = size;
 	clear_nlink(inode);	/* It is unlinked */
@@ -2971,6 +2972,32 @@ put_dentry:
 put_memory:
 	shmem_unacct_size(flags, size);
 	return res;
+}
+
+/**
+ * shmem_kernel_file_setup - get an unlinked file living in tmpfs which must be
+ * 	kernel internal.  There will be NO LSM permission checks against the
+ * 	underlying inode.  So users of this interface must do LSM checks at a
+ * 	higher layer.  The one user is the big_key implementation.  LSM checks
+ * 	are provided at the key level rather than the inode level.
+ * @name: name for dentry (to be seen in /proc/<pid>/maps
+ * @size: size to be set for the file
+ * @flags: VM_NORESERVE suppresses pre-accounting of the entire object size
+ */
+struct file *shmem_kernel_file_setup(const char *name, loff_t size, unsigned long flags)
+{
+	return __shmem_file_setup(name, size, flags, S_PRIVATE);
+}
+
+/**
+ * shmem_file_setup - get an unlinked file living in tmpfs
+ * @name: name for dentry (to be seen in /proc/<pid>/maps
+ * @size: size to be set for the file
+ * @flags: VM_NORESERVE suppresses pre-accounting of the entire object size
+ */
+struct file *shmem_file_setup(const char *name, loff_t size, unsigned long flags)
+{
+	return __shmem_file_setup(name, size, flags, 0);
 }
 EXPORT_SYMBOL_GPL(shmem_file_setup);
 

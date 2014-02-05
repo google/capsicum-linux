@@ -284,7 +284,7 @@ config AUDIT
 
 config AUDITSYSCALL
 	bool "Enable system-call auditing support"
-	depends on AUDIT && (X86 || PPC || S390 || IA64 || UML || SPARC64 || SUPERH || (ARM && AEABI && !OABI_COMPAT))
+	depends on AUDIT && (X86 || PARISC || PPC || S390 || IA64 || UML || SPARC64 || SUPERH || (ARM && AEABI && !OABI_COMPAT))
 	default y if SECURITY_SELINUX
 	help
 	  Enable low-overhead system-call auditing infrastructure that
@@ -300,20 +300,6 @@ config AUDIT_TREE
 	def_bool y
 	depends on AUDITSYSCALL
 	select FSNOTIFY
-
-config AUDIT_LOGINUID_IMMUTABLE
-	bool "Make audit loginuid immutable"
-	depends on AUDIT
-	help
-	  The config option toggles if a task setting its loginuid requires
-	  CAP_SYS_AUDITCONTROL or if that task should require no special permissions
-	  but should instead only allow setting its loginuid if it was never
-	  previously set.  On systems which use systemd or a similar central
-	  process to restart login services this should be set to true.  On older
-	  systems in which an admin would typically have to directly stop and
-	  start processes this should be set to false.  Setting this to true allows
-	  one to drop potentially dangerous capabilites from the login tasks,
-	  but may not be backwards compatible with older init systems.
 
 source "kernel/irq/Kconfig"
 source "kernel/time/Kconfig"
@@ -354,7 +340,8 @@ config VIRT_CPU_ACCOUNTING_NATIVE
 
 config VIRT_CPU_ACCOUNTING_GEN
 	bool "Full dynticks CPU time accounting"
-	depends on HAVE_CONTEXT_TRACKING && 64BIT
+	depends on HAVE_CONTEXT_TRACKING
+	depends on HAVE_VIRT_CPU_ACCOUNTING_GEN
 	select VIRT_CPU_ACCOUNTING
 	select CONTEXT_TRACKING
 	help
@@ -480,6 +467,7 @@ config TREE_RCU
 config TREE_PREEMPT_RCU
 	bool "Preemptible tree-based hierarchical RCU"
 	depends on PREEMPT
+	select IRQ_WORK
 	help
 	  This option selects the RCU implementation that is
 	  designed for very large SMP systems with hundreds or
@@ -537,13 +525,29 @@ config RCU_USER_QS
 config CONTEXT_TRACKING_FORCE
 	bool "Force context tracking"
 	depends on CONTEXT_TRACKING
-	default CONTEXT_TRACKING
+	default y if !NO_HZ_FULL
 	help
-	  Probe on user/kernel boundaries by default in order to
-	  test the features that rely on it such as userspace RCU extended
-	  quiescent states.
-	  This test is there for debugging until we have a real user like the
-	  full dynticks mode.
+	  The major pre-requirement for full dynticks to work is to
+	  support the context tracking subsystem. But there are also
+	  other dependencies to provide in order to make the full
+	  dynticks working.
+
+	  This option stands for testing when an arch implements the
+	  context tracking backend but doesn't yet fullfill all the
+	  requirements to make the full dynticks feature working.
+	  Without the full dynticks, there is no way to test the support
+	  for context tracking and the subsystems that rely on it: RCU
+	  userspace extended quiescent state and tickless cputime
+	  accounting. This option copes with the absence of the full
+	  dynticks subsystem by forcing the context tracking on all
+	  CPUs in the system.
+
+	  Say Y only if you're working on the developpement of an
+	  architecture backend for the context tracking.
+
+	  Say N otherwise, this option brings an overhead that you
+	  don't want in production.
+
 
 config RCU_FANOUT
 	int "Tree-based hierarchical RCU fanout value"
@@ -815,6 +819,12 @@ config GENERIC_SCHED_CLOCK
 config ARCH_SUPPORTS_NUMA_BALANCING
 	bool
 
+#
+# For architectures that know their GCC __int128 support is sound
+#
+config ARCH_SUPPORTS_INT128
+	bool
+
 # For architectures that (ab)use NUMA to represent different memory regions
 # all cpu-local but of different latencies, such as SuperH.
 #
@@ -837,7 +847,7 @@ config NUMA_BALANCING_DEFAULT_ENABLED
 	default y
 	depends on NUMA_BALANCING
 	help
-	  If set, autonumic NUMA balancing will be enabled if running on a NUMA
+	  If set, automatic NUMA balancing will be enabled if running on a NUMA
 	  machine.
 
 config NUMA_BALANCING
@@ -848,7 +858,7 @@ config NUMA_BALANCING
 	help
 	  This option adds support for automatic NUMA aware memory/task placement.
 	  The mechanism is quite primitive and is based on migrating memory when
-	  it is references to the node the task is running on.
+	  it has references to the node the task is running on.
 
 	  This system will be inactive on UMA systems.
 
@@ -1116,7 +1126,6 @@ config IPC_NS
 
 config USER_NS
 	bool "User namespace"
-	depends on UIDGID_CONVERTED
 	select UIDGID_STRICT_TYPE_CHECKS
 
 	default n
@@ -1150,20 +1159,8 @@ config NET_NS
 
 endif # NAMESPACES
 
-config UIDGID_CONVERTED
-	# True if all of the selected software conmponents are known
-	# to have uid_t and gid_t converted to kuid_t and kgid_t
-	# where appropriate and are otherwise safe to use with
-	# the user namespace.
-	bool
-	default y
-
-	# Filesystems
-	depends on XFS_FS = n
-
 config UIDGID_STRICT_TYPE_CHECKS
 	bool "Require conversions between uid/gids and their internal representation"
-	depends on UIDGID_CONVERTED
 	default n
 	help
 	 While the nececessary conversions are being added to all subsystems this option allows
@@ -1608,7 +1605,7 @@ endchoice
 
 config SLUB_CPU_PARTIAL
 	default y
-	depends on SLUB
+	depends on SLUB && SMP
 	bool "SLUB per cpu partial cache"
 	help
 	  Per cpu partial caches accellerate objects allocation and freeing
@@ -1674,8 +1671,21 @@ config BASE_SMALL
 	default 0 if BASE_FULL
 	default 1 if !BASE_FULL
 
+config SYSTEM_TRUSTED_KEYRING
+	bool "Provide system-wide ring of trusted keys"
+	depends on KEYS
+	help
+	  Provide a system keyring to which trusted keys can be added.  Keys in
+	  the keyring are considered to be trusted.  Keys may be added at will
+	  by the kernel from compiled-in data and from hardware key stores, but
+	  userspace may only add extra keys if those keys can be verified by
+	  keys already in the keyring.
+
+	  Keys in this keyring are used by module signature checking.
+
 menuconfig MODULES
 	bool "Enable loadable module support"
+	option modules
 	help
 	  Kernel modules are small pieces of compiled code which can
 	  be inserted in the running kernel, rather than being
@@ -1746,6 +1756,7 @@ config MODULE_SRCVERSION_ALL
 config MODULE_SIG
 	bool "Module signature verification"
 	depends on MODULES
+	select SYSTEM_TRUSTED_KEYRING
 	select KEYS
 	select CRYPTO
 	select ASYMMETRIC_KEY_TYPE

@@ -92,6 +92,7 @@ static void intel_lvds_get_config(struct intel_encoder *encoder,
 	struct drm_device *dev = encoder->base.dev;
 	struct drm_i915_private *dev_priv = dev->dev_private;
 	u32 lvds_reg, tmp, flags = 0;
+	int dotclock;
 
 	if (HAS_PCH_SPLIT(dev))
 		lvds_reg = PCH_LVDS;
@@ -116,22 +117,37 @@ static void intel_lvds_get_config(struct intel_encoder *encoder,
 
 		pipe_config->gmch_pfit.control |= tmp & PANEL_8TO6_DITHER_ENABLE;
 	}
+
+	dotclock = pipe_config->port_clock;
+
+	if (HAS_PCH_SPLIT(dev_priv->dev))
+		ironlake_check_encoder_dotclock(pipe_config, dotclock);
+
+	pipe_config->adjusted_mode.crtc_clock = dotclock;
 }
 
 /* The LVDS pin pair needs to be on before the DPLLs are enabled.
  * This is an exception to the general rule that mode_set doesn't turn
  * things on.
  */
-static void intel_pre_pll_enable_lvds(struct intel_encoder *encoder)
+static void intel_pre_enable_lvds(struct intel_encoder *encoder)
 {
 	struct intel_lvds_encoder *lvds_encoder = to_lvds_encoder(&encoder->base);
 	struct drm_device *dev = encoder->base.dev;
 	struct drm_i915_private *dev_priv = dev->dev_private;
-	struct intel_crtc *intel_crtc = to_intel_crtc(encoder->base.crtc);
-	struct drm_display_mode *fixed_mode =
-		lvds_encoder->attached_connector->base.panel.fixed_mode;
-	int pipe = intel_crtc->pipe;
+	struct intel_crtc *crtc = to_intel_crtc(encoder->base.crtc);
+	const struct drm_display_mode *adjusted_mode =
+		&crtc->config.adjusted_mode;
+	int pipe = crtc->pipe;
 	u32 temp;
+
+	if (HAS_PCH_SPLIT(dev)) {
+		assert_fdi_rx_pll_disabled(dev_priv, pipe);
+		assert_shared_dpll_disabled(dev_priv,
+					    intel_crtc_to_shared_dpll(crtc));
+	} else {
+		assert_pll_disabled(dev_priv, pipe);
+	}
 
 	temp = I915_READ(lvds_encoder->reg);
 	temp |= LVDS_PORT_EN | LVDS_A0A2_CLKA_POWER_UP;
@@ -149,7 +165,7 @@ static void intel_pre_pll_enable_lvds(struct intel_encoder *encoder)
 
 	/* set the corresponsding LVDS_BORDER bit */
 	temp &= ~LVDS_BORDER_ENABLE;
-	temp |= intel_crtc->config.gmch_pfit.lvds_border_bits;
+	temp |= crtc->config.gmch_pfit.lvds_border_bits;
 	/* Set the B0-B3 data pairs corresponding to whether we're going to
 	 * set the DPLLs for dual-channel mode or not.
 	 */
@@ -169,16 +185,15 @@ static void intel_pre_pll_enable_lvds(struct intel_encoder *encoder)
 	if (INTEL_INFO(dev)->gen == 4) {
 		/* Bspec wording suggests that LVDS port dithering only exists
 		 * for 18bpp panels. */
-		if (intel_crtc->config.dither &&
-		    intel_crtc->config.pipe_bpp == 18)
+		if (crtc->config.dither && crtc->config.pipe_bpp == 18)
 			temp |= LVDS_ENABLE_DITHER;
 		else
 			temp &= ~LVDS_ENABLE_DITHER;
 	}
 	temp &= ~(LVDS_HSYNC_POLARITY | LVDS_VSYNC_POLARITY);
-	if (fixed_mode->flags & DRM_MODE_FLAG_NHSYNC)
+	if (adjusted_mode->flags & DRM_MODE_FLAG_NHSYNC)
 		temp |= LVDS_HSYNC_POLARITY;
-	if (fixed_mode->flags & DRM_MODE_FLAG_NVSYNC)
+	if (adjusted_mode->flags & DRM_MODE_FLAG_NVSYNC)
 		temp |= LVDS_VSYNC_POLARITY;
 
 	I915_WRITE(lvds_encoder->reg, temp);
@@ -191,7 +206,8 @@ static void intel_enable_lvds(struct intel_encoder *encoder)
 {
 	struct drm_device *dev = encoder->base.dev;
 	struct intel_lvds_encoder *lvds_encoder = to_lvds_encoder(&encoder->base);
-	struct intel_crtc *intel_crtc = to_intel_crtc(encoder->base.crtc);
+	struct intel_connector *intel_connector =
+		&lvds_encoder->attached_connector->base;
 	struct drm_i915_private *dev_priv = dev->dev_private;
 	u32 ctl_reg, stat_reg;
 
@@ -210,13 +226,15 @@ static void intel_enable_lvds(struct intel_encoder *encoder)
 	if (wait_for((I915_READ(stat_reg) & PP_ON) != 0, 1000))
 		DRM_ERROR("timed out waiting for panel to power on\n");
 
-	intel_panel_enable_backlight(dev, intel_crtc->pipe);
+	intel_panel_enable_backlight(intel_connector);
 }
 
 static void intel_disable_lvds(struct intel_encoder *encoder)
 {
 	struct drm_device *dev = encoder->base.dev;
 	struct intel_lvds_encoder *lvds_encoder = to_lvds_encoder(&encoder->base);
+	struct intel_connector *intel_connector =
+		&lvds_encoder->attached_connector->base;
 	struct drm_i915_private *dev_priv = dev->dev_private;
 	u32 ctl_reg, stat_reg;
 
@@ -228,7 +246,7 @@ static void intel_disable_lvds(struct intel_encoder *encoder)
 		stat_reg = PP_STATUS;
 	}
 
-	intel_panel_disable_backlight(dev);
+	intel_panel_disable_backlight(intel_connector);
 
 	I915_WRITE(ctl_reg, I915_READ(ctl_reg) & ~POWER_TARGET_ON);
 	if (wait_for((I915_READ(stat_reg) & PP_ON) == 0, 1000))
@@ -312,14 +330,12 @@ static bool intel_lvds_compute_config(struct intel_encoder *intel_encoder,
 	return true;
 }
 
-static void intel_lvds_mode_set(struct drm_encoder *encoder,
-				struct drm_display_mode *mode,
-				struct drm_display_mode *adjusted_mode)
+static void intel_lvds_mode_set(struct intel_encoder *encoder)
 {
 	/*
-	 * The LVDS pin pair will already have been turned on in the
-	 * intel_crtc_mode_set since it has a large impact on the DPLL
-	 * settings.
+	 * We don't do anything here, the LVDS port is fully set up in the pre
+	 * enable hook - the ordering constraints for enabling the lvds port vs.
+	 * enabling the display pll are too strict.
 	 */
 }
 
@@ -335,6 +351,9 @@ intel_lvds_detect(struct drm_connector *connector, bool force)
 {
 	struct drm_device *dev = connector->dev;
 	enum drm_connector_status status;
+
+	DRM_DEBUG_KMS("[CONNECTOR:%d:%s]\n",
+		      connector->base.id, drm_get_connector_name(connector));
 
 	status = intel_panel_detect(dev);
 	if (status != connector_status_unknown)
@@ -458,7 +477,6 @@ static void intel_lvds_destroy(struct drm_connector *connector)
 
 	intel_panel_fini(&lvds_connector->base.panel);
 
-	drm_sysfs_connector_remove(connector);
 	drm_connector_cleanup(connector);
 	kfree(connector);
 }
@@ -496,10 +514,6 @@ static int intel_lvds_set_property(struct drm_connector *connector,
 
 	return 0;
 }
-
-static const struct drm_encoder_helper_funcs intel_lvds_helper_funcs = {
-	.mode_set = intel_lvds_mode_set,
-};
 
 static const struct drm_connector_helper_funcs intel_lvds_connector_helper_funcs = {
 	.get_modes = intel_lvds_get_modes,
@@ -696,6 +710,22 @@ static const struct dmi_system_id intel_no_lvds[] = {
 	},
 	{
 		.callback = intel_no_lvds_dmi_callback,
+		.ident = "Intel D410PT",
+		.matches = {
+			DMI_MATCH(DMI_BOARD_VENDOR, "Intel"),
+			DMI_MATCH(DMI_BOARD_NAME, "D410PT"),
+		},
+	},
+	{
+		.callback = intel_no_lvds_dmi_callback,
+		.ident = "Intel D425KT",
+		.matches = {
+			DMI_MATCH(DMI_BOARD_VENDOR, "Intel"),
+			DMI_EXACT_MATCH(DMI_BOARD_NAME, "D425KT"),
+		},
+	},
+	{
+		.callback = intel_no_lvds_dmi_callback,
 		.ident = "Intel D510MO",
 		.matches = {
 			DMI_MATCH(DMI_BOARD_VENDOR, "Intel"),
@@ -782,7 +812,8 @@ static bool lvds_is_present_in_vbt(struct drm_device *dev,
 		return true;
 
 	for (i = 0; i < dev_priv->vbt.child_dev_num; i++) {
-		struct child_device_config *child = dev_priv->vbt.child_dev + i;
+		union child_device_config *uchild = dev_priv->vbt.child_dev + i;
+		struct old_child_dev_config *child = &uchild->old;
 
 		/* If the device type is not LFP, continue.
 		 * We have to check both the new identifiers as well as the
@@ -936,11 +967,11 @@ void intel_lvds_init(struct drm_device *dev)
 		}
 	}
 
-	lvds_encoder = kzalloc(sizeof(struct intel_lvds_encoder), GFP_KERNEL);
+	lvds_encoder = kzalloc(sizeof(*lvds_encoder), GFP_KERNEL);
 	if (!lvds_encoder)
 		return;
 
-	lvds_connector = kzalloc(sizeof(struct intel_lvds_connector), GFP_KERNEL);
+	lvds_connector = kzalloc(sizeof(*lvds_connector), GFP_KERNEL);
 	if (!lvds_connector) {
 		kfree(lvds_encoder);
 		return;
@@ -959,8 +990,9 @@ void intel_lvds_init(struct drm_device *dev)
 			 DRM_MODE_ENCODER_LVDS);
 
 	intel_encoder->enable = intel_enable_lvds;
-	intel_encoder->pre_pll_enable = intel_pre_pll_enable_lvds;
+	intel_encoder->pre_enable = intel_pre_enable_lvds;
 	intel_encoder->compute_config = intel_lvds_compute_config;
+	intel_encoder->mode_set = intel_lvds_mode_set;
 	intel_encoder->disable = intel_disable_lvds;
 	intel_encoder->get_hw_state = intel_lvds_get_hw_state;
 	intel_encoder->get_config = intel_lvds_get_config;
@@ -977,7 +1009,6 @@ void intel_lvds_init(struct drm_device *dev)
 	else
 		intel_encoder->crtc_mask = (1 << 1);
 
-	drm_encoder_helper_add(encoder, &intel_lvds_helper_funcs);
 	drm_connector_helper_add(connector, &intel_lvds_connector_helper_funcs);
 	connector->display_info.subpixel_order = SubPixelHorizontalRGB;
 	connector->interlace_allowed = false;

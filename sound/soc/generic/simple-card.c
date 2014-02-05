@@ -27,6 +27,11 @@ static int __asoc_simple_card_dai_init(struct snd_soc_dai *dai,
 	if (!ret && daifmt)
 		ret = snd_soc_dai_set_fmt(dai, daifmt);
 
+	if (ret == -ENOTSUPP) {
+		dev_dbg(dai->dev, "ASoC: set_fmt is not supported\n");
+		ret = 0;
+	}
+
 	if (!ret && set->sysclk)
 		ret = snd_soc_dai_set_sysclk(dai, 0, set->sysclk, 0);
 
@@ -105,6 +110,7 @@ static int asoc_simple_card_remove(struct platform_device *pdev)
 static struct platform_driver asoc_simple_card = {
 	.driver = {
 		.name	= "asoc-simple-card",
+		.owner = THIS_MODULE,
 	},
 	.probe		= asoc_simple_card_probe,
 	.remove		= asoc_simple_card_remove,
@@ -112,6 +118,7 @@ static struct platform_driver asoc_simple_card = {
 
 module_platform_driver(asoc_simple_card);
 
+MODULE_ALIAS("platform:asoc-simple-card");
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("ASoC Simple Sound Card");
 MODULE_AUTHOR("Kuninori Morimoto <kuninori.morimoto.gx@renesas.com>");

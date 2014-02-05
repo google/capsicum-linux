@@ -102,17 +102,8 @@ static u32 ieee80211_hw_conf_chan(struct ieee80211_local *local)
 
 	offchannel_flag = local->hw.conf.flags & IEEE80211_CONF_OFFCHANNEL;
 
-	if (local->scan_channel) {
-		chandef.chan = local->scan_channel;
-		/* If scanning on oper channel, use whatever channel-type
-		 * is currently in use.
-		 */
-		if (chandef.chan == local->_oper_chandef.chan) {
-			chandef = local->_oper_chandef;
-		} else {
-			chandef.width = NL80211_CHAN_WIDTH_20_NOHT;
-			chandef.center_freq1 = chandef.chan->center_freq;
-		}
+	if (local->scan_chandef.chan) {
+		chandef = local->scan_chandef;
 	} else if (local->tmp_channel) {
 		chandef.chan = local->tmp_channel;
 		chandef.width = NL80211_CHAN_WIDTH_20_NOHT;
@@ -151,7 +142,7 @@ static u32 ieee80211_hw_conf_chan(struct ieee80211_local *local)
 		changed |= IEEE80211_CONF_CHANGE_SMPS;
 	}
 
-	power = chandef.chan->max_power;
+	power = ieee80211_chandef_max_power(&chandef);
 
 	rcu_read_lock();
 	list_for_each_entry_rcu(sdata, &local->interfaces, list) {
@@ -901,9 +892,6 @@ int ieee80211_register_hw(struct ieee80211_hw *hw)
 	if (!local->ops->remain_on_channel)
 		local->hw.wiphy->max_remain_on_channel_duration = 5000;
 
-	if (local->ops->sched_scan_start)
-		local->hw.wiphy->flags |= WIPHY_FLAG_SUPPORTS_SCHED_SCAN;
-
 	/* mac80211 based drivers don't support internal TDLS setup */
 	if (local->hw.wiphy->flags & WIPHY_FLAG_SUPPORTS_TDLS)
 		local->hw.wiphy->flags |= WIPHY_FLAG_TDLS_EXTERNAL_SETUP;
@@ -951,6 +939,8 @@ int ieee80211_register_hw(struct ieee80211_hw *hw)
 	if (result < 0)
 		wiphy_debug(local->hw.wiphy, "Failed to initialize wep: %d\n",
 			    result);
+
+	local->hw.conf.flags = IEEE80211_CONF_IDLE;
 
 	ieee80211_led_init(local);
 
@@ -1059,6 +1049,7 @@ void ieee80211_unregister_hw(struct ieee80211_hw *hw)
 
 	cancel_work_sync(&local->restart_work);
 	cancel_work_sync(&local->reconfig_filter);
+	flush_work(&local->sched_scan_stopped_work);
 
 	ieee80211_clear_tx_pending(local);
 	rate_control_deinitialize(local);

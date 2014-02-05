@@ -31,6 +31,8 @@
 #include <linux/mii.h>
 #include <linux/phy.h>
 #include <linux/workqueue.h>
+#include <linux/of_address.h>
+#include <linux/of_irq.h>
 #include <linux/of_mdio.h>
 #include <linux/of_net.h>
 #include <linux/of_platform.h>
@@ -3899,7 +3901,7 @@ static int ucc_geth_probe(struct platform_device* ofdev)
 
 	mac_addr = of_get_mac_address(np);
 	if (mac_addr)
-		memcpy(dev->dev_addr, mac_addr, 6);
+		memcpy(dev->dev_addr, mac_addr, ETH_ALEN);
 
 	ugeth->ug_info = ug_info;
 	ugeth->dev = device;
@@ -3911,14 +3913,12 @@ static int ucc_geth_probe(struct platform_device* ofdev)
 
 static int ucc_geth_remove(struct platform_device* ofdev)
 {
-	struct device *device = &ofdev->dev;
-	struct net_device *dev = dev_get_drvdata(device);
+	struct net_device *dev = platform_get_drvdata(ofdev);
 	struct ucc_geth_private *ugeth = netdev_priv(dev);
 
 	unregister_netdev(dev);
 	free_netdev(dev);
 	ucc_geth_memclean(ugeth);
-	dev_set_drvdata(device, NULL);
 
 	return 0;
 }

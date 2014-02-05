@@ -282,8 +282,7 @@ ltq_etop_hw_init(struct net_device *dev)
 
 		if (IS_TX(i)) {
 			ltq_dma_alloc_tx(&ch->dma);
-			request_irq(irq, ltq_etop_dma_irq, IRQF_DISABLED,
-				"etop_tx", priv);
+			request_irq(irq, ltq_etop_dma_irq, 0, "etop_tx", priv);
 		} else if (IS_RX(i)) {
 			ltq_dma_alloc_rx(&ch->dma);
 			for (ch->dma.desc = 0; ch->dma.desc < LTQ_DESC_NUM;
@@ -291,8 +290,7 @@ ltq_etop_hw_init(struct net_device *dev)
 				if (ltq_etop_alloc_skb(ch))
 					return -ENOMEM;
 			ch->dma.desc = 0;
-			request_irq(irq, ltq_etop_dma_irq, IRQF_DISABLED,
-				"etop_rx", priv);
+			request_irq(irq, ltq_etop_dma_irq, 0, "etop_rx", priv);
 		}
 		ch->dma.irq = irq;
 	}
@@ -621,7 +619,8 @@ ltq_etop_set_multicast_list(struct net_device *dev)
 }
 
 static u16
-ltq_etop_select_queue(struct net_device *dev, struct sk_buff *skb)
+ltq_etop_select_queue(struct net_device *dev, struct sk_buff *skb,
+		      void *accel_priv)
 {
 	/* we are currently only using the first queue */
 	return 0;

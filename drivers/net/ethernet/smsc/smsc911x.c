@@ -2167,7 +2167,7 @@ static int smsc911x_init(struct net_device *dev)
 		udelay(1000);
 
 	if (to == 0) {
-		pr_err("Device not READY in 100ms aborting\n");
+		netdev_err(dev, "Device not READY in 100ms aborting\n");
 		return -ENODEV;
 	}
 
@@ -2374,7 +2374,7 @@ static int smsc911x_drv_probe(struct platform_device *pdev)
 	struct device_node *np = pdev->dev.of_node;
 	struct net_device *dev;
 	struct smsc911x_data *pdata;
-	struct smsc911x_platform_config *config = pdev->dev.platform_data;
+	struct smsc911x_platform_config *config = dev_get_platdata(&pdev->dev);
 	struct resource *res, *irq_res;
 	unsigned int intcfg = 0;
 	int res_size, irq_flags;
@@ -2502,7 +2502,7 @@ static int smsc911x_drv_probe(struct platform_device *pdev)
 		SMSC_TRACE(pdata, probe,
 			   "MAC Address is specified by configuration");
 	} else if (is_valid_ether_addr(pdata->config.mac)) {
-		memcpy(dev->dev_addr, pdata->config.mac, 6);
+		memcpy(dev->dev_addr, pdata->config.mac, ETH_ALEN);
 		SMSC_TRACE(pdata, probe,
 			   "MAC Address specified by platform data");
 	} else {

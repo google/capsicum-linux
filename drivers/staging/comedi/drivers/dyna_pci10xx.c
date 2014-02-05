@@ -33,6 +33,8 @@
  their cards in their manuals.
 */
 
+#include <linux/module.h>
+#include <linux/delay.h>
 #include <linux/pci.h>
 #include <linux/mutex.h>
 
@@ -145,33 +147,23 @@ static int dyna_pci10xx_di_insn_bits(struct comedi_device *dev,
 	return insn->n;
 }
 
-/* digital output bit interface */
 static int dyna_pci10xx_do_insn_bits(struct comedi_device *dev,
-			      struct comedi_subdevice *s,
-			      struct comedi_insn *insn, unsigned int *data)
+				     struct comedi_subdevice *s,
+				     struct comedi_insn *insn,
+				     unsigned int *data)
 {
 	struct dyna_pci10xx_private *devpriv = dev->private;
 
-	/* The insn data is a mask in data[0] and the new data
-	 * in data[1], each channel cooresponding to a bit.
-	 * s->state contains the previous write data
-	 */
 	mutex_lock(&devpriv->mutex);
-	if (data[0]) {
-		s->state &= ~data[0];
-		s->state |= (data[0] & data[1]);
+	if (comedi_dio_update_state(s, data)) {
 		smp_mb();
 		outw_p(s->state, devpriv->BADR3);
 		udelay(10);
 	}
 
-	/*
-	 * On return, data[1] contains the value of the digital
-	 * input and output lines. We just return the software copy of the
-	 * output values if it was a purely digital output subdevice.
-	 */
 	data[1] = s->state;
 	mutex_unlock(&devpriv->mutex);
+
 	return insn->n;
 }
 
@@ -183,10 +175,9 @@ static int dyna_pci10xx_auto_attach(struct comedi_device *dev,
 	struct comedi_subdevice *s;
 	int ret;
 
-	devpriv = kzalloc(sizeof(*devpriv), GFP_KERNEL);
+	devpriv = comedi_alloc_devpriv(dev, sizeof(*devpriv));
 	if (!devpriv)
 		return -ENOMEM;
-	dev->private = devpriv;
 
 	ret = comedi_pci_enable(dev);
 	if (ret)

@@ -20,6 +20,7 @@
 #ifndef _NET_BATMAN_ADV_GATEWAY_CLIENT_H_
 #define _NET_BATMAN_ADV_GATEWAY_CLIENT_H_
 
+void batadv_gw_check_client_stop(struct batadv_priv *bat_priv);
 void batadv_gw_deselect(struct batadv_priv *bat_priv);
 void batadv_gw_election(struct batadv_priv *bat_priv);
 struct batadv_orig_node *
@@ -28,7 +29,7 @@ void batadv_gw_check_election(struct batadv_priv *bat_priv,
 			      struct batadv_orig_node *orig_node);
 void batadv_gw_node_update(struct batadv_priv *bat_priv,
 			   struct batadv_orig_node *orig_node,
-			   uint8_t new_gwflags);
+			   struct batadv_tvlv_gateway_data *gateway);
 void batadv_gw_node_delete(struct batadv_priv *bat_priv,
 			   struct batadv_orig_node *orig_node);
 void batadv_gw_node_purge(struct batadv_priv *bat_priv);

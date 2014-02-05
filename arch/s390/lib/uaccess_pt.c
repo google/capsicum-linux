@@ -78,36 +78,39 @@ static size_t copy_in_kernel(size_t count, void __user *to,
  * contains the (negative) exception code.
  */
 #ifdef CONFIG_64BIT
+
 static unsigned long follow_table(struct mm_struct *mm,
 				  unsigned long address, int write)
 {
 	unsigned long *table = (unsigned long *)__pa(mm->pgd);
 
+	if (unlikely(address > mm->context.asce_limit - 1))
+		return -0x38UL;
 	switch (mm->context.asce_bits & _ASCE_TYPE_MASK) {
 	case _ASCE_TYPE_REGION1:
 		table = table + ((address >> 53) & 0x7ff);
-		if (unlikely(*table & _REGION_ENTRY_INV))
+		if (unlikely(*table & _REGION_ENTRY_INVALID))
 			return -0x39UL;
 		table = (unsigned long *)(*table & _REGION_ENTRY_ORIGIN);
 		/* fallthrough */
 	case _ASCE_TYPE_REGION2:
 		table = table + ((address >> 42) & 0x7ff);
-		if (unlikely(*table & _REGION_ENTRY_INV))
+		if (unlikely(*table & _REGION_ENTRY_INVALID))
 			return -0x3aUL;
 		table = (unsigned long *)(*table & _REGION_ENTRY_ORIGIN);
 		/* fallthrough */
 	case _ASCE_TYPE_REGION3:
 		table = table + ((address >> 31) & 0x7ff);
-		if (unlikely(*table & _REGION_ENTRY_INV))
+		if (unlikely(*table & _REGION_ENTRY_INVALID))
 			return -0x3bUL;
 		table = (unsigned long *)(*table & _REGION_ENTRY_ORIGIN);
 		/* fallthrough */
 	case _ASCE_TYPE_SEGMENT:
 		table = table + ((address >> 20) & 0x7ff);
-		if (unlikely(*table & _SEGMENT_ENTRY_INV))
+		if (unlikely(*table & _SEGMENT_ENTRY_INVALID))
 			return -0x10UL;
 		if (unlikely(*table & _SEGMENT_ENTRY_LARGE)) {
-			if (write && (*table & _SEGMENT_ENTRY_RO))
+			if (write && (*table & _SEGMENT_ENTRY_PROTECT))
 				return -0x04UL;
 			return (*table & _SEGMENT_ENTRY_ORIGIN_LARGE) +
 				(address & ~_SEGMENT_ENTRY_ORIGIN_LARGE);
@@ -117,7 +120,7 @@ static unsigned long follow_table(struct mm_struct *mm,
 	table = table + ((address >> 12) & 0xff);
 	if (unlikely(*table & _PAGE_INVALID))
 		return -0x11UL;
-	if (write && (*table & _PAGE_RO))
+	if (write && (*table & _PAGE_PROTECT))
 		return -0x04UL;
 	return (*table & PAGE_MASK) + (address & ~PAGE_MASK);
 }
@@ -130,13 +133,13 @@ static unsigned long follow_table(struct mm_struct *mm,
 	unsigned long *table = (unsigned long *)__pa(mm->pgd);
 
 	table = table + ((address >> 20) & 0x7ff);
-	if (unlikely(*table & _SEGMENT_ENTRY_INV))
+	if (unlikely(*table & _SEGMENT_ENTRY_INVALID))
 		return -0x10UL;
 	table = (unsigned long *)(*table & _SEGMENT_ENTRY_ORIGIN);
 	table = table + ((address >> 12) & 0xff);
 	if (unlikely(*table & _PAGE_INVALID))
 		return -0x11UL;
-	if (write && (*table & _PAGE_RO))
+	if (write && (*table & _PAGE_PROTECT))
 		return -0x04UL;
 	return (*table & PAGE_MASK) + (address & ~PAGE_MASK);
 }
@@ -461,9 +464,7 @@ int futex_atomic_cmpxchg_pt(u32 *uval, u32 __user *uaddr,
 
 struct uaccess_ops uaccess_pt = {
 	.copy_from_user		= copy_from_user_pt,
-	.copy_from_user_small	= copy_from_user_pt,
 	.copy_to_user		= copy_to_user_pt,
-	.copy_to_user_small	= copy_to_user_pt,
 	.copy_in_user		= copy_in_user_pt,
 	.clear_user		= clear_user_pt,
 	.strnlen_user		= strnlen_user_pt,

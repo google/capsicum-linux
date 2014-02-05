@@ -449,19 +449,6 @@ int ast_dumb_create(struct drm_file *file,
 	return 0;
 }
 
-int ast_dumb_destroy(struct drm_file *file,
-		     struct drm_device *dev,
-		     uint32_t handle)
-{
-	return drm_gem_handle_delete(file, handle);
-}
-
-int ast_gem_init_object(struct drm_gem_object *obj)
-{
-	BUG();
-	return 0;
-}
-
 void ast_bo_unref(struct ast_bo **bo)
 {
 	struct ttm_buffer_object *tbo;
@@ -487,7 +474,7 @@ void ast_gem_free_object(struct drm_gem_object *obj)
 
 static inline u64 ast_bo_mmap_offset(struct ast_bo *bo)
 {
-	return bo->bo.addr_space_offset;
+	return drm_vma_node_offset_addr(&bo->bo.vma_node);
 }
 int
 ast_dumb_mmap_offset(struct drm_file *file,

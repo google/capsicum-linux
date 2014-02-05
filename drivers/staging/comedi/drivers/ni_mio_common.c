@@ -58,6 +58,7 @@
 
 #include <linux/interrupt.h>
 #include <linux/sched.h>
+#include <linux/delay.h>
 #include "8255.h"
 #include "mite.h"
 #include "comedi_fc.h"
@@ -1291,7 +1292,7 @@ static void ni_ao_fifo_load(struct comedi_device *dev,
 	struct comedi_cmd *cmd = &async->cmd;
 	int chan;
 	int i;
-	short d;
+	unsigned short d;
 	u32 packed_data;
 	int range;
 	int err = 1;
@@ -1402,7 +1403,7 @@ static void ni_ai_fifo_read(struct comedi_device *dev,
 	int i;
 
 	if (board->reg_type == ni_reg_611x) {
-		short data[2];
+		unsigned short data[2];
 		u32 dl;
 
 		for (i = 0; i < n / 2; i++) {
@@ -1419,7 +1420,7 @@ static void ni_ai_fifo_read(struct comedi_device *dev,
 			cfc_write_to_buffer(s, data[0]);
 		}
 	} else if (board->reg_type == ni_reg_6143) {
-		short data[2];
+		unsigned short data[2];
 		u32 dl;
 
 		/*  This just reads the FIFO assuming the data is present, no checks on the FIFO status are performed */
@@ -1510,9 +1511,9 @@ static void ni_handle_fifo_dregs(struct comedi_device *dev)
 	const struct ni_board_struct *board = comedi_board(dev);
 	struct ni_private *devpriv = dev->private;
 	struct comedi_subdevice *s = &dev->subdevices[NI_AI_SUBDEV];
-	short data[2];
+	unsigned short data[2];
 	u32 dl;
-	short fifo_empty;
+	unsigned short fifo_empty;
 	int i;
 
 	if (board->reg_type == ni_reg_611x) {
@@ -1576,7 +1577,7 @@ static void get_last_sample_611x(struct comedi_device *dev)
 	const struct ni_board_struct *board = comedi_board(dev);
 	struct ni_private *devpriv __maybe_unused = dev->private;
 	struct comedi_subdevice *s = &dev->subdevices[NI_AI_SUBDEV];
-	short data;
+	unsigned short data;
 	u32 dl;
 
 	if (board->reg_type != ni_reg_611x)
@@ -1595,7 +1596,7 @@ static void get_last_sample_6143(struct comedi_device *dev)
 	const struct ni_board_struct *board = comedi_board(dev);
 	struct ni_private *devpriv __maybe_unused = dev->private;
 	struct comedi_subdevice *s = &dev->subdevices[NI_AI_SUBDEV];
-	short data;
+	unsigned short data;
 	u32 dl;
 
 	if (board->reg_type != ni_reg_6143)
@@ -1620,7 +1621,7 @@ static void ni_ai_munge(struct comedi_device *dev, struct comedi_subdevice *s,
 	struct comedi_async *async = s->async;
 	unsigned int i;
 	unsigned int length = num_bytes / bytes_per_sample(s);
-	short *array = data;
+	unsigned short *array = data;
 	unsigned int *larray = data;
 
 	for (i = 0; i < length; i++) {
@@ -2872,7 +2873,7 @@ static void ni_ao_munge(struct comedi_device *dev, struct comedi_subdevice *s,
 	unsigned int i;
 	unsigned int offset;
 	unsigned int length = num_bytes / sizeof(short);
-	short *array = data;
+	unsigned short *array = data;
 
 	offset = 1 << (board->aobits - 1);
 	for (i = 0; i < length; i++) {
@@ -3527,63 +3528,41 @@ static int ni_ao_reset(struct comedi_device *dev, struct comedi_subdevice *s)
 
 static int ni_dio_insn_config(struct comedi_device *dev,
 			      struct comedi_subdevice *s,
-			      struct comedi_insn *insn, unsigned int *data)
+			      struct comedi_insn *insn,
+			      unsigned int *data)
 {
 	struct ni_private *devpriv = dev->private;
+	int ret;
 
-#ifdef DEBUG_DIO
-	printk("ni_dio_insn_config() chan=%d io=%d\n",
-	       CR_CHAN(insn->chanspec), data[0]);
-#endif
-	switch (data[0]) {
-	case INSN_CONFIG_DIO_OUTPUT:
-		s->io_bits |= 1 << CR_CHAN(insn->chanspec);
-		break;
-	case INSN_CONFIG_DIO_INPUT:
-		s->io_bits &= ~(1 << CR_CHAN(insn->chanspec));
-		break;
-	case INSN_CONFIG_DIO_QUERY:
-		data[1] =
-		    (s->
-		     io_bits & (1 << CR_CHAN(insn->chanspec))) ? COMEDI_OUTPUT :
-		    COMEDI_INPUT;
-		return insn->n;
-		break;
-	default:
-		return -EINVAL;
-	}
+	ret = comedi_dio_insn_config(dev, s, insn, data, 0);
+	if (ret)
+		return ret;
 
 	devpriv->dio_control &= ~DIO_Pins_Dir_Mask;
 	devpriv->dio_control |= DIO_Pins_Dir(s->io_bits);
 	devpriv->stc_writew(dev, devpriv->dio_control, DIO_Control_Register);
 
-	return 1;
+	return insn->n;
 }
 
 static int ni_dio_insn_bits(struct comedi_device *dev,
 			    struct comedi_subdevice *s,
-			    struct comedi_insn *insn, unsigned int *data)
+			    struct comedi_insn *insn,
+			    unsigned int *data)
 {
 	struct ni_private *devpriv = dev->private;
 
-#ifdef DEBUG_DIO
-	printk("ni_dio_insn_bits() mask=0x%x bits=0x%x\n", data[0], data[1]);
-#endif
+	/* Make sure we're not using the serial part of the dio */
+	if ((data[0] & (DIO_SDIN | DIO_SDOUT)) && devpriv->serial_interval_ns)
+		return -EBUSY;
 
-	if (data[0]) {
-		/* Perform check to make sure we're not using the
-		   serial part of the dio */
-		if ((data[0] & (DIO_SDIN | DIO_SDOUT))
-		    && devpriv->serial_interval_ns)
-			return -EBUSY;
-
-		s->state &= ~data[0];
-		s->state |= (data[0] & data[1]);
+	if (comedi_dio_update_state(s, data)) {
 		devpriv->dio_output &= ~DIO_Parallel_Data_Mask;
 		devpriv->dio_output |= DIO_Parallel_Data_Out(s->state);
 		devpriv->stc_writew(dev, devpriv->dio_output,
 				    DIO_Output_Register);
 	}
+
 	data[1] = devpriv->stc_readw(dev, DIO_Parallel_Input_Register);
 
 	return insn->n;
@@ -3595,32 +3574,15 @@ static int ni_m_series_dio_insn_config(struct comedi_device *dev,
 				       unsigned int *data)
 {
 	struct ni_private *devpriv __maybe_unused = dev->private;
+	int ret;
 
-#ifdef DEBUG_DIO
-	printk("ni_m_series_dio_insn_config() chan=%d io=%d\n",
-	       CR_CHAN(insn->chanspec), data[0]);
-#endif
-	switch (data[0]) {
-	case INSN_CONFIG_DIO_OUTPUT:
-		s->io_bits |= 1 << CR_CHAN(insn->chanspec);
-		break;
-	case INSN_CONFIG_DIO_INPUT:
-		s->io_bits &= ~(1 << CR_CHAN(insn->chanspec));
-		break;
-	case INSN_CONFIG_DIO_QUERY:
-		data[1] =
-		    (s->
-		     io_bits & (1 << CR_CHAN(insn->chanspec))) ? COMEDI_OUTPUT :
-		    COMEDI_INPUT;
-		return insn->n;
-		break;
-	default:
-		return -EINVAL;
-	}
+	ret = comedi_dio_insn_config(dev, s, insn, data, 0);
+	if (ret)
+		return ret;
 
 	ni_writel(s->io_bits, M_Offset_DIO_Direction);
 
-	return 1;
+	return insn->n;
 }
 
 static int ni_m_series_dio_insn_bits(struct comedi_device *dev,
@@ -3630,16 +3592,9 @@ static int ni_m_series_dio_insn_bits(struct comedi_device *dev,
 {
 	struct ni_private *devpriv __maybe_unused = dev->private;
 
-#ifdef DEBUG_DIO
-	printk("ni_m_series_dio_insn_bits() mask=0x%x bits=0x%x\n", data[0],
-	       data[1]);
-#endif
-
-	if (data[0]) {
-		s->state &= ~data[0];
-		s->state |= (data[0] & data[1]);
+	if (comedi_dio_update_state(s, data))
 		ni_writel(s->state, M_Offset_Static_Digital_Output);
-	}
+
 	data[1] = ni_readl(M_Offset_Static_Digital_Input);
 
 	return insn->n;
@@ -4363,10 +4318,9 @@ static int ni_alloc_private(struct comedi_device *dev)
 {
 	struct ni_private *devpriv;
 
-	devpriv = kzalloc(sizeof(*devpriv), GFP_KERNEL);
+	devpriv = comedi_alloc_devpriv(dev, sizeof(*devpriv));
 	if (!devpriv)
 		return -ENOMEM;
-	dev->private = devpriv;
 
 	spin_lock_init(&devpriv->window_lock);
 	spin_lock_init(&devpriv->soft_reg_copy_lock);
@@ -5388,20 +5342,20 @@ static int ni_config_filter(struct comedi_device *dev, unsigned pfi_channel,
 
 static int ni_pfi_insn_bits(struct comedi_device *dev,
 			    struct comedi_subdevice *s,
-			    struct comedi_insn *insn, unsigned int *data)
+			    struct comedi_insn *insn,
+			    unsigned int *data)
 {
 	const struct ni_board_struct *board = comedi_board(dev);
 	struct ni_private *devpriv __maybe_unused = dev->private;
 
-	if ((board->reg_type & ni_reg_m_series_mask) == 0) {
+	if (!(board->reg_type & ni_reg_m_series_mask))
 		return -ENOTSUPP;
-	}
-	if (data[0]) {
-		s->state &= ~data[0];
-		s->state |= (data[0] & data[1]);
+
+	if (comedi_dio_update_state(s, data))
 		ni_writew(s->state, M_Offset_PFI_DO);
-	}
+
 	data[1] = ni_readw(M_Offset_PFI_DI);
+
 	return insn->n;
 }
 

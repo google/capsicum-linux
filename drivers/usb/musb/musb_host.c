@@ -253,7 +253,7 @@ musb_start_urb(struct musb *musb, int is_in, struct musb_qh *qh)
 			case USB_ENDPOINT_XFER_BULK:	s = "-bulk"; break;
 			case USB_ENDPOINT_XFER_ISOC:	s = "-iso"; break;
 			default:			s = "-intr"; break;
-			}; s; }),
+			} s; }),
 			epnum, buf + offset, len);
 
 	/* Configure endpoint */
@@ -2628,6 +2628,8 @@ int musb_host_alloc(struct musb *musb)
 
 void musb_host_cleanup(struct musb *musb)
 {
+	if (musb->port_mode == MUSB_PORT_MODE_GADGET)
+		return;
 	usb_remove_hcd(musb->hcd);
 	musb->hcd = NULL;
 }

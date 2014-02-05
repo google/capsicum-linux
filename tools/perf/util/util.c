@@ -1,7 +1,7 @@
 #include "../perf.h"
 #include "util.h"
 #include <sys/mman.h>
-#ifdef BACKTRACE_SUPPORT
+#ifdef HAVE_BACKTRACE_SUPPORT
 #include <execinfo.h>
 #endif
 #include <stdio.h>
@@ -55,17 +55,20 @@ int mkdir_p(char *path, mode_t mode)
 	return (stat(path, &st) && mkdir(path, mode)) ? -1 : 0;
 }
 
-static int slow_copyfile(const char *from, const char *to)
+static int slow_copyfile(const char *from, const char *to, mode_t mode)
 {
-	int err = 0;
+	int err = -1;
 	char *line = NULL;
 	size_t n;
 	FILE *from_fp = fopen(from, "r"), *to_fp;
+	mode_t old_umask;
 
 	if (from_fp == NULL)
 		goto out;
 
+	old_umask = umask(mode ^ 0777);
 	to_fp = fopen(to, "w");
+	umask(old_umask);
 	if (to_fp == NULL)
 		goto out_fclose_from;
 
@@ -82,7 +85,7 @@ out:
 	return err;
 }
 
-int copyfile(const char *from, const char *to)
+int copyfile_mode(const char *from, const char *to, mode_t mode)
 {
 	int fromfd, tofd;
 	struct stat st;
@@ -93,13 +96,13 @@ int copyfile(const char *from, const char *to)
 		goto out;
 
 	if (st.st_size == 0) /* /proc? do it slowly... */
-		return slow_copyfile(from, to);
+		return slow_copyfile(from, to, mode);
 
 	fromfd = open(from, O_RDONLY);
 	if (fromfd < 0)
 		goto out;
 
-	tofd = creat(to, 0755);
+	tofd = creat(to, mode);
 	if (tofd < 0)
 		goto out_close_from;
 
@@ -119,6 +122,11 @@ out_close_from:
 	close(fromfd);
 out:
 	return err;
+}
+
+int copyfile(const char *from, const char *to)
+{
+	return copyfile_mode(from, to, 0755);
 }
 
 unsigned long convert_unit(unsigned long value, char *unit)
@@ -204,7 +212,7 @@ int hex2u64(const char *ptr, u64 *long_val)
 }
 
 /* Obtain a backtrace and print it to stdout. */
-#ifdef BACKTRACE_SUPPORT
+#ifdef HAVE_BACKTRACE_SUPPORT
 void dump_stack(void)
 {
 	void *array[16];
@@ -268,4 +276,140 @@ void perf_debugfs_set_path(const char *mntpt)
 {
 	snprintf(debugfs_mountpoint, strlen(debugfs_mountpoint), "%s", mntpt);
 	set_tracing_events_path(mntpt);
+}
+
+static const char *find_debugfs(void)
+{
+	const char *path = perf_debugfs_mount(NULL);
+
+	if (!path)
+		fprintf(stderr, "Your kernel does not support the debugfs filesystem");
+
+	return path;
+}
+
+/*
+ * Finds the path to the debugfs/tracing
+ * Allocates the string and stores it.
+ */
+const char *find_tracing_dir(void)
+{
+	static char *tracing;
+	static int tracing_found;
+	const char *debugfs;
+
+	if (tracing_found)
+		return tracing;
+
+	debugfs = find_debugfs();
+	if (!debugfs)
+		return NULL;
+
+	tracing = malloc(strlen(debugfs) + 9);
+	if (!tracing)
+		return NULL;
+
+	sprintf(tracing, "%s/tracing", debugfs);
+
+	tracing_found = 1;
+	return tracing;
+}
+
+char *get_tracing_file(const char *name)
+{
+	const char *tracing;
+	char *file;
+
+	tracing = find_tracing_dir();
+	if (!tracing)
+		return NULL;
+
+	file = malloc(strlen(tracing) + strlen(name) + 2);
+	if (!file)
+		return NULL;
+
+	sprintf(file, "%s/%s", tracing, name);
+	return file;
+}
+
+void put_tracing_file(char *file)
+{
+	free(file);
+}
+
+int parse_nsec_time(const char *str, u64 *ptime)
+{
+	u64 time_sec, time_nsec;
+	char *end;
+
+	time_sec = strtoul(str, &end, 10);
+	if (*end != '.' && *end != '\0')
+		return -1;
+
+	if (*end == '.') {
+		int i;
+		char nsec_buf[10];
+
+		if (strlen(++end) > 9)
+			return -1;
+
+		strncpy(nsec_buf, end, 9);
+		nsec_buf[9] = '\0';
+
+		/* make it nsec precision */
+		for (i = strlen(nsec_buf); i < 9; i++)
+			nsec_buf[i] = '0';
+
+		time_nsec = strtoul(nsec_buf, &end, 10);
+		if (*end != '\0')
+			return -1;
+	} else
+		time_nsec = 0;
+
+	*ptime = time_sec * NSEC_PER_SEC + time_nsec;
+	return 0;
+}
+
+unsigned long parse_tag_value(const char *str, struct parse_tag *tags)
+{
+	struct parse_tag *i = tags;
+
+	while (i->tag) {
+		char *s;
+
+		s = strchr(str, i->tag);
+		if (s) {
+			unsigned long int value;
+			char *endptr;
+
+			value = strtoul(str, &endptr, 10);
+			if (s != endptr)
+				break;
+
+			if (value > ULONG_MAX / i->mult)
+				break;
+			value *= i->mult;
+			return value;
+		}
+		i++;
+	}
+
+	return (unsigned long) -1;
+}
+
+int filename__read_int(const char *filename, int *value)
+{
+	char line[64];
+	int fd = open(filename, O_RDONLY), err = -1;
+
+	if (fd < 0)
+		return -1;
+
+	if (read(fd, line, sizeof(line)) > 0) {
+		*value = atoi(line);
+		err = 0;
+	}
+
+	close(fd);
+	return err;
 }

@@ -319,9 +319,6 @@ void ath9k_ani_reset(struct ath_hw *ah, bool is_scanning)
 			ah->ani_function = 0;
 	}
 
-	/* always allow mode (on/off) to be controlled */
-	ah->ani_function |= ATH9K_ANI_MODE;
-
 	ofdm_nil = max_t(int, ATH9K_ANI_OFDM_DEF_LEVEL,
 			 aniState->ofdmNoiseImmunityLevel);
 	cck_nil = max_t(int, ATH9K_ANI_CCK_DEF_LEVEL,
@@ -341,10 +338,9 @@ void ath9k_ani_reset(struct ath_hw *ah, bool is_scanning)
 		    aniState->cckNoiseImmunityLevel !=
 		    ATH9K_ANI_CCK_DEF_LEVEL) {
 			ath_dbg(common, ANI,
-				"Restore defaults: opmode %u chan %d Mhz/0x%x is_scanning=%d ofdm:%d cck:%d\n",
+				"Restore defaults: opmode %u chan %d Mhz is_scanning=%d ofdm:%d cck:%d\n",
 				ah->opmode,
 				chan->channel,
-				chan->channelFlags,
 				is_scanning,
 				aniState->ofdmNoiseImmunityLevel,
 				aniState->cckNoiseImmunityLevel);
@@ -357,10 +353,9 @@ void ath9k_ani_reset(struct ath_hw *ah, bool is_scanning)
 		 * restore historical levels for this channel
 		 */
 		ath_dbg(common, ANI,
-			"Restore history: opmode %u chan %d Mhz/0x%x is_scanning=%d ofdm:%d cck:%d\n",
+			"Restore history: opmode %u chan %d Mhz is_scanning=%d ofdm:%d cck:%d\n",
 			ah->opmode,
 			chan->channel,
-			chan->channelFlags,
 			is_scanning,
 			aniState->ofdmNoiseImmunityLevel,
 			aniState->cckNoiseImmunityLevel);

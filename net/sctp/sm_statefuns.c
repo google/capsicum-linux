@@ -28,10 +28,7 @@
  *
  * Please send any bug reports or fixes you make to the
  * email address(es):
- *    lksctp developers <lksctp-developers@lists.sourceforge.net>
- *
- * Or submit a bug report through the following website:
- *    http://www.sf.net/projects/lksctp
+ *    lksctp developers <linux-sctp@vger.kernel.org>
  *
  * Written or modified by:
  *    La Monte H.P. Yarroll <piggy@acm.org>
@@ -45,9 +42,6 @@
  *    Ardelle Fan	    <ardelle.fan@intel.com>
  *    Ryan Layer	    <rmlayer@us.ibm.com>
  *    Kevin Gao		    <kevin.gao@intel.com>
- *
- * Any bugs reported given to us we will try to fix... any fixes shared will
- * be incorporated into the next SCTP release.
  */
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
@@ -826,7 +820,7 @@ sctp_disposition_t sctp_sf_do_5_1D_ce(struct net *net,
 	SCTP_INC_STATS(net, SCTP_MIB_PASSIVEESTABS);
 	sctp_add_cmd_sf(commands, SCTP_CMD_HB_TIMERS_START, SCTP_NULL());
 
-	if (new_asoc->autoclose)
+	if (new_asoc->timeouts[SCTP_EVENT_TIMEOUT_AUTOCLOSE])
 		sctp_add_cmd_sf(commands, SCTP_CMD_TIMER_START,
 				SCTP_TO(SCTP_EVENT_TIMEOUT_AUTOCLOSE));
 
@@ -914,7 +908,7 @@ sctp_disposition_t sctp_sf_do_5_1E_ca(struct net *net,
 	SCTP_INC_STATS(net, SCTP_MIB_CURRESTAB);
 	SCTP_INC_STATS(net, SCTP_MIB_ACTIVEESTABS);
 	sctp_add_cmd_sf(commands, SCTP_CMD_HB_TIMERS_START, SCTP_NULL());
-	if (asoc->autoclose)
+	if (asoc->timeouts[SCTP_EVENT_TIMEOUT_AUTOCLOSE])
 		sctp_add_cmd_sf(commands, SCTP_CMD_TIMER_START,
 				SCTP_TO(SCTP_EVENT_TIMEOUT_AUTOCLOSE));
 
@@ -2976,7 +2970,7 @@ sctp_disposition_t sctp_sf_eat_data_6_2(struct net *net,
 	if (chunk->chunk_hdr->flags & SCTP_DATA_SACK_IMM)
 		force = SCTP_FORCE();
 
-	if (asoc->autoclose) {
+	if (asoc->timeouts[SCTP_EVENT_TIMEOUT_AUTOCLOSE]) {
 		sctp_add_cmd_sf(commands, SCTP_CMD_TIMER_RESTART,
 				SCTP_TO(SCTP_EVENT_TIMEOUT_AUTOCLOSE));
 	}
@@ -3884,7 +3878,7 @@ sctp_disposition_t sctp_sf_eat_fwd_tsn(struct net *net,
 				SCTP_CHUNK(chunk));
 
 	/* Count this as receiving DATA. */
-	if (asoc->autoclose) {
+	if (asoc->timeouts[SCTP_EVENT_TIMEOUT_AUTOCLOSE]) {
 		sctp_add_cmd_sf(commands, SCTP_CMD_TIMER_RESTART,
 				SCTP_TO(SCTP_EVENT_TIMEOUT_AUTOCLOSE));
 	}
@@ -5273,7 +5267,7 @@ sctp_disposition_t sctp_sf_do_9_2_start_shutdown(
 	sctp_add_cmd_sf(commands, SCTP_CMD_TIMER_RESTART,
 			SCTP_TO(SCTP_EVENT_TIMEOUT_T5_SHUTDOWN_GUARD));
 
-	if (asoc->autoclose)
+	if (asoc->timeouts[SCTP_EVENT_TIMEOUT_AUTOCLOSE])
 		sctp_add_cmd_sf(commands, SCTP_CMD_TIMER_STOP,
 				SCTP_TO(SCTP_EVENT_TIMEOUT_AUTOCLOSE));
 
@@ -5352,7 +5346,7 @@ sctp_disposition_t sctp_sf_do_9_2_shutdown_ack(
 	sctp_add_cmd_sf(commands, SCTP_CMD_TIMER_RESTART,
 			SCTP_TO(SCTP_EVENT_TIMEOUT_T2_SHUTDOWN));
 
-	if (asoc->autoclose)
+	if (asoc->timeouts[SCTP_EVENT_TIMEOUT_AUTOCLOSE])
 		sctp_add_cmd_sf(commands, SCTP_CMD_TIMER_STOP,
 				SCTP_TO(SCTP_EVENT_TIMEOUT_AUTOCLOSE));
 

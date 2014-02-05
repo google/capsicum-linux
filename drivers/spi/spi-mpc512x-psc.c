@@ -20,6 +20,7 @@
 #include <linux/errno.h>
 #include <linux/interrupt.h>
 #include <linux/of_address.h>
+#include <linux/of_irq.h>
 #include <linux/of_platform.h>
 #include <linux/completion.h>
 #include <linux/io.h>
@@ -38,7 +39,8 @@ struct mpc512x_psc_spi {
 	struct mpc512x_psc_fifo __iomem *fifo;
 	unsigned int irq;
 	u8 bits_per_word;
-	u32 mclk;
+	struct clk *clk_mclk;
+	u32 mclk_rate;
 
 	struct completion txisrdone;
 };
@@ -72,6 +74,7 @@ static void mpc512x_psc_spi_activate_cs(struct spi_device *spi)
 	struct mpc52xx_psc __iomem *psc = mps->psc;
 	u32 sicr;
 	u32 ccr;
+	int speed;
 	u16 bclkdiv;
 
 	sicr = in_be32(&psc->sicr);
@@ -95,10 +98,10 @@ static void mpc512x_psc_spi_activate_cs(struct spi_device *spi)
 
 	ccr = in_be32(&psc->ccr);
 	ccr &= 0xFF000000;
-	if (cs->speed_hz)
-		bclkdiv = (mps->mclk / cs->speed_hz) - 1;
-	else
-		bclkdiv = (mps->mclk / 1000000) - 1;	/* default 1MHz */
+	speed = cs->speed_hz;
+	if (!speed)
+		speed = 1000000;	/* default 1MHz */
+	bclkdiv = (mps->mclk_rate / speed) - 1;
 
 	ccr |= (((bclkdiv & 0xff) << 16) | (((bclkdiv >> 8) & 0xff) << 8));
 	out_be32(&psc->ccr, ccr);
@@ -164,7 +167,7 @@ static int mpc512x_psc_spi_transfer_rxtx(struct spi_device *spi,
 			}
 
 			/* have the ISR trigger when the TX FIFO is empty */
-			INIT_COMPLETION(mps->txisrdone);
+			reinit_completion(&mps->txisrdone);
 			out_be32(&fifo->txisr, MPC512x_PSC_FIFO_EMPTY);
 			out_be32(&fifo->tximr, MPC512x_PSC_FIFO_EMPTY);
 			wait_for_completion(&mps->txisrdone);
@@ -386,18 +389,10 @@ static int mpc512x_psc_spi_port_config(struct spi_master *master,
 {
 	struct mpc52xx_psc __iomem *psc = mps->psc;
 	struct mpc512x_psc_fifo __iomem *fifo = mps->fifo;
-	struct clk *spiclk;
-	int ret = 0;
-	char name[32];
 	u32 sicr;
 	u32 ccr;
+	int speed;
 	u16 bclkdiv;
-
-	sprintf(name, "psc%d_mclk", master->bus_num);
-	spiclk = clk_get(&master->dev, name);
-	clk_enable(spiclk);
-	mps->mclk = clk_get_rate(spiclk);
-	clk_put(spiclk);
 
 	/* Reset the PSC into a known state */
 	out_8(&psc->command, MPC52xx_PSC_RST_RX);
@@ -425,7 +420,8 @@ static int mpc512x_psc_spi_port_config(struct spi_master *master,
 
 	ccr = in_be32(&psc->ccr);
 	ccr &= 0xFF000000;
-	bclkdiv = (mps->mclk / 1000000) - 1;	/* default 1MHz */
+	speed = 1000000;	/* default 1MHz */
+	bclkdiv = (mps->mclk_rate / speed) - 1;
 	ccr |= (((bclkdiv & 0xff) << 16) | (((bclkdiv >> 8) & 0xff) << 8));
 	out_be32(&psc->ccr, ccr);
 
@@ -445,7 +441,7 @@ static int mpc512x_psc_spi_port_config(struct spi_master *master,
 
 	mps->bits_per_word = 8;
 
-	return ret;
+	return 0;
 }
 
 static irqreturn_t mpc512x_psc_spi_isr(int irq, void *dev_id)
@@ -474,11 +470,14 @@ static int mpc512x_psc_spi_do_probe(struct device *dev, u32 regaddr,
 					      u32 size, unsigned int irq,
 					      s16 bus_num)
 {
-	struct fsl_spi_platform_data *pdata = dev->platform_data;
+	struct fsl_spi_platform_data *pdata = dev_get_platdata(dev);
 	struct mpc512x_psc_spi *mps;
 	struct spi_master *master;
 	int ret;
 	void *tempp;
+	int psc_num;
+	char clk_name[16];
+	struct clk *clk;
 
 	master = spi_alloc_master(dev, sizeof *mps);
 	if (master == NULL)
@@ -521,16 +520,31 @@ static int mpc512x_psc_spi_do_probe(struct device *dev, u32 regaddr,
 		goto free_master;
 	init_completion(&mps->txisrdone);
 
+	psc_num = master->bus_num;
+	snprintf(clk_name, sizeof(clk_name), "psc%d_mclk", psc_num);
+	clk = devm_clk_get(dev, clk_name);
+	if (IS_ERR(clk)) {
+		ret = PTR_ERR(clk);
+		goto free_irq;
+	}
+	ret = clk_prepare_enable(clk);
+	if (ret)
+		goto free_irq;
+	mps->clk_mclk = clk;
+	mps->mclk_rate = clk_get_rate(clk);
+
 	ret = mpc512x_psc_spi_port_config(master, mps);
 	if (ret < 0)
-		goto free_irq;
+		goto free_clock;
 
-	ret = spi_register_master(master);
+	ret = devm_spi_register_master(dev, master);
 	if (ret < 0)
-		goto free_irq;
+		goto free_clock;
 
 	return ret;
 
+free_clock:
+	clk_disable_unprepare(mps->clk_mclk);
 free_irq:
 	free_irq(mps->irq, mps);
 free_master:
@@ -543,14 +557,13 @@ free_master:
 
 static int mpc512x_psc_spi_do_remove(struct device *dev)
 {
-	struct spi_master *master = spi_master_get(dev_get_drvdata(dev));
+	struct spi_master *master = dev_get_drvdata(dev);
 	struct mpc512x_psc_spi *mps = spi_master_get_devdata(master);
 
-	spi_unregister_master(master);
+	clk_disable_unprepare(mps->clk_mclk);
 	free_irq(mps->irq, mps);
 	if (mps->psc)
 		iounmap(mps->psc);
-	spi_master_put(master);
 
 	return 0;
 }

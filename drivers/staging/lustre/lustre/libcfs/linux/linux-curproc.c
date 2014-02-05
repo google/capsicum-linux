@@ -65,20 +65,6 @@ int    cfs_curproc_groups_nr(void)
 	return nr;
 }
 
-void   cfs_curproc_groups_dump(gid_t *array, int size)
-{
-	task_lock(current);
-	size = min_t(int, size, current_cred()->group_info->ngroups);
-	memcpy(array, current_cred()->group_info->blocks[0], size * sizeof(__u32));
-	task_unlock(current);
-}
-
-
-int    current_is_in_group(gid_t gid)
-{
-	return in_group_p(gid);
-}
-
 /* Currently all the CFS_CAP_* defines match CAP_* ones. */
 #define cfs_cap_pack(cap) (cap)
 #define cfs_cap_unpack(cap) (cap)
@@ -181,7 +167,7 @@ static int cfs_access_process_vm(struct task_struct *tsk, unsigned long addr,
 		return 0;
 
 	down_read(&mm->mmap_sem);
-	/* ignore errors, just check how much was sucessfully transfered */
+	/* ignore errors, just check how much was successfully transferred */
 	while (len) {
 		int bytes, rc, offset;
 		void *maddr;
@@ -226,24 +212,25 @@ int cfs_get_environ(const char *key, char *value, int *val_len)
 	int key_len = strlen(key);
 	unsigned long addr;
 	int rc;
-	ENTRY;
 
 	buffer = kmalloc(buf_len, GFP_USER);
 	if (!buffer)
-		RETURN(-ENOMEM);
+		return -ENOMEM;
 
 	mm = get_task_mm(current);
 	if (!mm) {
 		kfree(buffer);
-		RETURN(-EINVAL);
+		return -EINVAL;
 	}
 
 	/* Avoid deadlocks on mmap_sem if called from sys_mmap_pgoff(),
 	 * which is already holding mmap_sem for writes.  If some other
 	 * thread gets the write lock in the meantime, this thread will
 	 * block, but at least it won't deadlock on itself.  LU-1735 */
-	if (down_read_trylock(&mm->mmap_sem) == 0)
+	if (down_read_trylock(&mm->mmap_sem) == 0) {
+		kfree(buffer);
 		return -EDEADLK;
+	}
 	up_read(&mm->mmap_sem);
 
 	addr = mm->env_start;
@@ -318,8 +305,6 @@ out:
 EXPORT_SYMBOL(cfs_get_environ);
 
 EXPORT_SYMBOL(cfs_curproc_groups_nr);
-EXPORT_SYMBOL(cfs_curproc_groups_dump);
-EXPORT_SYMBOL(current_is_in_group);
 EXPORT_SYMBOL(cfs_cap_raise);
 EXPORT_SYMBOL(cfs_cap_lower);
 EXPORT_SYMBOL(cfs_cap_raised);

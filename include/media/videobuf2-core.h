@@ -83,7 +83,7 @@ struct vb2_fileio_data;
 struct vb2_mem_ops {
 	void		*(*alloc)(void *alloc_ctx, unsigned long size, gfp_t gfp_flags);
 	void		(*put)(void *buf_priv);
-	struct dma_buf *(*get_dmabuf)(void *buf_priv);
+	struct dma_buf *(*get_dmabuf)(void *buf_priv, unsigned long flags);
 
 	void		*(*get_userptr)(void *alloc_ctx, unsigned long vaddr,
 					unsigned long size, int write);
@@ -219,8 +219,9 @@ struct vb2_buffer {
  *			configured format and *num_buffers is the total number
  *			of buffers, that are being allocated. When called from
  *			VIDIOC_CREATE_BUFS, fmt != NULL and it describes the
- *			target frame format. In this case *num_buffers are being
- *			allocated additionally to q->num_buffers.
+ *			target frame format (if the format isn't valid the
+ *			callback must return -EINVAL). In this case *num_buffers
+ *			are being allocated additionally to q->num_buffers.
  * @wait_prepare:	release any locks taken while calling vb2 functions;
  *			it is called before an ioctl needs to wait for a new
  *			buffer to arrive; required to avoid a deadlock in
@@ -236,8 +237,10 @@ struct vb2_buffer {
  * @buf_prepare:	called every time the buffer is queued from userspace
  *			and from the VIDIOC_PREPARE_BUF ioctl; drivers may
  *			perform any initialization required before each hardware
- *			operation in this callback; if an error is returned, the
- *			buffer will not be queued in driver; optional
+ *			operation in this callback; drivers that support
+ *			VIDIOC_CREATE_BUFS must also validate the buffer size;
+ *			if an error is returned, the buffer will not be queued
+ *			in driver; optional
  * @buf_finish:		called before every dequeue of the buffer back to
  *			userspace; drivers may perform any operations required
  *			before userspace accesses the buffer; optional
@@ -388,7 +391,7 @@ unsigned long vb2_get_unmapped_area(struct vb2_queue *q,
 unsigned int vb2_poll(struct vb2_queue *q, struct file *file, poll_table *wait);
 size_t vb2_read(struct vb2_queue *q, char __user *data, size_t count,
 		loff_t *ppos, int nonblock);
-size_t vb2_write(struct vb2_queue *q, char __user *data, size_t count,
+size_t vb2_write(struct vb2_queue *q, const char __user *data, size_t count,
 		loff_t *ppos, int nonblock);
 
 /**
@@ -488,7 +491,7 @@ int vb2_ioctl_expbuf(struct file *file, void *priv,
 
 int vb2_fop_mmap(struct file *file, struct vm_area_struct *vma);
 int vb2_fop_release(struct file *file);
-ssize_t vb2_fop_write(struct file *file, char __user *buf,
+ssize_t vb2_fop_write(struct file *file, const char __user *buf,
 		size_t count, loff_t *ppos);
 ssize_t vb2_fop_read(struct file *file, char __user *buf,
 		size_t count, loff_t *ppos);

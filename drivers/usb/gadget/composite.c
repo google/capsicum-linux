@@ -354,7 +354,7 @@ static u8 encode_bMaxPower(enum usb_device_speed speed,
 		return DIV_ROUND_UP(val, 8);
 	default:
 		return DIV_ROUND_UP(val, 2);
-	};
+	}
 }
 
 static int config_buf(struct usb_configuration *config,
@@ -593,6 +593,7 @@ static void reset_config(struct usb_composite_dev *cdev)
 		bitmap_zero(f->endpoints, 32);
 	}
 	cdev->config = NULL;
+	cdev->delayed_status = 0;
 }
 
 static int set_config(struct usb_composite_dev *cdev,
@@ -1497,17 +1498,15 @@ void composite_disconnect(struct usb_gadget *gadget)
 
 /*-------------------------------------------------------------------------*/
 
-static ssize_t composite_show_suspended(struct device *dev,
-					struct device_attribute *attr,
-					char *buf)
+static ssize_t suspended_show(struct device *dev, struct device_attribute *attr,
+			      char *buf)
 {
 	struct usb_gadget *gadget = dev_to_usb_gadget(dev);
 	struct usb_composite_dev *cdev = get_gadget_data(gadget);
 
 	return sprintf(buf, "%d\n", cdev->suspended);
 }
-
-static DEVICE_ATTR(suspended, 0444, composite_show_suspended, NULL);
+static DEVICE_ATTR_RO(suspended);
 
 static void __composite_unbind(struct usb_gadget *gadget, bool unbind_driver)
 {

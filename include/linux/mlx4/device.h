@@ -33,6 +33,7 @@
 #ifndef MLX4_DEVICE_H
 #define MLX4_DEVICE_H
 
+#include <linux/if_ether.h>
 #include <linux/pci.h>
 #include <linux/completion.h>
 #include <linux/radix-tree.h>
@@ -53,6 +54,7 @@ enum {
 	MLX4_FLAG_MASTER	= 1 << 2,
 	MLX4_FLAG_SLAVE		= 1 << 3,
 	MLX4_FLAG_SRIOV		= 1 << 4,
+	MLX4_FLAG_OLD_REG_MAC	= 1 << 6,
 };
 
 enum {
@@ -154,7 +156,7 @@ enum {
 	MLX4_DEV_CAP_FLAG2_RSS_TOP		= 1LL <<  1,
 	MLX4_DEV_CAP_FLAG2_RSS_XOR		= 1LL <<  2,
 	MLX4_DEV_CAP_FLAG2_FS_EN		= 1LL <<  3,
-	MLX4_DEV_CAP_FLAGS2_REASSIGN_MAC_EN	= 1LL <<  4,
+	MLX4_DEV_CAP_FLAG2_REASSIGN_MAC_EN	= 1LL <<  4,
 	MLX4_DEV_CAP_FLAG2_TS			= 1LL <<  5,
 	MLX4_DEV_CAP_FLAG2_VLAN_CONTROL		= 1LL <<  6,
 	MLX4_DEV_CAP_FLAG2_FSM			= 1LL <<  7,
@@ -207,6 +209,7 @@ enum mlx4_event {
 	MLX4_EVENT_TYPE_CMD		   = 0x0a,
 	MLX4_EVENT_TYPE_VEP_UPDATE	   = 0x19,
 	MLX4_EVENT_TYPE_COMM_CHANNEL	   = 0x18,
+	MLX4_EVENT_TYPE_OP_REQUIRED	   = 0x1a,
 	MLX4_EVENT_TYPE_FATAL_WARNING	   = 0x1b,
 	MLX4_EVENT_TYPE_FLR_EVENT	   = 0x1c,
 	MLX4_EVENT_TYPE_PORT_MNG_CHG_EVENT = 0x1d,
@@ -619,7 +622,7 @@ struct mlx4_eth_av {
 	u8		dgid[16];
 	u32		reserved4[2];
 	__be16		vlan;
-	u8		mac[6];
+	u8		mac[ETH_ALEN];
 };
 
 union mlx4_ext_av {
@@ -638,16 +641,28 @@ struct mlx4_counter {
 	__be64	tx_bytes;
 };
 
+struct mlx4_quotas {
+	int qp;
+	int cq;
+	int srq;
+	int mpt;
+	int mtt;
+	int counter;
+	int xrcd;
+};
+
 struct mlx4_dev {
 	struct pci_dev	       *pdev;
 	unsigned long		flags;
 	unsigned long		num_slaves;
 	struct mlx4_caps	caps;
 	struct mlx4_phys_caps	phys_caps;
+	struct mlx4_quotas	quotas;
 	struct radix_tree_root	qp_table_tree;
 	u8			rev_id;
 	char			board_id[MLX4_BOARD_ID_LEN];
 	int			num_vfs;
+	int			numa_node;
 	int			oper_log_mgm_entry_size;
 	u64			regid_promisc_array[MLX4_MAX_PORTS + 1];
 	u64			regid_allmulti_array[MLX4_MAX_PORTS + 1];
@@ -769,6 +784,12 @@ static inline int mlx4_is_master(struct mlx4_dev *dev)
 	return dev->flags & MLX4_FLAG_MASTER;
 }
 
+static inline int mlx4_num_reserved_sqps(struct mlx4_dev *dev)
+{
+	return dev->phys_caps.base_sqpn + 8 +
+		16 * MLX4_MFUNC_MAX * !!mlx4_is_master(dev);
+}
+
 static inline int mlx4_is_qp_reserved(struct mlx4_dev *dev, u32 qpn)
 {
 	return (qpn < dev->phys_caps.base_sqpn + 8 +
@@ -814,7 +835,7 @@ void mlx4_xrcd_free(struct mlx4_dev *dev, u32 xrcdn);
 
 int mlx4_uar_alloc(struct mlx4_dev *dev, struct mlx4_uar *uar);
 void mlx4_uar_free(struct mlx4_dev *dev, struct mlx4_uar *uar);
-int mlx4_bf_alloc(struct mlx4_dev *dev, struct mlx4_bf *bf);
+int mlx4_bf_alloc(struct mlx4_dev *dev, struct mlx4_bf *bf, int node);
 void mlx4_bf_free(struct mlx4_dev *dev, struct mlx4_bf *bf);
 
 int mlx4_mtt_init(struct mlx4_dev *dev, int npages, int page_shift,
@@ -913,10 +934,10 @@ enum mlx4_net_trans_promisc_mode {
 };
 
 struct mlx4_spec_eth {
-	u8	dst_mac[6];
-	u8	dst_mac_msk[6];
-	u8	src_mac[6];
-	u8	src_mac_msk[6];
+	u8	dst_mac[ETH_ALEN];
+	u8	dst_mac_msk[ETH_ALEN];
+	u8	src_mac[ETH_ALEN];
+	u8	src_mac_msk[ETH_ALEN];
 	u8	ether_type_enable;
 	__be16	ether_type;
 	__be16	vlan_id_msk;
@@ -1052,11 +1073,6 @@ struct _rule_hw {
 	};
 };
 
-/* translating DMFS verbs sniffer rule to the FW API would need two reg IDs */
-struct mlx4_flow_handle {
-	u64 reg_id[2];
-};
-
 int mlx4_flow_steer_promisc_add(struct mlx4_dev *dev, u8 port, u32 qpn,
 				enum mlx4_net_trans_promisc_mode mode);
 int mlx4_flow_steer_promisc_remove(struct mlx4_dev *dev, u8 port,
@@ -1081,7 +1097,7 @@ int mlx4_SET_PORT_SCHEDULER(struct mlx4_dev *dev, u8 port, u8 *tc_tx_bw,
 		u8 *pg, u16 *ratelimit);
 int mlx4_find_cached_vlan(struct mlx4_dev *dev, u8 port, u16 vid, int *idx);
 int mlx4_register_vlan(struct mlx4_dev *dev, u8 port, u16 vlan, int *index);
-void mlx4_unregister_vlan(struct mlx4_dev *dev, u8 port, int index);
+void mlx4_unregister_vlan(struct mlx4_dev *dev, u8 port, u16 vlan);
 
 int mlx4_map_phys_fmr(struct mlx4_dev *dev, struct mlx4_fmr *fmr, u64 *page_list,
 		      int npages, u64 iova, u32 *lkey, u32 *rkey);

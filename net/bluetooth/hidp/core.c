@@ -225,17 +225,47 @@ static void hidp_input_report(struct hidp_session *session, struct sk_buff *skb)
 
 static int hidp_send_report(struct hidp_session *session, struct hid_report *report)
 {
-	unsigned char buf[32], hdr;
-	int rsize;
+	unsigned char hdr;
+	u8 *buf;
+	int rsize, ret;
 
-	rsize = ((report->size - 1) >> 3) + 1 + (report->id > 0);
-	if (rsize > sizeof(buf))
+	buf = hid_alloc_report_buf(report, GFP_ATOMIC);
+	if (!buf)
 		return -EIO;
 
 	hid_output_report(report, buf);
 	hdr = HIDP_TRANS_DATA | HIDP_DATA_RTYPE_OUPUT;
 
-	return hidp_send_intr_message(session, hdr, buf, rsize);
+	rsize = ((report->size - 1) >> 3) + 1 + (report->id > 0);
+	ret = hidp_send_intr_message(session, hdr, buf, rsize);
+
+	kfree(buf);
+	return ret;
+}
+
+static int hidp_hidinput_event(struct input_dev *dev, unsigned int type,
+			       unsigned int code, int value)
+{
+	struct hid_device *hid = input_get_drvdata(dev);
+	struct hidp_session *session = hid->driver_data;
+	struct hid_field *field;
+	int offset;
+
+	BT_DBG("session %p type %d code %d value %d",
+	       session, type, code, value);
+
+	if (type != EV_LED)
+		return -1;
+
+	offset = hidinput_find_field(hid, type, code, &field);
+	if (offset == -1) {
+		hid_warn(dev, "event field not found\n");
+		return -1;
+	}
+
+	hid_set_field(field, offset, value);
+
+	return hidp_send_report(session, field->report);
 }
 
 static int hidp_get_raw_report(struct hid_device *hid,
@@ -678,20 +708,6 @@ static int hidp_parse(struct hid_device *hid)
 
 static int hidp_start(struct hid_device *hid)
 {
-	struct hidp_session *session = hid->driver_data;
-	struct hid_report *report;
-
-	if (hid->quirks & HID_QUIRK_NO_INIT_REPORTS)
-		return 0;
-
-	list_for_each_entry(report, &hid->report_enum[HID_INPUT_REPORT].
-			report_list, list)
-		hidp_send_report(session, report);
-
-	list_for_each_entry(report, &hid->report_enum[HID_FEATURE_REPORT].
-			report_list, list)
-		hidp_send_report(session, report);
-
 	return 0;
 }
 
@@ -711,6 +727,7 @@ static struct hid_ll_driver hidp_hid_driver = {
 	.stop = hidp_stop,
 	.open  = hidp_open,
 	.close = hidp_close,
+	.hidinput_input_event = hidp_hidinput_event,
 };
 
 /* This function sets up the hid device. It does not add it
@@ -750,10 +767,10 @@ static int hidp_setup_hid(struct hidp_session *session,
 	strncpy(hid->name, req->name, sizeof(req->name) - 1);
 
 	snprintf(hid->phys, sizeof(hid->phys), "%pMR",
-		 &bt_sk(session->ctrl_sock->sk)->src);
+		 &l2cap_pi(session->ctrl_sock->sk)->chan->src);
 
 	snprintf(hid->uniq, sizeof(hid->uniq), "%pMR",
-		 &bt_sk(session->ctrl_sock->sk)->dst);
+		 &l2cap_pi(session->ctrl_sock->sk)->chan->dst);
 
 	hid->dev.parent = &session->conn->hcon->dev;
 	hid->ll_driver = &hidp_hid_driver;
@@ -1266,23 +1283,29 @@ static int hidp_session_thread(void *arg)
 static int hidp_verify_sockets(struct socket *ctrl_sock,
 			       struct socket *intr_sock)
 {
+	struct l2cap_chan *ctrl_chan, *intr_chan;
 	struct bt_sock *ctrl, *intr;
 	struct hidp_session *session;
 
 	if (!l2cap_is_socket(ctrl_sock) || !l2cap_is_socket(intr_sock))
 		return -EINVAL;
 
+	ctrl_chan = l2cap_pi(ctrl_sock->sk)->chan;
+	intr_chan = l2cap_pi(intr_sock->sk)->chan;
+
+	if (bacmp(&ctrl_chan->src, &intr_chan->src) ||
+	    bacmp(&ctrl_chan->dst, &intr_chan->dst))
+		return -ENOTUNIQ;
+
 	ctrl = bt_sk(ctrl_sock->sk);
 	intr = bt_sk(intr_sock->sk);
 
-	if (bacmp(&ctrl->src, &intr->src) || bacmp(&ctrl->dst, &intr->dst))
-		return -ENOTUNIQ;
 	if (ctrl->sk.sk_state != BT_CONNECTED ||
 	    intr->sk.sk_state != BT_CONNECTED)
 		return -EBADFD;
 
 	/* early session check, we check again during session registration */
-	session = hidp_session_find(&ctrl->dst);
+	session = hidp_session_find(&ctrl_chan->dst);
 	if (session) {
 		hidp_session_put(session);
 		return -EEXIST;
@@ -1315,7 +1338,7 @@ int hidp_connection_add(struct hidp_connadd_req *req,
 	if (!conn)
 		return -EBADFD;
 
-	ret = hidp_session_new(&session, &bt_sk(ctrl_sock->sk)->dst, ctrl_sock,
+	ret = hidp_session_new(&session, &chan->dst, ctrl_sock,
 			       intr_sock, req, conn);
 	if (ret)
 		goto out_conn;

@@ -387,7 +387,7 @@ qlcnic_send_cmd_descs(struct qlcnic_adapter *adapter,
 	if (!test_bit(__QLCNIC_FW_ATTACHED, &adapter->state))
 		return -EIO;
 
-	tx_ring = adapter->tx_ring;
+	tx_ring = &adapter->tx_ring[0];
 	__netif_tx_lock_bh(tx_ring->txq);
 
 	producer = tx_ring->producer;
@@ -445,7 +445,7 @@ int qlcnic_82xx_sre_macaddr_change(struct qlcnic_adapter *adapter, u8 *addr,
 
 	mac_req = (struct qlcnic_mac_req *)&req.words[0];
 	mac_req->op = op;
-	memcpy(mac_req->mac_addr, addr, 6);
+	memcpy(mac_req->mac_addr, addr, ETH_ALEN);
 
 	vlan_req = (struct qlcnic_vlan_req *)&req.words[1];
 	vlan_req->vlan_id = cpu_to_le16(vlan_id);
@@ -740,6 +740,22 @@ int qlcnic_82xx_clear_lb_mode(struct qlcnic_adapter *adapter, u8 mode)
 	return 0;
 }
 
+int qlcnic_82xx_read_phys_port_id(struct qlcnic_adapter *adapter)
+{
+	u8 mac[ETH_ALEN];
+	int ret;
+
+	ret = qlcnic_get_mac_address(adapter, mac,
+				     adapter->ahw->physical_port);
+	if (ret)
+		return ret;
+
+	memcpy(adapter->ahw->phys_port_id, mac, ETH_ALEN);
+	adapter->flags |= QLCNIC_HAS_PHYS_PORT_ID;
+
+	return 0;
+}
+
 /*
  * Send the interrupt coalescing parameter set by ethtool to the card.
  */
@@ -769,8 +785,6 @@ void qlcnic_82xx_config_intr_coalesce(struct qlcnic_adapter *adapter)
 
 #define QLCNIC_ENABLE_IPV4_LRO		1
 #define QLCNIC_ENABLE_IPV6_LRO		2
-#define QLCNIC_NO_DEST_IPV4_CHECK	(1 << 8)
-#define QLCNIC_NO_DEST_IPV6_CHECK	(2 << 8)
 
 int qlcnic_82xx_config_hw_lro(struct qlcnic_adapter *adapter, int enable)
 {
@@ -790,11 +804,10 @@ int qlcnic_82xx_config_hw_lro(struct qlcnic_adapter *adapter, int enable)
 
 	word = 0;
 	if (enable) {
-		word = QLCNIC_ENABLE_IPV4_LRO | QLCNIC_NO_DEST_IPV4_CHECK;
+		word = QLCNIC_ENABLE_IPV4_LRO;
 		if (adapter->ahw->extra_capability[0] &
 		    QLCNIC_FW_CAP2_HW_LRO_IPV6)
-			word |= QLCNIC_ENABLE_IPV6_LRO |
-				QLCNIC_NO_DEST_IPV6_CHECK;
+			word |= QLCNIC_ENABLE_IPV6_LRO;
 	}
 
 	req.words[0] = cpu_to_le64(word);

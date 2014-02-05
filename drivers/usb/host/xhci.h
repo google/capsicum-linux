@@ -383,6 +383,7 @@ struct xhci_op_regs {
 #define	PORT_RWE		(1 << 3)
 #define	PORT_HIRD(p)		(((p) & 0xf) << 4)
 #define	PORT_HIRD_MASK		(0xf << 4)
+#define	PORT_L1DS_MASK		(0xff << 8)
 #define	PORT_L1DS(p)		(((p) & 0xff) << 8)
 #define	PORT_HLE		(1 << 16)
 
@@ -934,8 +935,6 @@ struct xhci_virt_device {
 	/* Rings saved to ensure old alt settings can be re-instated */
 	struct xhci_ring		**ring_cache;
 	int				num_rings_cached;
-	/* Store xHC assigned device address */
-	int				address;
 #define	XHCI_MAX_RINGS_CACHED	31
 	struct xhci_virt_ep		eps[31];
 	struct completion		cmd_completion;
@@ -1412,7 +1411,17 @@ struct xhci_bus_state {
 	unsigned long		resume_done[USB_MAXCHILDREN];
 	/* which ports have started to resume */
 	unsigned long		resuming_ports;
+	/* Which ports are waiting on RExit to U0 transition. */
+	unsigned long		rexit_ports;
+	struct completion	rexit_done[USB_MAXCHILDREN];
 };
+
+
+/*
+ * It can take up to 20 ms to transition from RExit to U0 on the
+ * Intel Lynx Point LP xHCI host.
+ */
+#define	XHCI_MAX_REXIT_TIMEOUT	(20 * 1000)
 
 static inline unsigned int hcd_index(struct usb_hcd *hcd)
 {
@@ -1490,11 +1499,6 @@ struct xhci_hcd {
 	struct dma_pool	*small_streams_pool;
 	struct dma_pool	*medium_streams_pool;
 
-#ifdef CONFIG_USB_XHCI_HCD_DEBUGGING
-	/* Poll the rings - for debugging */
-	struct timer_list	event_ring_timer;
-	int			zombie;
-#endif
 	/* Host controller watchdog timer structures */
 	unsigned int		xhc_state;
 
@@ -1542,6 +1546,9 @@ struct xhci_hcd {
 #define XHCI_SPURIOUS_REBOOT	(1 << 13)
 #define XHCI_COMP_MODE_QUIRK	(1 << 14)
 #define XHCI_AVOID_BEI		(1 << 15)
+#define XHCI_PLAT		(1 << 16)
+#define XHCI_SLOW_SUSPEND	(1 << 17)
+#define XHCI_SPURIOUS_WAKEUP	(1 << 18)
 	unsigned int		num_active_eps;
 	unsigned int		limit_active_eps;
 	/* There are two roothubs to keep track of bus suspend info for */
@@ -1579,16 +1586,8 @@ static inline struct usb_hcd *xhci_to_hcd(struct xhci_hcd *xhci)
 	return xhci->main_hcd;
 }
 
-#ifdef CONFIG_USB_XHCI_HCD_DEBUGGING
-#define XHCI_DEBUG	1
-#else
-#define XHCI_DEBUG	0
-#endif
-
 #define xhci_dbg(xhci, fmt, args...) \
-	do { if (XHCI_DEBUG) dev_dbg(xhci_to_hcd(xhci)->self.controller , fmt , ## args); } while (0)
-#define xhci_info(xhci, fmt, args...) \
-	do { if (XHCI_DEBUG) dev_info(xhci_to_hcd(xhci)->self.controller , fmt , ## args); } while (0)
+	dev_dbg(xhci_to_hcd(xhci)->self.controller , fmt , ## args)
 #define xhci_err(xhci, fmt, args...) \
 	dev_err(xhci_to_hcd(xhci)->self.controller , fmt , ## args)
 #define xhci_warn(xhci, fmt, args...) \
@@ -1660,6 +1659,8 @@ char *xhci_get_slot_state(struct xhci_hcd *xhci,
 void xhci_dbg_ep_rings(struct xhci_hcd *xhci,
 		unsigned int slot_id, unsigned int ep_index,
 		struct xhci_virt_ep *ep);
+void xhci_dbg_trace(struct xhci_hcd *xhci, void (*trace)(struct va_format *),
+			const char *fmt, ...);
 
 /* xHCI memory management */
 void xhci_mem_cleanup(struct xhci_hcd *xhci);
@@ -1850,6 +1851,7 @@ int xhci_cancel_cmd(struct xhci_hcd *xhci, struct xhci_command *command,
 		union xhci_trb *cmd_trb);
 void xhci_ring_ep_doorbell(struct xhci_hcd *xhci, unsigned int slot_id,
 		unsigned int ep_index, unsigned int stream_id);
+union xhci_trb *xhci_find_next_enqueue(struct xhci_ring *ring);
 
 /* xHCI roothub code */
 void xhci_set_link_state(struct xhci_hcd *xhci, __le32 __iomem **port_array,

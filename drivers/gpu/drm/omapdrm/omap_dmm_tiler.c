@@ -664,8 +664,9 @@ static int omap_dmm_probe(struct platform_device *dev)
 	}
 
 	/* set dma mask for device */
-	/* NOTE: this is a workaround for the hwmod not initializing properly */
-	dev->dev.coherent_dma_mask = DMA_BIT_MASK(32);
+	ret = dma_set_coherent_mask(&dev->dev, DMA_BIT_MASK(32));
+	if (ret)
+		goto fail;
 
 	omap_dmm->dummy_pa = page_to_phys(omap_dmm->dummy_page);
 
@@ -871,7 +872,7 @@ int tiler_map_show(struct seq_file *s, void *arg)
 		goto error;
 
 	for (lut_idx = 0; lut_idx < omap_dmm->num_lut; lut_idx++) {
-		memset(map, 0, sizeof(h_adj * sizeof(*map)));
+		memset(map, 0, h_adj * sizeof(*map));
 		memset(global_map, ' ', (w_adj + 1) * h_adj);
 
 		for (i = 0; i < omap_dmm->container_height; i++) {

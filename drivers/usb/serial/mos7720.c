@@ -374,7 +374,7 @@ static int write_parport_reg_nonblock(struct mos7715_parport *mos_parport,
 		kfree(urbtrack);
 		return -ENOMEM;
 	}
-	urbtrack->setup = kmalloc(sizeof(*urbtrack->setup), GFP_KERNEL);
+	urbtrack->setup = kmalloc(sizeof(*urbtrack->setup), GFP_ATOMIC);
 	if (!urbtrack->setup) {
 		usb_free_urb(urbtrack->urb);
 		kfree(urbtrack);
@@ -382,8 +382,8 @@ static int write_parport_reg_nonblock(struct mos7715_parport *mos_parport,
 	}
 	urbtrack->setup->bRequestType = (__u8)0x40;
 	urbtrack->setup->bRequest = (__u8)0x0e;
-	urbtrack->setup->wValue = get_reg_value(reg, dummy);
-	urbtrack->setup->wIndex = get_reg_index(reg);
+	urbtrack->setup->wValue = cpu_to_le16(get_reg_value(reg, dummy));
+	urbtrack->setup->wIndex = cpu_to_le16(get_reg_index(reg));
 	urbtrack->setup->wLength = 0;
 	usb_fill_control_urb(urbtrack->urb, usbdev,
 			     usb_sndctrlpipe(usbdev, 0),
@@ -455,7 +455,7 @@ static int parport_prologue(struct parport *pp)
 		return -1;
 	}
 	mos_parport->msg_pending = true;   /* synch usb call pending */
-	INIT_COMPLETION(mos_parport->syncmsg_compl);
+	reinit_completion(&mos_parport->syncmsg_compl);
 	spin_unlock(&release_lock);
 
 	mutex_lock(&mos_parport->serial->disc_mutex);

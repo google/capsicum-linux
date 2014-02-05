@@ -19,17 +19,10 @@
 #include "pmcc4.h"
 #include "sbe_bid.h"
 
-#ifdef SBE_INCLUDE_SYMBOLS
-#define STATIC
-#else
-#define STATIC  static
-#endif
-
-
 char       *
 sbeid_get_bdname (ci_t *ci)
 {
-    char       *np = 0;
+    char       *np = NULL;
 
     switch (ci->brd_id)
     {

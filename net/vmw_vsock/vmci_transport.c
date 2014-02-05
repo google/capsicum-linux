@@ -34,8 +34,8 @@
 #include <linux/wait.h>
 #include <linux/workqueue.h>
 #include <net/sock.h>
+#include <net/af_vsock.h>
 
-#include "af_vsock.h"
 #include "vmci_transport_notify.h"
 
 static int vmci_transport_recv_dgram_cb(void *data, struct vmci_datagram *dg);
@@ -1745,8 +1745,6 @@ static int vmci_transport_dgram_dequeue(struct kiocb *kiocb,
 
 	if (flags & MSG_OOB || flags & MSG_ERRQUEUE)
 		return -EOPNOTSUPP;
-
-	msg->msg_namelen = 0;
 
 	/* Retrieve the head sk_buff from the socket's receive queue. */
 	err = 0;

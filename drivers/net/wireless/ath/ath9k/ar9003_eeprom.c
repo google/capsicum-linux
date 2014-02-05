@@ -2991,7 +2991,10 @@ static u32 ath9k_hw_ar9300_get_eeprom(struct ath_hw *ah,
 	case EEP_CHAIN_MASK_REDUCE:
 		return (pBase->miscConfiguration >> 0x3) & 0x1;
 	case EEP_ANT_DIV_CTL1:
-		return eep->base_ext1.ant_div_control;
+		if (AR_SREV_9565(ah))
+			return AR9300_EEP_ANTDIV_CONTROL_DEFAULT_VALUE;
+		else
+			return eep->base_ext1.ant_div_control;
 	case EEP_ANTENNA_GAIN_5G:
 		return eep->modalHeader5G.antennaGain;
 	case EEP_ANTENNA_GAIN_2G:
@@ -3424,12 +3427,12 @@ static u32 ath9k_hw_ar9003_dump_eeprom(struct ath_hw *ah, bool dump_base_hdr,
 	struct ar9300_base_eep_hdr *pBase;
 
 	if (!dump_base_hdr) {
-		len += snprintf(buf + len, size - len,
-				"%20s :\n", "2GHz modal Header");
+		len += scnprintf(buf + len, size - len,
+				 "%20s :\n", "2GHz modal Header");
 		len = ar9003_dump_modal_eeprom(buf, len, size,
 						&eep->modalHeader2G);
-		len += snprintf(buf + len, size - len,
-				"%20s :\n", "5GHz modal Header");
+		len += scnprintf(buf + len, size - len,
+				 "%20s :\n", "5GHz modal Header");
 		len = ar9003_dump_modal_eeprom(buf, len, size,
 						&eep->modalHeader5G);
 		goto out;
@@ -3479,8 +3482,8 @@ static u32 ath9k_hw_ar9003_dump_eeprom(struct ath_hw *ah, bool dump_base_hdr,
 	PR_EEP("Rx Gain", pBase->txrxgain & 0xf);
 	PR_EEP("SW Reg", le32_to_cpu(pBase->swreg));
 
-	len += snprintf(buf + len, size - len, "%20s : %pM\n", "MacAddress",
-			ah->eeprom.ar9300_eep.macAddr);
+	len += scnprintf(buf + len, size - len, "%20s : %pM\n", "MacAddress",
+			 ah->eeprom.ar9300_eep.macAddr);
 out:
 	if (len > size)
 		len = size;
@@ -3541,13 +3544,12 @@ static u16 ar9003_switch_com_spdt_get(struct ath_hw *ah, bool is2ghz)
 	return le16_to_cpu(ar9003_modal_header(ah, is2ghz)->switchcomspdt);
 }
 
-
-static u32 ar9003_hw_ant_ctrl_common_get(struct ath_hw *ah, bool is2ghz)
+u32 ar9003_hw_ant_ctrl_common_get(struct ath_hw *ah, bool is2ghz)
 {
 	return le32_to_cpu(ar9003_modal_header(ah, is2ghz)->antCtrlCommon);
 }
 
-static u32 ar9003_hw_ant_ctrl_common_2_get(struct ath_hw *ah, bool is2ghz)
+u32 ar9003_hw_ant_ctrl_common_2_get(struct ath_hw *ah, bool is2ghz)
 {
 	return le32_to_cpu(ar9003_modal_header(ah, is2ghz)->antCtrlCommon2);
 }
@@ -3561,6 +3563,7 @@ static u16 ar9003_hw_ant_ctrl_chain_get(struct ath_hw *ah, int chain,
 
 static void ar9003_hw_ant_ctrl_apply(struct ath_hw *ah, bool is2ghz)
 {
+	struct ath_common *common = ath9k_hw_common(ah);
 	struct ath9k_hw_capabilities *pCap = &ah->caps;
 	int chain;
 	u32 regval, value, gpio;
@@ -3614,6 +3617,11 @@ static void ar9003_hw_ant_ctrl_apply(struct ath_hw *ah, bool is2ghz)
 	}
 
 	value = ar9003_hw_ant_ctrl_common_2_get(ah, is2ghz);
+	if (AR_SREV_9485(ah) && common->bt_ant_diversity) {
+		value &= ~AR_SWITCH_TABLE_COM2_ALL;
+		value |= ah->config.ant_ctrl_comm2g_switch_enable;
+
+	}
 	REG_RMW_FIELD(ah, AR_PHY_SWITCH_COM_2, AR_SWITCH_TABLE_COM2_ALL, value);
 
 	if ((AR_SREV_9462(ah)) && (ah->rxchainmask == 0x2)) {
@@ -3645,21 +3653,43 @@ static void ar9003_hw_ant_ctrl_apply(struct ath_hw *ah, bool is2ghz)
 		regval &= (~AR_PHY_ANT_DIV_LNADIV);
 		regval |= ((value >> 6) & 0x1) << AR_PHY_ANT_DIV_LNADIV_S;
 
+		if (AR_SREV_9485(ah) && common->bt_ant_diversity)
+			regval |= AR_ANT_DIV_ENABLE;
+
 		if (AR_SREV_9565(ah)) {
-			if (ah->shared_chain_lnadiv) {
+			if (common->bt_ant_diversity) {
 				regval |= (1 << AR_PHY_ANT_SW_RX_PROT_S);
+
+				REG_SET_BIT(ah, AR_PHY_RESTART,
+					    AR_PHY_RESTART_ENABLE_DIV_M2FLAG);
+
+				/* Force WLAN LNA diversity ON */
+				REG_SET_BIT(ah, AR_BTCOEX_WL_LNADIV,
+					    AR_BTCOEX_WL_LNADIV_FORCE_ON);
 			} else {
 				regval &= ~(1 << AR_PHY_ANT_DIV_LNADIV_S);
 				regval &= ~(1 << AR_PHY_ANT_SW_RX_PROT_S);
+
+				REG_CLR_BIT(ah, AR_PHY_MC_GAIN_CTRL,
+					    (1 << AR_PHY_ANT_SW_RX_PROT_S));
+
+				/* Force WLAN LNA diversity OFF */
+				REG_CLR_BIT(ah, AR_BTCOEX_WL_LNADIV,
+					    AR_BTCOEX_WL_LNADIV_FORCE_ON);
 			}
 		}
 
 		REG_WRITE(ah, AR_PHY_MC_GAIN_CTRL, regval);
 
-		/*enable fast_div */
+		/* enable fast_div */
 		regval = REG_READ(ah, AR_PHY_CCK_DETECT);
 		regval &= (~AR_FAST_DIV_ENABLE);
 		regval |= ((value >> 7) & 0x1) << AR_FAST_DIV_ENABLE_S;
+
+		if ((AR_SREV_9485(ah) || AR_SREV_9565(ah))
+		    && common->bt_ant_diversity)
+			regval |= AR_FAST_DIV_ENABLE;
+
 		REG_WRITE(ah, AR_PHY_CCK_DETECT, regval);
 
 		if (pCap->hw_caps & ATH9K_HW_CAP_ANT_DIV_COMB) {
@@ -3673,9 +3703,9 @@ static void ar9003_hw_ant_ctrl_apply(struct ath_hw *ah, bool is2ghz)
 				     AR_PHY_ANT_DIV_ALT_GAINTB |
 				     AR_PHY_ANT_DIV_MAIN_GAINTB));
 			/* by default use LNA1 for the main antenna */
-			regval |= (AR_PHY_ANT_DIV_LNA1 <<
+			regval |= (ATH_ANT_DIV_COMB_LNA1 <<
 				   AR_PHY_ANT_DIV_MAIN_LNACONF_S);
-			regval |= (AR_PHY_ANT_DIV_LNA2 <<
+			regval |= (ATH_ANT_DIV_COMB_LNA2 <<
 				   AR_PHY_ANT_DIV_ALT_LNACONF_S);
 			REG_WRITE(ah, AR_PHY_MC_GAIN_CTRL, regval);
 		}
@@ -3813,6 +3843,11 @@ static void ar9003_hw_atten_apply(struct ath_hw *ah, struct ath9k_channel *chan)
 			else
 				value = ar9003_hw_atten_chain_get_margin(ah, i, chan);
 
+			if (ah->config.alt_mingainidx)
+				REG_RMW_FIELD(ah, AR_PHY_EXT_ATTEN_CTL_0,
+					      AR_PHY_EXT_ATTEN_CTL_XATTEN1_MARGIN,
+					      value);
+
 			REG_RMW_FIELD(ah, ext_atten_reg[i],
 				      AR_PHY_EXT_ATTEN_CTL_XATTEN1_MARGIN,
 				      value);
@@ -3949,18 +3984,20 @@ static void ar9003_hw_quick_drop_apply(struct ath_hw *ah, u16 freq)
 	int quick_drop;
 	s32 t[3], f[3] = {5180, 5500, 5785};
 
-	if (!(pBase->miscConfiguration & BIT(1)))
+	if (!(pBase->miscConfiguration & BIT(4)))
 		return;
 
-	if (freq < 4000)
-		quick_drop = eep->modalHeader2G.quick_drop;
-	else {
-		t[0] = eep->base_ext1.quick_drop_low;
-		t[1] = eep->modalHeader5G.quick_drop;
-		t[2] = eep->base_ext1.quick_drop_high;
-		quick_drop = ar9003_hw_power_interpolate(freq, f, t, 3);
+	if (AR_SREV_9300(ah) || AR_SREV_9580(ah) || AR_SREV_9340(ah)) {
+		if (freq < 4000) {
+			quick_drop = eep->modalHeader2G.quick_drop;
+		} else {
+			t[0] = eep->base_ext1.quick_drop_low;
+			t[1] = eep->modalHeader5G.quick_drop;
+			t[2] = eep->base_ext1.quick_drop_high;
+			quick_drop = ar9003_hw_power_interpolate(freq, f, t, 3);
+		}
+		REG_RMW_FIELD(ah, AR_PHY_AGC, AR_PHY_AGC_QUICK_DROP, quick_drop);
 	}
-	REG_RMW_FIELD(ah, AR_PHY_AGC, AR_PHY_AGC_QUICK_DROP, quick_drop);
 }
 
 static void ar9003_hw_txend_to_xpa_off_apply(struct ath_hw *ah, bool is2ghz)
@@ -4000,7 +4037,7 @@ static void ar9003_hw_xlna_bias_strength_apply(struct ath_hw *ah, bool is2ghz)
 	struct ar9300_eeprom *eep = &ah->eeprom.ar9300_eep;
 	u8 bias;
 
-	if (!(eep->baseEepHeader.featureEnable & 0x40))
+	if (!(eep->baseEepHeader.miscConfiguration & 0x40))
 		return;
 
 	if (!AR_SREV_9300(ah))

@@ -35,7 +35,6 @@
  */
 #define DEBUG_SUBSYSTEM S_CLASS
 
-#include <linux/version.h>
 #include <asm/statfs.h>
 #include <obd_cksum.h>
 #include <obd_class.h>
@@ -146,7 +145,7 @@ static ssize_t osc_max_dirty_mb_seq_write(struct file *file, const char *buffer,
 
 	if (pages_number <= 0 ||
 	    pages_number > OSC_MAX_DIRTY_MB_MAX << (20 - PAGE_CACHE_SHIFT) ||
-	    pages_number > num_physpages / 4) /* 1/4 of RAM */
+	    pages_number > totalram_pages / 4) /* 1/4 of RAM */
 		return -ERANGE;
 
 	client_obd_list_lock(&cli->cl_loi_list_lock);
@@ -572,7 +571,7 @@ static int osc_rpc_stats_seq_show(struct seq_file *seq, void *v)
 	client_obd_list_lock(&cli->cl_loi_list_lock);
 
 	seq_printf(seq, "snapshot_time:	 %lu.%lu (secs.usecs)\n",
-		   now.tv_sec, now.tv_usec);
+		   now.tv_sec, (unsigned long)now.tv_usec);
 	seq_printf(seq, "read RPCs in flight:  %d\n",
 		   cli->cl_r_in_flight);
 	seq_printf(seq, "write RPCs in flight: %d\n",
@@ -684,7 +683,7 @@ static int osc_stats_seq_show(struct seq_file *seq, void *v)
 	do_gettimeofday(&now);
 
 	seq_printf(seq, "snapshot_time:	 %lu.%lu (secs.usecs)\n",
-		   now.tv_sec, now.tv_usec);
+		   now.tv_sec, (unsigned long)now.tv_usec);
 	seq_printf(seq, "lockless_write_bytes\t\t"LPU64"\n",
 		   stats->os_lockless_writes);
 	seq_printf(seq, "lockless_read_bytes\t\t"LPU64"\n",

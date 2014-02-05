@@ -64,7 +64,7 @@ netdev_tx_t br_dev_xmit(struct sk_buff *skb, struct net_device *dev)
 			br_flood_deliver(br, skb, false);
 			goto out;
 		}
-		if (br_multicast_rcv(br, NULL, skb)) {
+		if (br_multicast_rcv(br, NULL, skb, vid)) {
 			kfree_skb(skb);
 			goto out;
 		}
@@ -88,10 +88,17 @@ out:
 static int br_dev_init(struct net_device *dev)
 {
 	struct net_bridge *br = netdev_priv(dev);
+	int i;
 
 	br->stats = alloc_percpu(struct br_cpu_netstats);
 	if (!br->stats)
 		return -ENOMEM;
+
+	for_each_possible_cpu(i) {
+		struct br_cpu_netstats *br_dev_stats;
+		br_dev_stats = per_cpu_ptr(br->stats, i);
+		u64_stats_init(&br_dev_stats->syncp);
+	}
 
 	return 0;
 }
@@ -245,22 +252,22 @@ fail:
 int br_netpoll_enable(struct net_bridge_port *p, gfp_t gfp)
 {
 	struct netpoll *np;
-	int err = 0;
+	int err;
+
+	if (!p->br->dev->npinfo)
+		return 0;
 
 	np = kzalloc(sizeof(*p->np), gfp);
-	err = -ENOMEM;
 	if (!np)
-		goto out;
+		return -ENOMEM;
 
 	err = __netpoll_setup(np, p->dev, gfp);
 	if (err) {
 		kfree(np);
-		goto out;
+		return err;
 	}
 
 	p->np = np;
-
-out:
 	return err;
 }
 

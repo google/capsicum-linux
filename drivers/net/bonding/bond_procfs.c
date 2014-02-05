@@ -10,9 +10,9 @@ static void *bond_info_seq_start(struct seq_file *seq, loff_t *pos)
 	__acquires(&bond->lock)
 {
 	struct bonding *bond = seq->private;
-	loff_t off = 0;
+	struct list_head *iter;
 	struct slave *slave;
-	int i;
+	loff_t off = 0;
 
 	/* make sure the bond won't be taken away */
 	rcu_read_lock();
@@ -21,10 +21,9 @@ static void *bond_info_seq_start(struct seq_file *seq, loff_t *pos)
 	if (*pos == 0)
 		return SEQ_START_TOKEN;
 
-	bond_for_each_slave(bond, slave, i) {
+	bond_for_each_slave(bond, slave, iter)
 		if (++off == *pos)
 			return slave;
-	}
 
 	return NULL;
 }
@@ -32,15 +31,25 @@ static void *bond_info_seq_start(struct seq_file *seq, loff_t *pos)
 static void *bond_info_seq_next(struct seq_file *seq, void *v, loff_t *pos)
 {
 	struct bonding *bond = seq->private;
-	struct slave *slave = v;
+	struct list_head *iter;
+	struct slave *slave;
+	bool found = false;
 
 	++*pos;
 	if (v == SEQ_START_TOKEN)
-		return bond->first_slave;
+		return bond_first_slave(bond);
 
-	slave = slave->next;
+	if (bond_is_last_slave(bond, v))
+		return NULL;
 
-	return (slave == bond->first_slave) ? NULL : slave;
+	bond_for_each_slave(bond, slave, iter) {
+		if (found)
+			return slave;
+		if (slave == v)
+			found = true;
+	}
+
+	return NULL;
 }
 
 static void bond_info_seq_stop(struct seq_file *seq, void *v)

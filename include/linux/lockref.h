@@ -15,57 +15,36 @@
  */
 
 #include <linux/spinlock.h>
+#include <generated/bounds.h>
+
+#define USE_CMPXCHG_LOCKREF \
+	(IS_ENABLED(CONFIG_ARCH_USE_CMPXCHG_LOCKREF) && \
+	 IS_ENABLED(CONFIG_SMP) && SPINLOCK_SIZE <= 4)
 
 struct lockref {
-	spinlock_t lock;
-	unsigned int count;
+	union {
+#if USE_CMPXCHG_LOCKREF
+		aligned_u64 lock_count;
+#endif
+		struct {
+			spinlock_t lock;
+			unsigned int count;
+		};
+	};
 };
 
-/**
- * lockref_get - Increments reference count unconditionally
- * @lockcnt: pointer to lockref structure
- *
- * This operation is only valid if you already hold a reference
- * to the object, so you know the count cannot be zero.
- */
-static inline void lockref_get(struct lockref *lockref)
-{
-	spin_lock(&lockref->lock);
-	lockref->count++;
-	spin_unlock(&lockref->lock);
-}
+extern void lockref_get(struct lockref *);
+extern int lockref_get_not_zero(struct lockref *);
+extern int lockref_get_or_lock(struct lockref *);
+extern int lockref_put_or_lock(struct lockref *);
 
-/**
- * lockref_get_not_zero - Increments count unless the count is 0
- * @lockcnt: pointer to lockref structure
- * Return: 1 if count updated successfully or 0 if count is 0
- */
-static inline int lockref_get_not_zero(struct lockref *lockref)
-{
-	int retval = 0;
+extern void lockref_mark_dead(struct lockref *);
+extern int lockref_get_not_dead(struct lockref *);
 
-	spin_lock(&lockref->lock);
-	if (lockref->count) {
-		lockref->count++;
-		retval = 1;
-	}
-	spin_unlock(&lockref->lock);
-	return retval;
-}
-
-/**
- * lockref_put_or_lock - decrements count unless count <= 1 before decrement
- * @lockcnt: pointer to lockref structure
- * Return: 1 if count updated successfully or 0 if count <= 1 and lock taken
- */
-static inline int lockref_put_or_lock(struct lockref *lockref)
+/* Must be called under spinlock for reliable results */
+static inline int __lockref_is_dead(const struct lockref *l)
 {
-	spin_lock(&lockref->lock);
-	if (lockref->count <= 1)
-		return 0;
-	lockref->count--;
-	spin_unlock(&lockref->lock);
-	return 1;
+	return ((int)l->count < 0);
 }
 
 #endif /* __LINUX_LOCKREF_H */

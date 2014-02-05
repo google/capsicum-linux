@@ -74,7 +74,7 @@ static void s3c_ac97_activate(struct snd_ac97 *ac97)
 	if (stat == S3C_AC97_GLBSTAT_MAINSTATE_ACTIVE)
 		return; /* Return if already active */
 
-	INIT_COMPLETION(s3c_ac97.done);
+	reinit_completion(&s3c_ac97.done);
 
 	ac_glbctrl = readl(s3c_ac97.regs + S3C_AC97_GLBCTRL);
 	ac_glbctrl = S3C_AC97_GLBCTRL_ACLINKON;
@@ -103,7 +103,7 @@ static unsigned short s3c_ac97_read(struct snd_ac97 *ac97,
 
 	s3c_ac97_activate(ac97);
 
-	INIT_COMPLETION(s3c_ac97.done);
+	reinit_completion(&s3c_ac97.done);
 
 	ac_codec_cmd = readl(s3c_ac97.regs + S3C_AC97_CODEC_CMD);
 	ac_codec_cmd = S3C_AC97_CODEC_CMD_READ | AC_CMD_ADDR(reg);
@@ -140,7 +140,7 @@ static void s3c_ac97_write(struct snd_ac97 *ac97, unsigned short reg,
 
 	s3c_ac97_activate(ac97);
 
-	INIT_COMPLETION(s3c_ac97.done);
+	reinit_completion(&s3c_ac97.done);
 
 	ac_codec_cmd = readl(s3c_ac97.regs + S3C_AC97_CODEC_CMD);
 	ac_codec_cmd = AC_CMD_ADDR(reg) | AC_CMD_DATA(val);
@@ -404,18 +404,13 @@ static int s3c_ac97_probe(struct platform_device *pdev)
 		return -ENXIO;
 	}
 
-	mem_res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
-	if (!mem_res) {
-		dev_err(&pdev->dev, "Unable to get register resource\n");
-		return -ENXIO;
-	}
-
 	irq_res = platform_get_resource(pdev, IORESOURCE_IRQ, 0);
 	if (!irq_res) {
 		dev_err(&pdev->dev, "AC97 IRQ not provided!\n");
 		return -ENXIO;
 	}
 
+	mem_res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	s3c_ac97.regs = devm_ioremap_resource(&pdev->dev, mem_res);
 	if (IS_ERR(s3c_ac97.regs))
 		return PTR_ERR(s3c_ac97.regs);
@@ -462,7 +457,7 @@ static int s3c_ac97_probe(struct platform_device *pdev)
 	if (ret)
 		goto err5;
 
-	ret = asoc_dma_platform_register(&pdev->dev);
+	ret = samsung_asoc_dma_platform_register(&pdev->dev);
 	if (ret) {
 		dev_err(&pdev->dev, "failed to get register DMA: %d\n", ret);
 		goto err6;
@@ -485,7 +480,7 @@ static int s3c_ac97_remove(struct platform_device *pdev)
 {
 	struct resource *irq_res;
 
-	asoc_dma_platform_unregister(&pdev->dev);
+	samsung_asoc_dma_platform_unregister(&pdev->dev);
 	snd_soc_unregister_component(&pdev->dev);
 
 	irq_res = platform_get_resource(pdev, IORESOURCE_IRQ, 0);

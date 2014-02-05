@@ -138,6 +138,12 @@ u8 ACPI_INIT_GLOBAL(acpi_gbl_disable_auto_repair, FALSE);
  */
 u8 ACPI_INIT_GLOBAL(acpi_gbl_disable_ssdt_table_load, FALSE);
 
+/*
+ * We keep track of the latest version of Windows that has been requested by
+ * the BIOS.
+ */
+u8 ACPI_INIT_GLOBAL(acpi_gbl_osi_data, 0);
+
 /* acpi_gbl_FADT is a local copy of the FADT, converted to a common format. */
 
 struct acpi_table_fadt acpi_gbl_FADT;
@@ -263,6 +269,7 @@ ACPI_EXTERN acpi_table_handler acpi_gbl_table_handler;
 ACPI_EXTERN void *acpi_gbl_table_handler_context;
 ACPI_EXTERN struct acpi_walk_state *acpi_gbl_breakpoint_walk;
 ACPI_EXTERN acpi_interface_handler acpi_gbl_interface_handler;
+ACPI_EXTERN struct acpi_sci_handler_info *acpi_gbl_sci_handler_list;
 
 /* Owner ID support */
 
@@ -285,7 +292,6 @@ ACPI_EXTERN u8 acpi_gbl_debugger_configuration;
 ACPI_EXTERN u8 acpi_gbl_step_to_next_call;
 ACPI_EXTERN u8 acpi_gbl_acpi_hardware_present;
 ACPI_EXTERN u8 acpi_gbl_events_initialized;
-ACPI_EXTERN u8 acpi_gbl_osi_data;
 ACPI_EXTERN struct acpi_interface_info *acpi_gbl_supported_interfaces;
 ACPI_EXTERN struct acpi_address_range
     *acpi_gbl_address_range_list[ACPI_ADDRESS_RANGE_MAX];
@@ -400,7 +406,9 @@ extern u32 acpi_gbl_nesting_level;
 
 /* Event counters */
 
+ACPI_EXTERN u32 acpi_method_count;
 ACPI_EXTERN u32 acpi_gpe_count;
+ACPI_EXTERN u32 acpi_sci_count;
 ACPI_EXTERN u32 acpi_fixed_event_count[ACPI_NUM_FIXED_EVENTS];
 
 /* Support for dynamic control method tracing mechanism */
@@ -440,19 +448,22 @@ ACPI_EXTERN u8 acpi_gbl_db_opt_tables;
 ACPI_EXTERN u8 acpi_gbl_db_opt_stats;
 ACPI_EXTERN u8 acpi_gbl_db_opt_ini_methods;
 ACPI_EXTERN u8 acpi_gbl_db_opt_no_region_support;
-
-ACPI_EXTERN char *acpi_gbl_db_args[ACPI_DEBUGGER_MAX_ARGS];
-ACPI_EXTERN acpi_object_type acpi_gbl_db_arg_types[ACPI_DEBUGGER_MAX_ARGS];
-ACPI_EXTERN char acpi_gbl_db_line_buf[ACPI_DB_LINE_BUFFER_SIZE];
-ACPI_EXTERN char acpi_gbl_db_parsed_buf[ACPI_DB_LINE_BUFFER_SIZE];
-ACPI_EXTERN char acpi_gbl_db_scope_buf[80];
-ACPI_EXTERN char acpi_gbl_db_debug_filename[80];
 ACPI_EXTERN u8 acpi_gbl_db_output_to_file;
 ACPI_EXTERN char *acpi_gbl_db_buffer;
 ACPI_EXTERN char *acpi_gbl_db_filename;
 ACPI_EXTERN u32 acpi_gbl_db_debug_level;
 ACPI_EXTERN u32 acpi_gbl_db_console_debug_level;
 ACPI_EXTERN struct acpi_namespace_node *acpi_gbl_db_scope_node;
+
+ACPI_EXTERN char *acpi_gbl_db_args[ACPI_DEBUGGER_MAX_ARGS];
+ACPI_EXTERN acpi_object_type acpi_gbl_db_arg_types[ACPI_DEBUGGER_MAX_ARGS];
+
+/* These buffers should all be the same size */
+
+ACPI_EXTERN char acpi_gbl_db_line_buf[ACPI_DB_LINE_BUFFER_SIZE];
+ACPI_EXTERN char acpi_gbl_db_parsed_buf[ACPI_DB_LINE_BUFFER_SIZE];
+ACPI_EXTERN char acpi_gbl_db_scope_buf[ACPI_DB_LINE_BUFFER_SIZE];
+ACPI_EXTERN char acpi_gbl_db_debug_filename[ACPI_DB_LINE_BUFFER_SIZE];
 
 /*
  * Statistic globals

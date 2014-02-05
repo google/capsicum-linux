@@ -28,7 +28,7 @@ static int __init set_no_mwait(const struct dmi_system_id *id)
 	return 0;
 }
 
-static struct dmi_system_id __initdata processor_idle_dmi_table[] = {
+static struct dmi_system_id processor_idle_dmi_table[] __initdata = {
 	{
 	set_no_mwait, "Extensa 5220", {
 	DMI_MATCH(DMI_BIOS_VENDOR, "Phoenix Technologies LTD"),
@@ -162,16 +162,23 @@ exit:
 	return apic_id;
 }
 
-int acpi_get_cpuid(acpi_handle handle, int type, u32 acpi_id)
+int acpi_get_apicid(acpi_handle handle, int type, u32 acpi_id)
 {
-#ifdef CONFIG_SMP
-	int i;
-#endif
-	int apic_id = -1;
+	int apic_id;
 
 	apic_id = map_mat_entry(handle, type, acpi_id);
 	if (apic_id == -1)
 		apic_id = map_madt_entry(type, acpi_id);
+
+	return apic_id;
+}
+
+int acpi_map_cpuid(int apic_id, u32 acpi_id)
+{
+#ifdef CONFIG_SMP
+	int i;
+#endif
+
 	if (apic_id == -1) {
 		/*
 		 * On UP processor, there is no _MAT or MADT table.
@@ -210,6 +217,15 @@ int acpi_get_cpuid(acpi_handle handle, int type, u32 acpi_id)
 		return apic_id;
 #endif
 	return -1;
+}
+
+int acpi_get_cpuid(acpi_handle handle, int type, u32 acpi_id)
+{
+	int apic_id;
+
+	apic_id = acpi_get_apicid(handle, type, acpi_id);
+
+	return acpi_map_cpuid(apic_id, acpi_id);
 }
 EXPORT_SYMBOL_GPL(acpi_get_cpuid);
 

@@ -960,6 +960,42 @@
 #       define DIG_MODE_SDVO             4
 #define DIG1_CNTL                        0x79a0
 
+#define AZ_F0_CODEC_PIN0_CONTROL_CHANNEL_SPEAKER          0x71bc
+#define		SPEAKER_ALLOCATION(x)			(((x) & 0x7f) << 0)
+#define		SPEAKER_ALLOCATION_MASK			(0x7f << 0)
+#define		SPEAKER_ALLOCATION_SHIFT		0
+#define		HDMI_CONNECTION				(1 << 16)
+#define		DP_CONNECTION				(1 << 17)
+
+#define AZ_F0_CODEC_PIN0_CONTROL_AUDIO_DESCRIPTOR0        0x71c8 /* LPCM */
+#define AZ_F0_CODEC_PIN0_CONTROL_AUDIO_DESCRIPTOR1        0x71cc /* AC3 */
+#define AZ_F0_CODEC_PIN0_CONTROL_AUDIO_DESCRIPTOR2        0x71d0 /* MPEG1 */
+#define AZ_F0_CODEC_PIN0_CONTROL_AUDIO_DESCRIPTOR3        0x71d4 /* MP3 */
+#define AZ_F0_CODEC_PIN0_CONTROL_AUDIO_DESCRIPTOR4        0x71d8 /* MPEG2 */
+#define AZ_F0_CODEC_PIN0_CONTROL_AUDIO_DESCRIPTOR5        0x71dc /* AAC */
+#define AZ_F0_CODEC_PIN0_CONTROL_AUDIO_DESCRIPTOR6        0x71e0 /* DTS */
+#define AZ_F0_CODEC_PIN0_CONTROL_AUDIO_DESCRIPTOR7        0x71e4 /* ATRAC */
+#define AZ_F0_CODEC_PIN0_CONTROL_AUDIO_DESCRIPTOR8        0x71e8 /* one bit audio - leave at 0 (default) */
+#define AZ_F0_CODEC_PIN0_CONTROL_AUDIO_DESCRIPTOR9        0x71ec /* Dolby Digital */
+#define AZ_F0_CODEC_PIN0_CONTROL_AUDIO_DESCRIPTOR10       0x71f0 /* DTS-HD */
+#define AZ_F0_CODEC_PIN0_CONTROL_AUDIO_DESCRIPTOR11       0x71f4 /* MAT-MLP */
+#define AZ_F0_CODEC_PIN0_CONTROL_AUDIO_DESCRIPTOR12       0x71f8 /* DTS */
+#define AZ_F0_CODEC_PIN0_CONTROL_AUDIO_DESCRIPTOR13       0x71fc /* WMA Pro */
+#       define MAX_CHANNELS(x)                            (((x) & 0x7) << 0)
+/* max channels minus one.  7 = 8 channels */
+#       define SUPPORTED_FREQUENCIES(x)                   (((x) & 0xff) << 8)
+#       define DESCRIPTOR_BYTE_2(x)                       (((x) & 0xff) << 16)
+#       define SUPPORTED_FREQUENCIES_STEREO(x)            (((x) & 0xff) << 24) /* LPCM only */
+/* SUPPORTED_FREQUENCIES, SUPPORTED_FREQUENCIES_STEREO
+ * bit0 = 32 kHz
+ * bit1 = 44.1 kHz
+ * bit2 = 48 kHz
+ * bit3 = 88.2 kHz
+ * bit4 = 96 kHz
+ * bit5 = 176.4 kHz
+ * bit6 = 192 kHz
+ */
+
 /* rs6xx/rs740 and r6xx share the same HDMI blocks, however, rs6xx has only one
  * instance of the blocks while r6xx has 2.  DCE 3.0 cards are slightly
  * different due to the new DIG blocks, but also have 2 instances.
@@ -1004,7 +1040,7 @@
 #       define HDMI0_AVI_INFO_CONT   (1 << 1)
 #       define HDMI0_AUDIO_INFO_SEND (1 << 4)
 #       define HDMI0_AUDIO_INFO_CONT (1 << 5)
-#       define HDMI0_AUDIO_INFO_SOURCE (1 << 6) /* 0 - sound block; 1 - hmdi regs */
+#       define HDMI0_AUDIO_INFO_SOURCE (1 << 6) /* 0 - sound block; 1 - hdmi regs */
 #       define HDMI0_AUDIO_INFO_UPDATE (1 << 7)
 #       define HDMI0_MPEG_INFO_SEND  (1 << 8)
 #       define HDMI0_MPEG_INFO_CONT  (1 << 9)
@@ -1162,6 +1198,34 @@
 #       define AFMT_AZ_FORMAT_WTRIG_MASK     (1 << 28)
 #       define AFMT_AZ_FORMAT_WTRIG_ACK      (1 << 29)
 #       define AFMT_AZ_AUDIO_ENABLE_CHG_ACK  (1 << 30)
+
+/* DCE3 FMT blocks */
+#define FMT_CONTROL                          0x6700
+#       define FMT_PIXEL_ENCODING            (1 << 16)
+        /* 0 = RGB 4:4:4 or YCbCr 4:4:4, 1 = YCbCr 4:2:2 */
+#define FMT_BIT_DEPTH_CONTROL                0x6710
+#       define FMT_TRUNCATE_EN               (1 << 0)
+#       define FMT_TRUNCATE_DEPTH            (1 << 4)
+#       define FMT_SPATIAL_DITHER_EN         (1 << 8)
+#       define FMT_SPATIAL_DITHER_MODE(x)    ((x) << 9)
+#       define FMT_SPATIAL_DITHER_DEPTH      (1 << 12)
+#       define FMT_FRAME_RANDOM_ENABLE       (1 << 13)
+#       define FMT_RGB_RANDOM_ENABLE         (1 << 14)
+#       define FMT_HIGHPASS_RANDOM_ENABLE    (1 << 15)
+#       define FMT_TEMPORAL_DITHER_EN        (1 << 16)
+#       define FMT_TEMPORAL_DITHER_DEPTH     (1 << 20)
+#       define FMT_TEMPORAL_DITHER_OFFSET(x) ((x) << 21)
+#       define FMT_TEMPORAL_LEVEL            (1 << 24)
+#       define FMT_TEMPORAL_DITHER_RESET     (1 << 25)
+#       define FMT_25FRC_SEL(x)              ((x) << 26)
+#       define FMT_50FRC_SEL(x)              ((x) << 28)
+#       define FMT_75FRC_SEL(x)              ((x) << 30)
+#define FMT_CLAMP_CONTROL                    0x672c
+#       define FMT_CLAMP_DATA_EN             (1 << 0)
+#       define FMT_CLAMP_COLOR_FORMAT(x)     ((x) << 16)
+#       define FMT_CLAMP_6BPC                0
+#       define FMT_CLAMP_8BPC                1
+#       define FMT_CLAMP_10BPC               2
 
 /* Power management */
 #define CG_SPLL_FUNC_CNTL                                 0x600
@@ -1487,7 +1551,7 @@
  */
 #              define PACKET3_CP_DMA_CP_SYNC       (1 << 31)
 /* COMMAND */
-#              define PACKET3_CP_DMA_CMD_SRC_SWAP(x) ((x) << 23)
+#              define PACKET3_CP_DMA_CMD_SRC_SWAP(x) ((x) << 22)
                 /* 0 - none
 		 * 1 - 8 in 16
 		 * 2 - 8 in 32

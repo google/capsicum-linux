@@ -89,27 +89,6 @@ static struct dmi_system_id dsdt_dmi_table[] __initdata = {
                                 Device Management
    -------------------------------------------------------------------------- */
 
-int acpi_bus_get_device(acpi_handle handle, struct acpi_device **device)
-{
-	acpi_status status;
-
-	if (!device)
-		return -EINVAL;
-
-	/* TBD: Support fixed-feature devices */
-
-	status = acpi_get_data(handle, acpi_bus_data_handler, (void **)device);
-	if (ACPI_FAILURE(status) || !*device) {
-		ACPI_DEBUG_PRINT((ACPI_DB_INFO, "No context for object [%p]\n",
-				  handle));
-		return -ENODEV;
-	}
-
-	return 0;
-}
-
-EXPORT_SYMBOL(acpi_bus_get_device);
-
 acpi_status acpi_bus_get_status_handle(acpi_handle handle,
 				       unsigned long long *sta)
 {
@@ -177,6 +156,16 @@ int acpi_bus_get_private_data(acpi_handle handle, void **data)
 }
 EXPORT_SYMBOL(acpi_bus_get_private_data);
 
+void acpi_bus_no_hotplug(acpi_handle handle)
+{
+	struct acpi_device *adev = NULL;
+
+	acpi_bus_get_device(handle, &adev);
+	if (adev)
+		adev->flags.no_hotplug = true;
+}
+EXPORT_SYMBOL_GPL(acpi_bus_no_hotplug);
+
 static void acpi_print_osc_error(acpi_handle handle,
 	struct acpi_osc_context *context, char *error)
 {
@@ -195,7 +184,7 @@ static void acpi_print_osc_error(acpi_handle handle,
 	printk("\n");
 }
 
-static acpi_status acpi_str_to_uuid(char *str, u8 *uuid)
+acpi_status acpi_str_to_uuid(char *str, u8 *uuid)
 {
 	int i;
 	static int opc_map_to_uuid[16] = {6, 4, 2, 0, 11, 9, 16, 14, 19, 21,
@@ -216,6 +205,7 @@ static acpi_status acpi_str_to_uuid(char *str, u8 *uuid)
 	}
 	return AE_OK;
 }
+EXPORT_SYMBOL_GPL(acpi_str_to_uuid);
 
 acpi_status acpi_run_osc(acpi_handle handle, struct acpi_osc_context *context)
 {
@@ -276,7 +266,7 @@ acpi_status acpi_run_osc(acpi_handle handle, struct acpi_osc_context *context)
 			acpi_print_osc_error(handle, context,
 				"_OSC invalid revision");
 		if (errors & OSC_CAPABILITIES_MASK_ERROR) {
-			if (((u32 *)context->cap.pointer)[OSC_QUERY_TYPE]
+			if (((u32 *)context->cap.pointer)[OSC_QUERY_DWORD]
 			    & OSC_QUERY_ENABLE)
 				goto out_success;
 			status = AE_SUPPORT;
@@ -316,132 +306,34 @@ static void acpi_bus_osc_support(void)
 	};
 	acpi_handle handle;
 
-	capbuf[OSC_QUERY_TYPE] = OSC_QUERY_ENABLE;
-	capbuf[OSC_SUPPORT_TYPE] = OSC_SB_PR3_SUPPORT; /* _PR3 is in use */
+	capbuf[OSC_QUERY_DWORD] = OSC_QUERY_ENABLE;
+	capbuf[OSC_SUPPORT_DWORD] = OSC_SB_PR3_SUPPORT; /* _PR3 is in use */
 #if defined(CONFIG_ACPI_PROCESSOR_AGGREGATOR) ||\
 			defined(CONFIG_ACPI_PROCESSOR_AGGREGATOR_MODULE)
-	capbuf[OSC_SUPPORT_TYPE] |= OSC_SB_PAD_SUPPORT;
+	capbuf[OSC_SUPPORT_DWORD] |= OSC_SB_PAD_SUPPORT;
 #endif
 
 #if defined(CONFIG_ACPI_PROCESSOR) || defined(CONFIG_ACPI_PROCESSOR_MODULE)
-	capbuf[OSC_SUPPORT_TYPE] |= OSC_SB_PPC_OST_SUPPORT;
+	capbuf[OSC_SUPPORT_DWORD] |= OSC_SB_PPC_OST_SUPPORT;
 #endif
 
 #ifdef ACPI_HOTPLUG_OST
-	capbuf[OSC_SUPPORT_TYPE] |= OSC_SB_HOTPLUG_OST_SUPPORT;
+	capbuf[OSC_SUPPORT_DWORD] |= OSC_SB_HOTPLUG_OST_SUPPORT;
 #endif
 
 	if (!ghes_disable)
-		capbuf[OSC_SUPPORT_TYPE] |= OSC_SB_APEI_SUPPORT;
+		capbuf[OSC_SUPPORT_DWORD] |= OSC_SB_APEI_SUPPORT;
 	if (ACPI_FAILURE(acpi_get_handle(NULL, "\\_SB", &handle)))
 		return;
 	if (ACPI_SUCCESS(acpi_run_osc(handle, &context))) {
 		u32 *capbuf_ret = context.ret.pointer;
-		if (context.ret.length > OSC_SUPPORT_TYPE)
+		if (context.ret.length > OSC_SUPPORT_DWORD)
 			osc_sb_apei_support_acked =
-				capbuf_ret[OSC_SUPPORT_TYPE] & OSC_SB_APEI_SUPPORT;
+				capbuf_ret[OSC_SUPPORT_DWORD] & OSC_SB_APEI_SUPPORT;
 		kfree(context.ret.pointer);
 	}
 	/* do we need to check other returned cap? Sounds no */
 }
-
-/* --------------------------------------------------------------------------
-                                Event Management
-   -------------------------------------------------------------------------- */
-
-#ifdef CONFIG_ACPI_PROC_EVENT
-static DEFINE_SPINLOCK(acpi_bus_event_lock);
-
-LIST_HEAD(acpi_bus_event_list);
-DECLARE_WAIT_QUEUE_HEAD(acpi_bus_event_queue);
-
-extern int event_is_open;
-
-int acpi_bus_generate_proc_event4(const char *device_class, const char *bus_id, u8 type, int data)
-{
-	struct acpi_bus_event *event;
-	unsigned long flags;
-
-	/* drop event on the floor if no one's listening */
-	if (!event_is_open)
-		return 0;
-
-	event = kzalloc(sizeof(struct acpi_bus_event), GFP_ATOMIC);
-	if (!event)
-		return -ENOMEM;
-
-	strcpy(event->device_class, device_class);
-	strcpy(event->bus_id, bus_id);
-	event->type = type;
-	event->data = data;
-
-	spin_lock_irqsave(&acpi_bus_event_lock, flags);
-	list_add_tail(&event->node, &acpi_bus_event_list);
-	spin_unlock_irqrestore(&acpi_bus_event_lock, flags);
-
-	wake_up_interruptible(&acpi_bus_event_queue);
-
-	return 0;
-
-}
-
-EXPORT_SYMBOL_GPL(acpi_bus_generate_proc_event4);
-
-int acpi_bus_generate_proc_event(struct acpi_device *device, u8 type, int data)
-{
-	if (!device)
-		return -EINVAL;
-	return acpi_bus_generate_proc_event4(device->pnp.device_class,
-					     device->pnp.bus_id, type, data);
-}
-
-EXPORT_SYMBOL(acpi_bus_generate_proc_event);
-
-int acpi_bus_receive_event(struct acpi_bus_event *event)
-{
-	unsigned long flags;
-	struct acpi_bus_event *entry = NULL;
-
-	DECLARE_WAITQUEUE(wait, current);
-
-
-	if (!event)
-		return -EINVAL;
-
-	if (list_empty(&acpi_bus_event_list)) {
-
-		set_current_state(TASK_INTERRUPTIBLE);
-		add_wait_queue(&acpi_bus_event_queue, &wait);
-
-		if (list_empty(&acpi_bus_event_list))
-			schedule();
-
-		remove_wait_queue(&acpi_bus_event_queue, &wait);
-		set_current_state(TASK_RUNNING);
-
-		if (signal_pending(current))
-			return -ERESTARTSYS;
-	}
-
-	spin_lock_irqsave(&acpi_bus_event_lock, flags);
-	if (!list_empty(&acpi_bus_event_list)) {
-		entry = list_entry(acpi_bus_event_list.next,
-				   struct acpi_bus_event, node);
-		list_del(&entry->node);
-	}
-	spin_unlock_irqrestore(&acpi_bus_event_lock, flags);
-
-	if (!entry)
-		return -ENODEV;
-
-	memcpy(event, entry, sizeof(struct acpi_bus_event));
-
-	kfree(entry);
-
-	return 0;
-}
-
-#endif	/* CONFIG_ACPI_PROC_EVENT */
 
 /* --------------------------------------------------------------------------
                              Notification Handling
@@ -499,19 +391,6 @@ static void acpi_bus_check_scope(acpi_handle handle)
 	 */
 }
 
-static BLOCKING_NOTIFIER_HEAD(acpi_bus_notify_list);
-int register_acpi_bus_notifier(struct notifier_block *nb)
-{
-	return blocking_notifier_chain_register(&acpi_bus_notify_list, nb);
-}
-EXPORT_SYMBOL_GPL(register_acpi_bus_notifier);
-
-void unregister_acpi_bus_notifier(struct notifier_block *nb)
-{
-	blocking_notifier_chain_unregister(&acpi_bus_notify_list, nb);
-}
-EXPORT_SYMBOL_GPL(unregister_acpi_bus_notifier);
-
 /**
  * acpi_bus_notify
  * ---------------
@@ -524,9 +403,6 @@ static void acpi_bus_notify(acpi_handle handle, u32 type, void *data)
 
 	ACPI_DEBUG_PRINT((ACPI_DB_INFO, "Notification %#02x to handle %p\n",
 			  type, handle));
-
-	blocking_notifier_call_chain(&acpi_bus_notify_list,
-		type, (void *)handle);
 
 	switch (type) {
 
@@ -593,8 +469,6 @@ static void acpi_bus_notify(acpi_handle handle, u32 type, void *data)
 static int __init acpi_bus_init_irq(void)
 {
 	acpi_status status;
-	union acpi_object arg = { ACPI_TYPE_INTEGER };
-	struct acpi_object_list arg_list = { 1, &arg };
 	char *message = NULL;
 
 
@@ -623,9 +497,7 @@ static int __init acpi_bus_init_irq(void)
 
 	printk(KERN_INFO PREFIX "Using %s for interrupt routing\n", message);
 
-	arg.integer.value = acpi_irq_model;
-
-	status = acpi_evaluate_object(NULL, "\\_PIC", &arg_list, NULL);
+	status = acpi_execute_simple_method(NULL, "\\_PIC", acpi_irq_model);
 	if (ACPI_FAILURE(status) && (status != AE_NOT_FOUND)) {
 		ACPI_EXCEPTION((AE_INFO, status, "Evaluating _PIC"));
 		return -ENODEV;
@@ -715,7 +587,6 @@ static int __init acpi_bus_init(void)
 {
 	int result;
 	acpi_status status;
-	extern acpi_status acpi_os_initialize1(void);
 
 	acpi_os_initialize1();
 

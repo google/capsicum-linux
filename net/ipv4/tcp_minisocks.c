@@ -293,12 +293,9 @@ void tcp_time_wait(struct sock *sk, int state, int timeo)
 #if IS_ENABLED(CONFIG_IPV6)
 		if (tw->tw_family == PF_INET6) {
 			struct ipv6_pinfo *np = inet6_sk(sk);
-			struct inet6_timewait_sock *tw6;
 
-			tw->tw_ipv6_offset = inet6_tw_offset(sk->sk_prot);
-			tw6 = inet6_twsk((struct sock *)tw);
-			tw6->tw_v6_daddr = np->daddr;
-			tw6->tw_v6_rcv_saddr = np->rcv_saddr;
+			tw->tw_v6_daddr = sk->sk_v6_daddr;
+			tw->tw_v6_rcv_saddr = sk->sk_v6_rcv_saddr;
 			tw->tw_tclass = np->tclass;
 			tw->tw_ipv6only = np->ipv6only;
 		}
@@ -411,6 +408,8 @@ struct sock *tcp_create_openreq_child(struct sock *sk, struct request_sock *req,
 		newtp->snd_ssthresh = TCP_INFINITE_SSTHRESH;
 		tcp_enable_early_retrans(newtp);
 		newtp->tlp_high_seq = 0;
+		newtp->lsndtime = treq->snt_synack;
+		newtp->total_retrans = req->num_retrans;
 
 		/* So many TCP implementations out there (incorrectly) count the
 		 * initial SYN frame in their delayed-ACK and congestion control
@@ -665,12 +664,6 @@ struct sock *tcp_check_req(struct sock *sk, struct sk_buff *skb,
 	 */
 	if (!(flg & TCP_FLAG_ACK))
 		return NULL;
-
-	/* Got ACK for our SYNACK, so update baseline for SYNACK RTT sample. */
-	if (tmp_opt.saw_tstamp && tmp_opt.rcv_tsecr)
-		tcp_rsk(req)->snt_synack = tmp_opt.rcv_tsecr;
-	else if (req->num_retrans) /* don't take RTT sample if retrans && ~TS */
-		tcp_rsk(req)->snt_synack = 0;
 
 	/* For Fast Open no more processing is needed (sk is the
 	 * child socket).

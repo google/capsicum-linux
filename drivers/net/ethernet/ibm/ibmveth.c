@@ -106,7 +106,7 @@ struct ibmveth_stat ibmveth_stats[] = {
 /* simple methods of getting data from the current rxq entry */
 static inline u32 ibmveth_rxq_flags(struct ibmveth_adapter *adapter)
 {
-	return adapter->rx_queue.queue_addr[adapter->rx_queue.index].flags_off;
+	return be32_to_cpu(adapter->rx_queue.queue_addr[adapter->rx_queue.index].flags_off);
 }
 
 static inline int ibmveth_rxq_toggle(struct ibmveth_adapter *adapter)
@@ -132,7 +132,7 @@ static inline int ibmveth_rxq_frame_offset(struct ibmveth_adapter *adapter)
 
 static inline int ibmveth_rxq_frame_length(struct ibmveth_adapter *adapter)
 {
-	return adapter->rx_queue.queue_addr[adapter->rx_queue.index].length;
+	return be32_to_cpu(adapter->rx_queue.queue_addr[adapter->rx_queue.index].length);
 }
 
 static inline int ibmveth_rxq_csum_good(struct ibmveth_adapter *adapter)
@@ -1185,7 +1185,7 @@ static void ibmveth_set_multicast_list(struct net_device *netdev)
 		netdev_for_each_mc_addr(ha, netdev) {
 			/* add the multicast address to the filter table */
 			unsigned long mcast_addr = 0;
-			memcpy(((char *)&mcast_addr)+2, ha->addr, 6);
+			memcpy(((char *)&mcast_addr)+2, ha->addr, ETH_ALEN);
 			lpar_rc = h_multicast_ctrl(adapter->vdev->unit_address,
 						   IbmVethMcastAddFilter,
 						   mcast_addr);
@@ -1370,7 +1370,7 @@ static int ibmveth_probe(struct vio_dev *dev, const struct vio_device_id *id)
 	netif_napi_add(netdev, &adapter->napi, ibmveth_poll, 16);
 
 	adapter->mac_addr = 0;
-	memcpy(&adapter->mac_addr, mac_addr_p, 6);
+	memcpy(&adapter->mac_addr, mac_addr_p, ETH_ALEN);
 
 	netdev->irq = dev->irq;
 	netdev->netdev_ops = &ibmveth_netdev_ops;

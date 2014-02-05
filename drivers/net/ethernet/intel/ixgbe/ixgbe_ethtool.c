@@ -160,6 +160,13 @@ static int ixgbe_get_settings(struct net_device *netdev,
 	bool autoneg = false;
 	bool link_up;
 
+	/* SFP type is needed for get_link_capabilities */
+	if (hw->phy.media_type & (ixgbe_media_type_fiber |
+				  ixgbe_media_type_fiber_qsfp)) {
+		if (hw->phy.sfp_type == ixgbe_sfp_type_not_present)
+				hw->phy.ops.identify_sfp(hw);
+	}
+
 	hw->mac.ops.get_link_capabilities(hw, &supported_link, &autoneg);
 
 	/* set the supported link speeds */
@@ -186,6 +193,11 @@ static int ixgbe_get_settings(struct net_device *netdev,
 			ecmd->advertising |= ADVERTISED_1000baseT_Full;
 		if (supported_link & IXGBE_LINK_SPEED_100_FULL)
 			ecmd->advertising |= ADVERTISED_100baseT_Full;
+
+		if (hw->phy.multispeed_fiber && !autoneg) {
+			if (supported_link & IXGBE_LINK_SPEED_10GB_FULL)
+				ecmd->advertising = ADVERTISED_10000baseT_Full;
+		}
 	}
 
 	if (autoneg) {
@@ -311,11 +323,16 @@ static int ixgbe_set_settings(struct net_device *netdev,
 		 * this function does not support duplex forcing, but can
 		 * limit the advertising of the adapter to the specified speed
 		 */
-		if (ecmd->autoneg == AUTONEG_DISABLE)
-			return -EINVAL;
-
 		if (ecmd->advertising & ~ecmd->supported)
 			return -EINVAL;
+
+		/* only allow one speed at a time if no autoneg */
+		if (!ecmd->autoneg && hw->phy.multispeed_fiber) {
+			if (ecmd->advertising ==
+			    (ADVERTISED_10000baseT_Full |
+			     ADVERTISED_1000baseT_Full))
+				return -EINVAL;
+		}
 
 		old = hw->phy.autoneg_advertised;
 		advertised = 0;
@@ -355,10 +372,11 @@ static void ixgbe_get_pauseparam(struct net_device *netdev,
 	struct ixgbe_adapter *adapter = netdev_priv(netdev);
 	struct ixgbe_hw *hw = &adapter->hw;
 
-	if (hw->fc.disable_fc_autoneg)
-		pause->autoneg = 0;
-	else
+	if (ixgbe_device_supports_autoneg_fc(hw) &&
+	    !hw->fc.disable_fc_autoneg)
 		pause->autoneg = 1;
+	else
+		pause->autoneg = 0;
 
 	if (hw->fc.current_mode == ixgbe_fc_rx_pause) {
 		pause->rx_pause = 1;
@@ -384,7 +402,7 @@ static int ixgbe_set_pauseparam(struct net_device *netdev,
 
 	/* some devices do not support autoneg of link flow control */
 	if ((pause->autoneg == AUTONEG_ENABLE) &&
-	    (ixgbe_device_supports_autoneg_fc(hw) != 0))
+	    !ixgbe_device_supports_autoneg_fc(hw))
 		return -EINVAL;
 
 	fc.disable_fc_autoneg = (pause->autoneg != AUTONEG_ENABLE);
@@ -424,7 +442,7 @@ static void ixgbe_set_msglevel(struct net_device *netdev, u32 data)
 
 static int ixgbe_get_regs_len(struct net_device *netdev)
 {
-#define IXGBE_REGS_LEN  1129
+#define IXGBE_REGS_LEN  1139
 	return IXGBE_REGS_LEN * sizeof(u32);
 }
 
@@ -584,22 +602,53 @@ static void ixgbe_get_regs(struct net_device *netdev,
 	regs_buff[828] = IXGBE_READ_REG(hw, IXGBE_FHFT(0));
 
 	/* DCB */
-	regs_buff[829] = IXGBE_READ_REG(hw, IXGBE_RMCS);
-	regs_buff[830] = IXGBE_READ_REG(hw, IXGBE_DPMCS);
-	regs_buff[831] = IXGBE_READ_REG(hw, IXGBE_PDPMCS);
-	regs_buff[832] = IXGBE_READ_REG(hw, IXGBE_RUPPBMR);
+	regs_buff[829] = IXGBE_READ_REG(hw, IXGBE_RMCS);   /* same as FCCFG  */
+	regs_buff[831] = IXGBE_READ_REG(hw, IXGBE_PDPMCS); /* same as RTTPCS */
+
+	switch (hw->mac.type) {
+	case ixgbe_mac_82598EB:
+		regs_buff[830] = IXGBE_READ_REG(hw, IXGBE_DPMCS);
+		regs_buff[832] = IXGBE_READ_REG(hw, IXGBE_RUPPBMR);
+		for (i = 0; i < 8; i++)
+			regs_buff[833 + i] =
+				IXGBE_READ_REG(hw, IXGBE_RT2CR(i));
+		for (i = 0; i < 8; i++)
+			regs_buff[841 + i] =
+				IXGBE_READ_REG(hw, IXGBE_RT2SR(i));
+		for (i = 0; i < 8; i++)
+			regs_buff[849 + i] =
+				IXGBE_READ_REG(hw, IXGBE_TDTQ2TCCR(i));
+		for (i = 0; i < 8; i++)
+			regs_buff[857 + i] =
+				IXGBE_READ_REG(hw, IXGBE_TDTQ2TCSR(i));
+		break;
+	case ixgbe_mac_82599EB:
+	case ixgbe_mac_X540:
+		regs_buff[830] = IXGBE_READ_REG(hw, IXGBE_RTTDCS);
+		regs_buff[832] = IXGBE_READ_REG(hw, IXGBE_RTRPCS);
+		for (i = 0; i < 8; i++)
+			regs_buff[833 + i] =
+				IXGBE_READ_REG(hw, IXGBE_RTRPT4C(i));
+		for (i = 0; i < 8; i++)
+			regs_buff[841 + i] =
+				IXGBE_READ_REG(hw, IXGBE_RTRPT4S(i));
+		for (i = 0; i < 8; i++)
+			regs_buff[849 + i] =
+				IXGBE_READ_REG(hw, IXGBE_RTTDT2C(i));
+		for (i = 0; i < 8; i++)
+			regs_buff[857 + i] =
+				IXGBE_READ_REG(hw, IXGBE_RTTDT2S(i));
+		break;
+	default:
+		break;
+	}
+
 	for (i = 0; i < 8; i++)
-		regs_buff[833 + i] = IXGBE_READ_REG(hw, IXGBE_RT2CR(i));
+		regs_buff[865 + i] =
+		IXGBE_READ_REG(hw, IXGBE_TDPT2TCCR(i)); /* same as RTTPT2C */
 	for (i = 0; i < 8; i++)
-		regs_buff[841 + i] = IXGBE_READ_REG(hw, IXGBE_RT2SR(i));
-	for (i = 0; i < 8; i++)
-		regs_buff[849 + i] = IXGBE_READ_REG(hw, IXGBE_TDTQ2TCCR(i));
-	for (i = 0; i < 8; i++)
-		regs_buff[857 + i] = IXGBE_READ_REG(hw, IXGBE_TDTQ2TCSR(i));
-	for (i = 0; i < 8; i++)
-		regs_buff[865 + i] = IXGBE_READ_REG(hw, IXGBE_TDPT2TCCR(i));
-	for (i = 0; i < 8; i++)
-		regs_buff[873 + i] = IXGBE_READ_REG(hw, IXGBE_TDPT2TCSR(i));
+		regs_buff[873 + i] =
+		IXGBE_READ_REG(hw, IXGBE_TDPT2TCSR(i)); /* same as RTTPT2S */
 
 	/* Statistics */
 	regs_buff[881] = IXGBE_GET_STAT(adapter, crcerrs);
@@ -739,6 +788,20 @@ static void ixgbe_get_regs(struct net_device *netdev,
 
 	/* 82599 X540 specific registers  */
 	regs_buff[1128] = IXGBE_READ_REG(hw, IXGBE_MFLCN);
+
+	/* 82599 X540 specific DCB registers  */
+	regs_buff[1129] = IXGBE_READ_REG(hw, IXGBE_RTRUP2TC);
+	regs_buff[1130] = IXGBE_READ_REG(hw, IXGBE_RTTUP2TC);
+	for (i = 0; i < 4; i++)
+		regs_buff[1131 + i] = IXGBE_READ_REG(hw, IXGBE_TXLLQ(i));
+	regs_buff[1135] = IXGBE_READ_REG(hw, IXGBE_RTTBCNRM);
+					/* same as RTTQCNRM */
+	regs_buff[1136] = IXGBE_READ_REG(hw, IXGBE_RTTBCNRD);
+					/* same as RTTQCNRR */
+
+	/* X540 specific DCB registers  */
+	regs_buff[1137] = IXGBE_READ_REG(hw, IXGBE_RTTQCNCR);
+	regs_buff[1138] = IXGBE_READ_REG(hw, IXGBE_RTTQCNTG);
 }
 
 static int ixgbe_get_eeprom_len(struct net_device *netdev)
@@ -1048,13 +1111,13 @@ static void ixgbe_get_ethtool_stats(struct net_device *netdev,
 		data[i] = (ixgbe_gstrings_stats[i].sizeof_stat ==
 		           sizeof(u64)) ? *(u64 *)p : *(u32 *)p;
 	}
-	for (j = 0; j < IXGBE_NUM_RX_QUEUES; j++) {
+	for (j = 0; j < netdev->num_tx_queues; j++) {
 		ring = adapter->tx_ring[j];
 		if (!ring) {
 			data[i] = 0;
 			data[i+1] = 0;
 			i += 2;
-#ifdef LL_EXTENDED_STATS
+#ifdef BP_EXTENDED_STATS
 			data[i] = 0;
 			data[i+1] = 0;
 			data[i+2] = 0;
@@ -1069,7 +1132,7 @@ static void ixgbe_get_ethtool_stats(struct net_device *netdev,
 			data[i+1] = ring->stats.bytes;
 		} while (u64_stats_fetch_retry_bh(&ring->syncp, start));
 		i += 2;
-#ifdef LL_EXTENDED_STATS
+#ifdef BP_EXTENDED_STATS
 		data[i] = ring->stats.yields;
 		data[i+1] = ring->stats.misses;
 		data[i+2] = ring->stats.cleaned;
@@ -1082,7 +1145,7 @@ static void ixgbe_get_ethtool_stats(struct net_device *netdev,
 			data[i] = 0;
 			data[i+1] = 0;
 			i += 2;
-#ifdef LL_EXTENDED_STATS
+#ifdef BP_EXTENDED_STATS
 			data[i] = 0;
 			data[i+1] = 0;
 			data[i+2] = 0;
@@ -1097,7 +1160,7 @@ static void ixgbe_get_ethtool_stats(struct net_device *netdev,
 			data[i+1] = ring->stats.bytes;
 		} while (u64_stats_fetch_retry_bh(&ring->syncp, start));
 		i += 2;
-#ifdef LL_EXTENDED_STATS
+#ifdef BP_EXTENDED_STATS
 		data[i] = ring->stats.yields;
 		data[i+1] = ring->stats.misses;
 		data[i+2] = ring->stats.cleaned;
@@ -1139,28 +1202,28 @@ static void ixgbe_get_strings(struct net_device *netdev, u32 stringset,
 			p += ETH_GSTRING_LEN;
 			sprintf(p, "tx_queue_%u_bytes", i);
 			p += ETH_GSTRING_LEN;
-#ifdef LL_EXTENDED_STATS
-			sprintf(p, "tx_q_%u_napi_yield", i);
+#ifdef BP_EXTENDED_STATS
+			sprintf(p, "tx_queue_%u_bp_napi_yield", i);
 			p += ETH_GSTRING_LEN;
-			sprintf(p, "tx_q_%u_misses", i);
+			sprintf(p, "tx_queue_%u_bp_misses", i);
 			p += ETH_GSTRING_LEN;
-			sprintf(p, "tx_q_%u_cleaned", i);
+			sprintf(p, "tx_queue_%u_bp_cleaned", i);
 			p += ETH_GSTRING_LEN;
-#endif /* LL_EXTENDED_STATS */
+#endif /* BP_EXTENDED_STATS */
 		}
 		for (i = 0; i < IXGBE_NUM_RX_QUEUES; i++) {
 			sprintf(p, "rx_queue_%u_packets", i);
 			p += ETH_GSTRING_LEN;
 			sprintf(p, "rx_queue_%u_bytes", i);
 			p += ETH_GSTRING_LEN;
-#ifdef LL_EXTENDED_STATS
-			sprintf(p, "rx_q_%u_ll_poll_yield", i);
+#ifdef BP_EXTENDED_STATS
+			sprintf(p, "rx_queue_%u_bp_poll_yield", i);
 			p += ETH_GSTRING_LEN;
-			sprintf(p, "rx_q_%u_misses", i);
+			sprintf(p, "rx_queue_%u_bp_misses", i);
 			p += ETH_GSTRING_LEN;
-			sprintf(p, "rx_q_%u_cleaned", i);
+			sprintf(p, "rx_queue_%u_bp_cleaned", i);
 			p += ETH_GSTRING_LEN;
-#endif /* LL_EXTENDED_STATS */
+#endif /* BP_EXTENDED_STATS */
 		}
 		for (i = 0; i < IXGBE_MAX_PACKET_BUFFERS; i++) {
 			sprintf(p, "tx_pb_%u_pxon", i);
@@ -1807,6 +1870,10 @@ static int ixgbe_run_loopback_test(struct ixgbe_adapter *adapter)
 	unsigned int size = 1024;
 	netdev_tx_t tx_ret_val;
 	struct sk_buff *skb;
+	u32 flags_orig = adapter->flags;
+
+	/* DCB can modify the frames on Tx */
+	adapter->flags &= ~IXGBE_FLAG_DCB_ENABLED;
 
 	/* allocate test skb */
 	skb = alloc_skb(size, GFP_KERNEL);
@@ -1859,6 +1926,7 @@ static int ixgbe_run_loopback_test(struct ixgbe_adapter *adapter)
 
 	/* free the original skb */
 	kfree_skb(skb);
+	adapter->flags = flags_orig;
 
 	return ret_val;
 }
@@ -1884,11 +1952,12 @@ static void ixgbe_diag_test(struct net_device *netdev,
                             struct ethtool_test *eth_test, u64 *data)
 {
 	struct ixgbe_adapter *adapter = netdev_priv(netdev);
-	struct ixgbe_hw *hw = &adapter->hw;
 	bool if_running = netif_running(netdev);
 
 	set_bit(__IXGBE_TESTING, &adapter->state);
 	if (eth_test->flags == ETH_TEST_FL_OFFLINE) {
+		struct ixgbe_hw *hw = &adapter->hw;
+
 		if (adapter->flags & IXGBE_FLAG_SRIOV_ENABLED) {
 			int i;
 			for (i = 0; i < adapter->num_vfs; i++) {
@@ -1912,21 +1981,18 @@ static void ixgbe_diag_test(struct net_device *netdev,
 		/* Offline tests */
 		e_info(hw, "offline testing starting\n");
 
-		if (if_running)
-			/* indicate we're in test mode */
-			dev_close(netdev);
-
-		/* bringing adapter down disables SFP+ optics */
-		if (hw->mac.ops.enable_tx_laser)
-			hw->mac.ops.enable_tx_laser(hw);
-
 		/* Link test performed before hardware reset so autoneg doesn't
 		 * interfere with test result
 		 */
 		if (ixgbe_link_test(adapter, &data[4]))
 			eth_test->flags |= ETH_TEST_FL_FAILED;
 
-		ixgbe_reset(adapter);
+		if (if_running)
+			/* indicate we're in test mode */
+			dev_close(netdev);
+		else
+			ixgbe_reset(adapter);
+
 		e_info(hw, "register testing starting\n");
 		if (ixgbe_reg_test(adapter, &data[0]))
 			eth_test->flags |= ETH_TEST_FL_FAILED;
@@ -1963,12 +2029,10 @@ skip_loopback:
 		clear_bit(__IXGBE_TESTING, &adapter->state);
 		if (if_running)
 			dev_open(netdev);
+		else if (hw->mac.ops.disable_tx_laser)
+			hw->mac.ops.disable_tx_laser(hw);
 	} else {
 		e_info(hw, "online testing starting\n");
-
-		/* if adapter is down, SFP+ optics will be disabled */
-		if (!if_running && hw->mac.ops.enable_tx_laser)
-			hw->mac.ops.enable_tx_laser(hw);
 
 		/* Online tests */
 		if (ixgbe_link_test(adapter, &data[4]))
@@ -1983,9 +2047,6 @@ skip_loopback:
 		clear_bit(__IXGBE_TESTING, &adapter->state);
 	}
 
-	/* if adapter was down, ensure SFP+ optics are disabled again */
-	if (!if_running && hw->mac.ops.disable_tx_laser)
-		hw->mac.ops.disable_tx_laser(hw);
 skip_ol_tests:
 	msleep_interruptible(4 * 1000);
 }
@@ -2196,13 +2257,13 @@ static int ixgbe_set_coalesce(struct net_device *netdev,
 
 #if IS_ENABLED(CONFIG_BQL)
 	/* detect ITR changes that require update of TXDCTL.WTHRESH */
-	if ((adapter->tx_itr_setting > 1) &&
+	if ((adapter->tx_itr_setting != 1) &&
 	    (adapter->tx_itr_setting < IXGBE_100K_ITR)) {
 		if ((tx_itr_prev == 1) ||
-		    (tx_itr_prev > IXGBE_100K_ITR))
+		    (tx_itr_prev >= IXGBE_100K_ITR))
 			need_reset = true;
 	} else {
-		if ((tx_itr_prev > 1) &&
+		if ((tx_itr_prev != 1) &&
 		    (tx_itr_prev < IXGBE_100K_ITR))
 			need_reset = true;
 	}
@@ -2909,33 +2970,21 @@ static int ixgbe_get_module_info(struct net_device *dev,
 	struct ixgbe_hw *hw = &adapter->hw;
 	u32 status;
 	u8 sff8472_rev, addr_mode;
-	int ret_val = 0;
 	bool page_swap = false;
-
-	/* avoid concurent i2c reads */
-	while (test_bit(__IXGBE_IN_SFP_INIT, &adapter->state))
-		msleep(100);
-
-	/* used by the service task */
-	set_bit(__IXGBE_READ_I2C, &adapter->state);
 
 	/* Check whether we support SFF-8472 or not */
 	status = hw->phy.ops.read_i2c_eeprom(hw,
 					     IXGBE_SFF_SFF_8472_COMP,
 					     &sff8472_rev);
-	if (status != 0) {
-		ret_val = -EIO;
-		goto err_out;
-	}
+	if (status != 0)
+		return -EIO;
 
 	/* addressing mode is not supported */
 	status = hw->phy.ops.read_i2c_eeprom(hw,
 					     IXGBE_SFF_SFF_8472_SWAP,
 					     &addr_mode);
-	if (status != 0) {
-		ret_val = -EIO;
-		goto err_out;
-	}
+	if (status != 0)
+		return -EIO;
 
 	if (addr_mode & IXGBE_SFF_ADDRESSING_MODE) {
 		e_err(drv, "Address change required to access page 0xA2, but not supported. Please report the module type to the driver maintainers.\n");
@@ -2952,9 +3001,7 @@ static int ixgbe_get_module_info(struct net_device *dev,
 		modinfo->eeprom_len = ETH_MODULE_SFF_8472_LEN;
 	}
 
-err_out:
-	clear_bit(__IXGBE_READ_I2C, &adapter->state);
-	return ret_val;
+	return 0;
 }
 
 static int ixgbe_get_module_eeprom(struct net_device *dev,
@@ -2966,51 +3013,27 @@ static int ixgbe_get_module_eeprom(struct net_device *dev,
 	u32 status = IXGBE_ERR_PHY_ADDR_INVALID;
 	u8 databyte = 0xFF;
 	int i = 0;
-	int ret_val = 0;
 
-	/* ixgbe_get_module_info is called before this function in all
-	 * cases, so we do not need any checks we already do above,
-	 * and can trust ee->len to be a known value.
-	 */
+	if (ee->len == 0)
+		return -EINVAL;
 
-	while (test_bit(__IXGBE_IN_SFP_INIT, &adapter->state))
-		msleep(100);
-	set_bit(__IXGBE_READ_I2C, &adapter->state);
+	for (i = ee->offset; i < ee->offset + ee->len; i++) {
+		/* I2C reads can take long time */
+		if (test_bit(__IXGBE_IN_SFP_INIT, &adapter->state))
+			return -EBUSY;
 
-	/* Read the first block, SFF-8079 */
-	for (i = 0; i < ETH_MODULE_SFF_8079_LEN; i++) {
-		status = hw->phy.ops.read_i2c_eeprom(hw, i, &databyte);
-		if (status != 0) {
-			/* Error occured while reading module */
-			ret_val = -EIO;
-			goto err_out;
-		}
-		data[i] = databyte;
+		if (i < ETH_MODULE_SFF_8079_LEN)
+			status = hw->phy.ops.read_i2c_eeprom(hw, i, &databyte);
+		else
+			status = hw->phy.ops.read_i2c_sff8472(hw, i, &databyte);
+
+		if (status != 0)
+			return -EIO;
+
+		data[i - ee->offset] = databyte;
 	}
 
-	/* If the second block is requested, check if SFF-8472 is supported. */
-	if (ee->len == ETH_MODULE_SFF_8472_LEN) {
-		if (data[IXGBE_SFF_SFF_8472_COMP] == IXGBE_SFF_SFF_8472_UNSUP)
-			return -EOPNOTSUPP;
-
-		/* Read the second block, SFF-8472 */
-		for (i = ETH_MODULE_SFF_8079_LEN;
-		     i < ETH_MODULE_SFF_8472_LEN; i++) {
-			status = hw->phy.ops.read_i2c_sff8472(hw,
-				i - ETH_MODULE_SFF_8079_LEN, &databyte);
-			if (status != 0) {
-				/* Error occured while reading module */
-				ret_val = -EIO;
-				goto err_out;
-			}
-			data[i] = databyte;
-		}
-	}
-
-err_out:
-	clear_bit(__IXGBE_READ_I2C, &adapter->state);
-
-	return ret_val;
+	return 0;
 }
 
 static const struct ethtool_ops ixgbe_ethtool_ops = {

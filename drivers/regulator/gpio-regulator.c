@@ -139,6 +139,7 @@ of_get_gpio_regulator_config(struct device *dev, struct device_node *np)
 	struct property *prop;
 	const char *regtype;
 	int proplen, gpio, i;
+	int ret;
 
 	config = devm_kzalloc(dev,
 			sizeof(struct gpio_regulator_config),
@@ -202,7 +203,11 @@ of_get_gpio_regulator_config(struct device *dev, struct device_node *np)
 	}
 	config->nr_states = i;
 
-	of_property_read_string(np, "regulator-type", &regtype);
+	ret = of_property_read_string(np, "regulator-type", &regtype);
+	if (ret < 0) {
+		dev_err(dev, "Missing 'regulator-type' property\n");
+		return ERR_PTR(-EINVAL);
+	}
 
 	if (!strncmp("voltage", regtype, 7))
 		config->type = REGULATOR_VOLTAGE;
@@ -219,7 +224,7 @@ static struct regulator_ops gpio_regulator_current_ops = {
 
 static int gpio_regulator_probe(struct platform_device *pdev)
 {
-	struct gpio_regulator_config *config = pdev->dev.platform_data;
+	struct gpio_regulator_config *config = dev_get_platdata(&pdev->dev);
 	struct device_node *np = pdev->dev.of_node;
 	struct gpio_regulator_data *drvdata;
 	struct regulator_config cfg = { };
@@ -283,7 +288,6 @@ static int gpio_regulator_probe(struct platform_device *pdev)
 		dev_err(&pdev->dev, "No regulator type set\n");
 		ret = -EINVAL;
 		goto err_memgpio;
-		break;
 	}
 
 	drvdata->nr_gpios = config->nr_gpios;

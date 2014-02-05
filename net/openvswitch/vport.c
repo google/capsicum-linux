@@ -42,6 +42,9 @@ static const struct vport_ops *vport_ops_list[] = {
 #ifdef CONFIG_OPENVSWITCH_GRE
 	&ovs_gre_vport_ops,
 #endif
+#ifdef CONFIG_OPENVSWITCH_VXLAN
+	&ovs_vxlan_vport_ops,
+#endif
 };
 
 /* Protected by RCU read lock for reading, ovs_mutex for writing. */
@@ -115,6 +118,7 @@ struct vport *ovs_vport_alloc(int priv_size, const struct vport_ops *ops,
 {
 	struct vport *vport;
 	size_t alloc_size;
+	int i;
 
 	alloc_size = sizeof(struct vport);
 	if (priv_size) {
@@ -137,6 +141,13 @@ struct vport *ovs_vport_alloc(int priv_size, const struct vport_ops *ops,
 		kfree(vport);
 		return ERR_PTR(-ENOMEM);
 	}
+
+	for_each_possible_cpu(i) {
+		struct pcpu_tstats *vport_stats;
+		vport_stats = per_cpu_ptr(vport->percpu_stats, i);
+		u64_stats_init(&vport_stats->syncp);
+	}
+
 
 	spin_lock_init(&vport->stats_lock);
 
@@ -200,7 +211,7 @@ out:
  *	ovs_vport_set_options - modify existing vport device (for kernel callers)
  *
  * @vport: vport to modify.
- * @port: New configuration.
+ * @options: New configuration.
  *
  * Modifies an existing device with the specified configuration (which is
  * dependent on device type).  ovs_mutex must be held.
@@ -325,6 +336,7 @@ int ovs_vport_get_options(const struct vport *vport, struct sk_buff *skb)
  *
  * @vport: vport that received the packet
  * @skb: skb that was received
+ * @tun_key: tunnel (if any) that carried packet
  *
  * Must be called with rcu_read_lock.  The packet cannot be shared and
  * skb->data should point to the Ethernet header.

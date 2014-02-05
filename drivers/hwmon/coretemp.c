@@ -52,7 +52,7 @@ MODULE_PARM_DESC(tjmax, "TjMax value in degrees Celsius");
 
 #define BASE_SYSFS_ATTR_NO	2	/* Sysfs Base attr no for coretemp */
 #define NUM_REAL_CORES		32	/* Number of Real cores per cpu */
-#define CORETEMP_NAME_LENGTH	17	/* String Length of attrs */
+#define CORETEMP_NAME_LENGTH	19	/* String Length of attrs */
 #define MAX_CORE_ATTRS		4	/* Maximum no of basic attrs */
 #define TOTAL_ATTRS		(MAX_CORE_ATTRS + 1)
 #define MAX_CORE_DATA		(NUM_REAL_CORES + BASE_SYSFS_ATTR_NO)
@@ -316,6 +316,18 @@ static int adjust_tjmax(struct cpuinfo_x86 *c, u32 id, struct device *dev)
 	return tjmax;
 }
 
+static bool cpu_has_tjmax(struct cpuinfo_x86 *c)
+{
+	u8 model = c->x86_model;
+
+	return model > 0xe &&
+	       model != 0x1c &&
+	       model != 0x26 &&
+	       model != 0x27 &&
+	       model != 0x35 &&
+	       model != 0x36;
+}
+
 static int get_tjmax(struct cpuinfo_x86 *c, u32 id, struct device *dev)
 {
 	int err;
@@ -328,7 +340,7 @@ static int get_tjmax(struct cpuinfo_x86 *c, u32 id, struct device *dev)
 	 */
 	err = rdmsr_safe_on_cpu(id, MSR_IA32_TEMPERATURE_TARGET, &eax, &edx);
 	if (err) {
-		if (c->x86_model > 0xe && c->x86_model != 0x1c)
+		if (cpu_has_tjmax(c))
 			dev_warn(dev, "Unable to read TjMax from CPU %u\n", id);
 	} else {
 		val = (eax >> 16) & 0xff;

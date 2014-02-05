@@ -38,6 +38,9 @@
 #include <linux/bootmem.h>
 #include <linux/iommu-helper.h>
 
+#define CREATE_TRACE_POINTS
+#include <trace/events/swiotlb.h>
+
 #define OFFSET(val,align) ((unsigned long)	\
 	                   ( (val) & ( (align) - 1)))
 
@@ -502,6 +505,7 @@ phys_addr_t swiotlb_tbl_map_single(struct device *hwdev,
 
 not_found:
 	spin_unlock_irqrestore(&io_tlb_lock, flags);
+	dev_warn(hwdev, "swiotlb buffer is full\n");
 	return SWIOTLB_MAP_ERROR;
 found:
 	spin_unlock_irqrestore(&io_tlb_lock, flags);
@@ -726,6 +730,8 @@ dma_addr_t swiotlb_map_page(struct device *dev, struct page *page,
 	if (dma_capable(dev, dev_addr, size) && !swiotlb_force)
 		return dev_addr;
 
+	trace_swiotlb_bounced(dev, dev_addr, size, swiotlb_force);
+
 	/* Oh well, have to allocate and map a bounce buffer. */
 	map = map_single(dev, phys, size, dir);
 	if (map == SWIOTLB_MAP_ERROR) {
@@ -870,13 +876,13 @@ swiotlb_map_sg_attrs(struct device *hwdev, struct scatterlist *sgl, int nelems,
 				swiotlb_full(hwdev, sg->length, dir, 0);
 				swiotlb_unmap_sg_attrs(hwdev, sgl, i, dir,
 						       attrs);
-				sgl[0].dma_length = 0;
+				sg_dma_len(sgl) = 0;
 				return 0;
 			}
 			sg->dma_address = phys_to_dma(hwdev, map);
 		} else
 			sg->dma_address = dev_addr;
-		sg->dma_length = sg->length;
+		sg_dma_len(sg) = sg->length;
 	}
 	return nelems;
 }
@@ -904,7 +910,7 @@ swiotlb_unmap_sg_attrs(struct device *hwdev, struct scatterlist *sgl,
 	BUG_ON(dir == DMA_NONE);
 
 	for_each_sg(sgl, sg, nelems, i)
-		unmap_single(hwdev, sg->dma_address, sg->dma_length, dir);
+		unmap_single(hwdev, sg->dma_address, sg_dma_len(sg), dir);
 
 }
 EXPORT_SYMBOL(swiotlb_unmap_sg_attrs);
@@ -934,7 +940,7 @@ swiotlb_sync_sg(struct device *hwdev, struct scatterlist *sgl,
 
 	for_each_sg(sgl, sg, nelems, i)
 		swiotlb_sync_single(hwdev, sg->dma_address,
-				    sg->dma_length, dir, target);
+				    sg_dma_len(sg), dir, target);
 }
 
 void

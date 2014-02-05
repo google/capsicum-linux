@@ -38,12 +38,10 @@
 #include <linux/clk.h>
 #include <linux/io.h>
 #include <linux/of.h>
-#include <linux/of_i2c.h>
 #include <linux/of_device.h>
 #include <linux/slab.h>
 #include <linux/i2c-omap.h>
 #include <linux/pm_runtime.h>
-#include <linux/pinctrl/consumer.h>
 
 /* I2C controller revisions */
 #define OMAP_I2C_OMAP1_REV_2		0x20
@@ -216,8 +214,6 @@ struct omap_i2c_dev {
 	u16			syscstate;
 	u16			westate;
 	u16			errata;
-
-	struct pinctrl		*pins;
 };
 
 static const u8 reg_map_ip_v1[] = {
@@ -270,13 +266,13 @@ static const u8 reg_map_ip_v2[] = {
 static inline void omap_i2c_write_reg(struct omap_i2c_dev *i2c_dev,
 				      int reg, u16 val)
 {
-	__raw_writew(val, i2c_dev->base +
+	writew_relaxed(val, i2c_dev->base +
 			(i2c_dev->regs[reg] << i2c_dev->reg_shift));
 }
 
 static inline u16 omap_i2c_read_reg(struct omap_i2c_dev *i2c_dev, int reg)
 {
-	return __raw_readw(i2c_dev->base +
+	return readw_relaxed(i2c_dev->base +
 				(i2c_dev->regs[reg] << i2c_dev->reg_shift));
 }
 
@@ -547,7 +543,7 @@ static int omap_i2c_xfer_msg(struct i2c_adapter *adap,
 	w |= OMAP_I2C_BUF_RXFIF_CLR | OMAP_I2C_BUF_TXFIF_CLR;
 	omap_i2c_write_reg(dev, OMAP_I2C_BUF_REG, w);
 
-	INIT_COMPLETION(dev->cmd_complete);
+	reinit_completion(&dev->cmd_complete);
 	dev->cmd_err = 0;
 
 	w = OMAP_I2C_CON_EN | OMAP_I2C_CON_MST | OMAP_I2C_CON_STT;
@@ -618,11 +614,10 @@ static int omap_i2c_xfer_msg(struct i2c_adapter *adap,
 	if (dev->cmd_err & OMAP_I2C_STAT_NACK) {
 		if (msg->flags & I2C_M_IGNORE_NAK)
 			return 0;
-		if (stop) {
-			w = omap_i2c_read_reg(dev, OMAP_I2C_CON_REG);
-			w |= OMAP_I2C_CON_STP;
-			omap_i2c_write_reg(dev, OMAP_I2C_CON_REG, w);
-		}
+
+		w = omap_i2c_read_reg(dev, OMAP_I2C_CON_REG);
+		w |= OMAP_I2C_CON_STP;
+		omap_i2c_write_reg(dev, OMAP_I2C_CON_REG, w);
 		return -EREMOTEIO;
 	}
 	return -EIO;
@@ -944,6 +939,9 @@ omap_i2c_isr_thread(int this_irq, void *dev_id)
 		/*
 		 * ProDB0017052: Clear ARDY bit twice
 		 */
+		if (stat & OMAP_I2C_STAT_ARDY)
+			omap_i2c_ack_stat(dev, OMAP_I2C_STAT_ARDY);
+
 		if (stat & (OMAP_I2C_STAT_ARDY | OMAP_I2C_STAT_NACK |
 					OMAP_I2C_STAT_AL)) {
 			omap_i2c_ack_stat(dev, (OMAP_I2C_STAT_RRDY |
@@ -1039,6 +1037,20 @@ static const struct i2c_algorithm omap_i2c_algo = {
 };
 
 #ifdef CONFIG_OF
+static struct omap_i2c_bus_platform_data omap2420_pdata = {
+	.rev = OMAP_I2C_IP_VERSION_1,
+	.flags = OMAP_I2C_FLAG_NO_FIFO |
+			OMAP_I2C_FLAG_SIMPLE_CLOCK |
+			OMAP_I2C_FLAG_16BIT_DATA_REG |
+			OMAP_I2C_FLAG_BUS_SHIFT_2,
+};
+
+static struct omap_i2c_bus_platform_data omap2430_pdata = {
+	.rev = OMAP_I2C_IP_VERSION_1,
+	.flags = OMAP_I2C_FLAG_BUS_SHIFT_2 |
+			OMAP_I2C_FLAG_FORCE_19200_INT_CLK,
+};
+
 static struct omap_i2c_bus_platform_data omap3_pdata = {
 	.rev = OMAP_I2C_IP_VERSION_1,
 	.flags = OMAP_I2C_FLAG_BUS_SHIFT_2,
@@ -1056,6 +1068,14 @@ static const struct of_device_id omap_i2c_of_match[] = {
 	{
 		.compatible = "ti,omap3-i2c",
 		.data = &omap3_pdata,
+	},
+	{
+		.compatible = "ti,omap2430-i2c",
+		.data = &omap2430_pdata,
+	},
+	{
+		.compatible = "ti,omap2420-i2c",
+		.data = &omap2420_pdata,
 	},
 	{ },
 };
@@ -1079,7 +1099,7 @@ omap_i2c_probe(struct platform_device *pdev)
 	struct i2c_adapter	*adap;
 	struct resource		*mem;
 	const struct omap_i2c_bus_platform_data *pdata =
-		pdev->dev.platform_data;
+		dev_get_platdata(&pdev->dev);
 	struct device_node	*node = pdev->dev.of_node;
 	const struct of_device_id *match;
 	int irq;
@@ -1120,16 +1140,6 @@ omap_i2c_probe(struct platform_device *pdev)
 		dev->set_mpu_wkup_lat = pdata->set_mpu_wkup_lat;
 	}
 
-	dev->pins = devm_pinctrl_get_select_default(&pdev->dev);
-	if (IS_ERR(dev->pins)) {
-		if (PTR_ERR(dev->pins) == -EPROBE_DEFER)
-			return -EPROBE_DEFER;
-
-		dev_warn(&pdev->dev, "did not get pins for i2c error: %li\n",
-			 PTR_ERR(dev->pins));
-		dev->pins = NULL;
-	}
-
 	dev->dev = &pdev->dev;
 	dev->irq = irq;
 
@@ -1152,9 +1162,9 @@ omap_i2c_probe(struct platform_device *pdev)
 	 * Read the Rev hi bit-[15:14] ie scheme this is 1 indicates ver2.
 	 * On omap1/3/2 Offset 4 is IE Reg the bit [15:14] is 0 at reset.
 	 * Also since the omap_i2c_read_reg uses reg_map_ip_* a
-	 * raw_readw is done.
+	 * readw_relaxed is done.
 	 */
-	rev = __raw_readw(dev->base + 0x04);
+	rev = readw_relaxed(dev->base + 0x04);
 
 	dev->scheme = OMAP_I2C_SCHEME(rev);
 	switch (dev->scheme) {
@@ -1244,8 +1254,6 @@ omap_i2c_probe(struct platform_device *pdev)
 
 	dev_info(dev->dev, "bus %d rev%d.%d at %d kHz\n", adap->nr,
 		 major, minor, dev->speed);
-
-	of_i2c_register_devices(adap);
 
 	pm_runtime_mark_last_busy(dev->dev);
 	pm_runtime_put_autosuspend(dev->dev);

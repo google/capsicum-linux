@@ -50,9 +50,6 @@ static struct mwifiex_if_ops sdio_ops;
 
 static struct semaphore add_remove_card_sem;
 
-static int mwifiex_sdio_resume(struct device *dev);
-static void mwifiex_sdio_interrupt(struct sdio_func *func);
-
 /*
  * SDIO probe.
  *
@@ -113,6 +110,51 @@ mwifiex_sdio_probe(struct sdio_func *func, const struct sdio_device_id *id)
 }
 
 /*
+ * SDIO resume.
+ *
+ * Kernel needs to suspend all functions separately. Therefore all
+ * registered functions must have drivers with suspend and resume
+ * methods. Failing that the kernel simply removes the whole card.
+ *
+ * If already not resumed, this function turns on the traffic and
+ * sends a host sleep cancel request to the firmware.
+ */
+static int mwifiex_sdio_resume(struct device *dev)
+{
+	struct sdio_func *func = dev_to_sdio_func(dev);
+	struct sdio_mmc_card *card;
+	struct mwifiex_adapter *adapter;
+	mmc_pm_flag_t pm_flag = 0;
+
+	if (func) {
+		pm_flag = sdio_get_host_pm_caps(func);
+		card = sdio_get_drvdata(func);
+		if (!card || !card->adapter) {
+			pr_err("resume: invalid card or adapter\n");
+			return 0;
+		}
+	} else {
+		pr_err("resume: sdio_func is not specified\n");
+		return 0;
+	}
+
+	adapter = card->adapter;
+
+	if (!adapter->is_suspended) {
+		dev_warn(adapter->dev, "device already resumed\n");
+		return 0;
+	}
+
+	adapter->is_suspended = false;
+
+	/* Disable Host Sleep */
+	mwifiex_cancel_hs(mwifiex_get_priv(adapter, MWIFIEX_BSS_ROLE_STA),
+			  MWIFIEX_ASYNC_CMD);
+
+	return 0;
+}
+
+/*
  * SDIO remove.
  *
  * This function removes the interface and frees up the card structure.
@@ -154,7 +196,6 @@ mwifiex_sdio_remove(struct sdio_func *func)
 	}
 
 	mwifiex_remove_card(card->adapter, &add_remove_card_sem);
-	kfree(card);
 }
 
 /*
@@ -210,51 +251,6 @@ static int mwifiex_sdio_suspend(struct device *dev)
 	adapter->is_suspended = true;
 
 	return ret;
-}
-
-/*
- * SDIO resume.
- *
- * Kernel needs to suspend all functions separately. Therefore all
- * registered functions must have drivers with suspend and resume
- * methods. Failing that the kernel simply removes the whole card.
- *
- * If already not resumed, this function turns on the traffic and
- * sends a host sleep cancel request to the firmware.
- */
-static int mwifiex_sdio_resume(struct device *dev)
-{
-	struct sdio_func *func = dev_to_sdio_func(dev);
-	struct sdio_mmc_card *card;
-	struct mwifiex_adapter *adapter;
-	mmc_pm_flag_t pm_flag = 0;
-
-	if (func) {
-		pm_flag = sdio_get_host_pm_caps(func);
-		card = sdio_get_drvdata(func);
-		if (!card || !card->adapter) {
-			pr_err("resume: invalid card or adapter\n");
-			return 0;
-		}
-	} else {
-		pr_err("resume: sdio_func is not specified\n");
-		return 0;
-	}
-
-	adapter = card->adapter;
-
-	if (!adapter->is_suspended) {
-		dev_warn(adapter->dev, "device already resumed\n");
-		return 0;
-	}
-
-	adapter->is_suspended = false;
-
-	/* Disable Host Sleep */
-	mwifiex_cancel_hs(mwifiex_get_priv(adapter, MWIFIEX_BSS_ROLE_STA),
-			  MWIFIEX_ASYNC_CMD);
-
-	return 0;
 }
 
 /* Device ID for SD8786 */
@@ -707,6 +703,65 @@ static void mwifiex_sdio_disable_host_int(struct mwifiex_adapter *adapter)
 }
 
 /*
+ * This function reads the interrupt status from card.
+ */
+static void mwifiex_interrupt_status(struct mwifiex_adapter *adapter)
+{
+	struct sdio_mmc_card *card = adapter->card;
+	u8 sdio_ireg;
+	unsigned long flags;
+
+	if (mwifiex_read_data_sync(adapter, card->mp_regs,
+				   card->reg->max_mp_regs,
+				   REG_PORT | MWIFIEX_SDIO_BYTE_MODE_MASK, 0)) {
+		dev_err(adapter->dev, "read mp_regs failed\n");
+		return;
+	}
+
+	sdio_ireg = card->mp_regs[HOST_INTSTATUS_REG];
+	if (sdio_ireg) {
+		/*
+		 * DN_LD_HOST_INT_STATUS and/or UP_LD_HOST_INT_STATUS
+		 * For SDIO new mode CMD port interrupts
+		 *	DN_LD_CMD_PORT_HOST_INT_STATUS and/or
+		 *	UP_LD_CMD_PORT_HOST_INT_STATUS
+		 * Clear the interrupt status register
+		 */
+		dev_dbg(adapter->dev, "int: sdio_ireg = %#x\n", sdio_ireg);
+		spin_lock_irqsave(&adapter->int_lock, flags);
+		adapter->int_status |= sdio_ireg;
+		spin_unlock_irqrestore(&adapter->int_lock, flags);
+	}
+}
+
+/*
+ * SDIO interrupt handler.
+ *
+ * This function reads the interrupt status from firmware and handles
+ * the interrupt in current thread (ksdioirqd) right away.
+ */
+static void
+mwifiex_sdio_interrupt(struct sdio_func *func)
+{
+	struct mwifiex_adapter *adapter;
+	struct sdio_mmc_card *card;
+
+	card = sdio_get_drvdata(func);
+	if (!card || !card->adapter) {
+		pr_debug("int: func=%p card=%p adapter=%p\n",
+			 func, card, card ? card->adapter : NULL);
+		return;
+	}
+	adapter = card->adapter;
+
+	if (!adapter->pps_uapsd_mode && adapter->ps_state == PS_STATE_SLEEP)
+		adapter->ps_state = PS_STATE_AWAKE;
+
+	mwifiex_interrupt_status(adapter);
+	mwifiex_main_process(adapter);
+}
+
+/*
  * This function enables the host interrupt.
  *
  * The host interrupt enable mask is written to the card
@@ -944,7 +999,7 @@ static int mwifiex_check_fw_status(struct mwifiex_adapter *adapter,
 			ret = 0;
 			break;
 		} else {
-			mdelay(100);
+			msleep(100);
 			ret = -1;
 		}
 	}
@@ -963,65 +1018,6 @@ static int mwifiex_check_fw_status(struct mwifiex_adapter *adapter,
 }
 
 /*
- * This function reads the interrupt status from card.
- */
-static void mwifiex_interrupt_status(struct mwifiex_adapter *adapter)
-{
-	struct sdio_mmc_card *card = adapter->card;
-	u8 sdio_ireg;
-	unsigned long flags;
-
-	if (mwifiex_read_data_sync(adapter, card->mp_regs,
-				   card->reg->max_mp_regs,
-				   REG_PORT | MWIFIEX_SDIO_BYTE_MODE_MASK, 0)) {
-		dev_err(adapter->dev, "read mp_regs failed\n");
-		return;
-	}
-
-	sdio_ireg = card->mp_regs[HOST_INTSTATUS_REG];
-	if (sdio_ireg) {
-		/*
-		 * DN_LD_HOST_INT_STATUS and/or UP_LD_HOST_INT_STATUS
-		 * For SDIO new mode CMD port interrupts
-		 *	DN_LD_CMD_PORT_HOST_INT_STATUS and/or
-		 *	UP_LD_CMD_PORT_HOST_INT_STATUS
-		 * Clear the interrupt status register
-		 */
-		dev_dbg(adapter->dev, "int: sdio_ireg = %#x\n", sdio_ireg);
-		spin_lock_irqsave(&adapter->int_lock, flags);
-		adapter->int_status |= sdio_ireg;
-		spin_unlock_irqrestore(&adapter->int_lock, flags);
-	}
-}
-
-/*
- * SDIO interrupt handler.
- *
- * This function reads the interrupt status from firmware and handles
- * the interrupt in current thread (ksdioirqd) right away.
- */
-static void
-mwifiex_sdio_interrupt(struct sdio_func *func)
-{
-	struct mwifiex_adapter *adapter;
-	struct sdio_mmc_card *card;
-
-	card = sdio_get_drvdata(func);
-	if (!card || !card->adapter) {
-		pr_debug("int: func=%p card=%p adapter=%p\n",
-			 func, card, card ? card->adapter : NULL);
-		return;
-	}
-	adapter = card->adapter;
-
-	if (!adapter->pps_uapsd_mode && adapter->ps_state == PS_STATE_SLEEP)
-		adapter->ps_state = PS_STATE_AWAKE;
-
-	mwifiex_interrupt_status(adapter);
-	mwifiex_main_process(adapter);
-}
-
-/*
  * This function decodes a received packet.
  *
  * Based on the type, the packet is treated as either a data, or
@@ -1032,7 +1028,10 @@ static int mwifiex_decode_rx_packet(struct mwifiex_adapter *adapter,
 				    struct sk_buff *skb, u32 upld_typ)
 {
 	u8 *cmd_buf;
+	__le16 *curr_ptr = (__le16 *)skb->data;
+	u16 pkt_len = le16_to_cpu(*curr_ptr);
 
+	skb_trim(skb, pkt_len);
 	skb_pull(skb, INTF_HEADER_LEN);
 
 	switch (upld_typ) {
@@ -1065,7 +1064,7 @@ static int mwifiex_decode_rx_packet(struct mwifiex_adapter *adapter,
 
 	case MWIFIEX_TYPE_EVENT:
 		dev_dbg(adapter->dev, "info: --- Rx: Event ---\n");
-		adapter->event_cause = *(u32 *) skb->data;
+		adapter->event_cause = le32_to_cpu(*(__le32 *) skb->data);
 
 		if ((skb->len > 0) && (skb->len  < MAX_EVENT_SIZE))
 			memcpy(adapter->event_body,
@@ -1210,8 +1209,8 @@ static int mwifiex_sdio_card_to_host_mp_aggr(struct mwifiex_adapter *adapter,
 		for (pind = 0; pind < card->mpa_rx.pkt_cnt; pind++) {
 
 			/* get curr PKT len & type */
-			pkt_len = *(u16 *) &curr_ptr[0];
-			pkt_type = *(u16 *) &curr_ptr[2];
+			pkt_len = le16_to_cpu(*(__le16 *) &curr_ptr[0]);
+			pkt_type = le16_to_cpu(*(__le16 *) &curr_ptr[2]);
 
 			/* copy pkt to deaggr buf */
 			skb_deaggr = card->mpa_rx.skb_arr[pind];
@@ -1745,7 +1744,6 @@ mwifiex_unregister_dev(struct mwifiex_adapter *adapter)
 		sdio_claim_host(card->func);
 		sdio_disable_func(card->func);
 		sdio_release_host(card->func);
-		sdio_set_drvdata(card->func, NULL);
 	}
 }
 
@@ -1773,7 +1771,6 @@ static int mwifiex_register_dev(struct mwifiex_adapter *adapter)
 		return ret;
 	}
 
-	sdio_set_drvdata(func, card);
 
 	adapter->dev = &func->dev;
 
@@ -1800,6 +1797,8 @@ static int mwifiex_init_sdio(struct mwifiex_adapter *adapter)
 	const struct mwifiex_sdio_card_reg *reg = card->reg;
 	int ret;
 	u8 sdio_ireg;
+
+	sdio_set_drvdata(card->func, card);
 
 	/*
 	 * Read the HOST_INT_STATUS_REG for ACK the first interrupt got
@@ -1883,6 +1882,8 @@ static void mwifiex_cleanup_sdio(struct mwifiex_adapter *adapter)
 	kfree(card->mpa_rx.len_arr);
 	kfree(card->mpa_tx.buf);
 	kfree(card->mpa_rx.buf);
+	sdio_set_drvdata(card->func, NULL);
+	kfree(card);
 }
 
 /*

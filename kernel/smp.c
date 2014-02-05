@@ -15,9 +15,9 @@
 
 #include "smpboot.h"
 
-#ifdef CONFIG_USE_GENERIC_SMP_HELPERS
 enum {
 	CSD_FLAG_LOCK		= 0x01,
+	CSD_FLAG_WAIT		= 0x02,
 };
 
 struct call_function_data {
@@ -48,10 +48,13 @@ hotplug_cfd(struct notifier_block *nfb, unsigned long action, void *hcpu)
 				cpu_to_node(cpu)))
 			return notifier_from_errno(-ENOMEM);
 		if (!zalloc_cpumask_var_node(&cfd->cpumask_ipi, GFP_KERNEL,
-				cpu_to_node(cpu)))
+				cpu_to_node(cpu))) {
+			free_cpumask_var(cfd->cpumask);
 			return notifier_from_errno(-ENOMEM);
+		}
 		cfd->csd = alloc_percpu(struct call_single_data);
 		if (!cfd->csd) {
+			free_cpumask_var(cfd->cpumask_ipi);
 			free_cpumask_var(cfd->cpumask);
 			return notifier_from_errno(-ENOMEM);
 		}
@@ -121,7 +124,7 @@ static void csd_lock(struct call_single_data *csd)
 
 static void csd_unlock(struct call_single_data *csd)
 {
-	WARN_ON(!(csd->flags & CSD_FLAG_LOCK));
+	WARN_ON((csd->flags & CSD_FLAG_WAIT) && !(csd->flags & CSD_FLAG_LOCK));
 
 	/*
 	 * ensure we're all done before releasing data:
@@ -136,12 +139,14 @@ static void csd_unlock(struct call_single_data *csd)
  * for execution on the given CPU. data must already have
  * ->func, ->info, and ->flags set.
  */
-static
-void generic_exec_single(int cpu, struct call_single_data *csd, int wait)
+static void generic_exec_single(int cpu, struct call_single_data *csd, int wait)
 {
 	struct call_single_queue *dst = &per_cpu(call_single_queue, cpu);
 	unsigned long flags;
 	int ipi;
+
+	if (wait)
+		csd->flags |= CSD_FLAG_WAIT;
 
 	raw_spin_lock_irqsave(&dst->lock, flags);
 	ipi = list_empty(&dst->list);
@@ -186,25 +191,13 @@ void generic_smp_call_function_single_interrupt(void)
 
 	while (!list_empty(&list)) {
 		struct call_single_data *csd;
-		unsigned int csd_flags;
 
 		csd = list_entry(list.next, struct call_single_data, list);
 		list_del(&csd->list);
 
-		/*
-		 * 'csd' can be invalid after this call if flags == 0
-		 * (when called through generic_exec_single()),
-		 * so save them away before making the call:
-		 */
-		csd_flags = csd->flags;
-
 		csd->func(csd->info);
 
-		/*
-		 * Unlocked CSDs are valid through generic_exec_single():
-		 */
-		if (csd_flags & CSD_FLAG_LOCK)
-			csd_unlock(csd);
+		csd_unlock(csd);
 	}
 }
 
@@ -278,8 +271,6 @@ EXPORT_SYMBOL(smp_call_function_single);
  * @wait: If true, wait until function has completed.
  *
  * Returns 0 on success, else a negative status code (if no cpus were online).
- * Note that @wait will be implicitly turned on in case of allocation failures,
- * since we fall back to on-stack allocation.
  *
  * Selection preference:
  *	1) current cpu if in @mask
@@ -351,6 +342,7 @@ void __smp_call_function_single(int cpu, struct call_single_data *csd,
 	}
 	put_cpu();
 }
+EXPORT_SYMBOL_GPL(__smp_call_function_single);
 
 /**
  * smp_call_function_many(): Run a function on a set of other CPUs.
@@ -470,7 +462,6 @@ int smp_call_function(smp_call_func_t func, void *info, int wait)
 	return 0;
 }
 EXPORT_SYMBOL(smp_call_function);
-#endif /* USE_GENERIC_SMP_HELPERS */
 
 /* Setup configured maximum number of CPUs to activate */
 unsigned int setup_max_cpus = NR_CPUS;
@@ -535,6 +526,11 @@ void __init setup_nr_cpu_ids(void)
 	nr_cpu_ids = find_last_bit(cpumask_bits(cpu_possible_mask),NR_CPUS) + 1;
 }
 
+void __weak smp_announce(void)
+{
+	printk(KERN_INFO "Brought up %d CPUs\n", num_online_cpus());
+}
+
 /* Called by boot processor to activate the rest. */
 void __init smp_init(void)
 {
@@ -551,7 +547,7 @@ void __init smp_init(void)
 	}
 
 	/* Any cleanup work */
-	printk(KERN_INFO "Brought up %ld CPUs\n", (long)num_online_cpus());
+	smp_announce();
 	smp_cpus_done(setup_max_cpus);
 }
 
@@ -586,8 +582,10 @@ EXPORT_SYMBOL(on_each_cpu);
  *
  * If @wait is true, then returns once @func has returned.
  *
- * You must not call this function with disabled interrupts or
- * from a hardware interrupt handler or from a bottom half handler.
+ * You must not call this function with disabled interrupts or from a
+ * hardware interrupt handler or from a bottom half handler.  The
+ * exception is that it may be used during early boot while
+ * early_boot_irqs_disabled is set.
  */
 void on_each_cpu_mask(const struct cpumask *mask, smp_call_func_t func,
 			void *info, bool wait)
@@ -596,9 +594,10 @@ void on_each_cpu_mask(const struct cpumask *mask, smp_call_func_t func,
 
 	smp_call_function_many(mask, func, info, wait);
 	if (cpumask_test_cpu(cpu, mask)) {
-		local_irq_disable();
+		unsigned long flags;
+		local_irq_save(flags);
 		func(info);
-		local_irq_enable();
+		local_irq_restore(flags);
 	}
 	put_cpu();
 }

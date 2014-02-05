@@ -423,14 +423,19 @@ static struct page *get_next_page(struct page *page)
 	if (is_last_page(page))
 		next = NULL;
 	else if (is_first_page(page))
-		next = (struct page *)page->private;
+		next = (struct page *)page_private(page);
 	else
 		next = list_entry(page->lru.next, struct page, lru);
 
 	return next;
 }
 
-/* Encode <page, obj_idx> as a single handle value */
+/*
+ * Encode <page, obj_idx> as a single handle value.
+ * On hardware platforms with physical memory starting at 0x0 the pfn
+ * could be 0 so we ensure that the handle will never be 0 by adjusting the
+ * encoded obj_idx value before encoding.
+ */
 static void *obj_location_to_handle(struct page *page, unsigned long obj_idx)
 {
 	unsigned long handle;
@@ -441,17 +446,21 @@ static void *obj_location_to_handle(struct page *page, unsigned long obj_idx)
 	}
 
 	handle = page_to_pfn(page) << OBJ_INDEX_BITS;
-	handle |= (obj_idx & OBJ_INDEX_MASK);
+	handle |= ((obj_idx + 1) & OBJ_INDEX_MASK);
 
 	return (void *)handle;
 }
 
-/* Decode <page, obj_idx> pair from the given object handle */
+/*
+ * Decode <page, obj_idx> pair from the given object handle. We adjust the
+ * decoded obj_idx back to its original value since it was adjusted in
+ * obj_location_to_handle().
+ */
 static void obj_handle_to_location(unsigned long handle, struct page **page,
 				unsigned long *obj_idx)
 {
 	*page = pfn_to_page(handle >> OBJ_INDEX_BITS);
-	*obj_idx = handle & OBJ_INDEX_MASK;
+	*obj_idx = (handle & OBJ_INDEX_MASK) - 1;
 }
 
 static unsigned long obj_idx_to_offset(struct page *page,
@@ -581,7 +590,7 @@ static struct page *alloc_zspage(struct size_class *class, gfp_t flags)
 			first_page->inuse = 0;
 		}
 		if (i == 1)
-			first_page->private = (unsigned long)page;
+			set_page_private(first_page, (unsigned long)page);
 		if (i >= 1)
 			page->first_page = first_page;
 		if (i >= 2)

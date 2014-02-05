@@ -1785,8 +1785,6 @@ static int __exit amiga_serial_remove(struct platform_device *pdev)
 	free_irq(IRQ_AMIGA_TBE, state);
 	free_irq(IRQ_AMIGA_RBF, state);
 
-	platform_set_drvdata(pdev, NULL);
-
 	return error;
 }
 
@@ -1857,6 +1855,9 @@ static struct console sercons = {
  */
 static int __init amiserial_console_init(void)
 {
+	if (!MACH_IS_AMIGA)
+		return -ENODEV;
+
 	register_console(&sercons);
 	return 0;
 }

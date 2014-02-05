@@ -107,24 +107,31 @@ static int __diag_ipl_functions(struct kvm_vcpu *vcpu)
 
 static int __diag_virtio_hypercall(struct kvm_vcpu *vcpu)
 {
-	int ret, idx;
+	int ret;
 
 	/* No virtio-ccw notification? Get out quickly. */
 	if (!vcpu->kvm->arch.css_support ||
 	    (vcpu->run->s.regs.gprs[1] != KVM_S390_VIRTIO_CCW_NOTIFY))
 		return -EOPNOTSUPP;
 
-	idx = srcu_read_lock(&vcpu->kvm->srcu);
 	/*
 	 * The layout is as follows:
 	 * - gpr 2 contains the subchannel id (passed as addr)
 	 * - gpr 3 contains the virtqueue index (passed as datamatch)
+	 * - gpr 4 contains the index on the bus (optionally)
 	 */
-	ret = kvm_io_bus_write(vcpu->kvm, KVM_VIRTIO_CCW_NOTIFY_BUS,
-				vcpu->run->s.regs.gprs[2],
-				8, &vcpu->run->s.regs.gprs[3]);
-	srcu_read_unlock(&vcpu->kvm->srcu, idx);
-	/* kvm_io_bus_write returns -EOPNOTSUPP if it found no match. */
+	ret = kvm_io_bus_write_cookie(vcpu->kvm, KVM_VIRTIO_CCW_NOTIFY_BUS,
+				      vcpu->run->s.regs.gprs[2],
+				      8, &vcpu->run->s.regs.gprs[3],
+				      vcpu->run->s.regs.gprs[4]);
+
+	/*
+	 * Return cookie in gpr 2, but don't overwrite the register if the
+	 * diagnose will be handled by userspace.
+	 */
+	if (ret != -EOPNOTSUPP)
+		vcpu->run->s.regs.gprs[2] = ret;
+	/* kvm_io_bus_write_cookie returns -EOPNOTSUPP if it found no match. */
 	return ret < 0 ? ret : 0;
 }
 

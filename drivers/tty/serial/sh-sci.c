@@ -1433,7 +1433,7 @@ static void work_fn_rx(struct work_struct *work)
 	desc = s->desc_rx[new];
 
 	if (dma_async_is_tx_complete(s->chan_rx, s->active_rx, NULL, NULL) !=
-	    DMA_SUCCESS) {
+	    DMA_COMPLETE) {
 		/* Handle incomplete DMA receive */
 		struct dma_chan *chan = s->chan_rx;
 		struct shdma_desc *sh_desc = container_of(desc,
@@ -2380,7 +2380,7 @@ static char early_serial_buf[32];
 
 static int sci_probe_earlyprintk(struct platform_device *pdev)
 {
-	struct plat_sci_port *cfg = pdev->dev.platform_data;
+	struct plat_sci_port *cfg = dev_get_platdata(&pdev->dev);
 
 	if (early_serial_console.data)
 		return -EEXIST;
@@ -2469,7 +2469,7 @@ static int sci_probe_single(struct platform_device *dev,
 
 static int sci_probe(struct platform_device *dev)
 {
-	struct plat_sci_port *p = dev->dev.platform_data;
+	struct plat_sci_port *p = dev_get_platdata(&dev->dev);
 	struct sci_port *sp = &sci_ports[dev->id];
 	int ret;
 

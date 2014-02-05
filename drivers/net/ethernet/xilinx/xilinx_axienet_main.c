@@ -201,17 +201,15 @@ static int axienet_dma_bd_init(struct net_device *ndev)
 	/*
 	 * Allocate the Tx and Rx buffer descriptors.
 	 */
-	lp->tx_bd_v = dma_alloc_coherent(ndev->dev.parent,
-					 sizeof(*lp->tx_bd_v) * TX_BD_NUM,
-					 &lp->tx_bd_p,
-					 GFP_KERNEL | __GFP_ZERO);
+	lp->tx_bd_v = dma_zalloc_coherent(ndev->dev.parent,
+					  sizeof(*lp->tx_bd_v) * TX_BD_NUM,
+					  &lp->tx_bd_p, GFP_KERNEL);
 	if (!lp->tx_bd_v)
 		goto out;
 
-	lp->rx_bd_v = dma_alloc_coherent(ndev->dev.parent,
-					 sizeof(*lp->rx_bd_v) * RX_BD_NUM,
-					 &lp->rx_bd_p,
-					 GFP_KERNEL | __GFP_ZERO);
+	lp->rx_bd_v = dma_zalloc_coherent(ndev->dev.parent,
+					  sizeof(*lp->rx_bd_v) * RX_BD_NUM,
+					  &lp->rx_bd_p, GFP_KERNEL);
 	if (!lp->rx_bd_v)
 		goto out;
 
@@ -1488,7 +1486,7 @@ static int axienet_of_probe(struct platform_device *op)
 
 	SET_NETDEV_DEV(ndev, &op->dev);
 	ndev->flags &= ~IFF_MULTICAST;  /* clear multicast */
-	ndev->features = NETIF_F_SG | NETIF_F_FRAGLIST;
+	ndev->features = NETIF_F_SG;
 	ndev->netdev_ops = &axienet_netdev_ops;
 	ndev->ethtool_ops = &axienet_ethtool_ops;
 

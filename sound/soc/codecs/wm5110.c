@@ -37,6 +37,47 @@ struct wm5110_priv {
 	struct arizona_fll fll[2];
 };
 
+static const struct reg_default wm5110_sysclk_revd_patch[] = {
+	{ 0x3093, 0x1001 },
+	{ 0x30E3, 0x1301 },
+	{ 0x3133, 0x1201 },
+	{ 0x3183, 0x1501 },
+	{ 0x31D3, 0x1401 },
+};
+
+static int wm5110_sysclk_ev(struct snd_soc_dapm_widget *w,
+			    struct snd_kcontrol *kcontrol, int event)
+{
+	struct snd_soc_codec *codec = w->codec;
+	struct arizona *arizona = dev_get_drvdata(codec->dev->parent);
+	struct regmap *regmap = codec->control_data;
+	const struct reg_default *patch = NULL;
+	int i, patch_size;
+
+	switch (arizona->rev) {
+	case 3:
+		patch = wm5110_sysclk_revd_patch;
+		patch_size = ARRAY_SIZE(wm5110_sysclk_revd_patch);
+		break;
+	default:
+		return 0;
+	}
+
+	switch (event) {
+	case SND_SOC_DAPM_POST_PMU:
+		if (patch)
+			for (i = 0; i < patch_size; i++)
+				regmap_write(regmap, patch[i].reg,
+					     patch[i].def);
+		break;
+
+	default:
+		break;
+	}
+
+	return 0;
+}
+
 static DECLARE_TLV_DB_SCALE(ana_tlv, 0, 100, 0);
 static DECLARE_TLV_DB_SCALE(eq_tlv, -1200, 100, 0);
 static DECLARE_TLV_DB_SCALE(digital_tlv, -6400, 50, 0);
@@ -58,14 +99,10 @@ static DECLARE_TLV_DB_SCALE(ng_tlv, -10200, 600, 0);
 	SOC_SINGLE(name " NG SPKDAT2R Switch", base, 11, 1, 0)
 
 static const struct snd_kcontrol_new wm5110_snd_controls[] = {
-SOC_SINGLE("IN1 High Performance Switch", ARIZONA_IN1L_CONTROL,
-	   ARIZONA_IN1_OSR_SHIFT, 1, 0),
-SOC_SINGLE("IN2 High Performance Switch", ARIZONA_IN2L_CONTROL,
-	   ARIZONA_IN2_OSR_SHIFT, 1, 0),
-SOC_SINGLE("IN3 High Performance Switch", ARIZONA_IN3L_CONTROL,
-	   ARIZONA_IN3_OSR_SHIFT, 1, 0),
-SOC_SINGLE("IN4 High Performance Switch", ARIZONA_IN4L_CONTROL,
-	   ARIZONA_IN4_OSR_SHIFT, 1, 0),
+SOC_ENUM("IN1 OSR", arizona_in_dmic_osr[0]),
+SOC_ENUM("IN2 OSR", arizona_in_dmic_osr[1]),
+SOC_ENUM("IN3 OSR", arizona_in_dmic_osr[2]),
+SOC_ENUM("IN4 OSR", arizona_in_dmic_osr[3]),
 
 SOC_SINGLE_RANGE_TLV("IN1L Volume", ARIZONA_IN1L_CONTROL,
 		     ARIZONA_IN1L_PGA_VOL_SHIFT, 0x40, 0x5f, 0, ana_tlv),
@@ -105,13 +142,13 @@ ARIZONA_MIXER_CONTROLS("EQ2", ARIZONA_EQ2MIX_INPUT_1_SOURCE),
 ARIZONA_MIXER_CONTROLS("EQ3", ARIZONA_EQ3MIX_INPUT_1_SOURCE),
 ARIZONA_MIXER_CONTROLS("EQ4", ARIZONA_EQ4MIX_INPUT_1_SOURCE),
 
-SND_SOC_BYTES_MASK("EQ1 Coefficeints", ARIZONA_EQ1_1, 21,
+SND_SOC_BYTES_MASK("EQ1 Coefficients", ARIZONA_EQ1_1, 21,
 		   ARIZONA_EQ1_ENA_MASK),
-SND_SOC_BYTES_MASK("EQ2 Coefficeints", ARIZONA_EQ2_1, 21,
+SND_SOC_BYTES_MASK("EQ2 Coefficients", ARIZONA_EQ2_1, 21,
 		   ARIZONA_EQ2_ENA_MASK),
-SND_SOC_BYTES_MASK("EQ3 Coefficeints", ARIZONA_EQ3_1, 21,
+SND_SOC_BYTES_MASK("EQ3 Coefficients", ARIZONA_EQ3_1, 21,
 		   ARIZONA_EQ3_ENA_MASK),
-SND_SOC_BYTES_MASK("EQ4 Coefficeints", ARIZONA_EQ4_1, 21,
+SND_SOC_BYTES_MASK("EQ4 Coefficients", ARIZONA_EQ4_1, 21,
 		   ARIZONA_EQ4_ENA_MASK),
 
 SOC_SINGLE_TLV("EQ1 B1 Volume", ARIZONA_EQ1_1, ARIZONA_EQ1_B1_GAIN_SHIFT,
@@ -211,19 +248,6 @@ ARIZONA_MIXER_CONTROLS("SPKDAT1R", ARIZONA_OUT5RMIX_INPUT_1_SOURCE),
 ARIZONA_MIXER_CONTROLS("SPKDAT2L", ARIZONA_OUT6LMIX_INPUT_1_SOURCE),
 ARIZONA_MIXER_CONTROLS("SPKDAT2R", ARIZONA_OUT6RMIX_INPUT_1_SOURCE),
 
-SOC_SINGLE("HPOUT1 High Performance Switch", ARIZONA_OUTPUT_PATH_CONFIG_1L,
-	   ARIZONA_OUT1_OSR_SHIFT, 1, 0),
-SOC_SINGLE("HPOUT2 High Performance Switch", ARIZONA_OUTPUT_PATH_CONFIG_2L,
-	   ARIZONA_OUT2_OSR_SHIFT, 1, 0),
-SOC_SINGLE("HPOUT3 High Performance Switch", ARIZONA_OUTPUT_PATH_CONFIG_3L,
-	   ARIZONA_OUT3_OSR_SHIFT, 1, 0),
-SOC_SINGLE("Speaker High Performance Switch", ARIZONA_OUTPUT_PATH_CONFIG_4L,
-	   ARIZONA_OUT4_OSR_SHIFT, 1, 0),
-SOC_SINGLE("SPKDAT1 High Performance Switch", ARIZONA_OUTPUT_PATH_CONFIG_5L,
-	   ARIZONA_OUT5_OSR_SHIFT, 1, 0),
-SOC_SINGLE("SPKDAT2 High Performance Switch", ARIZONA_OUTPUT_PATH_CONFIG_6L,
-	   ARIZONA_OUT6_OSR_SHIFT, 1, 0),
-
 SOC_DOUBLE_R("HPOUT1 Digital Switch", ARIZONA_DAC_DIGITAL_VOLUME_1L,
 	     ARIZONA_DAC_DIGITAL_VOLUME_1R, ARIZONA_OUT1L_MUTE_SHIFT, 1, 1),
 SOC_DOUBLE_R("HPOUT2 Digital Switch", ARIZONA_DAC_DIGITAL_VOLUME_2L,
@@ -255,18 +279,6 @@ SOC_DOUBLE_R_TLV("SPKDAT1 Digital Volume", ARIZONA_DAC_DIGITAL_VOLUME_5L,
 SOC_DOUBLE_R_TLV("SPKDAT2 Digital Volume", ARIZONA_DAC_DIGITAL_VOLUME_6L,
 		 ARIZONA_DAC_DIGITAL_VOLUME_6R, ARIZONA_OUT6L_VOL_SHIFT,
 		 0xbf, 0, digital_tlv),
-
-SOC_DOUBLE_R_RANGE_TLV("HPOUT1 Volume", ARIZONA_OUTPUT_PATH_CONFIG_1L,
-		       ARIZONA_OUTPUT_PATH_CONFIG_1R,
-		       ARIZONA_OUT1L_PGA_VOL_SHIFT,
-		       0x34, 0x40, 0, ana_tlv),
-SOC_DOUBLE_R_RANGE_TLV("HPOUT2 Volume", ARIZONA_OUTPUT_PATH_CONFIG_2L,
-		       ARIZONA_OUTPUT_PATH_CONFIG_2R,
-		       ARIZONA_OUT2L_PGA_VOL_SHIFT,
-		       0x34, 0x40, 0, ana_tlv),
-SOC_DOUBLE_R_RANGE_TLV("HPOUT3 Volume", ARIZONA_OUTPUT_PATH_CONFIG_3L,
-		       ARIZONA_OUTPUT_PATH_CONFIG_3R,
-		       ARIZONA_OUT3L_PGA_VOL_SHIFT, 0x34, 0x40, 0, ana_tlv),
 
 SOC_DOUBLE("SPKDAT1 Switch", ARIZONA_PDM_SPK1_CTRL_1, ARIZONA_SPK1L_MUTE_SHIFT,
 	   ARIZONA_SPK1R_MUTE_SHIFT, 1, 1),
@@ -404,7 +416,7 @@ static const struct snd_kcontrol_new wm5110_aec_loopback_mux =
 
 static const struct snd_soc_dapm_widget wm5110_dapm_widgets[] = {
 SND_SOC_DAPM_SUPPLY("SYSCLK", ARIZONA_SYSTEM_CLOCK_1, ARIZONA_SYSCLK_ENA_SHIFT,
-		    0, NULL, 0),
+		    0, wm5110_sysclk_ev, SND_SOC_DAPM_POST_PMU),
 SND_SOC_DAPM_SUPPLY("ASYNCCLK", ARIZONA_ASYNC_CLOCK_1,
 		    ARIZONA_ASYNC_CLK_ENA_SHIFT, 0, NULL, 0),
 SND_SOC_DAPM_SUPPLY("OPCLK", ARIZONA_OUTPUT_SYSTEM_CLOCK,
@@ -431,6 +443,9 @@ SND_SOC_DAPM_INPUT("IN3L"),
 SND_SOC_DAPM_INPUT("IN3R"),
 SND_SOC_DAPM_INPUT("IN4L"),
 SND_SOC_DAPM_INPUT("IN4R"),
+
+SND_SOC_DAPM_OUTPUT("DRC1 Signal Activity"),
+SND_SOC_DAPM_OUTPUT("DRC2 Signal Activity"),
 
 SND_SOC_DAPM_PGA_E("IN1L PGA", ARIZONA_INPUT_ENABLES, ARIZONA_IN1L_ENA_SHIFT,
 		   0, NULL, 0, arizona_in_ev,
@@ -842,9 +857,6 @@ static const struct snd_soc_dapm_route wm5110_dapm_routes[] = {
 	{ "Tone Generator 1", NULL, "TONE" },
 	{ "Tone Generator 2", NULL, "TONE" },
 
-	{ "Mic Mute Mixer", NULL, "Noise Mixer" },
-	{ "Mic Mute Mixer", NULL, "Mic Mixer" },
-
 	{ "AIF1 Capture", NULL, "AIF1TX1" },
 	{ "AIF1 Capture", NULL, "AIF1TX2" },
 	{ "AIF1 Capture", NULL, "AIF1TX3" },
@@ -979,33 +991,53 @@ static const struct snd_soc_dapm_route wm5110_dapm_routes[] = {
 	ARIZONA_MIXER_ROUTES("LHPF3", "LHPF3"),
 	ARIZONA_MIXER_ROUTES("LHPF4", "LHPF4"),
 
-	ARIZONA_MUX_ROUTES("ASRC1L"),
-	ARIZONA_MUX_ROUTES("ASRC1R"),
-	ARIZONA_MUX_ROUTES("ASRC2L"),
-	ARIZONA_MUX_ROUTES("ASRC2R"),
+	ARIZONA_MIXER_ROUTES("Mic Mute Mixer", "Noise"),
+	ARIZONA_MIXER_ROUTES("Mic Mute Mixer", "Mic"),
 
+	ARIZONA_MUX_ROUTES("ASRC1L", "ASRC1L"),
+	ARIZONA_MUX_ROUTES("ASRC1R", "ASRC1R"),
+	ARIZONA_MUX_ROUTES("ASRC2L", "ASRC2L"),
+	ARIZONA_MUX_ROUTES("ASRC2R", "ASRC2R"),
+
+	{ "AEC Loopback", "HPOUT1L", "OUT1L" },
+	{ "AEC Loopback", "HPOUT1R", "OUT1R" },
 	{ "HPOUT1L", NULL, "OUT1L" },
 	{ "HPOUT1R", NULL, "OUT1R" },
 
+	{ "AEC Loopback", "HPOUT2L", "OUT2L" },
+	{ "AEC Loopback", "HPOUT2R", "OUT2R" },
 	{ "HPOUT2L", NULL, "OUT2L" },
 	{ "HPOUT2R", NULL, "OUT2R" },
 
+	{ "AEC Loopback", "HPOUT3L", "OUT3L" },
+	{ "AEC Loopback", "HPOUT3R", "OUT3R" },
 	{ "HPOUT3L", NULL, "OUT3L" },
-	{ "HPOUT3R", NULL, "OUT3L" },
+	{ "HPOUT3R", NULL, "OUT3R" },
 
+	{ "AEC Loopback", "SPKOUTL", "OUT4L" },
 	{ "SPKOUTLN", NULL, "OUT4L" },
 	{ "SPKOUTLP", NULL, "OUT4L" },
 
+	{ "AEC Loopback", "SPKOUTR", "OUT4R" },
 	{ "SPKOUTRN", NULL, "OUT4R" },
 	{ "SPKOUTRP", NULL, "OUT4R" },
 
+	{ "AEC Loopback", "SPKDAT1L", "OUT5L" },
+	{ "AEC Loopback", "SPKDAT1R", "OUT5R" },
 	{ "SPKDAT1L", NULL, "OUT5L" },
 	{ "SPKDAT1R", NULL, "OUT5R" },
 
+	{ "AEC Loopback", "SPKDAT2L", "OUT6L" },
+	{ "AEC Loopback", "SPKDAT2R", "OUT6R" },
 	{ "SPKDAT2L", NULL, "OUT6L" },
 	{ "SPKDAT2R", NULL, "OUT6R" },
 
 	{ "MICSUPP", NULL, "SYSCLK" },
+
+	{ "DRC1 Signal Activity", NULL, "DRC1L" },
+	{ "DRC1 Signal Activity", NULL, "DRC1R" },
+	{ "DRC2 Signal Activity", NULL, "DRC2L" },
+	{ "DRC2 Signal Activity", NULL, "DRC2R" },
 };
 
 static int wm5110_set_fll(struct snd_soc_codec *codec, int fll_id, int source,
@@ -1170,6 +1202,7 @@ static int wm5110_codec_probe(struct snd_soc_codec *codec)
 		return ret;
 
 	arizona_init_spk(codec);
+	arizona_init_gpio(codec);
 
 	snd_soc_dapm_disable_pin(&codec->dapm, "HAPTICS");
 

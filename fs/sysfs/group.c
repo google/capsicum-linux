@@ -3,8 +3,10 @@
  *
  * Copyright (c) 2003 Patrick Mochel
  * Copyright (c) 2003 Open Source Development Lab
+ * Copyright (c) 2013 Greg Kroah-Hartman
+ * Copyright (c) 2013 The Linux Foundation
  *
- * This file is released undert the GPL v2. 
+ * This file is released undert the GPL v2.
  *
  */
 
@@ -19,12 +21,12 @@
 static void remove_files(struct sysfs_dirent *dir_sd, struct kobject *kobj,
 			 const struct attribute_group *grp)
 {
-	struct attribute *const* attr;
-	struct bin_attribute *const* bin_attr;
+	struct attribute *const *attr;
+	struct bin_attribute *const *bin_attr;
 
 	if (grp->attrs)
 		for (attr = grp->attrs; *attr; attr++)
-			sysfs_hash_and_remove(dir_sd, NULL, (*attr)->name);
+			sysfs_hash_and_remove(dir_sd, (*attr)->name, NULL);
 	if (grp->bin_attrs)
 		for (bin_attr = grp->bin_attrs; *bin_attr; bin_attr++)
 			sysfs_remove_bin_file(kobj, *bin_attr);
@@ -33,8 +35,8 @@ static void remove_files(struct sysfs_dirent *dir_sd, struct kobject *kobj,
 static int create_files(struct sysfs_dirent *dir_sd, struct kobject *kobj,
 			const struct attribute_group *grp, int update)
 {
-	struct attribute *const* attr;
-	struct bin_attribute *const* bin_attr;
+	struct attribute *const *attr;
+	struct bin_attribute *const *bin_attr;
 	int error = 0, i;
 
 	if (grp->attrs) {
@@ -47,16 +49,17 @@ static int create_files(struct sysfs_dirent *dir_sd, struct kobject *kobj,
 			 * re-adding (if required) the file.
 			 */
 			if (update)
-				sysfs_hash_and_remove(dir_sd, NULL,
-						      (*attr)->name);
+				sysfs_hash_and_remove(dir_sd, (*attr)->name,
+						      NULL);
 			if (grp->is_visible) {
 				mode = grp->is_visible(kobj, *attr, i);
 				if (!mode)
 					continue;
 			}
-			error = sysfs_add_file_mode(dir_sd, *attr,
-						    SYSFS_KOBJ_ATTR,
-						    (*attr)->mode | mode);
+			error = sysfs_add_file_mode_ns(dir_sd, *attr,
+						       SYSFS_KOBJ_ATTR,
+						       (*attr)->mode | mode,
+						       NULL);
 			if (unlikely(error))
 				break;
 		}
@@ -108,7 +111,7 @@ static int internal_create_group(struct kobject *kobj, int update,
 	error = create_files(sd, kobj, grp, update);
 	if (error) {
 		if (grp->name)
-			sysfs_remove_subdir(sd);
+			sysfs_remove(sd);
 	}
 	sysfs_put(sd);
 	return error;
@@ -129,6 +132,41 @@ int sysfs_create_group(struct kobject *kobj,
 {
 	return internal_create_group(kobj, 0, grp);
 }
+EXPORT_SYMBOL_GPL(sysfs_create_group);
+
+/**
+ * sysfs_create_groups - given a directory kobject, create a bunch of attribute groups
+ * @kobj:	The kobject to create the group on
+ * @groups:	The attribute groups to create, NULL terminated
+ *
+ * This function creates a bunch of attribute groups.  If an error occurs when
+ * creating a group, all previously created groups will be removed, unwinding
+ * everything back to the original state when this function was called.
+ * It will explicitly warn and error if any of the attribute files being
+ * created already exist.
+ *
+ * Returns 0 on success or error code from sysfs_create_group on error.
+ */
+int sysfs_create_groups(struct kobject *kobj,
+			const struct attribute_group **groups)
+{
+	int error = 0;
+	int i;
+
+	if (!groups)
+		return 0;
+
+	for (i = 0; groups[i]; i++) {
+		error = sysfs_create_group(kobj, groups[i]);
+		if (error) {
+			while (--i >= 0)
+				sysfs_remove_group(kobj, groups[i]);
+			break;
+		}
+	}
+	return error;
+}
+EXPORT_SYMBOL_GPL(sysfs_create_groups);
 
 /**
  * sysfs_update_group - given a directory kobject, update an attribute group
@@ -152,20 +190,28 @@ int sysfs_update_group(struct kobject *kobj,
 {
 	return internal_create_group(kobj, 1, grp);
 }
+EXPORT_SYMBOL_GPL(sysfs_update_group);
 
-
-
-void sysfs_remove_group(struct kobject * kobj, 
-			const struct attribute_group * grp)
+/**
+ * sysfs_remove_group: remove a group from a kobject
+ * @kobj:	kobject to remove the group from
+ * @grp:	group to remove
+ *
+ * This function removes a group of attributes from a kobject.  The attributes
+ * previously have to have been created for this group, otherwise it will fail.
+ */
+void sysfs_remove_group(struct kobject *kobj,
+			const struct attribute_group *grp)
 {
 	struct sysfs_dirent *dir_sd = kobj->sd;
 	struct sysfs_dirent *sd;
 
 	if (grp->name) {
-		sd = sysfs_get_dirent(dir_sd, NULL, grp->name);
+		sd = sysfs_get_dirent(dir_sd, grp->name);
 		if (!sd) {
-			WARN(!sd, KERN_WARNING "sysfs group %p not found for "
-				"kobject '%s'\n", grp, kobject_name(kobj));
+			WARN(!sd, KERN_WARNING
+			     "sysfs group %p not found for kobject '%s'\n",
+			     grp, kobject_name(kobj));
 			return;
 		}
 	} else
@@ -173,10 +219,31 @@ void sysfs_remove_group(struct kobject * kobj,
 
 	remove_files(sd, kobj, grp);
 	if (grp->name)
-		sysfs_remove_subdir(sd);
+		sysfs_remove(sd);
 
 	sysfs_put(sd);
 }
+EXPORT_SYMBOL_GPL(sysfs_remove_group);
+
+/**
+ * sysfs_remove_groups - remove a list of groups
+ *
+ * @kobj:	The kobject for the groups to be removed from
+ * @groups:	NULL terminated list of groups to be removed
+ *
+ * If groups is not NULL, remove the specified groups from the kobject.
+ */
+void sysfs_remove_groups(struct kobject *kobj,
+			 const struct attribute_group **groups)
+{
+	int i;
+
+	if (!groups)
+		return;
+	for (i = 0; groups[i]; i++)
+		sysfs_remove_group(kobj, groups[i]);
+}
+EXPORT_SYMBOL_GPL(sysfs_remove_groups);
 
 /**
  * sysfs_merge_group - merge files into a pre-existing attribute group.
@@ -195,7 +262,7 @@ int sysfs_merge_group(struct kobject *kobj,
 	struct attribute *const *attr;
 	int i;
 
-	dir_sd = sysfs_get_dirent(kobj->sd, NULL, grp->name);
+	dir_sd = sysfs_get_dirent(kobj->sd, grp->name);
 	if (!dir_sd)
 		return -ENOENT;
 
@@ -203,7 +270,7 @@ int sysfs_merge_group(struct kobject *kobj,
 		error = sysfs_add_file(dir_sd, *attr, SYSFS_KOBJ_ATTR);
 	if (error) {
 		while (--i >= 0)
-			sysfs_hash_and_remove(dir_sd, NULL, (*--attr)->name);
+			sysfs_hash_and_remove(dir_sd, (*--attr)->name, NULL);
 	}
 	sysfs_put(dir_sd);
 
@@ -222,10 +289,10 @@ void sysfs_unmerge_group(struct kobject *kobj,
 	struct sysfs_dirent *dir_sd;
 	struct attribute *const *attr;
 
-	dir_sd = sysfs_get_dirent(kobj->sd, NULL, grp->name);
+	dir_sd = sysfs_get_dirent(kobj->sd, grp->name);
 	if (dir_sd) {
 		for (attr = grp->attrs; *attr; ++attr)
-			sysfs_hash_and_remove(dir_sd, NULL, (*attr)->name);
+			sysfs_hash_and_remove(dir_sd, (*attr)->name, NULL);
 		sysfs_put(dir_sd);
 	}
 }
@@ -244,7 +311,7 @@ int sysfs_add_link_to_group(struct kobject *kobj, const char *group_name,
 	struct sysfs_dirent *dir_sd;
 	int error = 0;
 
-	dir_sd = sysfs_get_dirent(kobj->sd, NULL, group_name);
+	dir_sd = sysfs_get_dirent(kobj->sd, group_name);
 	if (!dir_sd)
 		return -ENOENT;
 
@@ -266,14 +333,10 @@ void sysfs_remove_link_from_group(struct kobject *kobj, const char *group_name,
 {
 	struct sysfs_dirent *dir_sd;
 
-	dir_sd = sysfs_get_dirent(kobj->sd, NULL, group_name);
+	dir_sd = sysfs_get_dirent(kobj->sd, group_name);
 	if (dir_sd) {
-		sysfs_hash_and_remove(dir_sd, NULL, link_name);
+		sysfs_hash_and_remove(dir_sd, link_name, NULL);
 		sysfs_put(dir_sd);
 	}
 }
 EXPORT_SYMBOL_GPL(sysfs_remove_link_from_group);
-
-EXPORT_SYMBOL_GPL(sysfs_create_group);
-EXPORT_SYMBOL_GPL(sysfs_update_group);
-EXPORT_SYMBOL_GPL(sysfs_remove_group);

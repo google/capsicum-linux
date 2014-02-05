@@ -84,7 +84,6 @@ static const struct file_operations qxl_fops = {
 	.release = drm_release,
 	.unlocked_ioctl = drm_ioctl,
 	.poll = drm_poll,
-	.fasync = drm_fasync,
 	.mmap = qxl_mmap,
 };
 
@@ -221,12 +220,11 @@ static struct drm_driver qxl_driver = {
 
 	.dumb_create = qxl_mode_dumb_create,
 	.dumb_map_offset = qxl_mode_dumb_mmap,
-	.dumb_destroy = qxl_mode_dumb_destroy,
+	.dumb_destroy = drm_gem_dumb_destroy,
 #if defined(CONFIG_DEBUG_FS)
 	.debugfs_init = qxl_debugfs_init,
 	.debugfs_cleanup = qxl_debugfs_takedown,
 #endif
-	.gem_init_object = qxl_gem_object_init,
 	.gem_free_object = qxl_gem_object_free,
 	.gem_open_object = qxl_gem_object_open,
 	.gem_close_object = qxl_gem_object_close,

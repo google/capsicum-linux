@@ -27,10 +27,7 @@
  *
  * Please send any bug reports or fixes you make to the
  * email address(es):
- *    lksctp developers <lksctp-developers@lists.sourceforge.net>
- *
- * Or submit a bug report through the following website:
- *    http://www.sf.net/projects/lksctp
+ *    lksctp developers <linux-sctp@vger.kernel.org>
  *
  * Written or modified by:
  *    La Monte H.P. Yarroll <piggy@acm.org>
@@ -41,9 +38,6 @@
  *    Ardelle Fan           <ardelle.fan@intel.com>
  *    Ryan Layer            <rmlayer@us.ibm.com>
  *    Kevin Gao             <kevin.gao@intel.com> 
- *
- * Any bugs reported given to us we will try to fix... any fixes shared will
- * be incorporated into the next SCTP release.
  */
 
 #ifndef __net_sctp_h__
@@ -96,12 +90,11 @@
 /*
  * sctp/protocol.c
  */
-extern int sctp_copy_local_addr_list(struct net *, struct sctp_bind_addr *,
-				     sctp_scope_t, gfp_t gfp,
-				     int flags);
-extern struct sctp_pf *sctp_get_pf_specific(sa_family_t family);
-extern int sctp_register_pf(struct sctp_pf *, sa_family_t);
-extern void sctp_addr_wq_mgmt(struct net *, struct sctp_sockaddr_entry *, int);
+int sctp_copy_local_addr_list(struct net *, struct sctp_bind_addr *,
+			      sctp_scope_t, gfp_t gfp, int flags);
+struct sctp_pf *sctp_get_pf_specific(sa_family_t family);
+int sctp_register_pf(struct sctp_pf *, sa_family_t);
+void sctp_addr_wq_mgmt(struct net *, struct sctp_sockaddr_entry *, int);
 
 /*
  * sctp/socket.c
@@ -116,7 +109,7 @@ void sctp_sock_rfree(struct sk_buff *skb);
 void sctp_copy_sock(struct sock *newsk, struct sock *sk,
 		    struct sctp_association *asoc);
 extern struct percpu_counter sctp_sockets_allocated;
-extern int sctp_asconf_mgmt(struct sctp_sock *, struct sctp_sockaddr_entry *);
+int sctp_asconf_mgmt(struct sctp_sock *, struct sctp_sockaddr_entry *);
 
 /*
  * sctp/primitive.c
@@ -613,7 +606,7 @@ static inline void sctp_v4_map_v6(union sctp_addr *addr)
  */
 static inline struct dst_entry *sctp_transport_dst_check(struct sctp_transport *t)
 {
-	if (t->dst && !dst_check(t->dst, 0)) {
+	if (t->dst && !dst_check(t->dst, t->dst_cookie)) {
 		dst_release(t->dst);
 		t->dst = NULL;
 	}

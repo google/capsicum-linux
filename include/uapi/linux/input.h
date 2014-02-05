@@ -152,6 +152,7 @@ struct input_keymap_entry {
 #define EVIOCGEFFECTS		_IOR('E', 0x84, int)			/* Report number of effects playable at the same time */
 
 #define EVIOCGRAB		_IOW('E', 0x90, int)			/* Grab/Release device */
+#define EVIOCREVOKE		_IOW('E', 0x91, int)			/* Revoke device access */
 
 #define EVIOCSCLOCKID		_IOW('E', 0xa0, int)			/* Set clockid to be used for timestamps */
 
@@ -194,6 +195,8 @@ struct input_keymap_entry {
 #define SYN_CONFIG		1
 #define SYN_MT_REPORT		2
 #define SYN_DROPPED		3
+#define SYN_MAX			0xf
+#define SYN_CNT			(SYN_MAX+1)
 
 /*
  * Keys and buttons
@@ -461,7 +464,8 @@ struct input_keymap_entry {
 #define KEY_BRIGHTNESS_ZERO	244	/* brightness off, use ambient */
 #define KEY_DISPLAY_OFF		245	/* display device to off state */
 
-#define KEY_WIMAX		246
+#define KEY_WWAN		246	/* Wireless WAN (LTE, UMTS, GSM, etc.) */
+#define KEY_WIMAX		KEY_WWAN
 #define KEY_RFKILL		247	/* Key that controls all radios */
 
 #define KEY_MICMUTE		248	/* Mute / unmute the microphone */
@@ -716,6 +720,8 @@ struct input_keymap_entry {
 #define BTN_DPAD_LEFT		0x222
 #define BTN_DPAD_RIGHT		0x223
 
+#define KEY_ALS_TOGGLE		0x230	/* Ambient light sensor */
+
 #define BTN_TRIGGER_HAPPY		0x2c0
 #define BTN_TRIGGER_HAPPY1		0x2c0
 #define BTN_TRIGGER_HAPPY2		0x2c1
@@ -853,6 +859,7 @@ struct input_keymap_entry {
 #define SW_FRONT_PROXIMITY	0x0b  /* set = front proximity sensor active */
 #define SW_ROTATE_LOCK		0x0c  /* set = rotate locked/disabled */
 #define SW_LINEIN_INSERT	0x0d  /* set = inserted */
+#define SW_MUTE_DEVICE		0x0e  /* set = device disabled */
 #define SW_MAX			0x0f
 #define SW_CNT			(SW_MAX+1)
 

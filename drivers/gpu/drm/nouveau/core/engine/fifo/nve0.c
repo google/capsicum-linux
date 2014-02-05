@@ -29,7 +29,6 @@
 #include <core/engctx.h>
 #include <core/event.h>
 #include <core/class.h>
-#include <core/math.h>
 #include <core/enum.h>
 
 #include <subdev/timer.h>
@@ -240,7 +239,7 @@ nve0_fifo_chan_ctor(struct nouveau_object *parent,
 
 	usermem = chan->base.chid * 0x200;
 	ioffset = args->ioffset;
-	ilength = log2i(args->ilength / 8);
+	ilength = order_base_2(args->ilength / 8);
 
 	for (i = 0; i < 0x200; i += 4)
 		nv_wo32(priv->user.mem, usermem + i, 0x00000000);
@@ -482,13 +481,6 @@ nve0_fifo_isr_subfifo_intr(struct nve0_fifo_priv *priv, int unit)
 	u32 mthd = (addr & 0x00003ffc);
 	u32 show = stat;
 
-	if (stat & 0x00200000) {
-		if (mthd == 0x0054) {
-			if (!nve0_fifo_swmthd(priv, chid, 0x0500, 0x00000000))
-				show &= ~0x00200000;
-		}
-	}
-
 	if (stat & 0x00800000) {
 		if (!nve0_fifo_swmthd(priv, chid, mthd, data))
 			show &= ~0x00800000;
@@ -676,8 +668,8 @@ nve0_fifo_init(struct nouveau_object *object)
 	return 0;
 }
 
-struct nouveau_oclass
-nve0_fifo_oclass = {
+struct nouveau_oclass *
+nve0_fifo_oclass = &(struct nouveau_oclass) {
 	.handle = NV_ENGINE(FIFO, 0xe0),
 	.ofuncs = &(struct nouveau_ofuncs) {
 		.ctor = nve0_fifo_ctor,

@@ -323,12 +323,14 @@ struct qxl_device {
 	struct work_struct gc_work;
 
 	struct work_struct fb_work;
+
+	struct drm_property *hotplug_mode_update_property;
 };
 
 /* forward declaration for QXL_INFO_IO */
 void qxl_io_log(struct qxl_device *qdev, const char *fmt, ...);
 
-extern struct drm_ioctl_desc qxl_ioctls[];
+extern const struct drm_ioctl_desc qxl_ioctls[];
 extern int qxl_max_ioctl;
 
 int qxl_driver_load(struct drm_device *dev, unsigned long flags);
@@ -405,9 +407,6 @@ int qxl_gem_object_create(struct qxl_device *qdev, int size,
 			  bool discardable, bool kernel,
 			  struct qxl_surface *surf,
 			  struct drm_gem_object **obj);
-int qxl_gem_object_pin(struct drm_gem_object *obj, uint32_t pin_domain,
-			  uint64_t *gpu_addr);
-void qxl_gem_object_unpin(struct drm_gem_object *obj);
 int qxl_gem_object_create_with_handle(struct qxl_device *qdev,
 				      struct drm_file *file_priv,
 				      u32 domain,
@@ -415,7 +414,6 @@ int qxl_gem_object_create_with_handle(struct qxl_device *qdev,
 				      struct qxl_surface *surf,
 				      struct qxl_bo **qobj,
 				      uint32_t *handle);
-int qxl_gem_object_init(struct drm_gem_object *obj);
 void qxl_gem_object_free(struct drm_gem_object *gobj);
 int qxl_gem_object_open(struct drm_gem_object *obj, struct drm_file *file_priv);
 void qxl_gem_object_close(struct drm_gem_object *obj,
@@ -427,9 +425,6 @@ int qxl_bo_kmap(struct qxl_bo *bo, void **ptr);
 int qxl_mode_dumb_create(struct drm_file *file_priv,
 			 struct drm_device *dev,
 			 struct drm_mode_create_dumb *args);
-int qxl_mode_dumb_destroy(struct drm_file *file_priv,
-			  struct drm_device *dev,
-			  uint32_t handle);
 int qxl_mode_dumb_mmap(struct drm_file *filp,
 		       struct drm_device *dev,
 		       uint32_t handle, uint64_t *offset_p);

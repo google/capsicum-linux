@@ -10,6 +10,7 @@
 #include <net/cfg80211.h>
 #include <net/ip.h>
 #include <net/dsfield.h>
+#include <linux/if_vlan.h>
 #include "core.h"
 #include "rdev-ops.h"
 
@@ -33,7 +34,8 @@ ieee80211_get_response_rate(struct ieee80211_supported_band *sband,
 }
 EXPORT_SYMBOL(ieee80211_get_response_rate);
 
-u32 ieee80211_mandatory_rates(struct ieee80211_supported_band *sband)
+u32 ieee80211_mandatory_rates(struct ieee80211_supported_band *sband,
+			      enum nl80211_bss_scan_width scan_width)
 {
 	struct ieee80211_rate *bitrates;
 	u32 mandatory_rates = 0;
@@ -43,10 +45,15 @@ u32 ieee80211_mandatory_rates(struct ieee80211_supported_band *sband)
 	if (WARN_ON(!sband))
 		return 1;
 
-	if (sband->band == IEEE80211_BAND_2GHZ)
-		mandatory_flag = IEEE80211_RATE_MANDATORY_B;
-	else
+	if (sband->band == IEEE80211_BAND_2GHZ) {
+		if (scan_width == NL80211_BSS_CHAN_WIDTH_5 ||
+		    scan_width == NL80211_BSS_CHAN_WIDTH_10)
+			mandatory_flag = IEEE80211_RATE_MANDATORY_G;
+		else
+			mandatory_flag = IEEE80211_RATE_MANDATORY_B;
+	} else {
 		mandatory_flag = IEEE80211_RATE_MANDATORY_A;
+	}
 
 	bitrates = sband->bitrates;
 	for (i = 0; i < sband->n_bitrates; i++)
@@ -685,6 +692,7 @@ EXPORT_SYMBOL(ieee80211_amsdu_to_8023s);
 unsigned int cfg80211_classify8021d(struct sk_buff *skb)
 {
 	unsigned int dscp;
+	unsigned char vlan_priority;
 
 	/* skb->priority values from 256->263 are magic values to
 	 * directly indicate a specific 802.1d priority.  This is used
@@ -693,6 +701,13 @@ unsigned int cfg80211_classify8021d(struct sk_buff *skb)
 	 */
 	if (skb->priority >= 256 && skb->priority <= 263)
 		return skb->priority - 256;
+
+	if (vlan_tx_tag_present(skb)) {
+		vlan_priority = (vlan_tx_tag_get(skb) & VLAN_PRIO_MASK)
+			>> VLAN_PRIO_SHIFT;
+		if (vlan_priority > 0)
+			return vlan_priority;
+	}
 
 	switch (skb->protocol) {
 	case htons(ETH_P_IP):
@@ -1234,7 +1249,7 @@ int cfg80211_can_use_iftype_chan(struct cfg80211_registered_device *rdev,
 	enum cfg80211_chan_mode chmode;
 	int num_different_channels = 0;
 	int total = 1;
-	bool radar_required;
+	bool radar_required = false;
 	int i, j;
 
 	ASSERT_RTNL();
@@ -1249,14 +1264,20 @@ int cfg80211_can_use_iftype_chan(struct cfg80211_registered_device *rdev,
 	case NL80211_IFTYPE_MESH_POINT:
 	case NL80211_IFTYPE_P2P_GO:
 	case NL80211_IFTYPE_WDS:
-		radar_required = !!(chan &&
-				    (chan->flags & IEEE80211_CHAN_RADAR));
+		/* if the interface could potentially choose a DFS channel,
+		 * then mark DFS as required.
+		 */
+		if (!chan) {
+			if (chanmode != CHAN_MODE_UNDEFINED && radar_detect)
+				radar_required = true;
+			break;
+		}
+		radar_required = !!(chan->flags & IEEE80211_CHAN_RADAR);
 		break;
 	case NL80211_IFTYPE_P2P_CLIENT:
 	case NL80211_IFTYPE_STATION:
 	case NL80211_IFTYPE_P2P_DEVICE:
 	case NL80211_IFTYPE_MONITOR:
-		radar_required = false;
 		break;
 	case NUM_NL80211_IFTYPES:
 	case NL80211_IFTYPE_UNSPECIFIED:

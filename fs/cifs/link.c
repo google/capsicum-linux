@@ -354,34 +354,30 @@ open_query_close_cifs_symlink(const unsigned char *path, char *pbuf,
 
 
 int
-CIFSCheckMFSymlink(struct cifs_fattr *fattr,
-		   const unsigned char *path,
-		   struct cifs_sb_info *cifs_sb, unsigned int xid)
+CIFSCheckMFSymlink(unsigned int xid, struct cifs_tcon *tcon,
+		   struct cifs_sb_info *cifs_sb, struct cifs_fattr *fattr,
+		   const unsigned char *path)
 {
-	int rc = 0;
+	int rc;
 	u8 *buf = NULL;
 	unsigned int link_len = 0;
 	unsigned int bytes_read = 0;
-	struct cifs_tcon *ptcon;
 
 	if (!CIFSCouldBeMFSymlink(fattr))
 		/* it's not a symlink */
 		return 0;
 
 	buf = kmalloc(CIFS_MF_SYMLINK_FILE_SIZE, GFP_KERNEL);
-	if (!buf) {
-		rc = -ENOMEM;
-		goto out;
-	}
+	if (!buf)
+		return -ENOMEM;
 
-	ptcon = tlink_tcon(cifs_sb_tlink(cifs_sb));
-	if ((ptcon->ses) && (ptcon->ses->server->ops->query_mf_symlink))
-		rc = ptcon->ses->server->ops->query_mf_symlink(path, buf,
-						 &bytes_read, cifs_sb, xid);
+	if (tcon->ses->server->ops->query_mf_symlink)
+		rc = tcon->ses->server->ops->query_mf_symlink(path, buf,
+						&bytes_read, cifs_sb, xid);
 	else
-		goto out;
+		rc = -ENOSYS;
 
-	if (rc != 0)
+	if (rc)
 		goto out;
 
 	if (bytes_read == 0) /* not a symlink */
@@ -509,6 +505,7 @@ cifs_follow_link(struct dentry *direntry, struct nameidata *nd)
 	struct cifs_sb_info *cifs_sb = CIFS_SB(inode->i_sb);
 	struct tcon_link *tlink = NULL;
 	struct cifs_tcon *tcon;
+	struct TCP_Server_Info *server;
 
 	xid = get_xid();
 
@@ -519,25 +516,7 @@ cifs_follow_link(struct dentry *direntry, struct nameidata *nd)
 		goto out;
 	}
 	tcon = tlink_tcon(tlink);
-
-	/*
-	 * For now, we just handle symlinks with unix extensions enabled.
-	 * Eventually we should handle NTFS reparse points, and MacOS
-	 * symlink support. For instance...
-	 *
-	 * rc = CIFSSMBQueryReparseLinkInfo(...)
-	 *
-	 * For now, just return -EACCES when the server doesn't support posix
-	 * extensions. Note that we still allow querying symlinks when posix
-	 * extensions are manually disabled. We could disable these as well
-	 * but there doesn't seem to be any harm in allowing the client to
-	 * read them.
-	 */
-	if (!(cifs_sb->mnt_cifs_flags & CIFS_MOUNT_MF_SYMLINKS) &&
-	    !cap_unix(tcon->ses)) {
-		rc = -EACCES;
-		goto out;
-	}
+	server = tcon->ses->server;
 
 	full_path = build_path_from_dentry(direntry);
 	if (!full_path)
@@ -559,6 +538,9 @@ cifs_follow_link(struct dentry *direntry, struct nameidata *nd)
 	if ((rc != 0) && cap_unix(tcon->ses))
 		rc = CIFSSMBUnixQuerySymLink(xid, tcon, full_path, &target_path,
 					     cifs_sb->local_nls);
+	else if (rc != 0 && server->ops->query_symlink)
+		rc = server->ops->query_symlink(xid, tcon, full_path,
+						&target_path, cifs_sb);
 
 	kfree(full_path);
 out:
@@ -634,11 +616,4 @@ symlink_exit:
 	cifs_put_tlink(tlink);
 	free_xid(xid);
 	return rc;
-}
-
-void cifs_put_link(struct dentry *direntry, struct nameidata *nd, void *cookie)
-{
-	char *p = nd_get_link(nd);
-	if (!IS_ERR(p))
-		kfree(p);
 }

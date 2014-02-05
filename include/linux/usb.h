@@ -337,6 +337,7 @@ struct usb_bus {
 					 * the ep queue on a short transfer
 					 * with the URB_SHORT_NOT_OK flag set.
 					 */
+	unsigned no_sg_constraint:1;	/* no sg constraint */
 	unsigned sg_tablesize;		/* 0 or largest number of sg list entries */
 
 	int devnum_next;		/* Next open device number in
@@ -474,7 +475,8 @@ struct usb3_lpm_parameters {
  * @lpm_capable: device supports LPM
  * @usb2_hw_lpm_capable: device can perform USB2 hardware LPM
  * @usb2_hw_lpm_besl_capable: device can perform USB2 hardware BESL LPM
- * @usb2_hw_lpm_enabled: USB2 hardware LPM enabled
+ * @usb2_hw_lpm_enabled: USB2 hardware LPM is enabled
+ * @usb2_hw_lpm_allowed: Userspace allows USB 2.0 LPM to be enabled
  * @usb3_lpm_enabled: USB3 hardware LPM enabled
  * @string_langid: language ID for strings
  * @product: iProduct string, if present (static)
@@ -547,6 +549,7 @@ struct usb_device {
 	unsigned usb2_hw_lpm_capable:1;
 	unsigned usb2_hw_lpm_besl_capable:1;
 	unsigned usb2_hw_lpm_enabled:1;
+	unsigned usb2_hw_lpm_allowed:1;
 	unsigned usb3_lpm_enabled:1;
 	int string_langid;
 
@@ -684,6 +687,11 @@ static inline bool usb_device_supports_ltm(struct usb_device *udev)
 	return udev->bos->ss_cap->bmAttributes & USB_LTM_SUPPORT;
 }
 
+static inline bool usb_device_no_sg_constraint(struct usb_device *udev)
+{
+	return udev && udev->bus && udev->bus->no_sg_constraint;
+}
+
 
 /*-------------------------------------------------------------------------*/
 
@@ -696,7 +704,7 @@ extern int usb_alloc_streams(struct usb_interface *interface,
 		unsigned int num_streams, gfp_t mem_flags);
 
 /* Reverts a group of bulk endpoints back to not using stream IDs. */
-extern void usb_free_streams(struct usb_interface *interface,
+extern int usb_free_streams(struct usb_interface *interface,
 		struct usb_host_endpoint **eps, unsigned int num_eps,
 		gfp_t mem_flags);
 
@@ -708,7 +716,10 @@ extern int usb_driver_claim_interface(struct usb_driver *driver,
  * usb_interface_claimed - returns true iff an interface is claimed
  * @iface: the interface being checked
  *
- * Returns true (nonzero) iff the interface is claimed, else false (zero).
+ * Return: %true (nonzero) iff the interface is claimed, else %false
+ * (zero).
+ *
+ * Note:
  * Callers must own the driver model's usb bus readlock.  So driver
  * probe() entries don't need extra locking, but other call contexts
  * may need to explicitly claim that lock.
@@ -745,8 +756,9 @@ extern struct usb_host_interface *usb_find_alt_setting(
  * @buf: where to put the string
  * @size: how big is "buf"?
  *
- * Returns length of the string (> 0) or negative if size was too small.
+ * Return: Length of the string (> 0) or negative if size was too small.
  *
+ * Note:
  * This identifier is intended to be "stable", reflecting physical paths in
  * hardware such as physical bus addresses for host controllers or ports on
  * USB hubs.  That makes it stay the same until systems are physically
@@ -1199,11 +1211,13 @@ struct usb_anchor {
 	struct list_head urb_list;
 	wait_queue_head_t wait;
 	spinlock_t lock;
+	atomic_t suspend_wakeups;
 	unsigned int poisoned:1;
 };
 
 static inline void init_usb_anchor(struct usb_anchor *anchor)
 {
+	memset(anchor, 0, sizeof(*anchor));
 	INIT_LIST_HEAD(&anchor->urb_list);
 	init_waitqueue_head(&anchor->wait);
 	spin_lock_init(&anchor->lock);
@@ -1247,7 +1261,11 @@ typedef void (*usb_complete_t)(struct urb *);
  *	the device driver is saying that it provided this DMA address,
  *	which the host controller driver should use in preference to the
  *	transfer_buffer.
- * @sg: scatter gather buffer list
+ * @sg: scatter gather buffer list, the buffer size of each element in
+ * 	the list (except the last) must be divisible by the endpoint's
+ * 	max packet size if no_sg_constraint isn't set in 'struct usb_bus'
+ * 	(FIXME: scatter-gather under xHCI is broken for periodic transfers.
+ * 	Do not use urb->sg for interrupt endpoints for now, only bulk.)
  * @num_mapped_sgs: (internal) number of mapped sg entries
  * @num_sgs: number of entries in the sg list
  * @transfer_buffer_length: How big is transfer_buffer.  The transfer may
@@ -1534,10 +1552,16 @@ static inline void usb_fill_int_urb(struct urb *urb,
 	urb->transfer_buffer_length = buffer_length;
 	urb->complete = complete_fn;
 	urb->context = context;
-	if (dev->speed == USB_SPEED_HIGH || dev->speed == USB_SPEED_SUPER)
+
+	if (dev->speed == USB_SPEED_HIGH || dev->speed == USB_SPEED_SUPER) {
+		/* make sure interval is within allowed range */
+		interval = clamp(interval, 1, 16);
+
 		urb->interval = 1 << (interval - 1);
-	else
+	} else {
 		urb->interval = interval;
+	}
+
 	urb->start_frame = -1;
 }
 
@@ -1556,6 +1580,8 @@ extern void usb_kill_anchored_urbs(struct usb_anchor *anchor);
 extern void usb_poison_anchored_urbs(struct usb_anchor *anchor);
 extern void usb_unpoison_anchored_urbs(struct usb_anchor *anchor);
 extern void usb_unlink_anchored_urbs(struct usb_anchor *anchor);
+extern void usb_anchor_suspend_wakeups(struct usb_anchor *anchor);
+extern void usb_anchor_resume_wakeups(struct usb_anchor *anchor);
 extern void usb_anchor_urb(struct urb *urb, struct usb_anchor *anchor);
 extern void usb_unanchor_urb(struct urb *urb);
 extern int usb_wait_anchor_empty_timeout(struct usb_anchor *anchor,
@@ -1570,7 +1596,7 @@ extern int usb_anchor_empty(struct usb_anchor *anchor);
  * usb_urb_dir_in - check if an URB describes an IN transfer
  * @urb: URB to be checked
  *
- * Returns 1 if @urb describes an IN transfer (device-to-host),
+ * Return: 1 if @urb describes an IN transfer (device-to-host),
  * otherwise 0.
  */
 static inline int usb_urb_dir_in(struct urb *urb)
@@ -1582,7 +1608,7 @@ static inline int usb_urb_dir_in(struct urb *urb)
  * usb_urb_dir_out - check if an URB describes an OUT transfer
  * @urb: URB to be checked
  *
- * Returns 1 if @urb describes an OUT transfer (host-to-device),
+ * Return: 1 if @urb describes an OUT transfer (host-to-device),
  * otherwise 0.
  */
 static inline int usb_urb_dir_out(struct urb *urb)

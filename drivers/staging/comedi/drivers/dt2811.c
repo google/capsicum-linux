@@ -41,10 +41,9 @@ Configuration options:
   [4] - D/A 1 range (same choices)
 */
 
+#include <linux/module.h>
 #include <linux/interrupt.h>
 #include "../comedidev.h"
-
-#include <linux/ioport.h>
 
 static const struct comedi_lrange range_dt2811_pgh_ai_5_unipolar = {
 	4, {
@@ -354,11 +353,11 @@ static int dt2811_di_insn_bits(struct comedi_device *dev,
 
 static int dt2811_do_insn_bits(struct comedi_device *dev,
 			       struct comedi_subdevice *s,
-			       struct comedi_insn *insn, unsigned int *data)
+			       struct comedi_insn *insn,
+			       unsigned int *data)
 {
-	s->state &= ~data[0];
-	s->state |= data[0] & data[1];
-	outb(s->state, dev->iobase + DT2811_DIO);
+	if (comedi_dio_update_state(s, data))
+		outb(s->state, dev->iobase + DT2811_DIO);
 
 	data[1] = s->state;
 
@@ -450,10 +449,9 @@ static int dt2811_attach(struct comedi_device *dev, struct comedi_devconfig *it)
 	if (ret)
 		return ret;
 
-	devpriv = kzalloc(sizeof(*devpriv), GFP_KERNEL);
+	devpriv = comedi_alloc_devpriv(dev, sizeof(*devpriv));
 	if (!devpriv)
 		return -ENOMEM;
-	dev->private = devpriv;
 
 	switch (it->options[2]) {
 	case 0:

@@ -72,16 +72,16 @@
 #include "fw-api-d3.h"
 #include "fw-api-bt-coex.h"
 
-/* queue and FIFO numbers by usage */
+/* maximal number of Tx queues in any platform */
+#define IWL_MVM_MAX_QUEUES	20
+
+/* Tx queue numbers */
 enum {
 	IWL_MVM_OFFCHANNEL_QUEUE = 8,
 	IWL_MVM_CMD_QUEUE = 9,
-	IWL_MVM_AUX_QUEUE = 15,
-	IWL_MVM_FIRST_AGG_QUEUE = 16,
-	IWL_MVM_NUM_QUEUES = 20,
-	IWL_MVM_LAST_AGG_QUEUE = IWL_MVM_NUM_QUEUES - 1,
-	IWL_MVM_CMD_FIFO = 7
 };
+
+#define IWL_MVM_CMD_FIFO	7
 
 #define IWL_MVM_STATION_COUNT	16
 
@@ -97,6 +97,7 @@ enum {
 	DBG_CFG = 0x9,
 
 	/* station table */
+	ADD_STA_KEY = 0x17,
 	ADD_STA = 0x18,
 	REMOVE_STA = 0x19,
 
@@ -114,6 +115,7 @@ enum {
 	TIME_EVENT_NOTIFICATION = 0x2a,
 	BINDING_CONTEXT_CMD = 0x2b,
 	TIME_QUOTA_CMD = 0x2c,
+	NON_QOS_TX_COUNTER_CMD = 0x2d,
 
 	LQ_CMD = 0x4e,
 
@@ -130,13 +132,14 @@ enum {
 	SCAN_OFFLOAD_COMPLETE = 0x6D,
 	SCAN_OFFLOAD_UPDATE_PROFILES_CMD = 0x6E,
 	SCAN_OFFLOAD_CONFIG_CMD = 0x6f,
+	MATCH_FOUND_NOTIFICATION = 0xd9,
 
 	/* Phy */
 	PHY_CONFIGURATION_CMD = 0x6a,
 	CALIB_RES_NOTIF_PHY_DB = 0x6b,
 	/* PHY_DB_CMD = 0x6c, */
 
-	/* Power */
+	/* Power - legacy power table command */
 	POWER_TABLE_CMD = 0x77,
 
 	/* Thermal Throttling*/
@@ -159,12 +162,16 @@ enum {
 	TX_ANT_CONFIGURATION_CMD = 0x98,
 	BT_CONFIG = 0x9b,
 	STATISTICS_NOTIFICATION = 0x9d,
+	REDUCE_TX_POWER_CMD = 0x9f,
 
 	/* RF-KILL commands and notifications */
 	CARD_STATE_CMD = 0xa0,
 	CARD_STATE_NOTIFICATION = 0xa1,
 
 	MISSED_BEACONS_NOTIFICATION = 0xa2,
+
+	/* Power - new power table command */
+	MAC_PM_POWER_TABLE = 0xa9,
 
 	REPLY_RX_PHY_CMD = 0xc0,
 	REPLY_RX_MPDU_CMD = 0xc1,
@@ -174,6 +181,7 @@ enum {
 	BT_COEX_PRIO_TABLE = 0xcc,
 	BT_COEX_PROT_ENV = 0xcd,
 	BT_PROFILE_NOTIFICATION = 0xce,
+	BT_COEX_CI = 0x5d,
 
 	REPLY_BEACON_FILTERING_CMD = 0xd2,
 
@@ -222,6 +230,19 @@ struct iwl_cmd_response {
 struct iwl_tx_ant_cfg_cmd {
 	__le32 valid;
 } __packed;
+
+/**
+ * struct iwl_reduce_tx_power_cmd - TX power reduction command
+ * REDUCE_TX_POWER_CMD = 0x9f
+ * @flags: (reserved for future implementation)
+ * @mac_context_id: id of the mac ctx for which we are reducing TX power.
+ * @pwr_restriction: TX power restriction in dBms.
+ */
+struct iwl_reduce_tx_power_cmd {
+	u8 flags;
+	u8 mac_context_id;
+	__le16 pwr_restriction;
+} __packed; /* TX_REDUCED_POWER_API_S_VER_1 */
 
 /*
  * Calibration control struct.
@@ -482,71 +503,79 @@ enum iwl_time_event_type {
 	TE_MAX
 }; /* MAC_EVENT_TYPE_API_E_VER_1 */
 
-/* Time Event dependencies: none, on another TE, or in a specific time */
-enum {
-	TE_INDEPENDENT		= 0,
-	TE_DEP_OTHER		= 1,
-	TE_DEP_TSF		= 2,
-	TE_EVENT_SOCIOPATHIC	= 4,
-}; /* MAC_EVENT_DEPENDENCY_POLICY_API_E_VER_2 */
-/*
- * Supported Time event notifications configuration.
- * A notification (both event and fragment) includes a status indicating weather
- * the FW was able to schedule the event or not. For fragment start/end
- * notification the status is always success. There is no start/end fragment
- * notification for monolithic events.
- *
- * @TE_NOTIF_NONE: no notifications
- * @TE_NOTIF_HOST_EVENT_START: request/receive notification on event start
- * @TE_NOTIF_HOST_EVENT_END:request/receive notification on event end
- * @TE_NOTIF_INTERNAL_EVENT_START: internal FW use
- * @TE_NOTIF_INTERNAL_EVENT_END: internal FW use.
- * @TE_NOTIF_HOST_FRAG_START: request/receive notification on frag start
- * @TE_NOTIF_HOST_FRAG_END:request/receive notification on frag end
- * @TE_NOTIF_INTERNAL_FRAG_START: internal FW use.
- * @TE_NOTIF_INTERNAL_FRAG_END: internal FW use.
- */
-enum {
-	TE_NOTIF_NONE = 0,
-	TE_NOTIF_HOST_EVENT_START = 0x1,
-	TE_NOTIF_HOST_EVENT_END = 0x2,
-	TE_NOTIF_INTERNAL_EVENT_START = 0x4,
-	TE_NOTIF_INTERNAL_EVENT_END = 0x8,
-	TE_NOTIF_HOST_FRAG_START = 0x10,
-	TE_NOTIF_HOST_FRAG_END = 0x20,
-	TE_NOTIF_INTERNAL_FRAG_START = 0x40,
-	TE_NOTIF_INTERNAL_FRAG_END = 0x80
-}; /* MAC_EVENT_ACTION_API_E_VER_2 */
+
+
+/* Time event - defines for command API v1 */
 
 /*
- * @TE_FRAG_NONE: fragmentation of the time event is NOT allowed.
- * @TE_FRAG_SINGLE: fragmentation of the time event is allowed, but only
- *  the first fragment is scheduled.
- * @TE_FRAG_DUAL: fragmentation of the time event is allowed, but only
- *  the first 2 fragments are scheduled.
- * @TE_FRAG_ENDLESS: fragmentation of the time event is allowed, and any number
- *  of fragments are valid.
+ * @TE_V1_FRAG_NONE: fragmentation of the time event is NOT allowed.
+ * @TE_V1_FRAG_SINGLE: fragmentation of the time event is allowed, but only
+ *	the first fragment is scheduled.
+ * @TE_V1_FRAG_DUAL: fragmentation of the time event is allowed, but only
+ *	the first 2 fragments are scheduled.
+ * @TE_V1_FRAG_ENDLESS: fragmentation of the time event is allowed, and any
+ *	number of fragments are valid.
  *
  * Other than the constant defined above, specifying a fragmentation value 'x'
  * means that the event can be fragmented but only the first 'x' will be
  * scheduled.
  */
 enum {
-	TE_FRAG_NONE = 0,
-	TE_FRAG_SINGLE = 1,
-	TE_FRAG_DUAL = 2,
-	TE_FRAG_ENDLESS = 0xffffffff
+	TE_V1_FRAG_NONE = 0,
+	TE_V1_FRAG_SINGLE = 1,
+	TE_V1_FRAG_DUAL = 2,
+	TE_V1_FRAG_ENDLESS = 0xffffffff
 };
 
-/* Repeat the time event endlessly (until removed) */
-#define TE_REPEAT_ENDLESS	(0xffffffff)
-/* If a Time Event has bounded repetitions, this is the maximal value */
-#define TE_REPEAT_MAX_MSK	(0x0fffffff)
 /* If a Time Event can be fragmented, this is the max number of fragments */
-#define TE_FRAG_MAX_MSK		(0x0fffffff)
+#define TE_V1_FRAG_MAX_MSK	0x0fffffff
+/* Repeat the time event endlessly (until removed) */
+#define TE_V1_REPEAT_ENDLESS	0xffffffff
+/* If a Time Event has bounded repetitions, this is the maximal value */
+#define TE_V1_REPEAT_MAX_MSK_V1	0x0fffffff
+
+/* Time Event dependencies: none, on another TE, or in a specific time */
+enum {
+	TE_V1_INDEPENDENT		= 0,
+	TE_V1_DEP_OTHER			= BIT(0),
+	TE_V1_DEP_TSF			= BIT(1),
+	TE_V1_EVENT_SOCIOPATHIC		= BIT(2),
+}; /* MAC_EVENT_DEPENDENCY_POLICY_API_E_VER_2 */
+
+/*
+ * @TE_V1_NOTIF_NONE: no notifications
+ * @TE_V1_NOTIF_HOST_EVENT_START: request/receive notification on event start
+ * @TE_V1_NOTIF_HOST_EVENT_END:request/receive notification on event end
+ * @TE_V1_NOTIF_INTERNAL_EVENT_START: internal FW use
+ * @TE_V1_NOTIF_INTERNAL_EVENT_END: internal FW use.
+ * @TE_V1_NOTIF_HOST_FRAG_START: request/receive notification on frag start
+ * @TE_V1_NOTIF_HOST_FRAG_END:request/receive notification on frag end
+ * @TE_V1_NOTIF_INTERNAL_FRAG_START: internal FW use.
+ * @TE_V1_NOTIF_INTERNAL_FRAG_END: internal FW use.
+ *
+ * Supported Time event notifications configuration.
+ * A notification (both event and fragment) includes a status indicating weather
+ * the FW was able to schedule the event or not. For fragment start/end
+ * notification the status is always success. There is no start/end fragment
+ * notification for monolithic events.
+ */
+enum {
+	TE_V1_NOTIF_NONE = 0,
+	TE_V1_NOTIF_HOST_EVENT_START = BIT(0),
+	TE_V1_NOTIF_HOST_EVENT_END = BIT(1),
+	TE_V1_NOTIF_INTERNAL_EVENT_START = BIT(2),
+	TE_V1_NOTIF_INTERNAL_EVENT_END = BIT(3),
+	TE_V1_NOTIF_HOST_FRAG_START = BIT(4),
+	TE_V1_NOTIF_HOST_FRAG_END = BIT(5),
+	TE_V1_NOTIF_INTERNAL_FRAG_START = BIT(6),
+	TE_V1_NOTIF_INTERNAL_FRAG_END = BIT(7),
+}; /* MAC_EVENT_ACTION_API_E_VER_2 */
+
 
 /**
- * struct iwl_time_event_cmd - configuring Time Events
+ * struct iwl_time_event_cmd_api_v1 - configuring Time Events
+ * with struct MAC_TIME_EVENT_DATA_API_S_VER_1 (see also
+ * with version 2. determined by IWL_UCODE_TLV_FLAGS)
  * ( TIME_EVENT_CMD = 0x29 )
  * @id_and_color: ID and color of the relevant MAC
  * @action: action to perform, one of FW_CTXT_ACTION_*
@@ -561,12 +590,13 @@ enum {
  * @interval_reciprocal: 2^32 / interval
  * @duration: duration of event in TU
  * @repeat: how many repetitions to do, can be TE_REPEAT_ENDLESS
- * @dep_policy: one of TE_INDEPENDENT, TE_DEP_OTHER, TE_DEP_TSF
+ * @dep_policy: one of TE_V1_INDEPENDENT, TE_V1_DEP_OTHER, TE_V1_DEP_TSF
+ *	and TE_V1_EVENT_SOCIOPATHIC
  * @is_present: 0 or 1, are we present or absent during the Time Event
  * @max_frags: maximal number of fragments the Time Event can be divided to
- * @notify: notifications using TE_NOTIF_* (whom to notify when)
+ * @notify: notifications using TE_V1_NOTIF_* (whom to notify when)
  */
-struct iwl_time_event_cmd {
+struct iwl_time_event_cmd_v1 {
 	/* COMMON_INDEX_HDR_API_S_VER_1 */
 	__le32 id_and_color;
 	__le32 action;
@@ -584,6 +614,123 @@ struct iwl_time_event_cmd {
 	__le32 repeat;
 	__le32 notify;
 } __packed; /* MAC_TIME_EVENT_CMD_API_S_VER_1 */
+
+
+/* Time event - defines for command API v2 */
+
+/*
+ * @TE_V2_FRAG_NONE: fragmentation of the time event is NOT allowed.
+ * @TE_V2_FRAG_SINGLE: fragmentation of the time event is allowed, but only
+ *  the first fragment is scheduled.
+ * @TE_V2_FRAG_DUAL: fragmentation of the time event is allowed, but only
+ *  the first 2 fragments are scheduled.
+ * @TE_V2_FRAG_ENDLESS: fragmentation of the time event is allowed, and any
+ *  number of fragments are valid.
+ *
+ * Other than the constant defined above, specifying a fragmentation value 'x'
+ * means that the event can be fragmented but only the first 'x' will be
+ * scheduled.
+ */
+enum {
+	TE_V2_FRAG_NONE = 0,
+	TE_V2_FRAG_SINGLE = 1,
+	TE_V2_FRAG_DUAL = 2,
+	TE_V2_FRAG_MAX = 0xfe,
+	TE_V2_FRAG_ENDLESS = 0xff
+};
+
+/* Repeat the time event endlessly (until removed) */
+#define TE_V2_REPEAT_ENDLESS	0xff
+/* If a Time Event has bounded repetitions, this is the maximal value */
+#define TE_V2_REPEAT_MAX	0xfe
+
+#define TE_V2_PLACEMENT_POS	12
+#define TE_V2_ABSENCE_POS	15
+
+/* Time event policy values (for time event cmd api v2)
+ * A notification (both event and fragment) includes a status indicating weather
+ * the FW was able to schedule the event or not. For fragment start/end
+ * notification the status is always success. There is no start/end fragment
+ * notification for monolithic events.
+ *
+ * @TE_V2_DEFAULT_POLICY: independent, social, present, unoticable
+ * @TE_V2_NOTIF_HOST_EVENT_START: request/receive notification on event start
+ * @TE_V2_NOTIF_HOST_EVENT_END:request/receive notification on event end
+ * @TE_V2_NOTIF_INTERNAL_EVENT_START: internal FW use
+ * @TE_V2_NOTIF_INTERNAL_EVENT_END: internal FW use.
+ * @TE_V2_NOTIF_HOST_FRAG_START: request/receive notification on frag start
+ * @TE_V2_NOTIF_HOST_FRAG_END:request/receive notification on frag end
+ * @TE_V2_NOTIF_INTERNAL_FRAG_START: internal FW use.
+ * @TE_V2_NOTIF_INTERNAL_FRAG_END: internal FW use.
+ * @TE_V2_DEP_OTHER: depends on another time event
+ * @TE_V2_DEP_TSF: depends on a specific time
+ * @TE_V2_EVENT_SOCIOPATHIC: can't co-exist with other events of tha same MAC
+ * @TE_V2_ABSENCE: are we present or absent during the Time Event.
+ */
+enum {
+	TE_V2_DEFAULT_POLICY = 0x0,
+
+	/* notifications (event start/stop, fragment start/stop) */
+	TE_V2_NOTIF_HOST_EVENT_START = BIT(0),
+	TE_V2_NOTIF_HOST_EVENT_END = BIT(1),
+	TE_V2_NOTIF_INTERNAL_EVENT_START = BIT(2),
+	TE_V2_NOTIF_INTERNAL_EVENT_END = BIT(3),
+
+	TE_V2_NOTIF_HOST_FRAG_START = BIT(4),
+	TE_V2_NOTIF_HOST_FRAG_END = BIT(5),
+	TE_V2_NOTIF_INTERNAL_FRAG_START = BIT(6),
+	TE_V2_NOTIF_INTERNAL_FRAG_END = BIT(7),
+
+	TE_V2_NOTIF_MSK = 0xff,
+
+	/* placement characteristics */
+	TE_V2_DEP_OTHER = BIT(TE_V2_PLACEMENT_POS),
+	TE_V2_DEP_TSF = BIT(TE_V2_PLACEMENT_POS + 1),
+	TE_V2_EVENT_SOCIOPATHIC = BIT(TE_V2_PLACEMENT_POS + 2),
+
+	/* are we present or absent during the Time Event. */
+	TE_V2_ABSENCE = BIT(TE_V2_ABSENCE_POS),
+};
+
+/**
+ * struct iwl_time_event_cmd_api_v2 - configuring Time Events
+ * with struct MAC_TIME_EVENT_DATA_API_S_VER_2 (see also
+ * with version 1. determined by IWL_UCODE_TLV_FLAGS)
+ * ( TIME_EVENT_CMD = 0x29 )
+ * @id_and_color: ID and color of the relevant MAC
+ * @action: action to perform, one of FW_CTXT_ACTION_*
+ * @id: this field has two meanings, depending on the action:
+ *	If the action is ADD, then it means the type of event to add.
+ *	For all other actions it is the unique event ID assigned when the
+ *	event was added by the FW.
+ * @apply_time: When to start the Time Event (in GP2)
+ * @max_delay: maximum delay to event's start (apply time), in TU
+ * @depends_on: the unique ID of the event we depend on (if any)
+ * @interval: interval between repetitions, in TU
+ * @duration: duration of event in TU
+ * @repeat: how many repetitions to do, can be TE_REPEAT_ENDLESS
+ * @max_frags: maximal number of fragments the Time Event can be divided to
+ * @policy: defines whether uCode shall notify the host or other uCode modules
+ *	on event and/or fragment start and/or end
+ *	using one of TE_INDEPENDENT, TE_DEP_OTHER, TE_DEP_TSF
+ *	TE_EVENT_SOCIOPATHIC
+ *	using TE_ABSENCE and using TE_NOTIF_*
+ */
+struct iwl_time_event_cmd_v2 {
+	/* COMMON_INDEX_HDR_API_S_VER_1 */
+	__le32 id_and_color;
+	__le32 action;
+	__le32 id;
+	/* MAC_TIME_EVENT_DATA_API_S_VER_2 */
+	__le32 apply_time;
+	__le32 max_delay;
+	__le32 depends_on;
+	__le32 interval;
+	__le32 duration;
+	u8 repeat;
+	u8 max_frags;
+	__le16 policy;
+} __packed; /* MAC_TIME_EVENT_CMD_API_S_VER_2 */
 
 /**
  * struct iwl_time_event_resp - response structure to iwl_time_event_cmd
@@ -765,6 +912,14 @@ struct iwl_phy_context_cmd {
 } __packed; /* PHY_CONTEXT_CMD_API_VER_1 */
 
 #define IWL_RX_INFO_PHY_CNT 8
+#define IWL_RX_INFO_ENERGY_ANT_ABC_IDX 1
+#define IWL_RX_INFO_ENERGY_ANT_A_MSK 0x000000ff
+#define IWL_RX_INFO_ENERGY_ANT_B_MSK 0x0000ff00
+#define IWL_RX_INFO_ENERGY_ANT_C_MSK 0x00ff0000
+#define IWL_RX_INFO_ENERGY_ANT_A_POS 0
+#define IWL_RX_INFO_ENERGY_ANT_B_POS 8
+#define IWL_RX_INFO_ENERGY_ANT_C_POS 16
+
 #define IWL_RX_INFO_AGC_IDX 1
 #define IWL_RX_INFO_RSSI_AB_IDX 2
 #define IWL_OFDM_AGC_A_MSK 0x0000007f
@@ -1170,7 +1325,7 @@ struct mvm_statistics_general {
 	struct mvm_statistics_general_common common;
 	__le32 beacon_filtered;
 	__le32 missed_beacons;
-	__s8 beacon_filter_everage_energy;
+	__s8 beacon_filter_average_energy;
 	__s8 beacon_filter_reason;
 	__s8 beacon_filter_current_energy;
 	__s8 beacon_filter_reserved;

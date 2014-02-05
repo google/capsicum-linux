@@ -165,11 +165,11 @@ struct ptldebug_header {
 #define CDEBUG_DEFAULT_MAX_DELAY (cfs_time_seconds(600))	 /* jiffies */
 #define CDEBUG_DEFAULT_MIN_DELAY ((cfs_time_seconds(1) + 1) / 2) /* jiffies */
 #define CDEBUG_DEFAULT_BACKOFF   2
-typedef struct {
+struct cfs_debug_limit_state {
 	cfs_time_t      cdls_next;
 	unsigned int    cdls_delay;
 	int	     cdls_count;
-} cfs_debug_limit_state_t;
+};
 
 struct libcfs_debug_msg_data {
 	const char	       *msg_file;
@@ -177,7 +177,7 @@ struct libcfs_debug_msg_data {
 	int		      msg_subsys;
 	int		      msg_line;
 	int		      msg_mask;
-	cfs_debug_limit_state_t  *msg_cdls;
+	struct cfs_debug_limit_state  *msg_cdls;
 };
 
 #define LIBCFS_DEBUG_MSG_DATA_INIT(data, mask, cdls)	\
@@ -226,7 +226,7 @@ do {								    \
 
 #define CDEBUG_LIMIT(mask, format, ...)	 \
 do {					    \
-	static cfs_debug_limit_state_t cdls;    \
+	static struct cfs_debug_limit_state cdls;    \
 						\
 	__CDEBUG(&cdls, mask, format, ## __VA_ARGS__);\
 } while (0)
@@ -261,74 +261,6 @@ do {								    \
 	goto label;						     \
 } while (0)
 
-
-/*
- * if rc == NULL, we need to code as RETURN((void *)NULL), otherwise
- * there will be a warning in osx.
- */
-#if defined(__GNUC__)
-
-long libcfs_log_return(struct libcfs_debug_msg_data *, long rc);
-#if BITS_PER_LONG > 32
-#define RETURN(rc)							\
-do {									\
-	EXIT_NESTING;							\
-	if (cfs_cdebug_show(D_TRACE, DEBUG_SUBSYSTEM)) {		\
-		LIBCFS_DEBUG_MSG_DATA_DECL(msgdata, D_TRACE, NULL);	\
-		return (typeof(rc))libcfs_log_return(&msgdata,		\
-						     (long)(rc));	\
-	}								\
-									\
-	return (rc);							\
-} while (0)
-#else /* BITS_PER_LONG == 32 */
-/* We need an on-stack variable, because we cannot case a 32-bit pointer
- * directly to (long long) without generating a complier warning/error, yet
- * casting directly to (long) will truncate 64-bit return values. The log
- * values will print as 32-bit values, but they always have been. LU-1436
- */
-#define RETURN(rc)							\
-do {									\
-	EXIT_NESTING;							\
-	if (cfs_cdebug_show(D_TRACE, DEBUG_SUBSYSTEM)) {		\
-		typeof(rc) __rc = (rc);					\
-		LIBCFS_DEBUG_MSG_DATA_DECL(msgdata, D_TRACE, NULL);	\
-		libcfs_log_return(&msgdata, (long_ptr_t)__rc);		\
-		return __rc;						\
-	}								\
-									\
-	return (rc);							\
-} while (0)
-#endif /* BITS_PER_LONG > 32 */
-
-#elif defined(_MSC_VER)
-#define RETURN(rc)						      \
-do {								    \
-	CDEBUG(D_TRACE, "Process leaving.\n");			  \
-	EXIT_NESTING;						   \
-	return (rc);						    \
-} while (0)
-#else
-# error "Unkown compiler"
-#endif /* __GNUC__ */
-
-#define ENTRY							   \
-ENTRY_NESTING;							  \
-do {								    \
-	CDEBUG(D_TRACE, "Process entered\n");			   \
-} while (0)
-
-#define EXIT							    \
-do {								    \
-	CDEBUG(D_TRACE, "Process leaving\n");			   \
-	EXIT_NESTING;						   \
-} while(0)
-
-#define RETURN_EXIT							\
-do {									\
-	EXIT;								\
-	return;								\
-} while (0)
 
 extern int libcfs_debug_msg(struct libcfs_debug_msg_data *msgdata,
 			    const char *format1, ...)

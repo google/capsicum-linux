@@ -32,7 +32,6 @@
 #include <linux/clk.h>
 #include <linux/delay.h>
 #include <linux/io.h>
-#include <linux/pinctrl/consumer.h>
 #include <linux/of_device.h>
 #include <linux/dma-mapping.h>
 #include <linux/dmaengine.h>
@@ -40,6 +39,7 @@
 #include <asm/cacheflush.h>
 
 #define MXS_AUART_PORTS 5
+#define MXS_AUART_FIFO_SIZE		16
 
 #define AUART_CTRL0			0x00000000
 #define AUART_CTRL0_SET			0x00000004
@@ -134,10 +134,10 @@ enum mxs_auart_type {
 struct mxs_auart_port {
 	struct uart_port port;
 
-#define MXS_AUART_DMA_CONFIG	0x1
 #define MXS_AUART_DMA_ENABLED	0x2
 #define MXS_AUART_DMA_TX_SYNC	2  /* bit 2 */
 #define MXS_AUART_DMA_RX_READY	3  /* bit 3 */
+#define MXS_AUART_RTSCTS	4  /* bit 4 */
 	unsigned long flags;
 	unsigned int ctrl;
 	enum mxs_auart_type devtype;
@@ -549,6 +549,9 @@ static int mxs_auart_dma_init(struct mxs_auart_port *s)
 	s->flags |= MXS_AUART_DMA_ENABLED;
 	dev_dbg(s->dev, "enabled the DMA support.");
 
+	/* The DMA buffer is now the FIFO the TTY subsystem can use */
+	s->port.fifosize = UART_XMIT_SIZE;
+
 	return 0;
 
 err_out:
@@ -640,7 +643,8 @@ static void mxs_auart_settermios(struct uart_port *u,
 		 * we can only implement the DMA support for auart
 		 * in mx28.
 		 */
-		if (is_imx28_auart(s) && (s->flags & MXS_AUART_DMA_CONFIG)) {
+		if (is_imx28_auart(s)
+				&& test_bit(MXS_AUART_RTSCTS, &s->flags)) {
 			if (!mxs_auart_dma_init(s))
 				/* enable DMA tranfer */
 				ctrl2 |= AUART_CTRL2_TXDMAE | AUART_CTRL2_RXDMAE
@@ -740,6 +744,9 @@ static int mxs_auart_startup(struct uart_port *u)
 
 	writel(AUART_INTR_RXIEN | AUART_INTR_RTIEN | AUART_INTR_CTSMIEN,
 			u->membase + AUART_INTR);
+
+	/* Reset FIFO size (it could have changed if DMA was enabled) */
+	u->fifosize = MXS_AUART_FIFO_SIZE;
 
 	/*
 	 * Enable fifo so all four bytes of a DMA word are written to
@@ -1008,7 +1015,8 @@ static int serial_mxs_probe_dt(struct mxs_auart_port *s,
 	}
 	s->port.line = ret;
 
-	s->flags |= MXS_AUART_DMA_CONFIG;
+	if (of_get_property(np, "fsl,uart-has-rtscts", NULL))
+		set_bit(MXS_AUART_RTSCTS, &s->flags);
 
 	return 0;
 }
@@ -1021,7 +1029,6 @@ static int mxs_auart_probe(struct platform_device *pdev)
 	u32 version;
 	int ret = 0;
 	struct resource *r;
-	struct pinctrl *pinctrl;
 
 	s = kzalloc(sizeof(struct mxs_auart_port), GFP_KERNEL);
 	if (!s) {
@@ -1034,12 +1041,6 @@ static int mxs_auart_probe(struct platform_device *pdev)
 		s->port.line = pdev->id < 0 ? 0 : pdev->id;
 	else if (ret < 0)
 		goto out_free;
-
-	pinctrl = devm_pinctrl_get_select_default(&pdev->dev);
-	if (IS_ERR(pinctrl)) {
-		ret = PTR_ERR(pinctrl);
-		goto out_free;
-	}
 
 	if (of_id) {
 		pdev->id_entry = of_id->data;
@@ -1062,7 +1063,7 @@ static int mxs_auart_probe(struct platform_device *pdev)
 	s->port.membase = ioremap(r->start, resource_size(r));
 	s->port.ops = &mxs_auart_ops;
 	s->port.iotype = UPIO_MEM;
-	s->port.fifosize = 16;
+	s->port.fifosize = MXS_AUART_FIFO_SIZE;
 	s->port.uartclk = clk_get_rate(s->clk);
 	s->port.type = PORT_IMX;
 	s->port.dev = s->dev = &pdev->dev;

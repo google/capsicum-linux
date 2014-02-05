@@ -282,31 +282,35 @@ static noinline_for_stack long fw_file_size(struct file *file)
 	return st.size;
 }
 
-static bool fw_read_file_contents(struct file *file, struct firmware_buf *fw_buf)
+static int fw_read_file_contents(struct file *file, struct firmware_buf *fw_buf)
 {
 	long size;
 	char *buf;
+	int rc;
 
 	size = fw_file_size(file);
 	if (size <= 0)
-		return false;
+		return -EINVAL;
 	buf = vmalloc(size);
 	if (!buf)
-		return false;
-	if (kernel_read(file, 0, buf, size) != size) {
+		return -ENOMEM;
+	rc = kernel_read(file, 0, buf, size);
+	if (rc != size) {
+		if (rc > 0)
+			rc = -EIO;
 		vfree(buf);
-		return false;
+		return rc;
 	}
 	fw_buf->data = buf;
 	fw_buf->size = size;
-	return true;
+	return 0;
 }
 
-static bool fw_get_filesystem_firmware(struct device *device,
+static int fw_get_filesystem_firmware(struct device *device,
 				       struct firmware_buf *buf)
 {
 	int i;
-	bool success = false;
+	int rc = -ENOENT;
 	char *path = __getname();
 
 	for (i = 0; i < ARRAY_SIZE(fw_path); i++) {
@@ -321,14 +325,17 @@ static bool fw_get_filesystem_firmware(struct device *device,
 		file = filp_open(path, O_RDONLY, 0);
 		if (IS_ERR(file))
 			continue;
-		success = fw_read_file_contents(file, buf);
+		rc = fw_read_file_contents(file, buf);
 		fput(file);
-		if (success)
+		if (rc)
+			dev_warn(device, "firmware, attempted to load %s, but failed with error %d\n",
+				path, rc);
+		else
 			break;
 	}
 	__putname(path);
 
-	if (success) {
+	if (!rc) {
 		dev_dbg(device, "firmware: direct-loading firmware %s\n",
 			buf->fw_id);
 		mutex_lock(&fw_lock);
@@ -337,7 +344,7 @@ static bool fw_get_filesystem_firmware(struct device *device,
 		mutex_unlock(&fw_lock);
 	}
 
-	return success;
+	return rc;
 }
 
 /* firmware holds the ownership of pages */
@@ -486,9 +493,8 @@ static struct notifier_block fw_shutdown_nb = {
 	.notifier_call = fw_shutdown_notify,
 };
 
-static ssize_t firmware_timeout_show(struct class *class,
-				     struct class_attribute *attr,
-				     char *buf)
+static ssize_t timeout_show(struct class *class, struct class_attribute *attr,
+			    char *buf)
 {
 	return sprintf(buf, "%d\n", loading_timeout);
 }
@@ -506,9 +512,8 @@ static ssize_t firmware_timeout_show(struct class *class,
  *
  *	Note: zero means 'wait forever'.
  **/
-static ssize_t firmware_timeout_store(struct class *class,
-				      struct class_attribute *attr,
-				      const char *buf, size_t count)
+static ssize_t timeout_store(struct class *class, struct class_attribute *attr,
+			     const char *buf, size_t count)
 {
 	loading_timeout = simple_strtol(buf, NULL, 10);
 	if (loading_timeout < 0)
@@ -518,8 +523,7 @@ static ssize_t firmware_timeout_store(struct class *class,
 }
 
 static struct class_attribute firmware_class_attrs[] = {
-	__ATTR(timeout, S_IWUSR | S_IRUGO,
-		firmware_timeout_show, firmware_timeout_store),
+	__ATTR_RW(timeout),
 	__ATTR_NULL
 };
 
@@ -868,8 +872,15 @@ static int _request_firmware_load(struct firmware_priv *fw_priv, bool uevent,
 		goto err_del_dev;
 	}
 
+	mutex_lock(&fw_lock);
+	list_add(&buf->pending_list, &pending_fw_head);
+	mutex_unlock(&fw_lock);
+
 	retval = device_create_file(f_dev, &dev_attr_loading);
 	if (retval) {
+		mutex_lock(&fw_lock);
+		list_del_init(&buf->pending_list);
+		mutex_unlock(&fw_lock);
 		dev_err(f_dev, "%s: device_create_file failed\n", __func__);
 		goto err_del_bin_attr;
 	}
@@ -883,10 +894,6 @@ static int _request_firmware_load(struct firmware_priv *fw_priv, bool uevent,
 
 		kobject_uevent(&fw_priv->dev.kobj, KOBJ_ADD);
 	}
-
-	mutex_lock(&fw_lock);
-	list_add(&buf->pending_list, &pending_fw_head);
-	mutex_unlock(&fw_lock);
 
 	wait_for_completion(&buf->completion);
 
@@ -1086,9 +1093,14 @@ _request_firmware(const struct firmware **firmware_p, const char *name,
 		}
 	}
 
-	if (!fw_get_filesystem_firmware(device, fw->priv))
+	ret = fw_get_filesystem_firmware(device, fw->priv);
+	if (ret) {
+		dev_warn(device, "Direct firmware load failed with error %d\n",
+			 ret);
+		dev_warn(device, "Falling back to user helper\n");
 		ret = fw_load_from_user_helper(fw, name, device,
 					       uevent, nowait, timeout);
+	}
 
 	/* don't cache firmware handled without uevent */
 	if (!ret)

@@ -152,14 +152,9 @@ config SND_HDA_CODEC_HDMI
 	  This module is automatically loaded at probing.
 
 config SND_HDA_I915
-	bool "Build Display HD-audio controller/codec power well support for i915 cards"
+	bool
+	default y
 	depends on DRM_I915
-	help
-	  Say Y here to include full HDMI and DisplayPort HD-audio controller/codec
-	  power-well support for Intel Haswell graphics cards based on the i915 driver.
-
-	  Note that this option must be enabled for Intel Haswell C+ stepping machines, otherwise
-	  the GPU audio controller/codecs will not be initialized or damaged when exit from S3 mode.
 
 config SND_HDA_CODEC_CIRRUS
 	bool "Build Cirrus Logic codec support"
@@ -214,8 +209,9 @@ config SND_HDA_CODEC_CA0132
 
 config SND_HDA_CODEC_CA0132_DSP
 	bool "Support new DSP code for CA0132 codec"
-	depends on SND_HDA_CODEC_CA0132 && FW_LOADER
+	depends on SND_HDA_CODEC_CA0132
 	select SND_HDA_DSP_LOADER
+	select FW_LOADER
 	help
 	  Say Y here to enable the DSP for Creative CA0132 for extended
 	  features like equalizer or echo cancellation.

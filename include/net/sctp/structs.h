@@ -25,10 +25,7 @@
  *
  * Please send any bug reports or fixes you make to the
  * email addresses:
- *    lksctp developers <lksctp-developers@lists.sourceforge.net>
- *
- * Or submit a bug report through the following website:
- *    http://www.sf.net/projects/lksctp
+ *    lksctp developers <linux-sctp@vger.kernel.org>
  *
  * Written or modified by:
  *    Randall Stewart	    <randall@sctp.chicago.il.us>
@@ -46,9 +43,6 @@
  *    Ryan Layer	    <rmlayer@us.ibm.com>
  *    Anup Pemmaiah	    <pemmaiah@cc.usu.edu>
  *    Kevin Gao             <kevin.gao@intel.com>
- *
- * Any bugs reported given to us we will try to fix... any fixes shared will
- * be incorporated into the next SCTP release.
  */
 
 #ifndef __sctp_structs_h__
@@ -119,28 +113,26 @@ struct sctp_hashbucket {
 
 /* The SCTP globals structure. */
 extern struct sctp_globals {
-	/* The following variables are implementation specific.	 */
-
-	/* Default initialization values to be applied to new associations. */
-	__u16 max_instreams;
-	__u16 max_outstreams;
-
 	/* This is a list of groups of functions for each address
 	 * family that we support.
 	 */
 	struct list_head address_families;
 
 	/* This is the hash of all endpoints. */
-	int ep_hashsize;
 	struct sctp_hashbucket *ep_hashtable;
-
 	/* This is the hash of all associations. */
-	int assoc_hashsize;
 	struct sctp_hashbucket *assoc_hashtable;
-
 	/* This is the sctp port control hash.	*/
-	int port_hashsize;
 	struct sctp_bind_hashbucket *port_hashtable;
+
+	/* Sizes of above hashtables. */
+	int ep_hashsize;
+	int assoc_hashsize;
+	int port_hashsize;
+
+	/* Default initialization values to be applied to new associations. */
+	__u16 max_instreams;
+	__u16 max_outstreams;
 
 	/* Flag to indicate whether computing and verifying checksum
 	 * is disabled. */
@@ -637,6 +629,7 @@ struct sctp_chunk {
 #define SCTP_NEED_FRTX 0x1
 #define SCTP_DONT_FRTX 0x2
 	__u16	rtt_in_progress:1,	/* This chunk used for RTT calc? */
+		resent:1,		/* Has this chunk ever been resent. */
 		has_tsn:1,		/* Does this chunk have a TSN yet? */
 		has_ssn:1,		/* Does this chunk have a SSN yet? */
 		singleton:1,		/* Only chunk in the packet? */
@@ -782,6 +775,7 @@ struct sctp_transport {
 
 	/* Has this transport moved the ctsn since we last sacked */
 	__u32 sack_generation;
+	u32 dst_cookie;
 
 	struct flowi fl;
 
@@ -1052,9 +1046,6 @@ struct sctp_outq {
 
 	/* Corked? */
 	char cork;
-
-	/* Is this structure empty?  */
-	char empty;
 };
 
 void sctp_outq_init(struct sctp_association *, struct sctp_outq *);
@@ -1731,12 +1722,6 @@ struct sctp_association {
 
 	/* How many duplicated TSNs have we seen?  */
 	int numduptsns;
-
-	/* Number of seconds of idle time before an association is closed.
-	 * In the association context, this is really used as a boolean
-	 * since the real timeout is stored in the timeouts array
-	 */
-	__u32 autoclose;
 
 	/* These are to support
 	 * "SCTP Extensions for Dynamic Reconfiguration of IP Addresses

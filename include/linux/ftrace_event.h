@@ -202,6 +202,7 @@ enum {
 	TRACE_EVENT_FL_NO_SET_FILTER_BIT,
 	TRACE_EVENT_FL_IGNORE_ENABLE_BIT,
 	TRACE_EVENT_FL_WAS_ENABLED_BIT,
+	TRACE_EVENT_FL_USE_CALL_FILTER_BIT,
 };
 
 /*
@@ -213,6 +214,7 @@ enum {
  *  WAS_ENABLED   - Set and stays set when an event was ever enabled
  *                    (used for module unloading, if a module event is enabled,
  *                     it is best to clear the buffers that used it).
+ *  USE_CALL_FILTER - For ftrace internal events, don't use file filter
  */
 enum {
 	TRACE_EVENT_FL_FILTERED		= (1 << TRACE_EVENT_FL_FILTERED_BIT),
@@ -220,6 +222,7 @@ enum {
 	TRACE_EVENT_FL_NO_SET_FILTER	= (1 << TRACE_EVENT_FL_NO_SET_FILTER_BIT),
 	TRACE_EVENT_FL_IGNORE_ENABLE	= (1 << TRACE_EVENT_FL_IGNORE_ENABLE_BIT),
 	TRACE_EVENT_FL_WAS_ENABLED	= (1 << TRACE_EVENT_FL_WAS_ENABLED_BIT),
+	TRACE_EVENT_FL_USE_CALL_FILTER	= (1 << TRACE_EVENT_FL_USE_CALL_FILTER_BIT),
 };
 
 struct ftrace_event_call {
@@ -238,12 +241,16 @@ struct ftrace_event_call {
 	 *   bit 2:		failed to apply filter
 	 *   bit 3:		ftrace internal event (do not enable)
 	 *   bit 4:		Event was enabled by module
+	 *   bit 5:		use call filter rather than file filter
 	 */
 	int			flags; /* static flags of different events */
 
 #ifdef CONFIG_PERF_EVENTS
 	int				perf_refcount;
 	struct hlist_head __percpu	*perf_events;
+
+	int	(*perf_perm)(struct ftrace_event_call *,
+			     struct perf_event *);
 #endif
 };
 
@@ -253,6 +260,8 @@ struct ftrace_subsystem_dir;
 enum {
 	FTRACE_EVENT_FL_ENABLED_BIT,
 	FTRACE_EVENT_FL_RECORDED_CMD_BIT,
+	FTRACE_EVENT_FL_FILTERED_BIT,
+	FTRACE_EVENT_FL_NO_SET_FILTER_BIT,
 	FTRACE_EVENT_FL_SOFT_MODE_BIT,
 	FTRACE_EVENT_FL_SOFT_DISABLED_BIT,
 };
@@ -261,6 +270,8 @@ enum {
  * Ftrace event file flags:
  *  ENABLED	  - The event is enabled
  *  RECORDED_CMD  - The comms should be recorded at sched_switch
+ *  FILTERED	  - The event has a filter attached
+ *  NO_SET_FILTER - Set when filter has error and is to be ignored
  *  SOFT_MODE     - The event is enabled/disabled by SOFT_DISABLED
  *  SOFT_DISABLED - When set, do not trace the event (even though its
  *                   tracepoint may be enabled)
@@ -268,6 +279,8 @@ enum {
 enum {
 	FTRACE_EVENT_FL_ENABLED		= (1 << FTRACE_EVENT_FL_ENABLED_BIT),
 	FTRACE_EVENT_FL_RECORDED_CMD	= (1 << FTRACE_EVENT_FL_RECORDED_CMD_BIT),
+	FTRACE_EVENT_FL_FILTERED	= (1 << FTRACE_EVENT_FL_FILTERED_BIT),
+	FTRACE_EVENT_FL_NO_SET_FILTER	= (1 << FTRACE_EVENT_FL_NO_SET_FILTER_BIT),
 	FTRACE_EVENT_FL_SOFT_MODE	= (1 << FTRACE_EVENT_FL_SOFT_MODE_BIT),
 	FTRACE_EVENT_FL_SOFT_DISABLED	= (1 << FTRACE_EVENT_FL_SOFT_DISABLED_BIT),
 };
@@ -275,6 +288,7 @@ enum {
 struct ftrace_event_file {
 	struct list_head		list;
 	struct ftrace_event_call	*event_call;
+	struct event_filter		*filter;
 	struct dentry			*dir;
 	struct trace_array		*tr;
 	struct ftrace_subsystem_dir	*system;
@@ -306,16 +320,33 @@ struct ftrace_event_file {
 	}								\
 	early_initcall(trace_init_flags_##name);
 
+#define __TRACE_EVENT_PERF_PERM(name, expr...)				\
+	static int perf_perm_##name(struct ftrace_event_call *tp_event, \
+				    struct perf_event *p_event)		\
+	{								\
+		return ({ expr; });					\
+	}								\
+	static int __init trace_init_perf_perm_##name(void)		\
+	{								\
+		event_##name.perf_perm = &perf_perm_##name;		\
+		return 0;						\
+	}								\
+	early_initcall(trace_init_perf_perm_##name);
+
 #define PERF_MAX_TRACE_SIZE	2048
 
 #define MAX_FILTER_STR_VAL	256	/* Should handle KSYM_SYMBOL_LEN */
 
-extern void destroy_preds(struct ftrace_event_call *call);
+extern void destroy_preds(struct ftrace_event_file *file);
+extern void destroy_call_preds(struct ftrace_event_call *call);
 extern int filter_match_preds(struct event_filter *filter, void *rec);
-extern int filter_current_check_discard(struct ring_buffer *buffer,
-					struct ftrace_event_call *call,
-					void *rec,
-					struct ring_buffer_event *event);
+
+extern int filter_check_discard(struct ftrace_event_file *file, void *rec,
+				struct ring_buffer *buffer,
+				struct ring_buffer_event *event);
+extern int call_filter_check_discard(struct ftrace_event_call *call, void *rec,
+				     struct ring_buffer *buffer,
+				     struct ring_buffer_event *event);
 
 enum {
 	FILTER_OTHER = 0,
@@ -358,6 +389,40 @@ do {									\
 	} else								\
 		__trace_printk(ip, fmt, ##args);			\
 } while (0)
+
+/**
+ * tracepoint_string - register constant persistent string to trace system
+ * @str - a constant persistent string that will be referenced in tracepoints
+ *
+ * If constant strings are being used in tracepoints, it is faster and
+ * more efficient to just save the pointer to the string and reference
+ * that with a printf "%s" instead of saving the string in the ring buffer
+ * and wasting space and time.
+ *
+ * The problem with the above approach is that userspace tools that read
+ * the binary output of the trace buffers do not have access to the string.
+ * Instead they just show the address of the string which is not very
+ * useful to users.
+ *
+ * With tracepoint_string(), the string will be registered to the tracing
+ * system and exported to userspace via the debugfs/tracing/printk_formats
+ * file that maps the string address to the string text. This way userspace
+ * tools that read the binary buffers have a way to map the pointers to
+ * the ASCII strings they represent.
+ *
+ * The @str used must be a constant string and persistent as it would not
+ * make sense to show a string that no longer exists. But it is still fine
+ * to be used with modules, because when modules are unloaded, if they
+ * had tracepoints, the ring buffers are cleared too. As long as the string
+ * does not change during the life of the module, it is fine to use
+ * tracepoint_string() within a module.
+ */
+#define tracepoint_string(str)						\
+	({								\
+		static const char *___tp_str __tracepoint_string = str; \
+		___tp_str;						\
+	})
+#define __tracepoint_string	__attribute__((section("__tracepoint_str")))
 
 #ifdef CONFIG_PERF_EVENTS
 struct perf_event;

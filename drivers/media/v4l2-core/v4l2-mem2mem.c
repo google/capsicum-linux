@@ -41,6 +41,8 @@ module_param(debug, bool, 0644);
 #define TRANS_QUEUED		(1 << 0)
 /* Instance is currently running in hardware */
 #define TRANS_RUNNING		(1 << 1)
+/* Instance is currently aborting */
+#define TRANS_ABORT		(1 << 2)
 
 
 /* Offset base for buffers on the destination queue - used to distinguish
@@ -196,6 +198,10 @@ static void v4l2_m2m_try_run(struct v4l2_m2m_dev *m2m_dev)
  * 2) at least one destination buffer has to be queued,
  * 3) streaming has to be on.
  *
+ * If a queue is buffered (for example a decoder hardware ringbuffer that has
+ * to be drained before doing streamoff), allow scheduling without v4l2 buffers
+ * on that queue.
+ *
  * There may also be additional, custom requirements. In such case the driver
  * should supply a custom callback (job_ready in v4l2_m2m_ops) that should
  * return 1 if the instance is ready.
@@ -217,6 +223,14 @@ static void v4l2_m2m_try_schedule(struct v4l2_m2m_ctx *m2m_ctx)
 	}
 
 	spin_lock_irqsave(&m2m_dev->job_spinlock, flags_job);
+
+	/* If the context is aborted then don't schedule it */
+	if (m2m_ctx->job_flags & TRANS_ABORT) {
+		spin_unlock_irqrestore(&m2m_dev->job_spinlock, flags_job);
+		dprintk("Aborted context\n");
+		return;
+	}
+
 	if (m2m_ctx->job_flags & TRANS_QUEUED) {
 		spin_unlock_irqrestore(&m2m_dev->job_spinlock, flags_job);
 		dprintk("On job queue already\n");
@@ -224,7 +238,8 @@ static void v4l2_m2m_try_schedule(struct v4l2_m2m_ctx *m2m_ctx)
 	}
 
 	spin_lock_irqsave(&m2m_ctx->out_q_ctx.rdy_spinlock, flags_out);
-	if (list_empty(&m2m_ctx->out_q_ctx.rdy_queue)) {
+	if (list_empty(&m2m_ctx->out_q_ctx.rdy_queue)
+	    && !m2m_ctx->out_q_ctx.buffered) {
 		spin_unlock_irqrestore(&m2m_ctx->out_q_ctx.rdy_spinlock,
 					flags_out);
 		spin_unlock_irqrestore(&m2m_dev->job_spinlock, flags_job);
@@ -232,7 +247,8 @@ static void v4l2_m2m_try_schedule(struct v4l2_m2m_ctx *m2m_ctx)
 		return;
 	}
 	spin_lock_irqsave(&m2m_ctx->cap_q_ctx.rdy_spinlock, flags_cap);
-	if (list_empty(&m2m_ctx->cap_q_ctx.rdy_queue)) {
+	if (list_empty(&m2m_ctx->cap_q_ctx.rdy_queue)
+	    && !m2m_ctx->cap_q_ctx.buffered) {
 		spin_unlock_irqrestore(&m2m_ctx->cap_q_ctx.rdy_spinlock,
 					flags_cap);
 		spin_unlock_irqrestore(&m2m_ctx->out_q_ctx.rdy_spinlock,
@@ -257,6 +273,41 @@ static void v4l2_m2m_try_schedule(struct v4l2_m2m_ctx *m2m_ctx)
 	spin_unlock_irqrestore(&m2m_dev->job_spinlock, flags_job);
 
 	v4l2_m2m_try_run(m2m_dev);
+}
+
+/**
+ * v4l2_m2m_cancel_job() - cancel pending jobs for the context
+ *
+ * In case of streamoff or release called on any context,
+ * 1] If the context is currently running, then abort job will be called
+ * 2] If the context is queued, then the context will be removed from
+ *    the job_queue
+ */
+static void v4l2_m2m_cancel_job(struct v4l2_m2m_ctx *m2m_ctx)
+{
+	struct v4l2_m2m_dev *m2m_dev;
+	unsigned long flags;
+
+	m2m_dev = m2m_ctx->m2m_dev;
+	spin_lock_irqsave(&m2m_dev->job_spinlock, flags);
+
+	m2m_ctx->job_flags |= TRANS_ABORT;
+	if (m2m_ctx->job_flags & TRANS_RUNNING) {
+		spin_unlock_irqrestore(&m2m_dev->job_spinlock, flags);
+		m2m_dev->m2m_ops->job_abort(m2m_ctx->priv);
+		dprintk("m2m_ctx %p running, will wait to complete", m2m_ctx);
+		wait_event(m2m_ctx->finished,
+				!(m2m_ctx->job_flags & TRANS_RUNNING));
+	} else if (m2m_ctx->job_flags & TRANS_QUEUED) {
+		list_del(&m2m_ctx->queue);
+		m2m_ctx->job_flags &= ~(TRANS_QUEUED | TRANS_RUNNING);
+		spin_unlock_irqrestore(&m2m_dev->job_spinlock, flags);
+		dprintk("m2m_ctx: %p had been on queue and was removed\n",
+			m2m_ctx);
+	} else {
+		/* Do nothing, was not on queue/running */
+		spin_unlock_irqrestore(&m2m_dev->job_spinlock, flags);
+	}
 }
 
 /**
@@ -430,6 +481,9 @@ int v4l2_m2m_streamoff(struct file *file, struct v4l2_m2m_ctx *m2m_ctx,
 	unsigned long flags_job, flags;
 	int ret;
 
+	/* wait until the current context is dequeued from job_queue */
+	v4l2_m2m_cancel_job(m2m_ctx);
+
 	q_ctx = get_queue_ctx(m2m_ctx, type);
 	ret = vb2_streamoff(&q_ctx->q, type);
 	if (ret)
@@ -438,13 +492,15 @@ int v4l2_m2m_streamoff(struct file *file, struct v4l2_m2m_ctx *m2m_ctx,
 	m2m_dev = m2m_ctx->m2m_dev;
 	spin_lock_irqsave(&m2m_dev->job_spinlock, flags_job);
 	/* We should not be scheduled anymore, since we're dropping a queue. */
-	INIT_LIST_HEAD(&m2m_ctx->queue);
+	if (m2m_ctx->job_flags & TRANS_QUEUED)
+		list_del(&m2m_ctx->queue);
 	m2m_ctx->job_flags = 0;
 
 	spin_lock_irqsave(&q_ctx->rdy_spinlock, flags);
 	/* Drop queue, since streamoff returns device to the same state as after
 	 * calling reqbufs. */
 	INIT_LIST_HEAD(&q_ctx->rdy_queue);
+	q_ctx->num_rdy = 0;
 	spin_unlock_irqrestore(&q_ctx->rdy_spinlock, flags);
 
 	if (m2m_dev->curr_ctx == m2m_ctx) {
@@ -652,27 +708,8 @@ EXPORT_SYMBOL_GPL(v4l2_m2m_ctx_init);
  */
 void v4l2_m2m_ctx_release(struct v4l2_m2m_ctx *m2m_ctx)
 {
-	struct v4l2_m2m_dev *m2m_dev;
-	unsigned long flags;
-
-	m2m_dev = m2m_ctx->m2m_dev;
-
-	spin_lock_irqsave(&m2m_dev->job_spinlock, flags);
-	if (m2m_ctx->job_flags & TRANS_RUNNING) {
-		spin_unlock_irqrestore(&m2m_dev->job_spinlock, flags);
-		m2m_dev->m2m_ops->job_abort(m2m_ctx->priv);
-		dprintk("m2m_ctx %p running, will wait to complete", m2m_ctx);
-		wait_event(m2m_ctx->finished, !(m2m_ctx->job_flags & TRANS_RUNNING));
-	} else if (m2m_ctx->job_flags & TRANS_QUEUED) {
-		list_del(&m2m_ctx->queue);
-		m2m_ctx->job_flags &= ~(TRANS_QUEUED | TRANS_RUNNING);
-		spin_unlock_irqrestore(&m2m_dev->job_spinlock, flags);
-		dprintk("m2m_ctx: %p had been on queue and was removed\n",
-			m2m_ctx);
-	} else {
-		/* Do nothing, was not on queue/running */
-		spin_unlock_irqrestore(&m2m_dev->job_spinlock, flags);
-	}
+	/* wait until the current context is dequeued from job_queue */
+	v4l2_m2m_cancel_job(m2m_ctx);
 
 	vb2_queue_release(&m2m_ctx->cap_q_ctx.q);
 	vb2_queue_release(&m2m_ctx->out_q_ctx.q);

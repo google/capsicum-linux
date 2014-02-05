@@ -19,22 +19,7 @@
 #ifndef _COMEDIDEV_H
 #define _COMEDIDEV_H
 
-#include <linux/kernel.h>
-#include <linux/module.h>
-#include <linux/kdev_t.h>
-#include <linux/slab.h>
-#include <linux/delay.h>
-#include <linux/errno.h>
-#include <linux/spinlock.h>
-#include <linux/mutex.h>
-#include <linux/wait.h>
-#include <linux/mm.h>
-#include <linux/init.h>
-#include <linux/vmalloc.h>
 #include <linux/dma-mapping.h>
-#include <linux/uaccess.h>
-#include <linux/io.h>
-#include <linux/timer.h>
 
 #include "comedi.h"
 
@@ -71,11 +56,6 @@ struct comedi_subdevice {
 
 	unsigned int maxdata;	/* if maxdata==0, use list */
 	const unsigned int *maxdata_list;	/* list is channel specific */
-
-	unsigned int flags;
-	const unsigned int *flaglist;
-
-	unsigned int settling_time_0;
 
 	const struct comedi_lrange *range_table;
 	const struct comedi_lrange *const *range_table_list;
@@ -322,7 +302,26 @@ static inline bool comedi_range_is_unipolar(struct comedi_subdevice *s,
 	return s->range_table->range[range].min >= 0;
 }
 
-/* some silly little inline functions */
+static inline bool comedi_chan_range_is_bipolar(struct comedi_subdevice *s,
+						unsigned int chan,
+						unsigned int range)
+{
+	return s->range_table_list[chan]->range[range].min < 0;
+}
+
+static inline bool comedi_chan_range_is_unipolar(struct comedi_subdevice *s,
+						 unsigned int chan,
+						 unsigned int range)
+{
+	return s->range_table_list[chan]->range[range].min >= 0;
+}
+
+/* munge between offset binary and two's complement values */
+static inline unsigned int comedi_offset_munge(struct comedi_subdevice *s,
+					       unsigned int val)
+{
+	return val ^ s->maxdata ^ (s->maxdata >> 1);
+}
 
 static inline unsigned int bytes_per_sample(const struct comedi_subdevice *subd)
 {
@@ -347,8 +346,8 @@ unsigned int comedi_buf_read_n_available(struct comedi_async *);
 unsigned int comedi_buf_read_alloc(struct comedi_async *, unsigned int);
 unsigned int comedi_buf_read_free(struct comedi_async *, unsigned int);
 
-int comedi_buf_put(struct comedi_async *, short);
-int comedi_buf_get(struct comedi_async *, short *);
+int comedi_buf_put(struct comedi_async *, unsigned short);
+int comedi_buf_get(struct comedi_async *, unsigned short *);
 
 void comedi_buf_memcpy_to(struct comedi_async *async, unsigned int offset,
 			  const void *source, unsigned int num_bytes);
@@ -357,6 +356,13 @@ void comedi_buf_memcpy_from(struct comedi_async *async, unsigned int offset,
 
 /* drivers.c - general comedi driver functions */
 
+int comedi_dio_insn_config(struct comedi_device *, struct comedi_subdevice *,
+			   struct comedi_insn *, unsigned int *data,
+			   unsigned int mask);
+unsigned int comedi_dio_update_state(struct comedi_subdevice *,
+				     unsigned int *data);
+
+void *comedi_alloc_devpriv(struct comedi_device *, size_t);
 int comedi_alloc_subdevices(struct comedi_device *, int);
 
 int comedi_load_firmware(struct comedi_device *, struct device *,
@@ -377,7 +383,7 @@ int comedi_auto_config(struct device *, struct comedi_driver *,
 void comedi_auto_unconfig(struct device *);
 
 int comedi_driver_register(struct comedi_driver *);
-int comedi_driver_unregister(struct comedi_driver *);
+void comedi_driver_unregister(struct comedi_driver *);
 
 /**
  * module_comedi_driver() - Helper macro for registering a comedi driver
@@ -400,7 +406,6 @@ int comedi_driver_unregister(struct comedi_driver *);
  */
 #define PCI_VENDOR_ID_KOLTER		0x1001
 #define PCI_VENDOR_ID_ICP		0x104c
-#define PCI_VENDOR_ID_AMCC		0x10e8
 #define PCI_VENDOR_ID_DT		0x1116
 #define PCI_VENDOR_ID_IOTECH		0x1616
 #define PCI_VENDOR_ID_CONTEC		0x1221
