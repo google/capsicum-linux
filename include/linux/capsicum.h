@@ -3,7 +3,6 @@
 
 #include <uapi/linux/capsicum.h>
 
-#ifdef CONFIG_SECURITY_CAPSICUM
 struct file;
 
 /* LSM hook fallback functions */
@@ -16,8 +15,8 @@ struct file *capsicum_file_install(cap_rights_t base_rights, struct file *file);
 struct dentry;
 int capsicum_path_lookup(cap_rights_t base_rights,
 			struct dentry *dentry, const char *name);
-#endif
 
+#ifdef CONFIG_SECURITY_CAPSICUM
 /*
  * Wrap a file in a new Capsicum capability object and install the capability
  * object into the file descriptor table. Return the new file descriptor or an
@@ -30,6 +29,7 @@ int capsicum_is_cap(const struct file *file);
 
 /* Return the underlying file for a Capsicum capability. */
 struct file *capsicum_unwrap(const struct file *capf, cap_rights_t *rights);
+#endif
 
 #endif
 

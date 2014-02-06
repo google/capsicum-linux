@@ -122,6 +122,7 @@ config SECURITY_CAPSICUM
 	default y
 	depends on SECURITY
 	depends on SECURITY_PATH
+	depends on SECCOMP
 	help
 	  Enable the Capsicum capability framework, which implements security
 	  primitives that support fine-grained capabilities on file
