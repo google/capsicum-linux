@@ -3630,7 +3630,7 @@ static long perf_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 		int ret;
 		if (arg != -1) {
 			struct perf_event *output_event;
-			struct fd output;
+			struct fd output = { .file = NULL };
 			ret = perf_fget_light(arg, CAP_WRITE, &output);
 			if (ret)
 				return ret;
