@@ -103,7 +103,7 @@ modifications:
 
 The remainder of the Capsicum functionality is implemented as a Linux Security
 Module (security/capsicum.c), using the following added LSM hooks:
- - syscall_intercept: Allow policing of system calls at system call entry, for
+ - intercept_syscall: Allow policing of system calls at system call entry, for
    processes that have activated secure computing (seccomp) mode.
  - file_lookup: Allow modification of the result of an fget() operation, so that
    a rights check can be performed and the normal file underlying a capability
@@ -119,10 +119,13 @@ New System Calls
 ----------------
 
 Capsicum implements the following new system calls:
- - cap_new: create a capability FD from a file descriptor
+ - cap_new: create a capability FD from a file descriptor (security/capsicum.c)
  - cap_getrights: return the rights associated with a capability FD
- - fexecve: execve via a file descriptor
- - pdfork: fork and generate a process descriptor
- - pdgetpid: get the pid associated with a process descriptor
+   (security/capsicum.c)
+ - fexecve: execve via a file descriptor (fs/exec.c)
+ - pdfork: fork and generate a process descriptor (kernel/fork.c)
+ - pdgetpid: get the pid associated with a process descriptor (fs/procdesc.c)
  - pdkill: send a signal to a process identified by a process descriptor
+   (fs/procdesc.c)
  - pdwait4: wait for a process identified by a process descriptor
+   (fs/procdesc.c)
