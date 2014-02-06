@@ -1542,7 +1542,9 @@ static int mdc_ioc_changelog_send(struct obd_device *obd,
 	cs->cs_obd = obd;
 	cs->cs_startrec = icc->icc_recno;
 	/* matching fput in mdc_changelog_send_thread */
-	cs->cs_fp = fget(icc->icc_id);
+	cs->cs_fp = fget(icc->icc_id, CAP_WRITE);
+	if (IS_ERR(cs->cs_fp))
+		cs->cs_fp = NULL;
 	cs->cs_flags = icc->icc_flags;
 
 	/*

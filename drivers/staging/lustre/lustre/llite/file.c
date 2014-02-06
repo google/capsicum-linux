@@ -1908,9 +1908,9 @@ long ll_file_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 		if ((file->f_flags & O_ACCMODE) == 0) /* O_RDONLY */
 			return -EPERM;
 
-		file2 = fget(lsl.sl_fd);
-		if (file2 == NULL)
-			return -EBADF;
+		file2 = fget(lsl.sl_fd, CAP_FSTAT);
+		if (IS_ERR(file2))
+			return PTR_ERR(file2);
 
 		rc = -EPERM;
 		if ((file2->f_flags & O_ACCMODE) != 0) /* O_WRONLY or O_RDWR */
