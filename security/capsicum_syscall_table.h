@@ -16,6 +16,8 @@
 #include <net/scm.h>
 #include <net/sock.h>
 #include <asm/prctl.h>
+#include <asm/unistd.h>
+#include <asm/syscall.h>
 
 static int check_mmap(unsigned long *args)
 {
@@ -67,11 +69,199 @@ static int check_prctl(unsigned long *args)
 	}
 }
 
+enum capmode_result {
+	CAPMODE_DENY = 0,
+	CAPMODE_ALLOW,
+	CAPMODE_SPECIAL
+};
+static unsigned char *syscalls_result;
+
+static int __init init_syscalls_result(void)
+{
+	int i;
+	syscalls_result = kcalloc(NR_syscalls, sizeof(unsigned char), GFP_KERNEL);
+	if (!syscalls_result) {
+		WARN_ON(1);
+		return -ENOMEM;
+	}
+	for (i = 0; i < NR_syscalls; i++)
+		syscalls_result[i] = CAPMODE_DENY;
+
+	/* Syscalls whose arguments need to be examined */
+	syscalls_result[__NR_arch_prctl] = CAPMODE_SPECIAL;
+	syscalls_result[__NR_mmap] = CAPMODE_SPECIAL;
+	syscalls_result[__NR_openat] = CAPMODE_SPECIAL;
+	syscalls_result[__NR_prctl] = CAPMODE_SPECIAL;
+
+	/* Allowed syscalls */
+	syscalls_result[__NR_accept] = CAPMODE_ALLOW;
+	syscalls_result[__NR_accept4] = CAPMODE_ALLOW;
+	syscalls_result[__NR_brk] = CAPMODE_ALLOW;
+	syscalls_result[__NR_cap_getrights] = CAPMODE_ALLOW;
+	syscalls_result[__NR_cap_new] = CAPMODE_ALLOW;
+	syscalls_result[__NR_clock_getres] = CAPMODE_ALLOW;
+	syscalls_result[__NR_clock_gettime] = CAPMODE_ALLOW;
+	syscalls_result[__NR_clone] = CAPMODE_ALLOW;
+	syscalls_result[__NR_close] = CAPMODE_ALLOW;
+	syscalls_result[__NR_dup] = CAPMODE_ALLOW;
+	syscalls_result[__NR_dup2] = CAPMODE_ALLOW;
+	syscalls_result[__NR_dup3] = CAPMODE_ALLOW;
+	syscalls_result[__NR_exit] = CAPMODE_ALLOW;
+	syscalls_result[__NR_exit_group] = CAPMODE_ALLOW;
+	syscalls_result[__NR_faccessat] = CAPMODE_ALLOW;
+	syscalls_result[__NR_fchmod] = CAPMODE_ALLOW;
+	syscalls_result[__NR_fchmodat] = CAPMODE_ALLOW;
+	syscalls_result[__NR_fchown] = CAPMODE_ALLOW;
+	syscalls_result[__NR_fchownat] = CAPMODE_ALLOW;
+	syscalls_result[__NR_fcntl] = CAPMODE_ALLOW;
+	syscalls_result[__NR_fdatasync] = CAPMODE_ALLOW;
+	syscalls_result[__NR_fexecve] = CAPMODE_ALLOW;
+	syscalls_result[__NR_fgetxattr] = CAPMODE_ALLOW;
+	syscalls_result[__NR_finit_module] = CAPMODE_ALLOW;
+	syscalls_result[__NR_flistxattr] = CAPMODE_ALLOW;
+	syscalls_result[__NR_flock] = CAPMODE_ALLOW;
+	syscalls_result[__NR_fork] = CAPMODE_ALLOW;
+	syscalls_result[__NR_fremovexattr] = CAPMODE_ALLOW;
+	syscalls_result[__NR_fsetxattr] = CAPMODE_ALLOW;
+	syscalls_result[__NR_fstat] = CAPMODE_ALLOW;
+	syscalls_result[__NR_fstatfs] = CAPMODE_ALLOW;
+	syscalls_result[__NR_fsync] = CAPMODE_ALLOW;
+	syscalls_result[__NR_ftruncate] = CAPMODE_ALLOW;
+	syscalls_result[__NR_futimesat] = CAPMODE_ALLOW;
+	syscalls_result[__NR_getdents] = CAPMODE_ALLOW;
+	syscalls_result[__NR_getegid] = CAPMODE_ALLOW;
+	syscalls_result[__NR_geteuid] = CAPMODE_ALLOW;
+	syscalls_result[__NR_getgid] = CAPMODE_ALLOW;
+	syscalls_result[__NR_getgroups] = CAPMODE_ALLOW;
+	syscalls_result[__NR_getitimer] = CAPMODE_ALLOW;
+	syscalls_result[__NR_getpeername] = CAPMODE_ALLOW;
+	syscalls_result[__NR_getpgid] = CAPMODE_ALLOW;
+	syscalls_result[__NR_getpgrp] = CAPMODE_ALLOW;
+	syscalls_result[__NR_getpid] = CAPMODE_ALLOW;
+	syscalls_result[__NR_getppid] = CAPMODE_ALLOW;
+	syscalls_result[__NR_getpriority] = CAPMODE_ALLOW;
+	syscalls_result[__NR_getresgid] = CAPMODE_ALLOW;
+	syscalls_result[__NR_getresuid] = CAPMODE_ALLOW;
+	syscalls_result[__NR_getrlimit] = CAPMODE_ALLOW;
+	syscalls_result[__NR_getrusage] = CAPMODE_ALLOW;
+	syscalls_result[__NR_getsid] = CAPMODE_ALLOW;
+	syscalls_result[__NR_getsockname] = CAPMODE_ALLOW;
+	syscalls_result[__NR_getsockopt] = CAPMODE_ALLOW;
+	syscalls_result[__NR_gettid] = CAPMODE_ALLOW;
+	syscalls_result[__NR_gettimeofday] = CAPMODE_ALLOW;
+	syscalls_result[__NR_getuid] = CAPMODE_ALLOW;
+	syscalls_result[__NR_ioctl] = CAPMODE_ALLOW;
+	syscalls_result[__NR_linkat] = CAPMODE_ALLOW;
+	syscalls_result[__NR_listen] = CAPMODE_ALLOW;
+	syscalls_result[__NR_lseek] = CAPMODE_ALLOW;
+	syscalls_result[__NR_madvise] = CAPMODE_ALLOW;
+	syscalls_result[__NR_mincore] = CAPMODE_ALLOW;
+	syscalls_result[__NR_mkdirat] = CAPMODE_ALLOW;
+	syscalls_result[__NR_mknodat] = CAPMODE_ALLOW;
+	syscalls_result[__NR_mlock] = CAPMODE_ALLOW;
+	syscalls_result[__NR_mlockall] = CAPMODE_ALLOW;
+	syscalls_result[__NR_mprotect] = CAPMODE_ALLOW;
+	syscalls_result[__NR_mq_getsetattr] = CAPMODE_ALLOW;
+	syscalls_result[__NR_mq_notify] = CAPMODE_ALLOW;
+	syscalls_result[__NR_mq_timedreceive] = CAPMODE_ALLOW;
+	syscalls_result[__NR_mq_timedsend] = CAPMODE_ALLOW;
+	syscalls_result[__NR_msync] = CAPMODE_ALLOW;
+	syscalls_result[__NR_munlock] = CAPMODE_ALLOW;
+	syscalls_result[__NR_munlockall] = CAPMODE_ALLOW;
+	syscalls_result[__NR_munmap] = CAPMODE_ALLOW;
+	syscalls_result[__NR_nanosleep] = CAPMODE_ALLOW;
+	syscalls_result[__NR_newfstatat] = CAPMODE_ALLOW;
+	syscalls_result[__NR_pdfork] = CAPMODE_ALLOW;
+	syscalls_result[__NR_pdgetpid] = CAPMODE_ALLOW;
+	syscalls_result[__NR_pdkill] = CAPMODE_ALLOW;
+	syscalls_result[__NR_pdwait4] = CAPMODE_ALLOW;
+	syscalls_result[__NR_pipe] = CAPMODE_ALLOW;
+	syscalls_result[__NR_pipe2] = CAPMODE_ALLOW;
+	syscalls_result[__NR_poll] = CAPMODE_ALLOW;
+	syscalls_result[__NR_ppoll] = CAPMODE_ALLOW;
+	syscalls_result[__NR_pread64] = CAPMODE_ALLOW;
+	syscalls_result[__NR_preadv] = CAPMODE_ALLOW;
+	syscalls_result[__NR_pselect6] = CAPMODE_ALLOW;
+	syscalls_result[__NR_pwrite64] = CAPMODE_ALLOW;
+	syscalls_result[__NR_pwritev] = CAPMODE_ALLOW;
+	syscalls_result[__NR_read] = CAPMODE_ALLOW;
+	syscalls_result[__NR_readahead] = CAPMODE_ALLOW;
+	syscalls_result[__NR_readlinkat] = CAPMODE_ALLOW;
+	syscalls_result[__NR_readv] = CAPMODE_ALLOW;
+	syscalls_result[__NR_recvfrom] = CAPMODE_ALLOW;
+	syscalls_result[__NR_recvmmsg] = CAPMODE_ALLOW;
+	syscalls_result[__NR_recvmsg] = CAPMODE_ALLOW;
+	syscalls_result[__NR_renameat] = CAPMODE_ALLOW;
+	syscalls_result[__NR_rt_sigaction] = CAPMODE_ALLOW;
+	syscalls_result[__NR_rt_sigpending] = CAPMODE_ALLOW;
+	syscalls_result[__NR_rt_sigprocmask] = CAPMODE_ALLOW;
+	syscalls_result[__NR_rt_sigqueueinfo] = CAPMODE_ALLOW;
+	syscalls_result[__NR_rt_sigreturn] = CAPMODE_ALLOW;
+	syscalls_result[__NR_rt_sigsuspend] = CAPMODE_ALLOW;
+	syscalls_result[__NR_rt_sigtimedwait] = CAPMODE_ALLOW;
+	syscalls_result[__NR_rt_tgsigqueueinfo] = CAPMODE_ALLOW;
+	syscalls_result[__NR_sched_get_priority_max] = CAPMODE_ALLOW;
+	syscalls_result[__NR_sched_get_priority_min] = CAPMODE_ALLOW;
+	syscalls_result[__NR_sched_getparam] = CAPMODE_ALLOW;
+	syscalls_result[__NR_sched_getscheduler] = CAPMODE_ALLOW;
+	syscalls_result[__NR_sched_rr_get_interval] = CAPMODE_ALLOW;
+	syscalls_result[__NR_sched_setparam] = CAPMODE_ALLOW;
+	syscalls_result[__NR_sched_setscheduler] = CAPMODE_ALLOW;
+	syscalls_result[__NR_sched_yield] = CAPMODE_ALLOW;
+	syscalls_result[__NR_select] = CAPMODE_ALLOW;
+	syscalls_result[__NR_sendfile] = CAPMODE_ALLOW;
+	syscalls_result[__NR_sendmmsg] = CAPMODE_ALLOW;
+	syscalls_result[__NR_sendmsg] = CAPMODE_ALLOW;
+	syscalls_result[__NR_sendto] = CAPMODE_ALLOW;
+	syscalls_result[__NR_setfsgid] = CAPMODE_ALLOW;
+	syscalls_result[__NR_setfsuid] = CAPMODE_ALLOW;
+	syscalls_result[__NR_setgid] = CAPMODE_ALLOW;
+	syscalls_result[__NR_setitimer] = CAPMODE_ALLOW;
+	syscalls_result[__NR_setpriority] = CAPMODE_ALLOW;
+	syscalls_result[__NR_setregid] = CAPMODE_ALLOW;
+	syscalls_result[__NR_setresgid] = CAPMODE_ALLOW;
+	syscalls_result[__NR_setresuid] = CAPMODE_ALLOW;
+	syscalls_result[__NR_setreuid] = CAPMODE_ALLOW;
+	syscalls_result[__NR_setrlimit] = CAPMODE_ALLOW;
+	syscalls_result[__NR_setsid] = CAPMODE_ALLOW;
+	syscalls_result[__NR_setsockopt] = CAPMODE_ALLOW;
+	syscalls_result[__NR_setuid] = CAPMODE_ALLOW;
+	syscalls_result[__NR_shutdown] = CAPMODE_ALLOW;
+	syscalls_result[__NR_sigaltstack] = CAPMODE_ALLOW;
+	syscalls_result[__NR_socket] = CAPMODE_ALLOW;
+	syscalls_result[__NR_socketpair] = CAPMODE_ALLOW;
+	syscalls_result[__NR_symlinkat] = CAPMODE_ALLOW;
+	syscalls_result[__NR_sync] = CAPMODE_ALLOW;
+	syscalls_result[__NR_syncfs] = CAPMODE_ALLOW;
+	syscalls_result[__NR_sync_file_range] = CAPMODE_ALLOW;
+	syscalls_result[__NR_umask] = CAPMODE_ALLOW;
+	syscalls_result[__NR_uname] = CAPMODE_ALLOW;
+	syscalls_result[__NR_unlinkat] = CAPMODE_ALLOW;
+	syscalls_result[__NR_unshare] = CAPMODE_ALLOW;
+	syscalls_result[__NR_utimensat] = CAPMODE_ALLOW;
+	syscalls_result[__NR_vfork] = CAPMODE_ALLOW;
+	syscalls_result[__NR_vmsplice] = CAPMODE_ALLOW;
+	syscalls_result[__NR_write] = CAPMODE_ALLOW;
+	syscalls_result[__NR_writev] = CAPMODE_ALLOW;
+	return 0;
+}
+arch_initcall(init_syscalls_result);
+
 static int capsicum_run_syscall_table(int arch, int callnr, unsigned long *args)
 {
+	enum capmode_result rc;
 	if (arch != AUDIT_ARCH_X86_64)
 		return -ECAPMODE;
+	if (!syscalls_result || callnr >= NR_syscalls || callnr < 0)
+		return -ECAPMODE;
 
+	rc = syscalls_result[callnr];
+	if (rc == CAPMODE_ALLOW)
+		return 0;
+	if (rc == CAPMODE_DENY)
+		return -ECAPMODE;
+
+	/* Special cases that depend on syscall arguments */
 	switch (callnr) {
 	case (__NR_arch_prctl):
 		return (args[0] & ~(ARCH_SET_FS|ARCH_GET_FS|ARCH_SET_GS|ARCH_GET_GS) ? -ECAPMODE : 0);
@@ -81,157 +271,6 @@ static int capsicum_run_syscall_table(int arch, int callnr, unsigned long *args)
 		return check_openat(args);
 	case (__NR_prctl):
 		return check_prctl(args);
-
-	case (__NR_accept):
-	case (__NR_accept4):
-	case (__NR_brk):
-	case (__NR_cap_getrights):
-	case (__NR_cap_new):
-	case (__NR_clock_getres):
-	case (__NR_clock_gettime):
-	case (__NR_clone):
-	case (__NR_close):
-	case (__NR_dup):
-	case (__NR_dup2):
-	case (__NR_dup3):
-	case (__NR_exit):
-	case (__NR_exit_group):
-	case (__NR_faccessat):
-	case (__NR_fchmod):
-	case (__NR_fchmodat):
-	case (__NR_fchown):
-	case (__NR_fchownat):
-	case (__NR_fcntl):
-	case (__NR_fdatasync):
-	case (__NR_fexecve):
-	case (__NR_fgetxattr):
-	case (__NR_finit_module):
-	case (__NR_flistxattr):
-	case (__NR_flock):
-	case (__NR_fork):
-	case (__NR_fremovexattr):
-	case (__NR_fsetxattr):
-	case (__NR_fstat):
-	case (__NR_fstatfs):
-	case (__NR_fsync):
-	case (__NR_ftruncate):
-	case (__NR_futimesat):
-	case (__NR_getdents):
-	case (__NR_getegid):
-	case (__NR_geteuid):
-	case (__NR_getgid):
-	case (__NR_getgroups):
-	case (__NR_getitimer):
-	case (__NR_getpeername):
-	case (__NR_getpgid):
-	case (__NR_getpgrp):
-	case (__NR_getpid):
-	case (__NR_getppid):
-	case (__NR_getpriority):
-	case (__NR_getresgid):
-	case (__NR_getresuid):
-	case (__NR_getrlimit):
-	case (__NR_getrusage):
-	case (__NR_getsid):
-	case (__NR_getsockname):
-	case (__NR_getsockopt):
-	case (__NR_gettid):
-	case (__NR_gettimeofday):
-	case (__NR_getuid):
-	case (__NR_ioctl):
-	case (__NR_linkat):
-	case (__NR_listen):
-	case (__NR_lseek):
-	case (__NR_madvise):
-	case (__NR_mincore):
-	case (__NR_mkdirat):
-	case (__NR_mknodat):
-	case (__NR_mlock):
-	case (__NR_mlockall):
-	case (__NR_mprotect):
-	case (__NR_mq_getsetattr):
-	case (__NR_mq_notify):
-	case (__NR_mq_timedreceive):
-	case (__NR_mq_timedsend):
-	case (__NR_msync):
-	case (__NR_munlock):
-	case (__NR_munlockall):
-	case (__NR_munmap):
-	case (__NR_nanosleep):
-	case (__NR_newfstatat):
-	case (__NR_pdfork):
-	case (__NR_pdgetpid):
-	case (__NR_pdkill):
-	case (__NR_pdwait4):
-	case (__NR_pipe):
-	case (__NR_pipe2):
-	case (__NR_poll):
-	case (__NR_ppoll):
-	case (__NR_pread64):
-	case (__NR_preadv):
-	case (__NR_pselect6):
-	case (__NR_pwrite64):
-	case (__NR_pwritev):
-	case (__NR_read):
-	case (__NR_readahead):
-	case (__NR_readlinkat):
-	case (__NR_readv):
-	case (__NR_recvfrom):
-	case (__NR_recvmmsg):
-	case (__NR_recvmsg):
-	case (__NR_renameat):
-	case (__NR_rt_sigaction):
-	case (__NR_rt_sigpending):
-	case (__NR_rt_sigprocmask):
-	case (__NR_rt_sigqueueinfo):
-	case (__NR_rt_sigreturn):
-	case (__NR_rt_sigsuspend):
-	case (__NR_rt_sigtimedwait):
-	case (__NR_rt_tgsigqueueinfo):
-	case (__NR_sched_get_priority_max):
-	case (__NR_sched_get_priority_min):
-	case (__NR_sched_getparam):
-	case (__NR_sched_getscheduler):
-	case (__NR_sched_rr_get_interval):
-	case (__NR_sched_setparam):
-	case (__NR_sched_setscheduler):
-	case (__NR_sched_yield):
-	case (__NR_select):
-	case (__NR_sendfile):
-	case (__NR_sendmmsg):
-	case (__NR_sendmsg):
-	case (__NR_sendto):
-	case (__NR_setfsgid):
-	case (__NR_setfsuid):
-	case (__NR_setgid):
-	case (__NR_setitimer):
-	case (__NR_setpriority):
-	case (__NR_setregid):
-	case (__NR_setresgid):
-	case (__NR_setresuid):
-	case (__NR_setreuid):
-	case (__NR_setrlimit):
-	case (__NR_setsid):
-	case (__NR_setsockopt):
-	case (__NR_setuid):
-	case (__NR_shutdown):
-	case (__NR_sigaltstack):
-	case (__NR_socket):
-	case (__NR_socketpair):
-	case (__NR_symlinkat):
-	case (__NR_sync):
-	case (__NR_syncfs):
-	case (__NR_sync_file_range):
-	case (__NR_umask):
-	case (__NR_uname):
-	case (__NR_unlinkat):
-	case (__NR_unshare):
-	case (__NR_utimensat):
-	case (__NR_vfork):
-	case (__NR_vmsplice):
-	case (__NR_write):
-	case (__NR_writev):
-		return 0;
 	default:
 		return -ECAPMODE;
 	}
