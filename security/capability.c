@@ -11,6 +11,7 @@
  */
 
 #include <linux/security.h>
+#include <linux/capsicum.h>
 
 static int cap_syslog(int type)
 {
@@ -38,11 +39,6 @@ static void cap_bprm_committing_creds(struct linux_binprm *bprm)
 
 static void cap_bprm_committed_creds(struct linux_binprm *bprm)
 {
-}
-
-static int cap_intercept_syscall(int arch, int callnr, unsigned long *args)
-{
-	return 0;
 }
 
 static int cap_sb_alloc_security(struct super_block *sb)
@@ -310,12 +306,6 @@ static int cap_path_chroot(struct path *root)
 	return 0;
 }
 
-static int cap_path_lookup(cap_rights_t base_rights,
-			struct dentry *dentry, const char *name)
-{
-	return 0;
-}
-
 #endif
 
 static int cap_file_permission(struct file *file, int mask)
@@ -374,18 +364,6 @@ static int cap_file_receive(struct file *file)
 static int cap_file_open(struct file *file, const struct cred *cred)
 {
 	return 0;
-}
-
-static struct file *cap_file_lookup(struct file *orig,
-				cap_rights_t required_rights,
-				cap_rights_t *actual_rights)
-{
-	return orig;
-}
-
-static struct file *cap_file_install(cap_rights_t base_rights, struct file *file)
-{
-	return file;
 }
 
 static int cap_task_create(unsigned long clone_flags)
@@ -940,9 +918,19 @@ static void cap_audit_rule_free(void *lsmrule)
 #define set_to_cap_if_null(ops, function)				\
 	do {								\
 		if (!ops->function) {					\
-			ops->function = cap_##function;			\
+			ops->function = cap_##function;		\
 			pr_debug("Had to override the " #function	\
-				 " security operation with the default.\n");\
+				 " security operation with the default "\
+				 "cap_" #function ".\n");		\
+			}						\
+	} while (0)
+#define set_to_capsicum_if_null(ops, function)				\
+	do {								\
+		if (!ops->function) {					\
+			ops->function = capsicum_##function;		\
+			pr_debug("Had to override the " #function	\
+				 " security operation with the default "\
+				 "capsicum_" #function ".\n");		\
 			}						\
 	} while (0)
 
@@ -963,7 +951,7 @@ void __init security_fixup_ops(struct security_operations *ops)
 	set_to_cap_if_null(ops, bprm_committed_creds);
 	set_to_cap_if_null(ops, bprm_check_security);
 	set_to_cap_if_null(ops, bprm_secureexec);
-	set_to_cap_if_null(ops, intercept_syscall);
+	set_to_capsicum_if_null(ops, intercept_syscall);
 	set_to_cap_if_null(ops, sb_alloc_security);
 	set_to_cap_if_null(ops, sb_free_security);
 	set_to_cap_if_null(ops, sb_copy_data);
@@ -1017,7 +1005,7 @@ void __init security_fixup_ops(struct security_operations *ops)
 	set_to_cap_if_null(ops, path_chmod);
 	set_to_cap_if_null(ops, path_chown);
 	set_to_cap_if_null(ops, path_chroot);
-	set_to_cap_if_null(ops, path_lookup);
+	set_to_capsicum_if_null(ops, path_lookup);
 #endif
 	set_to_cap_if_null(ops, file_permission);
 	set_to_cap_if_null(ops, file_alloc_security);
@@ -1032,8 +1020,8 @@ void __init security_fixup_ops(struct security_operations *ops)
 	set_to_cap_if_null(ops, file_send_sigiotask);
 	set_to_cap_if_null(ops, file_receive);
 	set_to_cap_if_null(ops, file_open);
-	set_to_cap_if_null(ops, file_lookup);
-	set_to_cap_if_null(ops, file_install);
+	set_to_capsicum_if_null(ops, file_lookup);
+	set_to_capsicum_if_null(ops, file_install);
 	set_to_cap_if_null(ops, task_create);
 	set_to_cap_if_null(ops, task_free);
 	set_to_cap_if_null(ops, cred_alloc_blank);

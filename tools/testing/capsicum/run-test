@@ -49,7 +49,7 @@ if $BUILD ; then
     fi
 fi
 
-TESTARGS="ubd0=test.img rw con0=fd:2 con1=fd:0,fd:1 con=pts mem=4096M security=capsicum cwd=\"$CWD\" runtest=\"$TESTS\""
+TESTARGS="ubd0=test.img rw con0=fd:2 con1=fd:0,fd:1 con=pts mem=4096M security=apparmor cwd=\"$CWD\" runtest=\"$TESTS\""
 if $VERBOSE ; then
     $INVOKE $TOPDIR/$BUILDSUBDIR/$TARGET $TESTARGS
 else

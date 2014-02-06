@@ -23,6 +23,8 @@
 #include <linux/syscalls.h>
 #include <linux/capsicum.h>
 
+#ifdef CONFIG_SECURITY_CAPSICUM
+
 #if 0
 #define kdebug(FMT, ...) \
 	printk(KERN_ERR "[%-9.9s%5u] "FMT"\n", current->comm, current->pid ,##__VA_ARGS__)
@@ -40,11 +42,8 @@ struct capsicum_capability {
 	struct file *underlying;
 };
 
-/* Whether the Capsicum LSM is enabled */
-static int capsicum_enabled;
 
 extern struct file_operations capsicum_file_ops;
-extern struct security_operations capsicum_security_ops;
 
 static inline bool capsicum_in_cap_mode(void)
 {
@@ -153,17 +152,6 @@ EXPORT_SYMBOL(capsicum_install_fd);
 /* Include the per-syscall processing code */
 #include "capsicum_syscall_table.h"
 
-/*
- * Entrypoint to process an incoming syscall (from kernel/seccomp.c).
- * Returns 0 if the syscall should proceed, < 0 otherwise.
- */
-int capsicum_intercept_syscall(int arch, int callnr, unsigned long *args)
-{
-	if (!capsicum_enabled)
-		return 0;
-	return capsicum_run_syscall_table(arch, callnr, args);
-}
-
 static int do_sys_cap_new(unsigned int orig_fd, cap_rights_t new_rights)
 {
 	struct file *file;
@@ -195,9 +183,6 @@ out_err:
 
 SYSCALL_DEFINE2(cap_new, unsigned int, orig_fd, u64, new_rights)
 {
-	if (!capsicum_enabled)
-		return -ENOSYS;
-
 	return do_sys_cap_new(orig_fd, (cap_rights_t)new_rights);
 }
 
@@ -277,9 +262,18 @@ static void capsicum_panic_not_unwrapped(void)
 }
 
 /*
- * LSM hook functions.
+ * LSM hook fallback functions.
  */
 
+/*
+ * Entrypoint to process an incoming syscall.
+ * Returns 0 if the syscall should proceed, < 0 otherwise.
+ */
+int capsicum_intercept_syscall(int arch, int callnr, unsigned long *args)
+{
+	return capsicum_run_syscall_table(arch, callnr, args);
+}
+EXPORT_SYMBOL(capsicum_intercept_syscall);
 
 /*
  * We are looking up a file by its file descriptor. If it is a Capsicum
@@ -291,9 +285,9 @@ static void capsicum_panic_not_unwrapped(void)
  * the file we are unwrapping is the same as the one which was examined in
  * capsicum_intercept_syscall().
  */
-static struct file *capsicum_file_lookup(struct file *file,
-					cap_rights_t required_rights,
-					cap_rights_t *actual_rights)
+struct file *capsicum_file_lookup(struct file *file,
+				  cap_rights_t required_rights,
+				  cap_rights_t *actual_rights)
 {
 	cap_rights_t rights;
 	struct file *underlying;
@@ -311,8 +305,9 @@ static struct file *capsicum_file_lookup(struct file *file,
 		*actual_rights = rights;
 	return underlying;
 }
+EXPORT_SYMBOL(capsicum_file_lookup);
 
-static struct file *capsicum_file_install(cap_rights_t base_rights, struct file *file)
+struct file *capsicum_file_install(cap_rights_t base_rights, struct file *file)
 {
 	struct file *capf;
 	if (base_rights == CAP_ALL)
@@ -326,14 +321,15 @@ static struct file *capsicum_file_install(cap_rights_t base_rights, struct file 
 	capsicum_cap_set(capf, file, base_rights);
 	return capf;
 }
+EXPORT_SYMBOL(capsicum_file_install);
 
 #ifdef CONFIG_SECURITY_PATH
 /*
  * Prevent absolute lookups and upward traversal (../) when in capability
  * mode or when the lookup is relative to a capability file descriptor.
  */
-static int capsicum_path_lookup(cap_rights_t base_rights,
-				struct dentry *dentry, const char *name)
+int capsicum_path_lookup(cap_rights_t base_rights,
+			 struct dentry *dentry, const char *name)
 {
 	if (!capsicum_in_cap_mode() && base_rights == CAP_ALL)
 		return 0;
@@ -347,22 +343,8 @@ static int capsicum_path_lookup(cap_rights_t base_rights,
 
 	return 0;
 }
+EXPORT_SYMBOL(capsicum_path_lookup);
 #endif
-
-static int __init capsicum_init(void)
-{
-	int err = register_security(&capsicum_security_ops);
-
-	capsicum_enabled = !err;
-	if (capsicum_enabled)
-		printk(KERN_INFO "Capsicum enabled\n");
-	else
-		printk(KERN_WARNING "Capsicum enable failed: another security "
-			"module has already been registered.\n");
-
-	return 0;
-}
-__initcall(capsicum_init);
 
 #define panic_ptr ((void *)&capsicum_panic_not_unwrapped)
 struct file_operations capsicum_file_ops = {
@@ -395,12 +377,32 @@ struct file_operations capsicum_file_ops = {
 	.show_fdinfo = capsicum_show_fdinfo
 };
 
-struct security_operations capsicum_security_ops = {
-	.name = "capsicum",
-	.intercept_syscall = capsicum_intercept_syscall,
-	.file_lookup = capsicum_file_lookup,
+#else
+
+/* If Capsicum is not enabled, all the fallback LSM hooks return OK */
+int capsicum_intercept_syscall(int arch, int callnr, unsigned long *args)
+{
+	return 0;
+}
+
+struct file *capsicum_file_lookup(struct file *file,
+				  cap_rights_t required_rights,
+				cap_rights_t *actual_rights)
+{
+	return file;
+}
+
+struct file *capsicum_file_install(cap_rights_t base_rights, struct file *file)
+{
+	return file;
+}
+
 #ifdef CONFIG_SECURITY_PATH
-	.path_lookup = capsicum_path_lookup,
+int capsicum_path_lookup(cap_rights_t base_rights,
+			struct dentry *dentry, const char *name)
+{
+	return 0;
+}
 #endif
-	.file_install = capsicum_file_install,
-};
+
+#endif

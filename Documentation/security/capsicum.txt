@@ -101,8 +101,11 @@ modifications:
    as combinations of Capsicum rights values.
  - Process descriptor functionality (under CONFIG_PROCDESC)
 
-The remainder of the Capsicum functionality is implemented as a Linux Security
-Module (security/capsicum.c), using the following added LSM hooks:
+The remainder of the Capsicum functionality is via Linux Security Module (LSM)
+hooks, with Capsicum providing the default implementation (similarly to the
+existing POSIX.1e capability code) when the active LSM does not override.
+
+The additional hooks added for (and implemented by) Capsicum are:
  - intercept_syscall: Allow policing of system calls at system call entry, for
    processes that have activated secure computing (seccomp) mode.
  - file_lookup: Allow modification of the result of an fget() operation, so that

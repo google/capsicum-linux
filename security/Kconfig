@@ -123,9 +123,10 @@ config SECURITY_CAPSICUM
 	depends on SECURITY
 	depends on SECURITY_PATH
 	help
-	  Enable the Capsicum LSM, which implements security primitives that
-	  support fine-grained capabilities on file descriptors; see
-	  Documentation/security/capsicum.txt for more details.
+	  Enable the Capsicum capability framework, which implements security
+	  primitives that support fine-grained capabilities on file
+	  descriptors; see Documentation/security/capsicum.txt for more
+	  details.
 
 	  If you are unsure as to whether this is required, answer N.
 
@@ -140,7 +141,6 @@ source security/integrity/Kconfig
 
 choice
 	prompt "Default security module"
-	default DEFAULT_SECURITY_CAPSICUM if SECURITY_CAPSICUM
 	default DEFAULT_SECURITY_SELINUX if SECURITY_SELINUX
 	default DEFAULT_SECURITY_SMACK if SECURITY_SMACK
 	default DEFAULT_SECURITY_TOMOYO if SECURITY_TOMOYO
@@ -151,9 +151,6 @@ choice
 	help
 	  Select the security module that will be used by default if the
 	  kernel parameter security= is not specified.
-
-	config DEFAULT_SECURITY_CAPSICUM
-		bool "Capsicum" if SECURITY_CAPSICUM=y
 
 	config DEFAULT_SECURITY_SELINUX
 		bool "SELinux" if SECURITY_SELINUX=y
@@ -177,7 +174,6 @@ endchoice
 
 config DEFAULT_SECURITY
 	string
-	default "capsicum" if DEFAULT_SECURITY_CAPSICUM
 	default "selinux" if DEFAULT_SECURITY_SELINUX
 	default "smack" if DEFAULT_SECURITY_SMACK
 	default "tomoyo" if DEFAULT_SECURITY_TOMOYO

@@ -6,11 +6,17 @@
 #ifdef CONFIG_SECURITY_CAPSICUM
 struct file;
 
-/*
- * Process the arguments for a syscall and return the action that the seccomp
- * framework should perform for the syscall.
- */
+/* LSM hook fallback functions */
 int capsicum_intercept_syscall(int arch, int callnr, unsigned long *args);
+struct file *capsicum_file_lookup(struct file *file,
+				  cap_rights_t required_rights,
+				cap_rights_t *actual_rights);
+struct file *capsicum_file_install(cap_rights_t base_rights, struct file *file);
+#ifdef CONFIG_SECURITY_PATH
+struct dentry;
+int capsicum_path_lookup(cap_rights_t base_rights,
+			struct dentry *dentry, const char *name);
+#endif
 
 /*
  * Wrap a file in a new Capsicum capability object and install the capability
