@@ -15,9 +15,22 @@
 #include <net/compat.h>
 #include <net/scm.h>
 #include <net/sock.h>
-#include <asm/prctl.h>
 #include <asm/unistd.h>
 #include <asm/syscall.h>
+
+/* TODO(drysdale): use a more general method for architecture-specific policing */
+#if defined(CONFIG_X86) || defined(CONFIG_UML_X86)
+#include <asm/prctl.h>
+static int check_arch_prctl(unsigned long *args)
+{
+	return (args[0] & ~(ARCH_SET_FS|ARCH_GET_FS|ARCH_SET_GS|ARCH_GET_GS) ? -ECAPMODE : 0);
+}
+#else
+static int check_arch_prctl(unsigned long *args)
+{
+	return -ECAPMODE;
+}
+#endif
 
 static int check_mmap(unsigned long *args)
 {
@@ -250,8 +263,7 @@ arch_initcall(init_syscalls_result);
 static int capsicum_run_syscall_table(int arch, int callnr, unsigned long *args)
 {
 	enum capmode_result rc;
-	if (arch != AUDIT_ARCH_X86_64)
-		return -ECAPMODE;
+
 	if (!syscalls_result || callnr >= NR_syscalls || callnr < 0)
 		return -ECAPMODE;
 
@@ -264,7 +276,7 @@ static int capsicum_run_syscall_table(int arch, int callnr, unsigned long *args)
 	/* Special cases that depend on syscall arguments */
 	switch (callnr) {
 	case (__NR_arch_prctl):
-		return (args[0] & ~(ARCH_SET_FS|ARCH_GET_FS|ARCH_SET_GS|ARCH_GET_GS) ? -ECAPMODE : 0);
+		return check_arch_prctl(args);
 	case (__NR_mmap):
 		return check_mmap(args);
 	case (__NR_openat):
