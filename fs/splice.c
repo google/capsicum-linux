@@ -1739,10 +1739,10 @@ SYSCALL_DEFINE6(splice, int, fd_in, loff_t __user *, off_in,
 		return 0;
 
 	error = -EBADF;
-	in = fdget(fd_in, CAP_READ|CAP_SEEK);
+	in = fdget(fd_in, CAP_PREAD);
 	if (!IS_ERR(in.file)) {
 		if (in.file->f_mode & FMODE_READ) {
-			out = fdget(fd_out, CAP_WRITE|CAP_SEEK);
+			out = fdget(fd_out, CAP_PWRITE);
 			if (!IS_ERR(out.file)) {
 				if (out.file->f_mode & FMODE_WRITE)
 					error = do_splice(in.file, off_in,

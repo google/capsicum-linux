@@ -1355,18 +1355,18 @@ static cap_rights_t aio_opcode_rights(int opcode)
 	switch (opcode) {
 	case IOCB_CMD_PREAD:
 	case IOCB_CMD_PREADV:
-		return CAP_READ|CAP_SEEK;
+		return CAP_PREAD;
 
 	case IOCB_CMD_PWRITE:
 	case IOCB_CMD_PWRITEV:
-		return CAP_WRITE|CAP_SEEK;
+		return CAP_PWRITE;
 
 	case IOCB_CMD_FSYNC:
 	case IOCB_CMD_FDSYNC:
 		return CAP_FSYNC;
 
 	default:
-		return CAP_READ|CAP_WRITE|CAP_SEEK|CAP_POLL_EVENT|CAP_FSYNC;
+		return CAP_PREAD|CAP_PWRITE|CAP_POLL_EVENT|CAP_FSYNC;
 	}
 }
 

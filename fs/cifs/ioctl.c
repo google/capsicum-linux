@@ -61,7 +61,7 @@ static long cifs_ioctl_clone(unsigned int xid, struct file *dst_file,
 		return rc;
 	}
 
-	src_file = fdget(srcfd, CAP_READ|CAP_SEEK);
+	src_file = fdget(srcfd, CAP_PREAD);
 	if (IS_ERR(src_file.file)) {
 		rc = PTR_ERR(src_file.file);
 		goto out_drop_write;

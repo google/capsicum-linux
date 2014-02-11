@@ -406,7 +406,7 @@ struct socket *sockfd_to_socket(unsigned int sockfd)
 	struct file *file;
 	struct inode *inode;
 
-	file = fget(sockfd, CAP_READ|CAP_WRITE|CAP_SEEK|CAP_SHUTDOWN);
+	file = fget(sockfd, CAP_READ|CAP_WRITE|CAP_SHUTDOWN);
 	if (!file) {
 		pr_err("invalid sockfd\n");
 		return NULL;

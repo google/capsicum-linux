@@ -4747,7 +4747,7 @@ long btrfs_ioctl_send(struct file *mnt_file, void __user *arg_)
 
 	sctx->flags = arg->flags;
 
-	sctx->send_filp = fget(arg->send_fd, CAP_WRITE|CAP_SEEK);
+	sctx->send_filp = fget(arg->send_fd, CAP_PWRITE);
 	if (IS_ERR(sctx->send_filp)) {
 		ret = PTR_ERR(sctx->send_filp);
 		sctx->send_filp = NULL;

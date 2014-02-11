@@ -498,7 +498,7 @@ static inline void file_pos_write(struct file *file, loff_t pos)
 
 SYSCALL_DEFINE3(read, unsigned int, fd, char __user *, buf, size_t, count)
 {
-	struct fd f = fdget(fd, CAP_READ|CAP_SEEK);
+	struct fd f = fdget(fd, CAP_READ);
 	ssize_t ret;
 
 	if (!IS_ERR(f.file)) {
@@ -516,7 +516,7 @@ SYSCALL_DEFINE3(read, unsigned int, fd, char __user *, buf, size_t, count)
 SYSCALL_DEFINE3(write, unsigned int, fd, const char __user *, buf,
 		size_t, count)
 {
-	struct fd f = fdget(fd, CAP_WRITE|CAP_SEEK);
+	struct fd f = fdget(fd, CAP_WRITE);
 	ssize_t ret;
 
 	if (!IS_ERR(f.file)) {
@@ -541,7 +541,7 @@ SYSCALL_DEFINE4(pread64, unsigned int, fd, char __user *, buf,
 	if (pos < 0)
 		return -EINVAL;
 
-	f = fdget(fd, CAP_READ);
+	f = fdget(fd, CAP_PREAD);
 	if (!IS_ERR(f.file)) {
 		ret = -ESPIPE;
 		if (f.file->f_mode & FMODE_PREAD)
@@ -563,7 +563,7 @@ SYSCALL_DEFINE4(pwrite64, unsigned int, fd, const char __user *, buf,
 	if (pos < 0)
 		return -EINVAL;
 
-	f = fdget(fd, CAP_WRITE);
+	f = fdget(fd, CAP_PWRITE);
 	if (!IS_ERR(f.file)) {
 		ret = -ESPIPE;
 		if (f.file->f_mode & FMODE_PWRITE)  
@@ -862,7 +862,7 @@ SYSCALL_DEFINE5(preadv, unsigned long, fd, const struct iovec __user *, vec,
 	if (pos < 0)
 		return -EINVAL;
 
-	f = fdget(fd, CAP_READ);
+	f = fdget(fd, CAP_PREAD);
 	if (!IS_ERR(f.file)) {
 		ret = -ESPIPE;
 		if (f.file->f_mode & FMODE_PREAD)
@@ -888,7 +888,7 @@ SYSCALL_DEFINE5(pwritev, unsigned long, fd, const struct iovec __user *, vec,
 	if (pos < 0)
 		return -EINVAL;
 
-	f = fdget(fd, CAP_WRITE);
+	f = fdget(fd, CAP_PWRITE);
 	if (!IS_ERR(f.file)) {
 		ret = -ESPIPE;
 		if (f.file->f_mode & FMODE_PWRITE)
@@ -1011,7 +1011,7 @@ COMPAT_SYSCALL_DEFINE4(preadv64, unsigned long, fd,
 
 	if (pos < 0)
 		return -EINVAL;
-	f = fdget(fd, CAP_READ);
+	f = fdget(fd, CAP_PREAD);
 	if (IS_ERR(f.file))
 		return PTR_ERR(f.file);
 	ret = -ESPIPE;
@@ -1078,7 +1078,7 @@ COMPAT_SYSCALL_DEFINE4(pwritev64, unsigned long, fd,
 
 	if (pos < 0)
 		return -EINVAL;
-	f = fdget(fd, CAP_WRITE);
+	f = fdget(fd, CAP_PWRITE);
 	if (IS_ERR(f.file))
 		return PTR_ERR(f.file);
 	ret = -ESPIPE;
@@ -1111,7 +1111,7 @@ static ssize_t do_sendfile(int out_fd, int in_fd, loff_t *ppos,
 	 * Get input file, and verify that it is ok..
 	 */
 	retval = -EBADF;
-	in = fdget(in_fd, CAP_READ);
+	in = fdget(in_fd, CAP_PREAD);
 	if (IS_ERR(in.file)) {
 		retval = PTR_ERR(in.file);
 		goto out;

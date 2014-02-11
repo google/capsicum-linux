@@ -1416,7 +1416,7 @@ static ssize_t ucma_migrate_id(struct ucma_file *new_file,
 		return -EFAULT;
 
 	/* Get current fd to protect against it being closed */
-	f = fdget(cmd.fd, CAP_READ|CAP_WRITE|CAP_SEEK|CAP_POLL_EVENT);
+	f = fdget(cmd.fd, CAP_READ|CAP_WRITE|CAP_POLL_EVENT);
 	if (IS_ERR(f.file))
 		return -ENOENT;
 

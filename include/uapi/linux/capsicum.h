@@ -15,6 +15,8 @@ typedef __u64 cap_rights_t;
 #define CAP_FSYNC               0x0000000000000020ULL
 #define CAP_FTRUNCATE           0x0000000000000040ULL
 #define CAP_SEEK                0x0000000000000080ULL
+#define CAP_PREAD               (CAP_SEEK | CAP_READ)   /* pread/preadv */
+#define CAP_PWRITE              (CAP_SEEK | CAP_WRITE)  /* pwrite/pwritev/openat(O_WRONLY) */
 
 /* VFS methods. */
 #define CAP_FCHFLAGS            0x0000000000000100ULL

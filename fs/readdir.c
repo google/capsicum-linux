@@ -204,7 +204,7 @@ SYSCALL_DEFINE3(getdents, unsigned int, fd,
 	if (!access_ok(VERIFY_WRITE, dirent, count))
 		return -EFAULT;
 
-	f = fdget(fd, CAP_READ|CAP_SEEK);
+	f = fdget(fd, CAP_READ);
 	if (IS_ERR(f.file))
 		return PTR_ERR(f.file);
 
@@ -284,7 +284,7 @@ SYSCALL_DEFINE3(getdents64, unsigned int, fd,
 	if (!access_ok(VERIFY_WRITE, dirent, count))
 		return -EFAULT;
 
-	f = fdget(fd, CAP_READ|CAP_SEEK);
+	f = fdget(fd, CAP_READ);
 	if (IS_ERR(f.file))
 		return PTR_ERR(f.file);
 

@@ -146,7 +146,7 @@ SYSCALL_DEFINE4(osf_getdirentries, unsigned int, fd,
 		long __user *, basep)
 {
 	int error;
-	struct fd arg = fdget(fd, CAP_READ|CAP_SEEK);
+	struct fd arg = fdget(fd, CAP_READ);
 	struct osf_dirent_callback buf = {
 		.ctx.actor = osf_filldir,
 		.dirent = dirent,
