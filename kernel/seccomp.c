@@ -543,6 +543,10 @@ long prctl_set_seccomp(unsigned long seccomp_mode, char __user *filter)
 		goto out;
 	}
 
+	/*
+	 * TODO(drysdale): find a better way of doing this, possibly leveraging
+	 * Will Drewry's PR_SECCOMP_EXT approach (initial patchset Jan 2014).
+	 */
 	if (seccomp_mode == SECCOMP_MODE_LSM) {
 		/*
 		 * SECCOMP_LSM mode has slightly different semantics: it affects
@@ -551,6 +555,7 @@ long prctl_set_seccomp(unsigned long seccomp_mode, char __user *filter)
 		 */
 		struct task_struct *t;
 
+		/* TODO(drysdale): fix locking */
 		rcu_read_lock();
 		/* First check none of the threads are already in a different seccomp mode */
 		t = current;
