@@ -3464,8 +3464,7 @@ SYSCALL_DEFINE4(mknodat, int, dfd, const char __user *, filename, umode_t, mode,
 
 	switch (mode & S_IFMT) {
 		case S_IFCHR: case S_IFBLK:
-			/* TODO(drysdale): enable this when CAP_MKNODAT is available */
-			/* dfd_rights |= CAP_MKNODAT; */
+			dfd_rights |= CAP_MKNODAT;
 			break;
 		case S_IFIFO:
 			dfd_rights |= CAP_MKFIFO;

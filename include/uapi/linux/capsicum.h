@@ -105,8 +105,11 @@ typedef __u64 cap_rights_t;
 /* Allow performance monitoring operations */
 #define CAP_PERFMON             0x0800000000000000ULL
 
+/* Allow mknodat(2) */
+#define CAP_MKNODAT             0x1000000000000000ULL
+
 /* The mask of all valid method rights. */
-#define CAP_MASK_VALID          0x0fffffffffffffffULL
+#define CAP_MASK_VALID          0x1fffffffffffffffULL
 
 /* All possible method rights. */
 #define CAP_ALL                 0xffffffffffffffffULL
