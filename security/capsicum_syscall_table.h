@@ -32,6 +32,12 @@ static int check_arch_prctl(unsigned long *args)
 }
 #endif
 
+static int check_kill(unsigned long *args)
+{
+	pid_t pid = args[0];
+	return (pid == task_tgid_vnr(current)) ? 0 : -ECAPMODE;
+}
+
 static int check_mmap(unsigned long *args)
 {
 	int flags = args[3];
@@ -102,6 +108,7 @@ static int __init init_syscalls_result(void)
 
 	/* Syscalls whose arguments need to be examined */
 	syscalls_result[__NR_arch_prctl] = CAPMODE_SPECIAL;
+	syscalls_result[__NR_kill] = CAPMODE_SPECIAL;
 	syscalls_result[__NR_mmap] = CAPMODE_SPECIAL;
 	syscalls_result[__NR_openat] = CAPMODE_SPECIAL;
 	syscalls_result[__NR_prctl] = CAPMODE_SPECIAL;
@@ -277,6 +284,8 @@ static int capsicum_run_syscall_table(int arch, int callnr, unsigned long *args)
 	switch (callnr) {
 	case (__NR_arch_prctl):
 		return check_arch_prctl(args);
+	case (__NR_kill):
+		return check_kill(args);
 	case (__NR_mmap):
 		return check_mmap(args);
 	case (__NR_openat):
