@@ -23,7 +23,8 @@ do
         -b) BUILD=true;;
         -v) VERBOSE=true;;
         -gdb)
-            INVOKE="gdb --args";;
+            INVOKE="gdb --args"
+            VERBOSE=true;;
         *) break;;
     esac
     shift
