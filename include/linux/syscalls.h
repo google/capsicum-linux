@@ -848,7 +848,7 @@ asmlinkage long sys_kcmp(pid_t pid1, pid_t pid2, int type,
 			 unsigned long idx1, unsigned long idx2);
 asmlinkage long sys_finit_module(int fd, const char __user *uargs, int flags);
 asmlinkage long sys_cap_new(unsigned int orig_fd, u64 new_rights);
-asmlinkage long sys_cap_getrights(unsigned int fd, u64 *rightsp);
+asmlinkage long sys_cap_rights_get(unsigned int fd, u64 *rightsp);
 asmlinkage long sys_pdfork(int __user *fdp, int  flags);
 asmlinkage long sys_pdgetpid(int fd, pid_t __user * pidp);
 asmlinkage long sys_pdkill(int fd, int signum);

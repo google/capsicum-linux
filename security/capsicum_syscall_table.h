@@ -117,8 +117,8 @@ static int __init init_syscalls_result(void)
 	syscalls_result[__NR_accept] = CAPMODE_ALLOW;
 	syscalls_result[__NR_accept4] = CAPMODE_ALLOW;
 	syscalls_result[__NR_brk] = CAPMODE_ALLOW;
-	syscalls_result[__NR_cap_getrights] = CAPMODE_ALLOW;
 	syscalls_result[__NR_cap_new] = CAPMODE_ALLOW;
+	syscalls_result[__NR_cap_rights_get] = CAPMODE_ALLOW;
 	syscalls_result[__NR_clock_getres] = CAPMODE_ALLOW;
 	syscalls_result[__NR_clock_gettime] = CAPMODE_ALLOW;
 	syscalls_result[__NR_clone] = CAPMODE_ALLOW;

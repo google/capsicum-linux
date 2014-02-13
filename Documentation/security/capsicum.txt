@@ -123,7 +123,7 @@ New System Calls
 
 Capsicum implements the following new system calls:
  - cap_new: create a capability FD from a file descriptor (security/capsicum.c)
- - cap_getrights: return the rights associated with a capability FD
+ - cap_rights_get: return the rights associated with a capability FD
    (security/capsicum.c)
  - fexecve: execve via a file descriptor (fs/exec.c)
  - pdfork: fork and generate a process descriptor (kernel/fork.c)

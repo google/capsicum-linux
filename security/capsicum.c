@@ -186,7 +186,7 @@ SYSCALL_DEFINE2(cap_new, unsigned int, orig_fd, u64, new_rights)
 	return do_sys_cap_new(orig_fd, (cap_rights_t)new_rights);
 }
 
-SYSCALL_DEFINE2(cap_getrights, unsigned int, fd, u64 __user *, rightsp)
+SYSCALL_DEFINE2(cap_rights_get, unsigned int, fd, u64 __user *, rightsp)
 {
 	int result;
 	struct file *file;
