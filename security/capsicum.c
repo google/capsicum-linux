@@ -24,24 +24,15 @@
 #include <linux/capsicum.h>
 
 #ifdef CONFIG_SECURITY_CAPSICUM
-
-#if 0
-#define kdebug(FMT, ...) \
-	printk(KERN_ERR "[%-9.9s%5u] "FMT"\n", current->comm, current->pid ,##__VA_ARGS__)
-#else
-#define kdebug(FMT, ...)
-#endif
-
 /*
  * Capsicum capability structure, holding the associated rights and underlying
  * real file.  Capabilities are not stacked, i.e. underlying always points to a
- * normal file not another capsicum_capability. Stored in file->private_data.
+ * normal file not another Capsicum capability. Stored in file->private_data.
  */
 struct capsicum_capability {
 	cap_rights_t rights;
 	struct file *underlying;
 };
-
 
 extern struct file_operations capsicum_file_ops;
 
@@ -58,37 +49,32 @@ inline int capsicum_is_cap(const struct file *file)
 EXPORT_SYMBOL(capsicum_is_cap);
 
 /*
- * Allocate a Capsicum capability object.
+ * Allocate a Capsicum capability object to wrap a given file object
+ * with the given rights.  Assumes the underlying file has already been
+ * unwrapped, i.e. is a normal file not a Capsicum capability object.
  */
-static struct file *capsicum_cap_alloc(void)
+static struct file *capsicum_wrap(struct file *underlying, cap_rights_t rights)
 {
 	struct capsicum_capability *cap;
-	struct file *newfile;
+	struct file *capf;
 
 	cap = kzalloc(sizeof(*cap), GFP_KERNEL);
 	if (!cap)
 		return ERR_PTR(-ENOMEM);
 
-	newfile = anon_inode_getfile("[capability]", &capsicum_file_ops, cap, 0);
-	if (IS_ERR(newfile))
+	capf = anon_inode_getfile("[capability]", &capsicum_file_ops, cap, 0);
+	if (IS_ERR(capf)) {
 		kfree(cap);
+		return capf;
+	}
 
-	return newfile;
-}
-
-/*
- * Initialise an already-allocated Capsicum capability object. to point to the
- * given underlying file with the given rights.
- */
-static void capsicum_cap_set(struct file *capf, struct file *underlying,
-			cap_rights_t rights)
-{
-	struct capsicum_capability *cap = capf->private_data;
-
-	BUG_ON(!capsicum_is_cap(capf));
-	BUG_ON(!cap);
+	if (!atomic_long_inc_not_zero(&underlying->f_count)) {
+		fput(capf);
+		return ERR_PTR(-EBADF);
+	}
 	cap->underlying = underlying;
 	cap->rights = rights;
+	return capf;
 }
 
 /*
@@ -115,64 +101,64 @@ EXPORT_SYMBOL(capsicum_unwrap);
 /* Include the per-syscall processing code */
 #include "capsicum_syscall_table.h"
 
-static int do_sys_cap_new(unsigned int orig_fd, cap_rights_t new_rights)
+int capsicum_rights_limit(unsigned int fd, cap_rights_t *new_rights)
 {
 	int rc = -EBADF;
-	int fd;
-	struct file *capf;
-	struct file *file;
-	struct file *underlying;
+	struct file *capf = NULL;
+	struct file *file;  /* current file for fd */
+	struct file *underlying;  /* base file for capability */
 	struct files_struct *files = current->files;
+	struct fdtable *fdt;
 	cap_rights_t existing_rights = CAP_ALL;
 
-	rcu_read_lock();
-	file = fcheck_files(files, orig_fd);
+	spin_lock(&files->file_lock);
+	fdt = files_fdtable(files);
+	if (fd >= fdt->max_fds)
+		goto out_err;
+	file = fdt->fd[fd];
 	if (!file)
 		goto out_err;
 
+	/* If we're limiting an existing Capsicum capability object, ensure
+	 * we wrap its underlying normal file. */
 	underlying = capsicum_unwrap(file, &existing_rights);
-	if (underlying)
-		file = underlying;
+	if (!underlying)
+		underlying = file;
 
 	/* Reject attempts to widen rights */
-	if ((new_rights & existing_rights) != new_rights) {
+	if (((*new_rights) & existing_rights) != (*new_rights)) {
 		rc = -ENOTCAPABLE;
 		goto out_err;
 	}
 
-	fd = get_unused_fd();
-	if (fd < 0) {
-		rc = fd;
+	capf = capsicum_wrap(underlying, *new_rights);
+	if (IS_ERR(capf)) {
+		rc = PTR_ERR(capf);
 		goto out_err;
 	}
 
-	capf = capsicum_cap_alloc();
-	if (IS_ERR(capf)) {
-		rc = PTR_ERR(capf);
-		goto out_err_put;
-	}
+	fput(file);
+	rcu_assign_pointer(fdt->fd[fd], capf);
+	spin_unlock(&files->file_lock);
+	return 0;
 
-	if (!atomic_long_inc_not_zero(&file->f_count))
-		goto out_err_put;
-
-	capsicum_cap_set(capf, file, new_rights);
-	fd_install(fd, capf);
-
-	rcu_read_unlock();
-	return fd;
-
-out_err_put:
-        put_unused_fd(fd);
 out_err:
-	rcu_read_unlock();
+	spin_unlock(&files->file_lock);
 	return rc;
 }
+EXPORT_SYMBOL(capsicum_rights_limit);
 
-SYSCALL_DEFINE2(cap_new, unsigned int, orig_fd, u64, new_rights)
+SYSCALL_DEFINE2(cap_rights_limit, unsigned int, fd, const u64 __user *, new_rights)
 {
-	return do_sys_cap_new(orig_fd, (cap_rights_t)new_rights);
+	cap_rights_t rights;
+
+	if (!new_rights)
+		return -EFAULT;
+	if (copy_from_user(&rights, new_rights, sizeof(cap_rights_t)))
+		return -EFAULT;
+
+	return capsicum_rights_limit(fd, &rights);
 }
-EXPORT_SYMBOL(sys_cap_new);
 
 SYSCALL_DEFINE2(cap_rights_get, unsigned int, fd, u64 __user *, rightsp)
 {
@@ -297,17 +283,9 @@ EXPORT_SYMBOL(capsicum_file_lookup);
 
 struct file *capsicum_file_install(cap_rights_t base_rights, struct file *file)
 {
-	struct file *capf;
 	if (base_rights == CAP_ALL)
 		return file;
-
-	/* Now allocate the Capsicum capability file wrapper */
-	capf = capsicum_cap_alloc();
-	if (IS_ERR(capf))
-		return capf;
-
-	capsicum_cap_set(capf, file, base_rights);
-	return capf;
+	return capsicum_wrap(file, base_rights);
 }
 EXPORT_SYMBOL(capsicum_file_install);
 

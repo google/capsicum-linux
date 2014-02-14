@@ -9,7 +9,7 @@ struct file;
 int capsicum_intercept_syscall(int arch, int callnr, unsigned long *args);
 struct file *capsicum_file_lookup(struct file *file,
 				  cap_rights_t required_rights,
-				cap_rights_t *actual_rights);
+				  cap_rights_t *actual_rights);
 struct file *capsicum_file_install(cap_rights_t base_rights, struct file *file);
 #ifdef CONFIG_SECURITY_PATH
 struct dentry;
@@ -19,6 +19,9 @@ int capsicum_path_lookup(cap_rights_t base_rights,
 #ifdef CONFIG_SECURITY_CAPSICUM
 /* Determine if a file is a Capsicum capability. */
 int capsicum_is_cap(const struct file *file);
+
+/* Restrict the rights associated with a file descriptor. */
+int capsicum_rights_limit(unsigned int fd, cap_rights_t *new_rights);
 
 /* Return the underlying file for a Capsicum capability. */
 struct file *capsicum_unwrap(const struct file *capf, cap_rights_t *rights);
