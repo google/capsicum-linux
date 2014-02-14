@@ -112,64 +112,27 @@ struct file *capsicum_unwrap(const struct file *capf, cap_rights_t *rights)
 }
 EXPORT_SYMBOL(capsicum_unwrap);
 
-/*
- * Wrap a file in a new Capsicum capability object and install the capability
- * object into the file descriptor table.  Returns the new file descriptor or an
- * error.
- */
-int capsicum_install_fd(struct file *orig, cap_rights_t rights)
-{
-	int error, fd;
-	struct file *capf;
-	struct file *file;
-
-	error = get_unused_fd();
-	if (error < 0)
-		return error;
-	fd = error;
-
-	capf = capsicum_cap_alloc();
-	if (IS_ERR(capf)) {
-		error = PTR_ERR(capf);
-		goto err_put_unused_fd;
-	}
-
-	file = capsicum_unwrap(orig, NULL);
-	if (file)
-		orig = file;
-	get_file(orig);
-	capsicum_cap_set(capf, orig, rights);
-	fd_install(fd, capf);
-
-	return fd;
-
-err_put_unused_fd:
-	put_unused_fd(fd);
-	return error;
-}
-EXPORT_SYMBOL(capsicum_install_fd);
-
 /* Include the per-syscall processing code */
 #include "capsicum_syscall_table.h"
 
 static int do_sys_cap_new(unsigned int orig_fd, cap_rights_t new_rights)
 {
 	int rc = -EBADF;
+	int fd;
+	struct file *capf;
 	struct file *file;
+	struct file *underlying;
 	struct files_struct *files = current->files;
 	cap_rights_t existing_rights = CAP_ALL;
 
 	rcu_read_lock();
 	file = fcheck_files(files, orig_fd);
-
 	if (!file)
 		goto out_err;
 
-	if (capsicum_is_cap(file)) {
-		file = capsicum_unwrap(file, &existing_rights);
-		if (!file)
-			goto out_err;
-	}
+	underlying = capsicum_unwrap(file, &existing_rights);
+	if (underlying)
+		file = underlying;
 
 	/* Reject attempts to widen rights */
 	if ((new_rights & existing_rights) != new_rights) {
@@ -177,12 +140,29 @@ static int do_sys_cap_new(unsigned int orig_fd, cap_rights_t new_rights)
 		goto out_err;
 	}
 
-	if (!atomic_long_inc_not_zero(&file->f_count))
+	fd = get_unused_fd();
+	if (fd < 0) {
+		rc = fd;
 		goto out_err;
+	}
+
+	capf = capsicum_cap_alloc();
+	if (IS_ERR(capf)) {
+		rc = PTR_ERR(capf);
+		goto out_err_put;
+	}
+
+	if (!atomic_long_inc_not_zero(&file->f_count))
+		goto out_err_put;
+
+	capsicum_cap_set(capf, file, new_rights);
+	fd_install(fd, capf);
 
 	rcu_read_unlock();
-	return capsicum_install_fd(file, new_rights);
+	return fd;
 
+out_err_put:
+        put_unused_fd(fd);
 out_err:
 	rcu_read_unlock();
 	return rc;
@@ -192,6 +172,7 @@ SYSCALL_DEFINE2(cap_new, unsigned int, orig_fd, u64, new_rights)
 {
 	return do_sys_cap_new(orig_fd, (cap_rights_t)new_rights);
 }
+EXPORT_SYMBOL(sys_cap_new);
 
 SYSCALL_DEFINE2(cap_rights_get, unsigned int, fd, u64 __user *, rightsp)
 {

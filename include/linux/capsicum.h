@@ -17,13 +17,6 @@ int capsicum_path_lookup(cap_rights_t base_rights,
 			struct dentry *dentry, const char *name);
 
 #ifdef CONFIG_SECURITY_CAPSICUM
-/*
- * Wrap a file in a new Capsicum capability object and install the capability
- * object into the file descriptor table. Return the new file descriptor or an
- * error value.
- */
-int capsicum_install_fd(struct file *orig, cap_rights_t rights);
-
 /* Determine if a file is a Capsicum capability. */
 int capsicum_is_cap(const struct file *file);
 
