@@ -154,6 +154,7 @@ EXPORT_SYMBOL(capsicum_install_fd);
 
 static int do_sys_cap_new(unsigned int orig_fd, cap_rights_t new_rights)
 {
+	int rc = -EBADF;
 	struct file *file;
 	struct files_struct *files = current->files;
 	cap_rights_t existing_rights = CAP_ALL;
@@ -170,15 +171,21 @@ static int do_sys_cap_new(unsigned int orig_fd, cap_rights_t new_rights)
 			goto out_err;
 	}
 
+	/* Reject attempts to widen rights */
+	if ((new_rights & existing_rights) != new_rights) {
+		rc = -ENOTCAPABLE;
+		goto out_err;
+	}
+
 	if (!atomic_long_inc_not_zero(&file->f_count))
 		goto out_err;
 
 	rcu_read_unlock();
-	return capsicum_install_fd(file, new_rights & existing_rights);
+	return capsicum_install_fd(file, new_rights);
 
 out_err:
 	rcu_read_unlock();
-	return -EBADF;
+	return rc;
 }
 
 SYSCALL_DEFINE2(cap_new, unsigned int, orig_fd, u64, new_rights)
