@@ -13,7 +13,7 @@ This functionality is based on:
    [Linux kernel implementation](http://git.chromium.org/gitweb/?p=chromiumos/third_party/kernel-capsicum.git;a=shortlog;h=refs/heads/capsicum)
    written by Meredydd Luff in 2012.
 
-The current functionality is based on the 3.11.1 upstream kernel.
+The current functionality is based on the 3.13 upstream kernel.
 
 Functionality Overview
 ----------------------
