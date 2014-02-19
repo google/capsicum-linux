@@ -649,12 +649,13 @@ iscsi_sw_tcp_conn_bind(struct iscsi_cls_session *cls_session,
 	struct iscsi_sw_tcp_conn *tcp_sw_conn = tcp_conn->dd_data;
 	struct sock *sk;
 	struct socket *sock;
+	struct cap_rights rights;
 	int err;
 
 	/* lookup for existing socket */
-	sock = sockfd_lookup((int)transport_eph,
-			     (CAP_READ|CAP_WRITE|CAP_GETSOCKNAME|
-			      CAP_GETPEERNAME|CAP_GETSOCKOPT), &err);
+	cap_rights_init(&rights, CAP_READ, CAP_WRITE, CAP_GETSOCKNAME,
+			CAP_GETPEERNAME, CAP_GETSOCKOPT);
+	sock = sockfd_lookup((int)transport_eph, &rights, &err);
 	if (!sock) {
 		iscsi_conn_printk(KERN_ERR, conn,
 				  "sockfd_lookup failed %d\n", err);

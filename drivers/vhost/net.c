@@ -813,7 +813,7 @@ static int vhost_net_release(struct inode *inode, struct file *f)
 	return 0;
 }
 
-static struct socket *get_raw_socket(int fd, cap_rights_t required_rights)
+static struct socket *get_raw_socket(int fd, struct cap_rights *required_rights)
 {
 	struct {
 		struct sockaddr_ll sa;
@@ -846,7 +846,7 @@ err:
 	return ERR_PTR(r);
 }
 
-static struct socket *get_tap_socket(int fd, cap_rights_t required_rights)
+static struct socket *get_tap_socket(int fd, struct cap_rights *required_rights)
 {
 	struct file *file = fget(fd, required_rights);
 	struct socket *sock;
@@ -862,7 +862,7 @@ static struct socket *get_tap_socket(int fd, cap_rights_t required_rights)
 	return sock;
 }
 
-static struct socket *get_socket(int fd, cap_rights_t required_rights)
+static struct socket *get_socket(int fd, struct cap_rights *required_rights)
 {
 	struct socket *sock;
 
@@ -884,6 +884,7 @@ static long vhost_net_set_backend(struct vhost_net *n, unsigned index, int fd)
 	struct vhost_virtqueue *vq;
 	struct vhost_net_virtqueue *nvq;
 	struct vhost_net_ubuf_ref *ubufs, *oldubufs = NULL;
+	struct cap_rights rights;
 	int r;
 
 	mutex_lock(&n->dev.mutex);
@@ -904,7 +905,7 @@ static long vhost_net_set_backend(struct vhost_net *n, unsigned index, int fd)
 		r = -EFAULT;
 		goto err_vq;
 	}
-	sock = get_socket(fd, CAP_READ|CAP_WRITE);
+	sock = get_socket(fd, cap_rights_init(&rights, CAP_READ, CAP_WRITE));
 	if (IS_ERR(sock)) {
 		r = PTR_ERR(sock);
 		goto err_vq;

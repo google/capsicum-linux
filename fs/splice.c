@@ -1684,6 +1684,7 @@ SYSCALL_DEFINE4(vmsplice, int, fd, const struct iovec __user *, iov,
 		unsigned long, nr_segs, unsigned int, flags)
 {
 	struct fd f;
+	struct cap_rights rights;
 	long error;
 
 	if (unlikely(nr_segs > UIO_MAXIOV))
@@ -1692,7 +1693,7 @@ SYSCALL_DEFINE4(vmsplice, int, fd, const struct iovec __user *, iov,
 		return 0;
 
 	error = -EBADF;
-	f = fdget(fd, CAP_WRITE);
+	f = fdget(fd, cap_rights_init(&rights, CAP_WRITE));
 	if (!IS_ERR(f.file)) {
 		if (f.file->f_mode & FMODE_WRITE)
 			error = vmsplice_to_pipe(f.file, iov, nr_segs, flags);
@@ -1733,16 +1734,18 @@ SYSCALL_DEFINE6(splice, int, fd_in, loff_t __user *, off_in,
 		size_t, len, unsigned int, flags)
 {
 	struct fd in, out;
+	struct cap_rights rights;
 	long error;
 
 	if (unlikely(!len))
 		return 0;
 
 	error = -EBADF;
-	in = fdget(fd_in, CAP_PREAD);
+	in = fdget(fd_in, cap_rights_init(&rights, CAP_PREAD));
 	if (!IS_ERR(in.file)) {
 		if (in.file->f_mode & FMODE_READ) {
-			out = fdget(fd_out, CAP_PWRITE);
+			out = fdget(fd_out,
+				    cap_rights_init(&rights, CAP_PWRITE));
 			if (!IS_ERR(out.file)) {
 				if (out.file->f_mode & FMODE_WRITE)
 					error = do_splice(in.file, off_in,
@@ -2068,16 +2071,19 @@ static long do_tee(struct file *in, struct file *out, size_t len,
 SYSCALL_DEFINE4(tee, int, fdin, int, fdout, size_t, len, unsigned int, flags)
 {
 	struct fd in;
+	struct cap_rights rights;
 	int error;
 
 	if (unlikely(!len))
 		return 0;
 
 	error = -EBADF;
-	in = fdget(fdin, CAP_READ);
+	in = fdget(fdin, cap_rights_init(&rights, CAP_READ));
 	if (!IS_ERR(in.file)) {
 		if (in.file->f_mode & FMODE_READ) {
-			struct fd out = fdget(fdout, CAP_WRITE);
+			struct fd out = fdget(fdout,
+					      cap_rights_init(&rights,
+							      CAP_WRITE));
 			if (!IS_ERR(out.file)) {
 				if (out.file->f_mode & FMODE_WRITE)
 					error = do_tee(in.file, out.file,

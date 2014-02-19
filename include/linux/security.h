@@ -24,7 +24,6 @@
 
 #include <linux/key.h>
 #include <linux/capability.h>
-#include <linux/capsicum.h>
 #include <linux/slab.h>
 #include <linux/err.h>
 #include <linux/string.h>
@@ -54,6 +53,7 @@ struct msg_queue;
 struct xattr;
 struct xfrm_sec_ctx;
 struct mm_struct;
+struct cap_rights;
 
 /* Maximum number of letters for an LSM name string */
 #define SECURITY_NAME_MAX	10
@@ -1537,8 +1537,8 @@ struct security_operations {
 	int (*path_chmod) (struct path *path, umode_t mode);
 	int (*path_chown) (struct path *path, kuid_t uid, kgid_t gid);
 	int (*path_chroot) (struct path *path);
-	int (*path_lookup) (cap_rights_t base_rights,
-			struct dentry *dentry, const char *name);
+	int (*path_lookup) (struct cap_rights *base_rights,
+			    struct dentry *dentry, const char *name);
 #endif
 
 	int (*inode_alloc_security) (struct inode *inode);
@@ -1599,9 +1599,9 @@ struct security_operations {
 	int (*file_receive) (struct file *file);
 	int (*file_open) (struct file *file, const struct cred *cred);
 	struct file *(*file_lookup) (struct file *orig,
-				     cap_rights_t required_rights,
-				     cap_rights_t *actual_rights);
-	struct file *(*file_install) (cap_rights_t base_rights,
+				     struct cap_rights *required_rights,
+				     struct cap_rights *actual_rights);
+	struct file *(*file_install) (struct cap_rights *base_rights,
 				      struct file *file);
 
 	int (*task_create) (unsigned long clone_flags);
@@ -1878,9 +1878,9 @@ int security_file_send_sigiotask(struct task_struct *tsk,
 int security_file_receive(struct file *file);
 int security_file_open(struct file *file, const struct cred *cred);
 struct file *security_file_lookup(struct file *orig,
-				cap_rights_t required_rights,
-				cap_rights_t *actual_rights);
-struct file *security_file_install(cap_rights_t base_rights,
+				struct cap_rights *required_rights,
+				struct cap_rights *actual_rights);
+struct file *security_file_install(struct cap_rights *base_rights,
 				   struct file *file);
 int security_task_create(unsigned long clone_flags);
 void security_task_free(struct task_struct *task);
@@ -2382,7 +2382,7 @@ static inline int security_file_open(struct file *file,
 }
 
 static inline struct file *security_file_lookup(struct file *orig,
-						cap_rights_t required_rights)
+						struct cap_rights *required_rights)
 {
 	return orig;
 }
@@ -2392,8 +2392,8 @@ static inline int security_fd_alloc(unsigned int fd)
 	return 0;
 }
 
-static inline int security_path_lookup(cap_rights_t base_rights,
-				struct dentry *dentry, const char *name)
+static inline int security_path_lookup(struct cap_rights *base_rights,
+				       struct dentry *dentry, const char *name)
 {
 	return 0;
 }
@@ -3032,8 +3032,8 @@ int security_path_rename(struct path *old_dir, struct dentry *old_dentry,
 int security_path_chmod(struct path *path, umode_t mode);
 int security_path_chown(struct path *path, kuid_t uid, kgid_t gid);
 int security_path_chroot(struct path *path);
-int security_path_lookup(cap_rights_t base_rights,
-			struct dentry *dentry, const char *name);
+int security_path_lookup(struct cap_rights *base_rights,
+			 struct dentry *dentry, const char *name);
 #else	/* CONFIG_SECURITY_PATH */
 static inline int security_path_unlink(struct path *dir, struct dentry *dentry)
 {
@@ -3098,8 +3098,8 @@ static inline int security_path_chroot(struct path *path)
 	return 0;
 }
 
-static inline int security_path_lookup(cap_rights_t base_rights,
-				struct dentry *dentry, const char *name)
+static inline int security_path_lookup(struct cap_rights *base_rights,
+				       struct dentry *dentry, const char *name)
 {
 	return 0;
 }

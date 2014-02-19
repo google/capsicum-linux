@@ -46,6 +46,7 @@ static long cifs_ioctl_clone(unsigned int xid, struct file *dst_file,
 	struct cifsFileInfo *smb_file_src;
 	struct inode *src_inode;
 	struct cifs_tcon *src_tcon;
+	struct cap_rights rights;
 
 	cifs_dbg(FYI, "ioctl clone range\n");
 	/* the destination must be opened for writing */
@@ -61,7 +62,7 @@ static long cifs_ioctl_clone(unsigned int xid, struct file *dst_file,
 		return rc;
 	}
 
-	src_file = fdget(srcfd, CAP_PREAD);
+	src_file = fdget(srcfd, cap_rights_init(&rights, CAP_PREAD));
 	if (IS_ERR(src_file.file)) {
 		rc = PTR_ERR(src_file.file);
 		goto out_drop_write;

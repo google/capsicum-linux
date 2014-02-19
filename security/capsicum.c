@@ -30,7 +30,7 @@
  * normal file not another Capsicum capability. Stored in file->private_data.
  */
 struct capsicum_capability {
-	cap_rights_t rights;
+	struct cap_rights rights;
 	struct file *underlying;
 };
 
@@ -53,7 +53,8 @@ EXPORT_SYMBOL(capsicum_is_cap);
  * with the given rights.  Assumes the underlying file has already been
  * unwrapped, i.e. is a normal file not a Capsicum capability object.
  */
-static struct file *capsicum_wrap(struct file *underlying, cap_rights_t rights)
+static struct file *capsicum_wrap(struct file *underlying,
+				  struct cap_rights *rights)
 {
 	struct capsicum_capability *cap;
 	struct file *capf;
@@ -73,7 +74,7 @@ static struct file *capsicum_wrap(struct file *underlying, cap_rights_t rights)
 		return ERR_PTR(-EBADF);
 	}
 	cap->underlying = underlying;
-	cap->rights = rights;
+	cap->rights = *rights;
 	return capf;
 }
 
@@ -82,12 +83,16 @@ static struct file *capsicum_wrap(struct file *underlying, cap_rights_t rights)
  * that capability.  If rights is non-NULL, the capability's rights will be
  * stored there too.  If cap is not a capability, returns NULL.
  */
-struct file *capsicum_unwrap(const struct file *capf, cap_rights_t *rights)
+struct file *capsicum_unwrap(const struct file *capf,
+			     struct cap_rights *rights)
 {
 	struct capsicum_capability *cap;
 
-	if (!capsicum_is_cap(capf))
+	if (!capsicum_is_cap(capf)) {
+		if (rights)
+			CAP_ALL(rights);
 		return NULL;
+	}
 
 	cap = capf->private_data;
 
@@ -101,7 +106,7 @@ EXPORT_SYMBOL(capsicum_unwrap);
 /* Include the per-syscall processing code */
 #include "capsicum_syscall_table.h"
 
-int capsicum_rights_limit(unsigned int fd, cap_rights_t *new_rights)
+int capsicum_rights_limit(unsigned int fd, struct cap_rights *new_rights)
 {
 	int rc = -EBADF;
 	struct file *capf = NULL;
@@ -109,7 +114,7 @@ int capsicum_rights_limit(unsigned int fd, cap_rights_t *new_rights)
 	struct file *underlying;  /* base file for capability */
 	struct files_struct *files = current->files;
 	struct fdtable *fdt;
-	cap_rights_t existing_rights = CAP_ALL;
+	struct cap_rights existing_rights;
 
 	spin_lock(&files->file_lock);
 	fdt = files_fdtable(files);
@@ -126,12 +131,12 @@ int capsicum_rights_limit(unsigned int fd, cap_rights_t *new_rights)
 		underlying = file;
 
 	/* Reject attempts to widen rights */
-	if (((*new_rights) & existing_rights) != (*new_rights)) {
+	if (!cap_rights_contains(&existing_rights, new_rights)) {
 		rc = -ENOTCAPABLE;
 		goto out_err;
 	}
 
-	capf = capsicum_wrap(underlying, *new_rights);
+	capf = capsicum_wrap(underlying, new_rights);
 	if (IS_ERR(capf)) {
 		rc = PTR_ERR(capf);
 		goto out_err;
@@ -148,24 +153,24 @@ out_err:
 }
 EXPORT_SYMBOL(capsicum_rights_limit);
 
-SYSCALL_DEFINE2(cap_rights_limit, unsigned int, fd, const u64 __user *, new_rights)
+SYSCALL_DEFINE2(cap_rights_limit, unsigned int, fd, const struct cap_rights __user *, new_rights)
 {
-	cap_rights_t rights;
+	struct cap_rights rights;
 
 	if (!new_rights)
 		return -EFAULT;
-	if (copy_from_user(&rights, new_rights, sizeof(cap_rights_t)))
+	if (copy_from_user(&rights, new_rights, sizeof(rights)))
 		return -EFAULT;
 
 	return capsicum_rights_limit(fd, &rights);
 }
 
-SYSCALL_DEFINE2(cap_rights_get, unsigned int, fd, u64 __user *, rightsp)
+SYSCALL_DEFINE2(cap_rights_get, unsigned int, fd, struct cap_rights __user *, rightsp)
 {
 	int result;
 	struct file *file;
 	struct files_struct *files = current->files;
-        cap_rights_t rights = CAP_ALL;
+        struct cap_rights rights;
 
 	rcu_read_lock();
 	file = fcheck_files(files, fd);
@@ -180,7 +185,8 @@ SYSCALL_DEFINE2(cap_rights_get, unsigned int, fd, u64 __user *, rightsp)
 		goto out_err;
 	}
 	rcu_read_unlock();
-	put_user(rights, rightsp);
+	if (copy_to_user(rightsp, &rights, sizeof(rights)))
+		return -EFAULT;
 	return 0;
 
 out_err:
@@ -214,6 +220,7 @@ static int capsicum_release(struct inode *i, struct file *capf)
 
 static int capsicum_show_fdinfo(struct seq_file *m, struct file *capf)
 {
+	int i;
 	struct capsicum_capability *cap;
 
 	if (!capsicum_is_cap(capf))
@@ -221,7 +228,10 @@ static int capsicum_show_fdinfo(struct seq_file *m, struct file *capf)
 
 	cap = capf->private_data;
 	BUG_ON(!cap);
-	seq_printf(m, "rights:\t%#016llx\n", cap->rights);
+	seq_printf(m, "rights:");
+	for (i = 0; i < (CAP_RIGHTS_VERSION + 2); i++)
+		seq_printf(m, "\t%#016llx", cap->rights.cr_rights[i]);
+	seq_printf(m, "\n");
 	return 0;
 }
 
@@ -260,20 +270,20 @@ EXPORT_SYMBOL(capsicum_intercept_syscall);
  * capsicum_intercept_syscall().
  */
 struct file *capsicum_file_lookup(struct file *file,
-				  cap_rights_t required_rights,
-				  cap_rights_t *actual_rights)
+				  struct cap_rights *required_rights,
+				  struct cap_rights *actual_rights)
 {
-	cap_rights_t rights;
+	struct cap_rights rights;
 	struct file *underlying;
 
 	/* See if the file in question is a Capsicum capability. */
 	underlying = capsicum_unwrap(file, &rights);
 	if (!underlying) {
 		if (actual_rights)
-			*actual_rights = CAP_ALL;
+			CAP_ALL(actual_rights);
 		return file;
 	}
-	if ((rights & required_rights) != required_rights)
+	if (!cap_rights_contains(&rights, required_rights))
 		return ERR_PTR(-ENOTCAPABLE);
 	if (actual_rights)
 		*actual_rights = rights;
@@ -281,9 +291,10 @@ struct file *capsicum_file_lookup(struct file *file,
 }
 EXPORT_SYMBOL(capsicum_file_lookup);
 
-struct file *capsicum_file_install(cap_rights_t base_rights, struct file *file)
+struct file *capsicum_file_install(struct cap_rights *base_rights,
+				   struct file *file)
 {
-	if (base_rights == CAP_ALL)
+	if (CAP_IS_ALL(base_rights))
 		return file;
 	return capsicum_wrap(file, base_rights);
 }
@@ -294,10 +305,10 @@ EXPORT_SYMBOL(capsicum_file_install);
  * Prevent absolute lookups and upward traversal (../) when in capability
  * mode or when the lookup is relative to a capability file descriptor.
  */
-int capsicum_path_lookup(cap_rights_t base_rights,
+int capsicum_path_lookup(struct cap_rights *base_rights,
 			 struct dentry *dentry, const char *name)
 {
-	if (!capsicum_in_cap_mode() && base_rights == CAP_ALL)
+	if (!capsicum_in_cap_mode() && CAP_IS_ALL(base_rights))
 		return 0;
 
 	if (name[0] == '.' && name[1] == '.' &&
@@ -352,20 +363,21 @@ int capsicum_intercept_syscall(int arch, int callnr, unsigned long *args)
 }
 
 struct file *capsicum_file_lookup(struct file *file,
-				  cap_rights_t required_rights,
-				cap_rights_t *actual_rights)
+				  struct cap_rights *required_rights,
+				  struct cap_rights *actual_rights)
 {
 	return file;
 }
 
-struct file *capsicum_file_install(cap_rights_t base_rights, struct file *file)
+struct file *capsicum_file_install(struct cap_rights *base_rights,
+				   struct file *file)
 {
 	return file;
 }
 
 #ifdef CONFIG_SECURITY_PATH
-int capsicum_path_lookup(cap_rights_t base_rights,
-			struct dentry *dentry, const char *name)
+int capsicum_path_lookup(struct cap_rights *base_rights,
+			 struct dentry *dentry, const char *name)
 {
 	return 0;
 }

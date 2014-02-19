@@ -431,7 +431,7 @@ EXPORT_SYMBOL(sock_from_file);
  *	On a success the socket object pointer is returned.
  */
 
-struct socket *sockfd_lookup(int fd, cap_rights_t required_rights, int *err)
+struct socket *sockfd_lookup(int fd, struct cap_rights *required_rights, int *err)
 {
 	struct file *file;
 	struct socket *sock;
@@ -449,8 +449,9 @@ struct socket *sockfd_lookup(int fd, cap_rights_t required_rights, int *err)
 }
 EXPORT_SYMBOL(sockfd_lookup);
 
-static struct socket *sockfd_lookup_light(int fd, cap_rights_t required_rights,
-					int *err, int *fput_needed)
+static struct socket *sockfd_lookup_light(int fd,
+					  struct cap_rights *required_rights,
+					  int *err, int *fput_needed)
 {
 	struct file *file;
 	struct socket *sock;
@@ -469,9 +470,9 @@ static struct socket *sockfd_lookup_light(int fd, cap_rights_t required_rights,
 }
 
 static struct socket *
-sockfd_lookup_light_rights(int fd, cap_rights_t required_rights,
-			cap_rights_t *actual_rights,
-			int *err, int *fput_needed)
+sockfd_lookup_light_rights(int fd, struct cap_rights *required_rights,
+			   struct cap_rights *actual_rights,
+			   int *err, int *fput_needed)
 {
 	struct file *file;
 	struct socket *sock;
@@ -1533,8 +1534,10 @@ SYSCALL_DEFINE3(bind, int, fd, struct sockaddr __user *, umyaddr, int, addrlen)
 	struct socket *sock;
 	struct sockaddr_storage address;
 	int err, fput_needed;
+	struct cap_rights rights;
 
-	sock = sockfd_lookup_light(fd, CAP_BIND, &err, &fput_needed);
+	sock = sockfd_lookup_light(fd, cap_rights_init(&rights, CAP_BIND),
+				   &err, &fput_needed);
 	if (sock) {
 		err = move_addr_to_kernel(umyaddr, addrlen, &address);
 		if (err >= 0) {
@@ -1562,8 +1565,10 @@ SYSCALL_DEFINE2(listen, int, fd, int, backlog)
 	struct socket *sock;
 	int err, fput_needed;
 	int somaxconn;
+	struct cap_rights rights;
 
-	sock = sockfd_lookup_light(fd, CAP_LISTEN, &err, &fput_needed);
+	sock = sockfd_lookup_light(fd, cap_rights_init(&rights, CAP_LISTEN),
+				   &err, &fput_needed);
 	if (sock) {
 		somaxconn = sock_net(sock->sk)->core.sysctl_somaxconn;
 		if ((unsigned int)backlog > somaxconn)
@@ -1598,7 +1603,7 @@ SYSCALL_DEFINE4(accept4, int, fd, struct sockaddr __user *, upeer_sockaddr,
 	struct file *installfile;
 	int err, len, newfd, fput_needed;
 	struct sockaddr_storage address;
-	cap_rights_t rights;
+	struct cap_rights rights;
 
 	if (flags & ~(SOCK_CLOEXEC | SOCK_NONBLOCK))
 		return -EINVAL;
@@ -1606,7 +1611,8 @@ SYSCALL_DEFINE4(accept4, int, fd, struct sockaddr __user *, upeer_sockaddr,
 	if (SOCK_NONBLOCK != O_NONBLOCK && (flags & SOCK_NONBLOCK))
 		flags = (flags & ~SOCK_NONBLOCK) | O_NONBLOCK;
 
-	sock = sockfd_lookup_light_rights(fd, CAP_ACCEPT, &rights, &err, &fput_needed);
+	cap_rights_init(&rights, CAP_ACCEPT);
+	sock = sockfd_lookup_light_rights(fd, &rights, &rights, &err, &fput_needed);
 	if (!sock)
 		goto out;
 
@@ -1660,7 +1666,7 @@ SYSCALL_DEFINE4(accept4, int, fd, struct sockaddr __user *, upeer_sockaddr,
 
 	/* File flags are not inherited via accept() unlike another OSes. */
 
-	installfile = security_file_install(rights, newfile);
+	installfile = security_file_install(&rights, newfile);
 	if (IS_ERR(installfile)) {
 		err = PTR_ERR(installfile);
 		goto out_fd;
@@ -1702,8 +1708,10 @@ SYSCALL_DEFINE3(connect, int, fd, struct sockaddr __user *, uservaddr,
 	struct socket *sock;
 	struct sockaddr_storage address;
 	int err, fput_needed;
+	struct cap_rights rights;
 
-	sock = sockfd_lookup_light(fd, CAP_CONNECT, &err, &fput_needed);
+	sock = sockfd_lookup_light(fd, cap_rights_init(&rights, CAP_CONNECT),
+				   &err, &fput_needed);
 	if (!sock)
 		goto out;
 	err = move_addr_to_kernel(uservaddr, addrlen, &address);
@@ -1734,8 +1742,10 @@ SYSCALL_DEFINE3(getsockname, int, fd, struct sockaddr __user *, usockaddr,
 	struct socket *sock;
 	struct sockaddr_storage address;
 	int len, err, fput_needed;
+	struct cap_rights rights;
 
-	sock = sockfd_lookup_light(fd, CAP_GETSOCKNAME, &err, &fput_needed);
+	sock = sockfd_lookup_light(fd, cap_rights_init(&rights, CAP_GETSOCKNAME),
+				   &err, &fput_needed);
 	if (!sock)
 		goto out;
 
@@ -1765,8 +1775,10 @@ SYSCALL_DEFINE3(getpeername, int, fd, struct sockaddr __user *, usockaddr,
 	struct socket *sock;
 	struct sockaddr_storage address;
 	int len, err, fput_needed;
+	struct cap_rights rights;
 
-	sock = sockfd_lookup_light(fd, CAP_GETPEERNAME, &err, &fput_needed);
+	sock = sockfd_lookup_light(fd, cap_rights_init(&rights, CAP_GETPEERNAME),
+				   &err, &fput_needed);
 	if (sock != NULL) {
 		err = security_socket_getpeername(sock);
 		if (err) {
@@ -1801,13 +1813,14 @@ SYSCALL_DEFINE6(sendto, int, fd, void __user *, buff, size_t, len,
 	struct msghdr msg;
 	struct iovec iov;
 	int fput_needed;
-	cap_rights_t rights = CAP_WRITE;
+	struct cap_rights rights;
+	cap_rights_init(&rights, CAP_WRITE);
 
 	if (len > INT_MAX)
 		len = INT_MAX;
 	if (addr)
-		rights |= CAP_CONNECT;
-	sock = sockfd_lookup_light(fd, rights, &err, &fput_needed);
+		cap_rights_set(&rights, CAP_CONNECT);
+	sock = sockfd_lookup_light(fd, &rights, &err, &fput_needed);
 	if (!sock)
 		goto out;
 
@@ -1863,10 +1876,12 @@ SYSCALL_DEFINE6(recvfrom, int, fd, void __user *, ubuf, size_t, size,
 	struct sockaddr_storage address;
 	int err, err2;
 	int fput_needed;
+	struct cap_rights rights;
 
 	if (size > INT_MAX)
 		size = INT_MAX;
-	sock = sockfd_lookup_light(fd, CAP_READ, &err, &fput_needed);
+	sock = sockfd_lookup_light(fd, cap_rights_init(&rights, CAP_READ),
+				   &err, &fput_needed);
 	if (!sock)
 		goto out;
 
@@ -1916,11 +1931,13 @@ SYSCALL_DEFINE5(setsockopt, int, fd, int, level, int, optname,
 {
 	int err, fput_needed;
 	struct socket *sock;
+	struct cap_rights rights;
 
 	if (optlen < 0)
 		return -EINVAL;
 
-	sock = sockfd_lookup_light(fd, CAP_SETSOCKOPT, &err, &fput_needed);
+	sock = sockfd_lookup_light(fd, cap_rights_init(&rights, CAP_SETSOCKOPT),
+				   &err, &fput_needed);
 	if (sock != NULL) {
 		err = security_socket_setsockopt(sock, level, optname);
 		if (err)
@@ -1950,8 +1967,10 @@ SYSCALL_DEFINE5(getsockopt, int, fd, int, level, int, optname,
 {
 	int err, fput_needed;
 	struct socket *sock;
+	struct cap_rights rights;
 
-	sock = sockfd_lookup_light(fd, CAP_GETSOCKOPT, &err, &fput_needed);
+	sock = sockfd_lookup_light(fd, cap_rights_init(&rights, CAP_GETSOCKOPT),
+				   &err, &fput_needed);
 	if (sock != NULL) {
 		err = security_socket_getsockopt(sock, level, optname);
 		if (err)
@@ -1979,8 +1998,10 @@ SYSCALL_DEFINE2(shutdown, int, fd, int, how)
 {
 	int err, fput_needed;
 	struct socket *sock;
+	struct cap_rights rights;
 
-	sock = sockfd_lookup_light(fd, CAP_SHUTDOWN, &err, &fput_needed);
+	sock = sockfd_lookup_light(fd, cap_rights_init(&rights, CAP_SHUTDOWN),
+				   &err, &fput_needed);
 	if (sock != NULL) {
 		err = security_socket_shutdown(sock, how);
 		if (!err)
@@ -2141,12 +2162,17 @@ long __sys_sendmsg(int fd, struct msghdr __user *msg, unsigned flags)
 	struct msghdr msg_sys;
 	struct socket *sock_addr;
 	struct socket *sock_noaddr;
+	struct cap_rights rights;
 
-	sock_addr = sockfd_lookup_light(fd, CAP_WRITE|CAP_CONNECT, &err, &fput_needed);
-	if (sock_addr)
+	cap_rights_init(&rights, CAP_WRITE, CAP_CONNECT);
+	sock_addr = sockfd_lookup_light(fd, &rights, &err, &fput_needed);
+	if (sock_addr) {
 		sock_noaddr = sock_addr;
-	else
-		sock_noaddr = sockfd_lookup_light(fd, CAP_WRITE, &err, &fput_needed);
+	} else {
+		cap_rights_init(&rights, CAP_WRITE),
+		sock_noaddr = sockfd_lookup_light(fd, &rights,
+						  &err, &fput_needed);
+	}
 	if (!sock_noaddr)
 		goto out;
 
@@ -2178,17 +2204,21 @@ int __sys_sendmmsg(int fd, struct mmsghdr __user *mmsg, unsigned int vlen,
 	struct compat_mmsghdr __user *compat_entry;
 	struct msghdr msg_sys;
 	struct used_address used_address;
+	struct cap_rights rights;
 
 	if (vlen > UIO_MAXIOV)
 		vlen = UIO_MAXIOV;
 
 	datagrams = 0;
 
-	sock_addr = sockfd_lookup_light(fd, CAP_WRITE|CAP_CONNECT, &err, &fput_needed);
-	if (sock_addr)
+	cap_rights_init(&rights, CAP_WRITE, CAP_CONNECT);
+	sock_addr = sockfd_lookup_light(fd, &rights, &err, &fput_needed);
+	if (sock_addr) {
 		sock_noaddr = sock_addr;
-	else
-		sock_noaddr = sockfd_lookup_light(fd, CAP_WRITE, &err, &fput_needed);
+	} else {
+		cap_rights_init(&rights, CAP_WRITE);
+		sock_noaddr = sockfd_lookup_light(fd, &rights, &err, &fput_needed);
+	}
 	if (!sock_noaddr)
 		return err;
 
@@ -2339,8 +2369,10 @@ long __sys_recvmsg(int fd, struct msghdr __user *msg, unsigned flags)
 	int fput_needed, err;
 	struct msghdr msg_sys;
 	struct socket *sock;
+	struct cap_rights rights;
 
-	sock = sockfd_lookup_light(fd, CAP_READ, &err, &fput_needed);
+	sock = sockfd_lookup_light(fd, cap_rights_init(&rights, CAP_READ),
+				   &err, &fput_needed);
 	if (!sock)
 		goto out;
 
@@ -2372,6 +2404,7 @@ int __sys_recvmmsg(int fd, struct mmsghdr __user *mmsg, unsigned int vlen,
 	struct compat_mmsghdr __user *compat_entry;
 	struct msghdr msg_sys;
 	struct timespec end_time;
+	struct cap_rights rights;
 
 	if (timeout &&
 	    poll_select_set_timeout(&end_time, timeout->tv_sec,
@@ -2380,7 +2413,8 @@ int __sys_recvmmsg(int fd, struct mmsghdr __user *mmsg, unsigned int vlen,
 
 	datagrams = 0;
 
-	sock = sockfd_lookup_light(fd, CAP_READ, &err, &fput_needed);
+	sock = sockfd_lookup_light(fd, cap_rights_init(&rights, CAP_READ),
+				   &err, &fput_needed);
 	if (!sock)
 		return err;
 

@@ -1533,7 +1533,8 @@ static noinline int btrfs_ioctl_snap_create_transid(struct file *file,
 		ret = btrfs_mksubvol(&file->f_path, name, namelen,
 				     NULL, transid, readonly, inherit);
 	} else {
-		struct fd src = fdget(fd, CAP_FSTAT);
+		struct cap_rights rights;
+		struct fd src = fdget(fd, cap_rights_init(&rights, CAP_FSTAT));
 		struct inode *src_inode;
 		if (IS_ERR(src.file)) {
 			ret = PTR_ERR(src.file);
@@ -2696,6 +2697,7 @@ static long btrfs_ioctl_file_extent_same(struct file *file,
 	struct inode *src = file->f_dentry->d_inode;
 	struct file *dst_file = NULL;
 	struct inode *dst;
+	struct cap_rights rights;
 	u64 off;
 	u64 len;
 	int i;
@@ -2764,10 +2766,11 @@ static long btrfs_ioctl_file_extent_same(struct file *file,
 	}
 
 	ret = 0;
+	cap_rights_init(&rights, CAP_FSTAT);
 	for (i = 0; i < same->dest_count; i++) {
 		info = &same->info[i];
 
-		dst_file = fget(info->fd, CAP_FSTAT);
+		dst_file = fget(info->fd, &rights);
 		if (!dst_file) {
 			info->status = -EBADF;
 			goto next;
@@ -3112,6 +3115,7 @@ static noinline long btrfs_ioctl_clone(struct file *file, unsigned long srcfd,
 	struct btrfs_root *root = BTRFS_I(inode)->root;
 	struct fd src_file;
 	struct inode *src;
+	struct cap_rights rights;
 	int ret;
 	u64 len = olen;
 	u64 bs = root->fs_info->sb->s_blocksize;
@@ -3138,7 +3142,7 @@ static noinline long btrfs_ioctl_clone(struct file *file, unsigned long srcfd,
 	if (ret)
 		return ret;
 
-	src_file = fdget(srcfd, CAP_FSTAT);
+	src_file = fdget(srcfd, cap_rights_init(&rights, CAP_FSTAT));
 	if (IS_ERR(src_file.file)) {
 		ret = PTR_ERR(src_file.file);
 		goto out_drop_write;

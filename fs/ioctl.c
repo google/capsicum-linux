@@ -604,7 +604,8 @@ int do_vfs_ioctl(struct file *filp, unsigned int fd, unsigned int cmd,
 SYSCALL_DEFINE3(ioctl, unsigned int, fd, unsigned int, cmd, unsigned long, arg)
 {
 	int error;
-	struct fd f = fdget(fd, CAP_IOCTL);
+	struct cap_rights rights;
+	struct fd f = fdget(fd, cap_rights_init(&rights, CAP_IOCTL));
 
 	if (IS_ERR(f.file))
 		return PTR_ERR(f.file);

@@ -1830,20 +1830,21 @@ SYSCALL_DEFINE4(epoll_ctl, int, epfd, int, op, int, fd,
 	struct epitem *epi;
 	struct epoll_event epds;
 	struct eventpoll *tep = NULL;
+	struct cap_rights rights;
 
 	error = -EFAULT;
 	if (ep_op_has_event(op) &&
 	    copy_from_user(&epds, event, sizeof(struct epoll_event)))
 		goto error_return;
 
-	f = fdget(epfd, CAP_EPOLL_CTL);
+	f = fdget(epfd, cap_rights_init(&rights, CAP_EPOLL_CTL));
 	if (IS_ERR(f.file)) {
 		error = PTR_ERR(f.file);
 		goto error_return;
 	}
 
 	/* Get the "struct file *" for the target file */
-	tf = fdget(fd, CAP_POLL_EVENT);
+	tf = fdget(fd, cap_rights_init(&rights, CAP_POLL_EVENT));
 	if (IS_ERR(tf.file)) {
 		error = PTR_ERR(tf.file);
 		goto error_fput;
@@ -1969,6 +1970,7 @@ SYSCALL_DEFINE4(epoll_wait, int, epfd, struct epoll_event __user *, events,
 	int error;
 	struct fd f;
 	struct eventpoll *ep;
+	struct cap_rights rights;
 
 	/* The maximum number of event must be greater than zero */
 	if (maxevents <= 0 || maxevents > EP_MAX_EVENTS)
@@ -1979,7 +1981,7 @@ SYSCALL_DEFINE4(epoll_wait, int, epfd, struct epoll_event __user *, events,
 		return -EFAULT;
 
 	/* Get the "struct file *" for the eventpoll file */
-	f = fdget(epfd, CAP_POLL_EVENT);
+	f = fdget(epfd, cap_rights_init(&rights, CAP_POLL_EVENT));
 	if (IS_ERR(f.file))
 		return PTR_ERR(f.file);
 

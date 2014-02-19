@@ -80,15 +80,17 @@ static inline void get_page_foll(struct page *page)
 	}
 }
 
-static inline cap_rights_t mmap_rights(unsigned long prot, unsigned long flags)
+static inline struct cap_rights *mmap_rights(struct cap_rights *rights,
+					     unsigned long prot,
+					     unsigned long flags)
 {
-	cap_rights_t rights = CAP_MMAP;
+	cap_rights_init(rights, CAP_MMAP);
 	if (prot & PROT_READ)
-		rights |= CAP_READ;
+		cap_rights_set(rights, CAP_MMAP_R);
 	if ((flags & MAP_SHARED) && (prot & PROT_WRITE))
-		rights |= CAP_WRITE;
+		cap_rights_set(rights, CAP_MMAP_W);
 	if (prot & PROT_EXEC)
-		rights |= CAP_MAPEXEC;
+		cap_rights_set(rights, CAP_MMAP_X);
 	return rights;
 }
 

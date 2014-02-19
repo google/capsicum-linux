@@ -388,7 +388,10 @@ asmlinkage long compat_sys_setsockopt(int fd, int level, int optname,
 				char __user *optval, unsigned int optlen)
 {
 	int err;
-	struct socket *sock = sockfd_lookup(fd, CAP_SETSOCKOPT, &err);
+	struct cap_rights rights;
+	struct socket *sock = sockfd_lookup(fd,
+					    cap_rights_init(&rights, CAP_SETSOCKOPT),
+					    &err);
 
 	if (sock) {
 		err = security_socket_setsockopt(sock, level, optname);
@@ -508,7 +511,10 @@ asmlinkage long compat_sys_getsockopt(int fd, int level, int optname,
 				char __user *optval, int __user *optlen)
 {
 	int err;
-	struct socket *sock = sockfd_lookup(fd, CAP_GETSOCKOPT, &err);
+	struct cap_rights rights;
+	struct socket *sock = sockfd_lookup(fd,
+					    cap_rights_init(&rights, CAP_GETSOCKOPT),
+					    &err);
 
 	if (sock) {
 		err = security_socket_getsockopt(sock, level, optname);

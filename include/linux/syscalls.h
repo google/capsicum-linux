@@ -64,6 +64,7 @@ struct old_linux_dirent;
 struct perf_event_attr;
 struct file_handle;
 struct sigaltstack;
+struct cap_rights;
 
 #include <linux/types.h>
 #include <linux/aio_abi.h>
@@ -848,8 +849,9 @@ asmlinkage long sys_kcmp(pid_t pid1, pid_t pid2, int type,
 			 unsigned long idx1, unsigned long idx2);
 asmlinkage long sys_finit_module(int fd, const char __user *uargs, int flags);
 asmlinkage long sys_cap_rights_limit(unsigned int orig_fd,
-				     const u64 __user *new_rights);
-asmlinkage long sys_cap_rights_get(unsigned int fd, u64 *rightsp);
+				     const struct cap_rights __user *new_rights);
+asmlinkage long sys_cap_rights_get(unsigned int fd,
+				   struct cap_rights __user *rightsp);
 asmlinkage long sys_pdfork(int __user *fdp, int  flags);
 asmlinkage long sys_pdgetpid(int fd, pid_t __user * pidp);
 asmlinkage long sys_pdkill(int fd, int signum);

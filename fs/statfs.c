@@ -94,7 +94,8 @@ retry:
 
 int fd_statfs(int fd, struct kstatfs *st)
 {
-	struct fd f = fdget_raw(fd, CAP_FSTATFS);
+	struct cap_rights rights;
+	struct fd f = fdget_raw(fd, cap_rights_init(&rights, CAP_FSTATFS));
 	int error;
 	if (!IS_ERR(f.file)) {
 		error = vfs_statfs(&f.file->f_path, st);

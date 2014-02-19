@@ -146,7 +146,8 @@ SYSCALL_DEFINE4(osf_getdirentries, unsigned int, fd,
 		long __user *, basep)
 {
 	int error;
-	struct fd arg = fdget(fd, CAP_READ);
+	struct cap_rights rights;
+	struct fd arg;
 	struct osf_dirent_callback buf = {
 		.ctx.actor = osf_filldir,
 		.dirent = dirent,
@@ -154,6 +155,7 @@ SYSCALL_DEFINE4(osf_getdirentries, unsigned int, fd,
 		.count = count
 	};
 
+	fd = fdget(fd, cap_rights_init(&rights, CAP_READ));
 	if (IS_ERR(arg.file))
 		return PTR_ERR(arg.file);
 

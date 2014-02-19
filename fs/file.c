@@ -654,8 +654,8 @@ void do_close_on_exec(struct files_struct *files)
  * if necessary.
  */
 static struct file *unwrap_file(struct file *orig,
-				cap_rights_t required_rights,
-				cap_rights_t *actual_rights,
+				struct cap_rights *required_rights,
+				struct cap_rights *actual_rights,
 				bool update_refcnt)
 {
 	struct file *f;
@@ -680,7 +680,7 @@ static struct file *unwrap_file(struct file *orig,
 	return f;
 }
 
-struct file *fget(unsigned int fd, cap_rights_t required_rights)
+struct file *fget(unsigned int fd, struct cap_rights *required_rights)
 {
 	struct file *file;
 	struct files_struct *files = current->files;
@@ -700,7 +700,7 @@ struct file *fget(unsigned int fd, cap_rights_t required_rights)
 }
 EXPORT_SYMBOL(fget);
 
-struct file *fget_raw(unsigned int fd, cap_rights_t required_rights)
+struct file *fget_raw(unsigned int fd, struct cap_rights *required_rights)
 {
 	struct file *file;
 	struct files_struct *files = current->files;
@@ -755,7 +755,7 @@ EXPORT_SYMBOL(fget_raw_no_unwrap);
  * The fput_needed flag returned by fget_light should be passed to the
  * corresponding fput_light.
  */
-struct file *fget_light(unsigned int fd, cap_rights_t required_rights,
+struct file *fget_light(unsigned int fd, struct cap_rights *required_rights,
 			int *fput_needed)
 {
 	struct file *file;
@@ -787,8 +787,10 @@ struct file *fget_light(unsigned int fd, cap_rights_t required_rights,
 }
 EXPORT_SYMBOL(fget_light);
 
-struct file *fget_raw_light(unsigned int fd, cap_rights_t required_rights,
-			cap_rights_t *actual_rights, int *fput_needed)
+struct file *fget_raw_light(unsigned int fd,
+			    struct cap_rights *required_rights,
+			    struct cap_rights *actual_rights,
+			    int *fput_needed)
 {
 	struct file *file;
 	struct files_struct *files = current->files;

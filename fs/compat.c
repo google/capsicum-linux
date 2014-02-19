@@ -873,7 +873,8 @@ asmlinkage long compat_sys_old_readdir(unsigned int fd,
 	struct compat_old_linux_dirent __user *dirent, unsigned int count)
 {
 	int error;
-	struct fd f = fdget(fd, CAP_READ);
+	struct cap_rights rights;
+	struct fd f = fdget(fd, cap_rights_init(&rights, CAP_READ));
 	struct compat_readdir_callback buf = {
 		.ctx.actor = compat_fillonedir,
 		.dirent = dirent
@@ -958,12 +959,13 @@ asmlinkage long compat_sys_getdents(unsigned int fd,
 		.current_dir = dirent,
 		.count = count
 	};
+	struct cap_rights rights;
 	int error;
 
 	if (!access_ok(VERIFY_WRITE, dirent, count))
 		return -EFAULT;
 
-	f = fdget(fd, CAP_READ);
+	f = fdget(fd, cap_rights_init(&rights, CAP_READ));
 	if (IS_ERR(f.file))
 		return PTR_ERR(f.file);
 
@@ -1043,12 +1045,13 @@ asmlinkage long compat_sys_getdents64(unsigned int fd,
 		.current_dir = dirent,
 		.count = count
 	};
+	struct cap_rights rights;
 	int error;
 
 	if (!access_ok(VERIFY_WRITE, dirent, count))
 		return -EFAULT;
 
-	f = fdget(fd, CAP_READ);
+	f = fdget(fd, cap_rights_init(&rights, CAP_READ));
 	if (IS_ERR(f.file))
 		return PTR_ERR(f.file);
 

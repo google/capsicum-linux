@@ -105,13 +105,14 @@ static int kvm_vfio_set_group(struct kvm_device *dev, long attr, u64 arg)
 	struct fd f;
 	int32_t fd;
 	int ret;
+	struct cap_rights rights;
 
 	switch (attr) {
 	case KVM_DEV_VFIO_GROUP_ADD:
 		if (get_user(fd, (int32_t __user *)argp))
 			return -EFAULT;
 
-		f = fdget(fd, CAP_FSTAT);
+		f = fdget(fd, cap_rights_init(&rights, CAP_FSTAT));
 		if (IS_ERR(f.file))
 			return PTR_ERR(f.file);
 
@@ -151,7 +152,7 @@ static int kvm_vfio_set_group(struct kvm_device *dev, long attr, u64 arg)
 		if (get_user(fd, (int32_t __user *)argp))
 			return -EFAULT;
 
-		f = fdget(fd, CAP_FSTAT);
+		f = fdget(fd, cap_rights_init(&rights, CAP_FSTAT));
 		if (IS_ERR(f.file))
 			return PTR_ERR(f.file);
 

@@ -154,12 +154,13 @@ static long do_sys_ftruncate(unsigned int fd, loff_t length, int small)
 	struct inode *inode;
 	struct dentry *dentry;
 	struct fd f;
+	struct cap_rights rights;
 	int error;
 
 	error = -EINVAL;
 	if (length < 0)
 		goto out;
-	f = fdget(fd, CAP_FTRUNCATE);
+	f = fdget(fd, cap_rights_init(&rights, CAP_FTRUNCATE));
 	if (IS_ERR(f.file)) {
 		error = PTR_ERR(f.file);
 		goto out;
@@ -283,7 +284,8 @@ int do_fallocate(struct file *file, int mode, loff_t offset, loff_t len)
 
 SYSCALL_DEFINE4(fallocate, int, fd, int, mode, loff_t, offset, loff_t, len)
 {
-	struct fd f = fdget(fd, CAP_WRITE);
+	struct cap_rights rights;
+	struct fd f = fdget(fd, cap_rights_init(&rights, CAP_WRITE));
 	int error;
 
 	if (!IS_ERR(f.file)) {
@@ -409,7 +411,8 @@ out:
 
 SYSCALL_DEFINE1(fchdir, unsigned int, fd)
 {
-	struct fd f = fdget_raw(fd, CAP_FCHDIR);
+	struct cap_rights rights;
+	struct fd f = fdget_raw(fd, cap_rights_init(&rights, CAP_FCHDIR));
 	struct inode *inode;
 	int error = -EBADF;
 
@@ -497,7 +500,8 @@ out_unlock:
 
 SYSCALL_DEFINE2(fchmod, unsigned int, fd, umode_t, mode)
 {
-	struct fd f = fdget(fd, CAP_FCHMOD);
+	struct cap_rights rights;
+	struct fd f = fdget(fd, cap_rights_init(&rights, CAP_FCHMOD));
 	int err = -EBADF;
 
 	if (!IS_ERR(f.file)) {
@@ -620,7 +624,8 @@ SYSCALL_DEFINE3(lchown, const char __user *, filename, uid_t, user, gid_t, group
 
 SYSCALL_DEFINE3(fchown, unsigned int, fd, uid_t, user, gid_t, group)
 {
-	struct fd f = fdget(fd, CAP_FCHOWN);
+	struct cap_rights rights;
+	struct fd f = fdget(fd, cap_rights_init(&rights, CAP_FCHOWN));
 	int error;
 
 	if (IS_ERR(f.file)) {

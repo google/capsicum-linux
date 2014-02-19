@@ -56,6 +56,7 @@ static int hidp_sock_ioctl(struct socket *sock, unsigned int cmd, unsigned long 
 	struct socket *csock;
 	struct socket *isock;
 	int err;
+	struct cap_rights rights;
 
 	BT_DBG("cmd %x arg %lx", cmd, arg);
 
@@ -67,11 +68,12 @@ static int hidp_sock_ioctl(struct socket *sock, unsigned int cmd, unsigned long 
 		if (copy_from_user(&ca, argp, sizeof(ca)))
 			return -EFAULT;
 
-		csock = sockfd_lookup(ca.ctrl_sock, CAP_READ|CAP_WRITE, &err);
+		cap_rights_init(&rights, CAP_READ, CAP_WRITE);
+		csock = sockfd_lookup(ca.ctrl_sock, &rights, &err);
 		if (!csock)
 			return err;
 
-		isock = sockfd_lookup(ca.intr_sock, CAP_READ|CAP_WRITE, &err);
+		isock = sockfd_lookup(ca.intr_sock, &rights, &err);
 		if (!isock) {
 			sockfd_put(csock);
 			return err;

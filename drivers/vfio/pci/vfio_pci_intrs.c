@@ -133,6 +133,7 @@ static int virqfd_enable(struct vfio_pci_device *vdev,
 	struct fd irqfd;
 	struct eventfd_ctx *ctx;
 	struct virqfd *virqfd;
+	struct cap_rights rights;
 	int ret = 0;
 	unsigned int events;
 
@@ -149,7 +150,7 @@ static int virqfd_enable(struct vfio_pci_device *vdev,
 	INIT_WORK(&virqfd->shutdown, virqfd_shutdown);
 	INIT_WORK(&virqfd->inject, virqfd_inject);
 
-	irqfd = fdget(fd, CAP_WRITE);
+	irqfd = fdget(fd, cap_rights_init(&rights, CAP_WRITE));
 	if (IS_ERR(irqfd.file)) {
 		ret = PTR_ERR(irqfd.file);
 		goto err_fd;

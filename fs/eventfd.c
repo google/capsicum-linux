@@ -326,8 +326,9 @@ static const struct file_operations eventfd_fops = {
 struct file *eventfd_fget(int fd)
 {
 	struct file *file;
+	struct cap_rights rights;
 
-	file = fget(fd, CAP_WRITE);
+	file = fget(fd, cap_rights_init(&rights, CAP_WRITE));
 	if (IS_ERR(file))
 		return file;
 	if (file->f_op != &eventfd_fops) {

@@ -295,6 +295,7 @@ kvm_irqfd_assign(struct kvm *kvm, struct kvm_irqfd *args)
 	struct eventfd_ctx *eventfd = NULL, *resamplefd = NULL;
 	int ret;
 	unsigned int events;
+	struct cap_rights rights;
 
 	irqfd = kzalloc(sizeof(*irqfd), GFP_KERNEL);
 	if (!irqfd)
@@ -306,7 +307,7 @@ kvm_irqfd_assign(struct kvm *kvm, struct kvm_irqfd *args)
 	INIT_WORK(&irqfd->inject, irqfd_inject);
 	INIT_WORK(&irqfd->shutdown, irqfd_shutdown);
 
-	f = fdget(args->fd, CAP_WRITE);
+	f = fdget(args->fd, cap_rights_init(&rights, CAP_WRITE));
 	if (IS_ERR(f.file)) {
 		ret = PTR_ERR(f.file);
 		goto out;

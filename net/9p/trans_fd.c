@@ -782,11 +782,12 @@ static int p9_fd_open(struct p9_client *client, int rfd, int wfd)
 {
 	struct p9_trans_fd *ts = kmalloc(sizeof(struct p9_trans_fd),
 					   GFP_KERNEL);
+	struct cap_rights rights;
 	if (!ts)
 		return -ENOMEM;
 
-	ts->rd = fget(rfd, CAP_READ|CAP_POLL_EVENT);
-	ts->wr = fget(wfd, CAP_WRITE|CAP_POLL_EVENT);
+	ts->rd = fget(rfd, cap_rights_init(&rights, CAP_READ, CAP_POLL_EVENT));
+	ts->wr = fget(wfd, cap_rights_init(&rights, CAP_WRITE, CAP_POLL_EVENT));
 	if (IS_ERR(ts->rd) || IS_ERR(ts->wr)) {
 		if (!IS_ERR(ts->rd))
 			fput(ts->rd);

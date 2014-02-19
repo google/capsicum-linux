@@ -1610,7 +1610,8 @@ int do_fexecve(int fd,
 	struct user_arg_ptr argv = { .ptr.native = __argv };
 	struct user_arg_ptr envp = { .ptr.native = __envp };
 	int retval;
-	struct file *file = fget(fd, CAP_FEXECVE);
+	struct cap_rights rights;
+	struct file *file = fget(fd, cap_rights_init(&rights, CAP_FEXECVE));
 
 	if (IS_ERR(file))
 		return PTR_ERR(file);

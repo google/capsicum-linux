@@ -584,9 +584,10 @@ SYSCALL_DEFINE3(readahead, int, fd, loff_t, offset, size_t, count)
 {
 	ssize_t ret;
 	struct fd f;
+	struct cap_rights rights;
 
 	ret = -EBADF;
-	f = fdget(fd, CAP_PREAD);
+	f = fdget(fd, cap_rights_init(&rights, CAP_PREAD));
 	if (!IS_ERR(f.file)) {
 		if (f.file->f_mode & FMODE_READ) {
 			struct address_space *mapping = f.file->f_mapping;

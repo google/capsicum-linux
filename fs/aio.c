@@ -1350,30 +1350,36 @@ rw_common:
 	return 0;
 }
 
-static cap_rights_t aio_opcode_rights(int opcode)
+static struct cap_rights *aio_opcode_rights(struct cap_rights *rights, int opcode)
 {
 	switch (opcode) {
 	case IOCB_CMD_PREAD:
 	case IOCB_CMD_PREADV:
-		return CAP_PREAD;
+		cap_rights_init(rights, CAP_PREAD);
+		break;
 
 	case IOCB_CMD_PWRITE:
 	case IOCB_CMD_PWRITEV:
-		return CAP_PWRITE;
+		cap_rights_init(rights, CAP_PWRITE);
+		break;
 
 	case IOCB_CMD_FSYNC:
 	case IOCB_CMD_FDSYNC:
-		return CAP_FSYNC;
+		cap_rights_init(rights, CAP_FSYNC);
+		break;
 
 	default:
-		return CAP_PREAD|CAP_PWRITE|CAP_POLL_EVENT|CAP_FSYNC;
+		cap_rights_init(rights,  CAP_PREAD, CAP_PWRITE, CAP_POLL_EVENT, CAP_FSYNC);
+		break;
 	}
+	return rights;
 }
 
 static int io_submit_one(struct kioctx *ctx, struct iocb __user *user_iocb,
 			 struct iocb *iocb, bool compat)
 {
 	struct kiocb *req;
+	struct cap_rights rights;
 	ssize_t ret;
 
 	/* enforce forwards compatibility on users */
@@ -1396,7 +1402,8 @@ static int io_submit_one(struct kioctx *ctx, struct iocb __user *user_iocb,
 	if (unlikely(!req))
 		return -EAGAIN;
 
-	req->ki_filp = fget(iocb->aio_fildes, aio_opcode_rights(iocb->aio_lio_opcode));
+	req->ki_filp = fget(iocb->aio_fildes,
+			    aio_opcode_rights(&rights, iocb->aio_lio_opcode));
 	if (unlikely(IS_ERR(req->ki_filp))) {
 		ret = PTR_ERR(req->ki_filp);
 		req->ki_filp = NULL;

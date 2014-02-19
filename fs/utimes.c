@@ -148,11 +148,12 @@ long do_utimes(int dfd, const char __user *filename, struct timespec *times,
 
 	if (filename == NULL && dfd != AT_FDCWD) {
 		struct fd f;
+		struct cap_rights rights;
 
 		if (flags & AT_SYMLINK_NOFOLLOW)
 			goto out;
 
-		f = fdget(dfd, CAP_FUTIMES);
+		f = fdget(dfd, cap_rights_init(&rights, CAP_FUTIMES));
 		if (IS_ERR(f.file)) {
 			error = PTR_ERR(f.file);
 			goto out;

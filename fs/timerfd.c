@@ -291,7 +291,7 @@ static const struct file_operations timerfd_fops = {
 	.llseek		= noop_llseek,
 };
 
-static int timerfd_fget(int fd, struct fd *p, cap_rights_t required_rights)
+static int timerfd_fget(int fd, struct fd *p, struct cap_rights *required_rights)
 {
 	struct fd f = fdget(fd, required_rights);
 	if (IS_ERR(f.file))
@@ -351,6 +351,7 @@ static int do_timerfd_settime(int ufd, int flags,
 {
 	struct fd f;
 	struct timerfd_ctx *ctx;
+	struct cap_rights rights;
 	int ret;
 
 	if ((flags & ~TFD_SETTIME_FLAGS) ||
@@ -358,7 +359,8 @@ static int do_timerfd_settime(int ufd, int flags,
 	    !timespec_valid(&new->it_interval))
 		return -EINVAL;
 
-	ret = timerfd_fget(ufd, &f, CAP_WRITE | (old ? CAP_READ : 0));
+	cap_rights_init(&rights, CAP_WRITE, (old ? CAP_READ : 0));
+	ret = timerfd_fget(ufd, &f, &rights);
 	if (ret)
 		return ret;
 	ctx = f.file->private_data;
@@ -415,7 +417,8 @@ static int do_timerfd_gettime(int ufd, struct itimerspec *t)
 {
 	struct fd f;
 	struct timerfd_ctx *ctx;
-	int ret = timerfd_fget(ufd, &f, CAP_READ);
+	struct cap_rights rights;
+	int ret = timerfd_fget(ufd, &f, cap_rights_init(&rights, CAP_READ));
 	if (ret)
 		return ret;
 	ctx = f.file->private_data;

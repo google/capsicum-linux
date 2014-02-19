@@ -1358,9 +1358,9 @@ SYSCALL_DEFINE6(mmap_pgoff, unsigned long, addr, unsigned long, len,
 	unsigned long retval = -EBADF;
 
 	if (!(flags & MAP_ANONYMOUS)) {
-		cap_rights_t rights = mmap_rights(prot, flags);
+		struct cap_rights rights;
 		audit_mmap_fd(fd, flags);
-		file = fget(fd, rights);
+		file = fget(fd, mmap_rights(&rights, prot, flags));
 		if (IS_ERR(file)) {
 			retval = PTR_ERR(file);
 			goto out;

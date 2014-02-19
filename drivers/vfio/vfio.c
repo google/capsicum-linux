@@ -1038,12 +1038,14 @@ static int vfio_group_set_container(struct vfio_group *group, int container_fd)
 	struct fd f;
 	struct vfio_container *container;
 	struct vfio_iommu_driver *driver;
+	struct cap_rights rights;
 	int ret = 0;
 
 	if (atomic_read(&group->container_users))
 		return -EINVAL;
 
-	f = fdget(container_fd, CAP_NONE);
+	CAP_NONE(&rights);
+	f = fdget(container_fd, &rights);
 	if (IS_ERR(f.file))
 		return PTR_ERR(f.file);
 

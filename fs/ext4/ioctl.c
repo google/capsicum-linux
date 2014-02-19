@@ -423,6 +423,7 @@ group_extend_out:
 	case EXT4_IOC_MOVE_EXT: {
 		struct move_extent me;
 		struct fd donor;
+		struct cap_rights rights;
 		int err;
 
 		if (!(filp->f_mode & FMODE_READ) ||
@@ -434,7 +435,8 @@ group_extend_out:
 			return -EFAULT;
 		me.moved_len = 0;
 
-		donor = fdget(me.donor_fd, CAP_PWRITE|CAP_FSTAT);
+		cap_rights_init(&rights, CAP_PWRITE, CAP_FSTAT);
+		donor = fdget(me.donor_fd, &rights);
 		if (IS_ERR(donor.file))
 			return PTR_ERR(donor.file);
 

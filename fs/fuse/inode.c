@@ -971,6 +971,7 @@ static int fuse_fill_super(struct super_block *sb, void *data, int silent)
 	struct file *file;
 	struct dentry *root_dentry;
 	struct fuse_req *init_req;
+	struct cap_rights rights;
 	int err;
 	int is_bdev = sb->s_bdev != NULL;
 
@@ -999,7 +1000,7 @@ static int fuse_fill_super(struct super_block *sb, void *data, int silent)
 	sb->s_time_gran = 1;
 	sb->s_export_op = &fuse_export_operations;
 
-	file = fget(d.fd, CAP_READ|CAP_WRITE);
+	file = fget(d.fd, cap_rights_init(&rights, CAP_READ, CAP_WRITE));
 	if (IS_ERR(file)) {
 		err = PTR_ERR(file);
 		if (err == -EBADF)

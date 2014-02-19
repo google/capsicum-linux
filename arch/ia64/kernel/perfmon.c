@@ -471,7 +471,7 @@ typedef struct {
 	int		cmd_flags;
 	unsigned int	cmd_narg;
 	size_t		cmd_argsize;
-	cap_rights_t	cmd_rights;
+	u64		cmd_right;
 	int		(*cmd_getsize)(void *arg, size_t *sz);
 } pfm_cmd_desc_t;
 
@@ -4773,6 +4773,7 @@ asmlinkage long
 sys_perfmonctl (int fd, int cmd, void __user *arg, int count)
 {
 	struct fd f = {NULL, 0};
+	struct cap_right rights;
 	pfm_context_t *ctx = NULL;
 	unsigned long flags = 0UL;
 	void *args_k = NULL;
@@ -4867,7 +4868,7 @@ restart_args:
 
 	if (unlikely((cmd_flags & PFM_CMD_FD) == 0)) goto skip_fd;
 
-	f = fdget(fd, pfm_cmd_tab[cmd].cmd_rights);
+	f = fdget(fd, cap_rights_init(&rights, pfm_cmd_tab[cmd].cmd_right));
 	if (unlikely(IS_ERR(f.file)) {
 		DPRINT(("invalid fd %d\n", fd));
 		ret = PTR_ERR(f.file);

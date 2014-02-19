@@ -193,6 +193,7 @@ static int atm_tc_change(struct Qdisc *sch, u32 classid, u32 parent,
 	struct socket *sock;
 	int fd, error, hdr_len;
 	void *hdr;
+	struct cap_rights rights;
 
 	pr_debug("atm_tc_change(sch %p,[qdisc %p],classid %x,parent %x,"
 		"flow %p,opt %p)\n", sch, p, classid, parent, flow, opt);
@@ -238,7 +239,8 @@ static int atm_tc_change(struct Qdisc *sch, u32 classid, u32 parent,
 	}
 	pr_debug("atm_tc_change: type %d, payload %d, hdr_len %d\n",
 		 opt->nla_type, nla_len(opt), hdr_len);
-	sock = sockfd_lookup(fd, CAP_GETSOCKNAME, &error);
+	sock = sockfd_lookup(fd, cap_rights_init(&rights, CAP_GETSOCKNAME),
+			     &error);
 	if (!sock)
 		return error;	/* f_count++ */
 	pr_debug("atm_tc_change: f_count %ld\n", file_count(sock->file));

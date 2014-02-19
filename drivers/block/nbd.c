@@ -646,10 +646,12 @@ static int __nbd_ioctl(struct block_device *bdev, struct nbd_device *nbd,
 
 	case NBD_SET_SOCK: {
 		struct file *file;
+		struct cap_rights rights;
 		int err;
 		if (nbd->file)
 			return -EBUSY;
-		file = fget(arg, CAP_READ|CAP_WRITE|CAP_SHUTDOWN);
+		cap_rights_init(&rights, CAP_READ, CAP_WRITE, CAP_SHUTDOWN);
+		file = fget(arg, &rights);
 		if (!IS_ERR(file)) {
 			struct inode *inode = file_inode(file);
 			if (S_ISSOCK(inode->i_mode)) {

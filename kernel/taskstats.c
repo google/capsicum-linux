@@ -431,13 +431,14 @@ static int cgroupstats_user_cmd(struct sk_buff *skb, struct genl_info *info)
 	size_t size;
 	u32 fd;
 	struct fd f;
+	struct cap_rights rights;
 
 	na = info->attrs[CGROUPSTATS_CMD_ATTR_FD];
 	if (!na)
 		return -EINVAL;
 
 	fd = nla_get_u32(info->attrs[CGROUPSTATS_CMD_ATTR_FD]);
-	f = fdget(fd, CAP_FSTAT);
+	f = fdget(fd, cap_rights_init(&rights, CAP_FSTAT));
 	if (IS_ERR(f.file))
 		return 0;
 

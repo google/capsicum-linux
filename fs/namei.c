@@ -633,7 +633,8 @@ static __always_inline void set_root(struct nameidata *nd)
 		get_fs_root(current->fs, &nd->root);
 }
 
-static int link_path_walk(const char *, struct nameidata *, cap_rights_t dfd_rights);
+static int link_path_walk(const char *, struct nameidata *,
+			  struct cap_rights *dfd_rights);
 
 static __always_inline void set_root_rcu(struct nameidata *nd)
 {
@@ -806,7 +807,8 @@ static int may_linkat(struct path *link)
 }
 
 static __always_inline int
-follow_link(struct path *link, struct nameidata *nd, void **p, cap_rights_t dfd_rights)
+follow_link(struct path *link, struct nameidata *nd, void **p,
+	    struct cap_rights *dfd_rights)
 {
 	struct dentry *dentry = link->dentry;
 	int error;
@@ -1561,7 +1563,7 @@ out_err:
  * symlinks can cause almost arbitrarily long lookups.
  */
 static inline int nested_symlink(struct path *path, struct nameidata *nd,
-				cap_rights_t dfd_rights)
+				 struct cap_rights *dfd_rights)
 {
 	int res;
 
@@ -1719,7 +1721,7 @@ static inline unsigned long hash_name(const char *name, unsigned int *hashp)
  * Returns error and drops reference to input namei data on failure.
  */
 static int link_path_walk(const char *name, struct nameidata *nd,
-			cap_rights_t dfd_rights)
+			  struct cap_rights *dfd_rights)
 {
 	struct path next;
 	int err;
@@ -1808,7 +1810,8 @@ static int link_path_walk(const char *name, struct nameidata *nd,
 }
 
 static int path_init(int dfd, const char *name, unsigned int flags,
-		struct nameidata *nd, struct file **fp, cap_rights_t *rights)
+		struct nameidata *nd, struct file **fp,
+		struct cap_rights *rights)
 {
 	int retval = 0;
 
@@ -1841,8 +1844,8 @@ static int path_init(int dfd, const char *name, unsigned int flags,
 
 	nd->m_seq = read_seqbegin(&mount_lock);
 	if (*name=='/') {
-		*rights = CAP_ALL;
-		retval = security_path_lookup(CAP_ALL, NULL, name);
+		CAP_ALL(rights);
+		retval = security_path_lookup(rights, NULL, name);
 		if (retval)
 			return retval;
 
@@ -1855,7 +1858,7 @@ static int path_init(int dfd, const char *name, unsigned int flags,
 		}
 		nd->path = nd->root;
 	} else if (dfd == AT_FDCWD) {
-		*rights = CAP_ALL;
+		CAP_ALL(rights);
 		if (flags & LOOKUP_RCU) {
 			struct fs_struct *fs = current->fs;
 			unsigned seq;
@@ -1875,7 +1878,7 @@ static int path_init(int dfd, const char *name, unsigned int flags,
 		struct fd f;
 		struct dentry *dentry;
 
-		f.file = fget_raw_light(dfd, *rights, rights, &f.need_put);
+		f.file = fget_raw_light(dfd, rights, rights, &f.need_put);
 		if (IS_ERR(f.file))
 			return PTR_ERR(f.file);
 
@@ -1914,8 +1917,9 @@ static inline int lookup_last(struct nameidata *nd, struct path *path)
 }
 
 /* Returns 0 and nd will be valid on success; Retuns error, otherwise. */
-static int path_lookupat(int dfd, cap_rights_t dfd_rights, const char *name,
-				unsigned int flags, struct nameidata *nd)
+static int path_lookupat(int dfd, struct cap_rights *dfd_rights,
+			 const char *name, unsigned int flags,
+			 struct nameidata *nd)
 {
 	struct file *base = NULL;
 	struct path path;
@@ -1935,7 +1939,7 @@ static int path_lookupat(int dfd, cap_rights_t dfd_rights, const char *name,
 	 * be handled by restarting a traditional ref-walk (which will always
 	 * be able to complete).
 	 */
-	err = path_init(dfd, name, flags | LOOKUP_PARENT, nd, &base, &dfd_rights);
+	err = path_init(dfd, name, flags | LOOKUP_PARENT, nd, &base, dfd_rights);
 
 	if (unlikely(err))
 		return err;
@@ -1980,7 +1984,7 @@ static int path_lookupat(int dfd, cap_rights_t dfd_rights, const char *name,
 	return err;
 }
 
-static int filename_lookup(int dfd, cap_rights_t dfd_rights,
+static int filename_lookup(int dfd, struct cap_rights *dfd_rights,
 			struct filename *name, unsigned int flags,
 			struct nameidata *nd)
 {
@@ -1997,8 +2001,9 @@ static int filename_lookup(int dfd, cap_rights_t dfd_rights,
 	return retval;
 }
 
-static int do_path_lookup(int dfd, cap_rights_t dfd_rights, const char *name,
-				unsigned int flags, struct nameidata *nd)
+static int do_path_lookup(int dfd, struct cap_rights *dfd_rights,
+			  const char *name, unsigned int flags,
+			  struct nameidata *nd)
 {
 	struct filename filename = { .name = name };
 
@@ -2010,7 +2015,10 @@ struct dentry *kern_path_locked(const char *name, struct path *path)
 {
 	struct nameidata nd;
 	struct dentry *d;
-	int err = do_path_lookup(AT_FDCWD, CAP_NONE, name, LOOKUP_PARENT, &nd);
+	struct cap_rights rights;
+	int err;
+	CAP_NONE(&rights);
+	err = do_path_lookup(AT_FDCWD, &rights, name, LOOKUP_PARENT, &nd);
 	if (err)
 		return ERR_PTR(err);
 	if (nd.last_type != LAST_NORM) {
@@ -2031,7 +2039,10 @@ struct dentry *kern_path_locked(const char *name, struct path *path)
 int kern_path(const char *name, unsigned int flags, struct path *path)
 {
 	struct nameidata nd;
-	int res = do_path_lookup(AT_FDCWD, CAP_NONE, name, flags, &nd);
+	struct cap_rights rights;
+	int res;
+	CAP_NONE(&rights);
+	res = do_path_lookup(AT_FDCWD, &rights, name, flags, &nd);
 	if (!res)
 		*path = nd.path;
 	return res;
@@ -2050,12 +2061,14 @@ int vfs_path_lookup(struct dentry *dentry, struct vfsmount *mnt,
 		    struct path *path)
 {
 	struct nameidata nd;
+	struct cap_rights rights;
 	int err;
 	nd.root.dentry = dentry;
 	nd.root.mnt = mnt;
 	BUG_ON(flags & LOOKUP_PARENT);
 	/* the first argument of do_path_lookup() is ignored with LOOKUP_ROOT */
-	err = do_path_lookup(AT_FDCWD, CAP_NONE, name, flags | LOOKUP_ROOT, &nd);
+	CAP_NONE(&rights);
+	err = do_path_lookup(AT_FDCWD, &rights, name, flags | LOOKUP_ROOT, &nd);
 	if (!err)
 		*path = nd.path;
 	return err;
@@ -2128,12 +2141,13 @@ int user_path_at_empty(int dfd, const char __user *name, unsigned flags,
 {
 	struct nameidata nd;
 	struct filename *tmp = getname_flags(name, flags, empty);
+	struct cap_rights rights;
 	int err = PTR_ERR(tmp);
 	if (!IS_ERR(tmp)) {
 
 		BUG_ON(flags & LOOKUP_PARENT);
-
-		err = filename_lookup(dfd, CAP_LOOKUP, tmp, flags, &nd);
+		cap_rights_init(&rights, CAP_LOOKUP);
+		err = filename_lookup(dfd, &rights, tmp, flags, &nd);
 		putname(tmp);
 		if (!err)
 			*path = nd.path;
@@ -2154,8 +2168,9 @@ int user_path_at(int dfd, const char __user *name, unsigned flags,
  *     path-walking is complete.
  */
 static struct filename *
-user_path_parent(int dfd, cap_rights_t dfd_rights, const char __user *path,
-		struct nameidata *nd, unsigned int flags)
+user_path_parent(int dfd, struct cap_rights *dfd_rights,
+		 const char __user *path, struct nameidata *nd,
+		 unsigned int flags)
 {
 	struct filename *s = getname(path);
 	int error;
@@ -2282,15 +2297,16 @@ path_mountpoint(int dfd, const char *name, struct path *path, unsigned int flags
 {
 	struct file *base = NULL;
 	struct nameidata nd;
-	cap_rights_t dfd_rights = CAP_LOOKUP;
+	struct cap_rights dfd_rights;
 	int err;
 
+	cap_rights_init(&dfd_rights, CAP_LOOKUP);
 	err = path_init(dfd, name, flags | LOOKUP_PARENT, &nd, &base, &dfd_rights);
 	if (unlikely(err))
 		return err;
 
 	current->total_link_count = 0;
-	err = link_path_walk(name, &nd, dfd_rights);
+	err = link_path_walk(name, &nd, &dfd_rights);
 	if (err)
 		goto out;
 
@@ -2302,7 +2318,7 @@ path_mountpoint(int dfd, const char *name, struct path *path, unsigned int flags
 		if (unlikely(err))
 			break;
 		nd.flags |= LOOKUP_PARENT;
-		err = follow_link(&link, &nd, &cookie, dfd_rights);
+		err = follow_link(&link, &nd, &cookie, &dfd_rights);
 		if (err)
 			break;
 		err = mountpoint_last(&nd, path);
@@ -3108,8 +3124,11 @@ static int do_tmpfile(int dfd, struct filename *pathname,
 	static const struct qstr name = QSTR_INIT("/", 1);
 	struct dentry *dentry, *child;
 	struct inode *dir;
-	int error = path_lookupat(dfd, CAP_LOOKUP, pathname->name,
-				  flags | LOOKUP_DIRECTORY, nd);
+	struct cap_rights rights;
+	int error;
+	cap_rights_init(&rights, CAP_LOOKUP);
+	error = path_lookupat(dfd, &rights, pathname->name,
+			      flags | LOOKUP_DIRECTORY, nd);
 	if (unlikely(error))
 		return error;
 	error = mnt_want_write(nd->path.mnt);
@@ -3161,33 +3180,34 @@ out:
 	return error;
 }
 
-static void openat_rights(cap_rights_t *rights, unsigned int flags)
+static void openat_rights(struct cap_rights *rights, unsigned int flags)
 {
 	if (flags & O_RDONLY)
-		(*rights) |= CAP_READ;
+		cap_rights_set(rights, CAP_READ);
 	if (flags & O_WRONLY) {
-		(*rights) |= CAP_WRITE;
+		cap_rights_set(rights, CAP_WRITE);
 		if (flags & (O_APPEND | O_TRUNC))
-			(*rights) |= CAP_SEEK;
+			cap_rights_set(rights, CAP_SEEK);
 	}
 	if (flags & O_CREAT)
-		(*rights) |= CAP_CREATE;
+		cap_rights_set(rights, CAP_CREATE);
 	if (flags & O_TRUNC)
-		(*rights) |= CAP_FTRUNCATE;
+		cap_rights_set(rights, CAP_FTRUNCATE);
 	if (flags & (O_DSYNC| FASYNC))
-		(*rights) |= CAP_FSYNC;
+		cap_rights_set(rights, CAP_FSYNC);
 }
 
 static struct file *path_openat(int dfd, struct filename *pathname,
 		struct nameidata *nd, const struct open_flags *op, int flags)
 {
-	cap_rights_t dfd_rights = CAP_LOOKUP;
+	struct cap_rights dfd_rights;
 	struct file *base = NULL;
 	struct file *file;
 	struct path path;
 	int opened = 0;
 	int error;
 
+	cap_rights_init(&dfd_rights, CAP_LOOKUP);
 	file = get_empty_filp();
 	if (IS_ERR(file))
 		return file;
@@ -3205,7 +3225,7 @@ static struct file *path_openat(int dfd, struct filename *pathname,
 		goto out;
 
 	current->total_link_count = 0;
-	error = link_path_walk(pathname->name, nd, dfd_rights);
+	error = link_path_walk(pathname->name, nd, &dfd_rights);
 	if (unlikely(error))
 		goto out;
 
@@ -3224,14 +3244,14 @@ static struct file *path_openat(int dfd, struct filename *pathname,
 			break;
 		nd->flags |= LOOKUP_PARENT;
 		nd->flags &= ~(LOOKUP_OPEN|LOOKUP_CREATE|LOOKUP_EXCL);
-		error = follow_link(&link, nd, &cookie, dfd_rights);
+		error = follow_link(&link, nd, &cookie, &dfd_rights);
 		if (unlikely(error))
 			break;
 		error = do_last(nd, &path, file, op, &opened, pathname);
 		put_link(nd, &link, cookie);
 	}
 	if (!error) {
-		struct file *repl_file = security_file_install(dfd_rights, file);
+		struct file *repl_file = security_file_install(&dfd_rights, file);
 		if (IS_ERR(repl_file)) {
 			error = PTR_ERR(repl_file);
 			goto out;
@@ -3297,10 +3317,11 @@ struct file *do_file_open_root(struct dentry *dentry, struct vfsmount *mnt,
 	return file;
 }
 
-static struct dentry *kern_path_create_rights(int dfd, cap_rights_t dfd_rights,
-					const char *pathname,
-					struct path *path,
-					unsigned int lookup_flags)
+static struct dentry *kern_path_create_rights(int dfd,
+					      struct cap_rights *dfd_rights,
+					      const char *pathname,
+					      struct path *path,
+					      unsigned int lookup_flags)
 {
 	struct dentry *dentry = ERR_PTR(-EEXIST);
 	struct nameidata nd;
@@ -3372,7 +3393,9 @@ out:
 struct dentry *kern_path_create(int dfd, const char *pathname,
 				struct path *path, unsigned int lookup_flags)
 {
-	return kern_path_create_rights(dfd, CAP_LOOKUP, pathname, path, lookup_flags);
+	struct cap_rights dfd_rights;
+	cap_rights_init(&dfd_rights, CAP_LOOKUP);
+	return kern_path_create_rights(dfd, &dfd_rights, pathname, path, lookup_flags);
 }
 EXPORT_SYMBOL(kern_path_create);
 
@@ -3385,10 +3408,11 @@ void done_path_create(struct path *path, struct dentry *dentry)
 }
 EXPORT_SYMBOL(done_path_create);
 
-static struct dentry *user_path_create_rights(int dfd, cap_rights_t dfd_rights,
-					const char __user *pathname,
-					struct path *path,
-					unsigned int lookup_flags)
+static struct dentry *user_path_create_rights(int dfd,
+					      struct cap_rights *dfd_rights,
+					      const char __user *pathname,
+					      struct path *path,
+					      unsigned int lookup_flags)
 {
 	struct filename *tmp = getname(pathname);
 	struct dentry *res;
@@ -3401,7 +3425,9 @@ static struct dentry *user_path_create_rights(int dfd, cap_rights_t dfd_rights,
 struct dentry *user_path_create(int dfd, const char __user *pathname,
 				struct path *path, unsigned int lookup_flags)
 {
-	return user_path_create_rights(dfd, CAP_LOOKUP, pathname, path, lookup_flags);
+	struct cap_rights dfd_rights;
+	cap_rights_init(&dfd_rights, CAP_LOOKUP);
+	return user_path_create_rights(dfd, &dfd_rights, pathname, path, lookup_flags);
 }
 EXPORT_SYMBOL(user_path_create);
 
@@ -3452,26 +3478,27 @@ static int may_mknod(umode_t mode)
 SYSCALL_DEFINE4(mknodat, int, dfd, const char __user *, filename, umode_t, mode,
 		unsigned, dev)
 {
-	cap_rights_t dfd_rights = CAP_LOOKUP;
+	struct cap_rights dfd_rights;
 	struct dentry *dentry;
 	struct path path;
 	int error;
 	unsigned int lookup_flags = 0;
 
+	cap_rights_init(&dfd_rights, CAP_LOOKUP);
 	error = may_mknod(mode);
 	if (error)
 		return error;
 
 	switch (mode & S_IFMT) {
 		case S_IFCHR: case S_IFBLK:
-			dfd_rights |= CAP_MKNODAT;
+			cap_rights_set(&dfd_rights, CAP_MKNODAT);
 			break;
 		case S_IFIFO:
-			dfd_rights |= CAP_MKFIFO;
+			cap_rights_set(&dfd_rights, CAP_MKFIFOAT);
 			break;
 	}
 retry:
-	dentry = user_path_create_rights(dfd, dfd_rights, filename, &path, lookup_flags);
+	dentry = user_path_create_rights(dfd, &dfd_rights, filename, &path, lookup_flags);
 	if (IS_ERR(dentry))
 		return PTR_ERR(dentry);
 
@@ -3537,9 +3564,11 @@ SYSCALL_DEFINE3(mkdirat, int, dfd, const char __user *, pathname, umode_t, mode)
 	struct path path;
 	int error;
 	unsigned int lookup_flags = LOOKUP_DIRECTORY;
+	struct cap_rights dfd_rights;
+	cap_rights_init(&dfd_rights, CAP_LOOKUP, CAP_MKDIRAT);
 
 retry:
-	dentry = user_path_create_rights(dfd, CAP_LOOKUP|CAP_MKDIR,
+	dentry = user_path_create_rights(dfd, &dfd_rights,
 					pathname, &path, lookup_flags);
 	if (IS_ERR(dentry))
 		return PTR_ERR(dentry);
@@ -3629,9 +3658,11 @@ static long do_rmdir(int dfd, const char __user *pathname)
 	struct filename *name;
 	struct dentry *dentry;
 	struct nameidata nd;
+	struct cap_rights rights;
 	unsigned int lookup_flags = 0;
+	cap_rights_init(&rights, CAP_LOOKUP, CAP_UNLINKAT);
 retry:
-	name = user_path_parent(dfd, CAP_LOOKUP|CAP_RMDIR, pathname, &nd, lookup_flags);
+	name = user_path_parent(dfd, &rights, pathname, &nd, lookup_flags);
 	if (IS_ERR(name))
 		return PTR_ERR(name);
 
@@ -3754,9 +3785,11 @@ static long do_unlinkat(int dfd, const char __user *pathname)
 	struct nameidata nd;
 	struct inode *inode = NULL;
 	struct inode *delegated_inode = NULL;
+	struct cap_rights rights;
 	unsigned int lookup_flags = 0;
+	cap_rights_init(&rights, CAP_LOOKUP);
 retry:
-	name = user_path_parent(dfd, CAP_LOOKUP, pathname, &nd, lookup_flags);
+	name = user_path_parent(dfd, &rights, pathname, &nd, lookup_flags);
 	if (IS_ERR(name))
 		return PTR_ERR(name);
 
@@ -4230,17 +4263,19 @@ SYSCALL_DEFINE4(renameat, int, olddfd, const char __user *, oldname,
 	struct inode *delegated_inode = NULL;
 	struct filename *from;
 	struct filename *to;
+	struct cap_rights rights;
 	unsigned int lookup_flags = 0;
 	bool should_retry = false;
 	int error;
+	cap_rights_init(&rights, CAP_LOOKUP);
 retry:
-	from = user_path_parent(olddfd, CAP_LOOKUP, oldname, &oldnd, lookup_flags);
+	from = user_path_parent(olddfd, &rights, oldname, &oldnd, lookup_flags);
 	if (IS_ERR(from)) {
 		error = PTR_ERR(from);
 		goto exit;
 	}
 
-	to = user_path_parent(newdfd, CAP_LOOKUP, newname, &newnd, lookup_flags);
+	to = user_path_parent(newdfd, &rights, newname, &newnd, lookup_flags);
 	if (IS_ERR(to)) {
 		error = PTR_ERR(to);
 		goto exit1;
