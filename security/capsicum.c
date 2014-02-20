@@ -180,9 +180,8 @@ SYSCALL_DEFINE2(cap_rights_get, unsigned int, fd, struct cap_rights __user *, ri
 		goto out_err;
 	}
 
-	if (capsicum_unwrap(file, &rights) == NULL) {
-		result = -EINVAL;
-		goto out_err;
+	if (!capsicum_unwrap(file, &rights)) {
+		CAP_ALL(&rights);
 	}
 	rcu_read_unlock();
 	if (copy_to_user(rightsp, &rights, sizeof(rights)))
