@@ -354,11 +354,11 @@ static bool fcntl_rights(unsigned int cmd, struct cap_rights *rights)
 		 * Returning true (=>use wrapped file) implies that no rights
 		 * are needed.
 		 */
-		CAP_NONE(rights);
+		CAP_SET_NONE(rights);
 		return true;
 	case F_GETFD:
 	case F_SETFD:
-		CAP_NONE(rights);
+		CAP_SET_NONE(rights);
 		return false;
 	case F_GETFL:
 	case F_SETFL:
@@ -397,7 +397,7 @@ static bool fcntl_rights(unsigned int cmd, struct cap_rights *rights)
 		cap_rights_init(rights, CAP_GETSOCKOPT);
 		return false;
 	default:
-		CAP_ALL(rights);
+		CAP_SET_ALL(rights);
 		return false;
 	}
 }

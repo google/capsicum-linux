@@ -90,7 +90,7 @@ struct file *capsicum_unwrap(const struct file *capf,
 
 	if (!capsicum_is_cap(capf)) {
 		if (rights)
-			CAP_ALL(rights);
+			CAP_SET_ALL(rights);
 		return NULL;
 	}
 
@@ -181,7 +181,7 @@ SYSCALL_DEFINE2(cap_rights_get, unsigned int, fd, struct cap_rights __user *, ri
 	}
 
 	if (!capsicum_unwrap(file, &rights)) {
-		CAP_ALL(&rights);
+		CAP_SET_ALL(&rights);
 	}
 	rcu_read_unlock();
 	if (copy_to_user(rightsp, &rights, sizeof(rights)))
@@ -279,7 +279,7 @@ struct file *capsicum_file_lookup(struct file *file,
 	underlying = capsicum_unwrap(file, &rights);
 	if (!underlying) {
 		if (actual_rights)
-			CAP_ALL(actual_rights);
+			CAP_SET_ALL(actual_rights);
 		return file;
 	}
 	if (!cap_rights_contains(&rights, required_rights))

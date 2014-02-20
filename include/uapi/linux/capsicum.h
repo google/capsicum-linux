@@ -315,13 +315,13 @@ typedef struct cap_rights cap_rights_t;
 /* Backward compatibility. */
 #define CAP_POLL_EVENT		CAP_EVENT
 
-#define CAP_ALL(rights)		do {				\
+#define CAP_SET_ALL(rights)		do {				\
 	(rights)->cr_rights[0] =					\
 	    ((__u64)CAP_RIGHTS_VERSION << 62) | CAP_ALL0;		\
 	(rights)->cr_rights[1] = CAP_ALL1;				\
 } while (0)
 
-#define CAP_NONE(rights)	do {					\
+#define CAP_SET_NONE(rights)	do {					\
 	(rights)->cr_rights[0] =					\
 	    ((__u64)CAP_RIGHTS_VERSION << 62) | CAPRIGHT(0, 0ULL);	\
 	(rights)->cr_rights[1] = CAPRIGHT(1, 0ULL);			\

@@ -1612,7 +1612,7 @@ static int snd_pcm_link(struct snd_pcm_substream *substream, int fd)
 	struct snd_pcm_group *group;
 	struct cap_rights rights;
 	struct fd f;
-	CAP_NONE(&rights);
+	CAP_SET_NONE(&rights);
 	f = fdget(fd, &rights);
 
 	if (IS_ERR(f.file)) {

@@ -1844,7 +1844,7 @@ static int path_init(int dfd, const char *name, unsigned int flags,
 
 	nd->m_seq = read_seqbegin(&mount_lock);
 	if (*name=='/') {
-		CAP_ALL(rights);
+		CAP_SET_ALL(rights);
 		retval = security_path_lookup(rights, NULL, name);
 		if (retval)
 			return retval;
@@ -1858,7 +1858,7 @@ static int path_init(int dfd, const char *name, unsigned int flags,
 		}
 		nd->path = nd->root;
 	} else if (dfd == AT_FDCWD) {
-		CAP_ALL(rights);
+		CAP_SET_ALL(rights);
 		if (flags & LOOKUP_RCU) {
 			struct fs_struct *fs = current->fs;
 			unsigned seq;
@@ -2017,7 +2017,7 @@ struct dentry *kern_path_locked(const char *name, struct path *path)
 	struct dentry *d;
 	struct cap_rights rights;
 	int err;
-	CAP_NONE(&rights);
+	CAP_SET_NONE(&rights);
 	err = do_path_lookup(AT_FDCWD, &rights, name, LOOKUP_PARENT, &nd);
 	if (err)
 		return ERR_PTR(err);
@@ -2041,7 +2041,7 @@ int kern_path(const char *name, unsigned int flags, struct path *path)
 	struct nameidata nd;
 	struct cap_rights rights;
 	int res;
-	CAP_NONE(&rights);
+	CAP_SET_NONE(&rights);
 	res = do_path_lookup(AT_FDCWD, &rights, name, flags, &nd);
 	if (!res)
 		*path = nd.path;
@@ -2067,7 +2067,7 @@ int vfs_path_lookup(struct dentry *dentry, struct vfsmount *mnt,
 	nd.root.mnt = mnt;
 	BUG_ON(flags & LOOKUP_PARENT);
 	/* the first argument of do_path_lookup() is ignored with LOOKUP_ROOT */
-	CAP_NONE(&rights);
+	CAP_SET_NONE(&rights);
 	err = do_path_lookup(AT_FDCWD, &rights, name, flags | LOOKUP_ROOT, &nd);
 	if (!err)
 		*path = nd.path;

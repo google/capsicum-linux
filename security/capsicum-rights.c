@@ -117,7 +117,7 @@ static bool cap_rights_is_vset(const struct cap_rights *rights, va_list ap)
 struct cap_rights *_cap_rights_init(struct cap_rights *rights, ...)
 {
 	va_list ap;
-	CAP_NONE(rights);
+	CAP_SET_NONE(rights);
 	va_start(ap, rights);
 	cap_rights_vset(rights, ap);
 	va_end(ap);
@@ -170,7 +170,7 @@ bool cap_rights_is_valid(const struct cap_rights *rights)
 	    CAPARSIZE(rights) > CAPARSIZE_MAX) {
 		return false;
 	}
-	CAP_ALL(&allrights);
+	CAP_SET_ALL(&allrights);
 	if (!cap_rights_contains(&allrights, rights))
 		return false;
 	for (i = 0; i < CAPARSIZE(rights); i++) {

@@ -4625,7 +4625,7 @@ pfm_exit_thread(struct task_struct *task)
 #define PFM_CMD_S(name, flags, rights) { name, #name, flags, 0, 0, rights, NULL }
 #define PFM_CMD_PCLRWS	(PFM_CMD_FD|PFM_CMD_ARG_RW|PFM_CMD_STOP)
 #define PFM_CMD_PCLRW	(PFM_CMD_FD|PFM_CMD_ARG_RW)
-#define PFM_CMD_NONE	{ NULL, "no-cmd", 0, 0, 0, CAP_NONE, NULL}
+#define PFM_CMD_NONE	{ NULL, "no-cmd", 0, 0, 0, 0, NULL}
 
 static pfm_cmd_desc_t pfm_cmd_tab[]={
 /* 0  */PFM_CMD_NONE,
