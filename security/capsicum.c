@@ -282,7 +282,7 @@ struct file *capsicum_file_lookup(struct file *file,
 			CAP_SET_ALL(actual_rights);
 		return file;
 	}
-	if (!cap_rights_contains(&rights, required_rights))
+	if (required_rights && !cap_rights_contains(&rights, required_rights))
 		return ERR_PTR(-ENOTCAPABLE);
 	if (actual_rights)
 		*actual_rights = rights;

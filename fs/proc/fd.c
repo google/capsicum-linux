@@ -19,6 +19,7 @@ static int seq_show(struct seq_file *m, void *v)
 	struct files_struct *files = NULL;
 	int f_flags = 0, ret = -ENOENT;
 	struct file *file = NULL;
+	struct file *underlying = NULL;
 	struct task_struct *task;
 
 	task = get_proc_task(m->private);
@@ -35,12 +36,13 @@ static int seq_show(struct seq_file *m, void *v)
 		file = fcheck_files(files, fd);
 		if (file) {
 			struct fdtable *fdt = files_fdtable(files);
-
-			f_flags = file->f_flags;
+			underlying = security_file_lookup(file, NULL, NULL);
+			f_flags = underlying->f_flags;
 			if (close_on_exec(fd, fdt))
 				f_flags |= O_CLOEXEC;
 
 			get_file(file);
+			get_file(underlying);
 			ret = 0;
 		}
 		spin_unlock(&files->file_lock);
@@ -49,9 +51,10 @@ static int seq_show(struct seq_file *m, void *v)
 
 	if (!ret) {
                 seq_printf(m, "pos:\t%lli\nflags:\t0%o\n",
-			   (long long)file->f_pos, f_flags);
+			   (long long)underlying->f_pos, f_flags);
 		if (file->f_op->show_fdinfo)
 			ret = file->f_op->show_fdinfo(m, file);
+		fput(underlying);
 		fput(file);
 	}
 
@@ -93,7 +96,9 @@ static int tid_fd_revalidate(struct dentry *dentry, unsigned int flags)
 			rcu_read_lock();
 			file = fcheck_files(files, fd);
 			if (file) {
-				unsigned f_mode = file->f_mode;
+				unsigned f_mode;
+				file = security_file_lookup(file, NULL, NULL);
+				f_mode = file->f_mode;
 
 				rcu_read_unlock();
 				put_files_struct(files);
@@ -156,6 +161,7 @@ static int proc_fd_link(struct dentry *dentry, struct path *path)
 		spin_lock(&files->file_lock);
 		fd_file = fcheck_files(files, fd);
 		if (fd_file) {
+			fd_file = security_file_lookup(fd_file, NULL, NULL);
 			*path = fd_file->f_path;
 			path_get(&fd_file->f_path);
 			ret = 0;
