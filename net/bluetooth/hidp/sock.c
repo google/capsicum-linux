@@ -56,7 +56,7 @@ static int hidp_sock_ioctl(struct socket *sock, unsigned int cmd, unsigned long 
 	struct socket *csock;
 	struct socket *isock;
 	int err;
-	struct cap_rights rights;
+	struct capsicum_rights rights;
 
 	BT_DBG("cmd %x arg %lx", cmd, arg);
 

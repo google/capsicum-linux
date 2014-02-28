@@ -1532,7 +1532,7 @@ static int mdc_ioc_changelog_send(struct obd_device *obd,
 				  struct ioc_changelog *icc)
 {
 	struct changelog_show *cs;
-	struct cap_rights rights;
+	struct capsicum_rights rights;
 	int rc;
 
 	/* Freed in mdc_changelog_send_thread */

@@ -108,7 +108,7 @@ SYSCALL_DEFINE3(old_readdir, unsigned int, fd,
 		struct old_linux_dirent __user *, dirent, unsigned int, count)
 {
 	int error;
-	struct cap_rights rights;
+	struct capsicum_rights rights;
 	struct fd f = fdget(fd, cap_rights_init(&rights, CAP_READ));
 	struct readdir_callback buf = {
 		.ctx.actor = fillonedir,
@@ -200,7 +200,7 @@ SYSCALL_DEFINE3(getdents, unsigned int, fd,
 		.count = count,
 		.current_dir = dirent
 	};
-	struct cap_rights rights;
+	struct capsicum_rights rights;
 	int error;
 
 	if (!access_ok(VERIFY_WRITE, dirent, count))
@@ -281,7 +281,7 @@ SYSCALL_DEFINE3(getdents64, unsigned int, fd,
 		.count = count,
 		.current_dir = dirent
 	};
-	struct cap_rights rights;
+	struct capsicum_rights rights;
 	int error;
 
 	if (!access_ok(VERIFY_WRITE, dirent, count))

@@ -1633,7 +1633,7 @@ SYSCALL_DEFINE1(umask, int, mask)
 static int prctl_set_mm_exe_file(struct mm_struct *mm, unsigned int fd)
 {
 	struct fd exe;
-	struct cap_rights rights;
+	struct capsicum_rights rights;
 	struct inode *inode;
 	int err;
 

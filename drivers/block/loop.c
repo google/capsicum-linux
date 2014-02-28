@@ -640,7 +640,7 @@ static int loop_change_fd(struct loop_device *lo, struct block_device *bdev,
 {
 	struct file	*file, *old_file;
 	struct inode	*inode;
-	struct cap_rights rights;
+	struct capsicum_rights rights;
 	int		error;
 
 	error = -ENXIO;
@@ -827,7 +827,7 @@ static int loop_set_fd(struct loop_device *lo, fmode_t mode,
 {
 	struct file	*file, *f;
 	struct inode	*inode;
-	struct cap_rights rights;
+	struct capsicum_rights rights;
 	struct address_space *mapping;
 	unsigned lo_blocksize;
 	int		lo_flags = 0;

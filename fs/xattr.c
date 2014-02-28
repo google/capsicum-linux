@@ -415,7 +415,7 @@ retry:
 SYSCALL_DEFINE5(fsetxattr, int, fd, const char __user *, name,
 		const void __user *,value, size_t, size, int, flags)
 {
-	struct cap_rights rights;
+	struct capsicum_rights rights;
 	struct fd f = fdget(fd, cap_rights_init(&rights, CAP_EXTATTR_SET));
 	struct dentry *dentry;
 	int error;
@@ -523,7 +523,7 @@ retry:
 SYSCALL_DEFINE4(fgetxattr, int, fd, const char __user *, name,
 		void __user *, value, size_t, size)
 {
-	struct cap_rights rights;
+	struct capsicum_rights rights;
 	struct fd f = fdget(fd, cap_rights_init(&rights, CAP_EXTATTR_GET));
 	ssize_t error = -EBADF;
 
@@ -613,7 +613,7 @@ retry:
 
 SYSCALL_DEFINE3(flistxattr, int, fd, char __user *, list, size_t, size)
 {
-	struct cap_rights rights;
+	struct capsicum_rights rights;
 	struct fd f = fdget(fd, cap_rights_init(&rights, CAP_EXTATTR_LIST));
 	ssize_t error = -EBADF;
 
@@ -691,7 +691,7 @@ retry:
 
 SYSCALL_DEFINE2(fremovexattr, int, fd, const char __user *, name)
 {
-	struct cap_rights rights;
+	struct capsicum_rights rights;
 	struct fd f = fdget(fd, cap_rights_init(&rights, CAP_EXTATTR_DELETE));
 	struct dentry *dentry;
 	int error = -EBADF;

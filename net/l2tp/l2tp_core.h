@@ -241,7 +241,7 @@ out:
 }
 
 struct sock *l2tp_tunnel_sock_lookup(struct l2tp_tunnel *tunnel,
-				     struct cap_rights *required_rights);
+				     struct capsicum_rights *rights);
 void l2tp_tunnel_sock_put(struct sock *sk);
 struct l2tp_session *l2tp_session_find(struct net *net,
 				       struct l2tp_tunnel *tunnel,

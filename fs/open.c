@@ -154,7 +154,7 @@ static long do_sys_ftruncate(unsigned int fd, loff_t length, int small)
 	struct inode *inode;
 	struct dentry *dentry;
 	struct fd f;
-	struct cap_rights rights;
+	struct capsicum_rights rights;
 	int error;
 
 	error = -EINVAL;
@@ -284,7 +284,7 @@ int do_fallocate(struct file *file, int mode, loff_t offset, loff_t len)
 
 SYSCALL_DEFINE4(fallocate, int, fd, int, mode, loff_t, offset, loff_t, len)
 {
-	struct cap_rights rights;
+	struct capsicum_rights rights;
 	struct fd f = fdget(fd, cap_rights_init(&rights, CAP_WRITE));
 	int error;
 
@@ -411,7 +411,7 @@ out:
 
 SYSCALL_DEFINE1(fchdir, unsigned int, fd)
 {
-	struct cap_rights rights;
+	struct capsicum_rights rights;
 	struct fd f = fdget_raw(fd, cap_rights_init(&rights, CAP_FCHDIR));
 	struct inode *inode;
 	int error = -EBADF;
@@ -500,7 +500,7 @@ out_unlock:
 
 SYSCALL_DEFINE2(fchmod, unsigned int, fd, umode_t, mode)
 {
-	struct cap_rights rights;
+	struct capsicum_rights rights;
 	struct fd f = fdget(fd, cap_rights_init(&rights, CAP_FCHMOD));
 	int err = -EBADF;
 
@@ -624,7 +624,7 @@ SYSCALL_DEFINE3(lchown, const char __user *, filename, uid_t, user, gid_t, group
 
 SYSCALL_DEFINE3(fchown, unsigned int, fd, uid_t, user, gid_t, group)
 {
-	struct cap_rights rights;
+	struct capsicum_rights rights;
 	struct fd f = fdget(fd, cap_rights_init(&rights, CAP_FCHOWN));
 	int error;
 

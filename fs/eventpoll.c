@@ -1830,7 +1830,7 @@ SYSCALL_DEFINE4(epoll_ctl, int, epfd, int, op, int, fd,
 	struct epitem *epi;
 	struct epoll_event epds;
 	struct eventpoll *tep = NULL;
-	struct cap_rights rights;
+	struct capsicum_rights rights;
 
 	error = -EFAULT;
 	if (ep_op_has_event(op) &&
@@ -1970,7 +1970,7 @@ SYSCALL_DEFINE4(epoll_wait, int, epfd, struct epoll_event __user *, events,
 	int error;
 	struct fd f;
 	struct eventpoll *ep;
-	struct cap_rights rights;
+	struct capsicum_rights rights;
 
 	/* The maximum number of event must be greater than zero */
 	if (maxevents <= 0 || maxevents > EP_MAX_EVENTS)

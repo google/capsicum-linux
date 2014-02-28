@@ -5971,7 +5971,7 @@ abort_export:
 
 static int set_bitmap_file(struct mddev *mddev, int fd)
 {
-	struct cap_rights rights;
+	struct capsicum_rights rights;
 	int err;
 
 	if (mddev->pers) {

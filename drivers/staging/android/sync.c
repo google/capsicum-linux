@@ -400,7 +400,7 @@ static void sync_fence_free_pts(struct sync_fence *fence)
 
 struct sync_fence *sync_fence_fdget(int fd)
 {
-	struct cap_rights rights;
+	struct capsicum_rights rights;
 	struct file *file = fget(fd, cap_rights_init(&rights, CAP_IOCTL));
 
 	if (file == NULL)

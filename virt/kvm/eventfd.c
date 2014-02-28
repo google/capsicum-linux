@@ -295,7 +295,7 @@ kvm_irqfd_assign(struct kvm *kvm, struct kvm_irqfd *args)
 	struct eventfd_ctx *eventfd = NULL, *resamplefd = NULL;
 	int ret;
 	unsigned int events;
-	struct cap_rights rights;
+	struct capsicum_rights rights;
 
 	irqfd = kzalloc(sizeof(*irqfd), GFP_KERNEL);
 	if (!irqfd)

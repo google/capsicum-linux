@@ -74,7 +74,7 @@ SYSCALL_DEFINE2(pdgetpid, int, fd, pid_t __user *, pidp)
 {
 	struct file *f;
 	struct procdesc *pd;
-	struct cap_rights rights;
+	struct capsicum_rights rights;
 	pid_t pid;
 
 	f = fget(fd, cap_rights_init(&rights, CAP_PDGETPID));
@@ -116,7 +116,7 @@ SYSCALL_DEFINE2(pdkill, int, fd, int, signum)
 {
 	struct file *f;
 	struct procdesc *pd;
-	struct cap_rights rights;
+	struct capsicum_rights rights;
 	int ret;
 
 	f = fget(fd, cap_rights_init(&rights, CAP_PDKILL));
@@ -138,7 +138,7 @@ SYSCALL_DEFINE4(pdwait4, int, fd, int __user *, status, int, options,
 {
 	struct file *f;
 	struct procdesc *pd;
-	struct cap_rights rights;
+	struct capsicum_rights rights;
 	pid_t pid;
 
 	f = fget(fd, cap_rights_init(&rights, CAP_PDWAIT));

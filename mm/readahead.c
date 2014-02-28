@@ -584,7 +584,7 @@ SYSCALL_DEFINE3(readahead, int, fd, loff_t, offset, size_t, count)
 {
 	ssize_t ret;
 	struct fd f;
-	struct cap_rights rights;
+	struct capsicum_rights rights;
 
 	ret = -EBADF;
 	f = fdget(fd, cap_rights_init(&rights, CAP_PREAD));

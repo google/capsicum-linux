@@ -117,7 +117,7 @@ int hpux_getdents(unsigned int fd, struct hpux_dirent __user *dirent, unsigned i
 		.count = count
 	};
 	int error;
-	struct cap_rights rights;
+	struct capsicum_rights rights;
 
 	arg = fdget(fd, cap_rights_init(&rights, CAP_READ));
 	if (IS_ERR(arg.file))

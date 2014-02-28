@@ -420,7 +420,7 @@ EXPORT_SYMBOL(sock_from_file);
 /**
  *	sockfd_lookup - Go from a file number to its socket slot
  *	@fd: file handle
- *	@required_rights: rights needed
+ *	@rights: rights needed
  *	@err: pointer to an error code return
  *
  *	The file handle passed in is locked and the socket it is bound
@@ -431,12 +431,12 @@ EXPORT_SYMBOL(sock_from_file);
  *	On a success the socket object pointer is returned.
  */
 
-struct socket *sockfd_lookup(int fd, struct cap_rights *required_rights, int *err)
+struct socket *sockfd_lookup(int fd, struct capsicum_rights *rights, int *err)
 {
 	struct file *file;
 	struct socket *sock;
 
-	file = fget(fd, required_rights);
+	file = fget(fd, rights);
 	if (IS_ERR(file)) {
 		*err = PTR_ERR(file);
 		return NULL;
@@ -450,14 +450,14 @@ struct socket *sockfd_lookup(int fd, struct cap_rights *required_rights, int *er
 EXPORT_SYMBOL(sockfd_lookup);
 
 static struct socket *sockfd_lookup_light(int fd,
-					  struct cap_rights *required_rights,
+					  struct capsicum_rights *rights,
 					  int *err, int *fput_needed)
 {
 	struct file *file;
 	struct socket *sock;
 
 	*err = -EBADF;
-	file = fget_light(fd, required_rights, fput_needed);
+	file = fget_light(fd, rights, fput_needed);
 	if (!IS_ERR(file)) {
 		sock = sock_from_file(file, err);
 		if (sock)
@@ -470,8 +470,9 @@ static struct socket *sockfd_lookup_light(int fd,
 }
 
 static struct socket *
-sockfd_lookup_light_rights(int fd, struct cap_rights *required_rights,
-			   struct cap_rights *actual_rights,
+sockfd_lookup_light_rights(int fd,
+			   const struct capsicum_rights *required_rights,
+			   const struct capsicum_rights **actual_rights,
 			   int *err, int *fput_needed)
 {
 	struct file *file;
@@ -1534,7 +1535,7 @@ SYSCALL_DEFINE3(bind, int, fd, struct sockaddr __user *, umyaddr, int, addrlen)
 	struct socket *sock;
 	struct sockaddr_storage address;
 	int err, fput_needed;
-	struct cap_rights rights;
+	struct capsicum_rights rights;
 
 	sock = sockfd_lookup_light(fd, cap_rights_init(&rights, CAP_BIND),
 				   &err, &fput_needed);
@@ -1565,7 +1566,7 @@ SYSCALL_DEFINE2(listen, int, fd, int, backlog)
 	struct socket *sock;
 	int err, fput_needed;
 	int somaxconn;
-	struct cap_rights rights;
+	struct capsicum_rights rights;
 
 	sock = sockfd_lookup_light(fd, cap_rights_init(&rights, CAP_LISTEN),
 				   &err, &fput_needed);
@@ -1603,7 +1604,8 @@ SYSCALL_DEFINE4(accept4, int, fd, struct sockaddr __user *, upeer_sockaddr,
 	struct file *installfile;
 	int err, len, newfd, fput_needed;
 	struct sockaddr_storage address;
-	struct cap_rights rights;
+	struct capsicum_rights rights;
+	const struct capsicum_rights *listen_rights;
 
 	if (flags & ~(SOCK_CLOEXEC | SOCK_NONBLOCK))
 		return -EINVAL;
@@ -1612,7 +1614,7 @@ SYSCALL_DEFINE4(accept4, int, fd, struct sockaddr __user *, upeer_sockaddr,
 		flags = (flags & ~SOCK_NONBLOCK) | O_NONBLOCK;
 
 	cap_rights_init(&rights, CAP_ACCEPT);
-	sock = sockfd_lookup_light_rights(fd, &rights, &rights, &err, &fput_needed);
+	sock = sockfd_lookup_light_rights(fd, &rights, &listen_rights, &err, &fput_needed);
 	if (!sock)
 		goto out;
 
@@ -1666,7 +1668,7 @@ SYSCALL_DEFINE4(accept4, int, fd, struct sockaddr __user *, upeer_sockaddr,
 
 	/* File flags are not inherited via accept() unlike another OSes. */
 
-	installfile = security_file_install(&rights, newfile);
+	installfile = security_file_install(listen_rights, newfile);
 	if (IS_ERR(installfile)) {
 		err = PTR_ERR(installfile);
 		goto out_fd;
@@ -1708,7 +1710,7 @@ SYSCALL_DEFINE3(connect, int, fd, struct sockaddr __user *, uservaddr,
 	struct socket *sock;
 	struct sockaddr_storage address;
 	int err, fput_needed;
-	struct cap_rights rights;
+	struct capsicum_rights rights;
 
 	sock = sockfd_lookup_light(fd, cap_rights_init(&rights, CAP_CONNECT),
 				   &err, &fput_needed);
@@ -1742,7 +1744,7 @@ SYSCALL_DEFINE3(getsockname, int, fd, struct sockaddr __user *, usockaddr,
 	struct socket *sock;
 	struct sockaddr_storage address;
 	int len, err, fput_needed;
-	struct cap_rights rights;
+	struct capsicum_rights rights;
 
 	sock = sockfd_lookup_light(fd, cap_rights_init(&rights, CAP_GETSOCKNAME),
 				   &err, &fput_needed);
@@ -1775,7 +1777,7 @@ SYSCALL_DEFINE3(getpeername, int, fd, struct sockaddr __user *, usockaddr,
 	struct socket *sock;
 	struct sockaddr_storage address;
 	int len, err, fput_needed;
-	struct cap_rights rights;
+	struct capsicum_rights rights;
 
 	sock = sockfd_lookup_light(fd, cap_rights_init(&rights, CAP_GETPEERNAME),
 				   &err, &fput_needed);
@@ -1813,7 +1815,7 @@ SYSCALL_DEFINE6(sendto, int, fd, void __user *, buff, size_t, len,
 	struct msghdr msg;
 	struct iovec iov;
 	int fput_needed;
-	struct cap_rights rights;
+	struct capsicum_rights rights;
 	cap_rights_init(&rights, CAP_WRITE);
 
 	if (len > INT_MAX)
@@ -1876,7 +1878,7 @@ SYSCALL_DEFINE6(recvfrom, int, fd, void __user *, ubuf, size_t, size,
 	struct sockaddr_storage address;
 	int err, err2;
 	int fput_needed;
-	struct cap_rights rights;
+	struct capsicum_rights rights;
 
 	if (size > INT_MAX)
 		size = INT_MAX;
@@ -1931,7 +1933,7 @@ SYSCALL_DEFINE5(setsockopt, int, fd, int, level, int, optname,
 {
 	int err, fput_needed;
 	struct socket *sock;
-	struct cap_rights rights;
+	struct capsicum_rights rights;
 
 	if (optlen < 0)
 		return -EINVAL;
@@ -1967,7 +1969,7 @@ SYSCALL_DEFINE5(getsockopt, int, fd, int, level, int, optname,
 {
 	int err, fput_needed;
 	struct socket *sock;
-	struct cap_rights rights;
+	struct capsicum_rights rights;
 
 	sock = sockfd_lookup_light(fd, cap_rights_init(&rights, CAP_GETSOCKOPT),
 				   &err, &fput_needed);
@@ -1998,7 +2000,7 @@ SYSCALL_DEFINE2(shutdown, int, fd, int, how)
 {
 	int err, fput_needed;
 	struct socket *sock;
-	struct cap_rights rights;
+	struct capsicum_rights rights;
 
 	sock = sockfd_lookup_light(fd, cap_rights_init(&rights, CAP_SHUTDOWN),
 				   &err, &fput_needed);
@@ -2162,7 +2164,7 @@ long __sys_sendmsg(int fd, struct msghdr __user *msg, unsigned flags)
 	struct msghdr msg_sys;
 	struct socket *sock_addr;
 	struct socket *sock_noaddr;
-	struct cap_rights rights;
+	struct capsicum_rights rights;
 
 	cap_rights_init(&rights, CAP_WRITE, CAP_CONNECT);
 	sock_addr = sockfd_lookup_light(fd, &rights, &err, &fput_needed);
@@ -2204,7 +2206,7 @@ int __sys_sendmmsg(int fd, struct mmsghdr __user *mmsg, unsigned int vlen,
 	struct compat_mmsghdr __user *compat_entry;
 	struct msghdr msg_sys;
 	struct used_address used_address;
-	struct cap_rights rights;
+	struct capsicum_rights rights;
 
 	if (vlen > UIO_MAXIOV)
 		vlen = UIO_MAXIOV;
@@ -2369,7 +2371,7 @@ long __sys_recvmsg(int fd, struct msghdr __user *msg, unsigned flags)
 	int fput_needed, err;
 	struct msghdr msg_sys;
 	struct socket *sock;
-	struct cap_rights rights;
+	struct capsicum_rights rights;
 
 	sock = sockfd_lookup_light(fd, cap_rights_init(&rights, CAP_READ),
 				   &err, &fput_needed);
@@ -2404,7 +2406,7 @@ int __sys_recvmmsg(int fd, struct mmsghdr __user *mmsg, unsigned int vlen,
 	struct compat_mmsghdr __user *compat_entry;
 	struct msghdr msg_sys;
 	struct timespec end_time;
-	struct cap_rights rights;
+	struct capsicum_rights rights;
 
 	if (timeout &&
 	    poll_select_set_timeout(&end_time, timeout->tv_sec,

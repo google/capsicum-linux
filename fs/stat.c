@@ -76,7 +76,7 @@ EXPORT_SYMBOL(vfs_getattr);
 
 int vfs_fstat(unsigned int fd, struct kstat *stat)
 {
-	struct cap_rights rights;
+	struct capsicum_rights rights;
 	struct fd f = fdget_raw(fd, cap_rights_init(&rights, CAP_FSTAT));
 	int error;
 

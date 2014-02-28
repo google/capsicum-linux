@@ -1540,7 +1540,7 @@ static int compat_ioctl_check_table(unsigned int xcmd)
 asmlinkage long compat_sys_ioctl(unsigned int fd, unsigned int cmd,
 				unsigned long arg)
 {
-	struct cap_rights rights;
+	struct capsicum_rights rights;
 	struct fd f = fdget(fd, cap_rights_init(&rights, CAP_IOCTL));
 	int error;
 	if (IS_ERR(f.file)) {

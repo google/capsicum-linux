@@ -1410,7 +1410,7 @@ static ssize_t ucma_migrate_id(struct ucma_file *new_file,
 	struct ucma_context *ctx;
 	struct fd f;
 	struct ucma_file *cur_file;
-	struct cap_rights rights;
+	struct capsicum_rights rights;
 	int ret = 0;
 
 	if (copy_from_user(&cmd, inbuf, sizeof(cmd)))

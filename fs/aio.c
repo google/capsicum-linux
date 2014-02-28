@@ -1350,7 +1350,8 @@ rw_common:
 	return 0;
 }
 
-static struct cap_rights *aio_opcode_rights(struct cap_rights *rights, int opcode)
+static struct capsicum_rights *
+aio_opcode_rights(struct capsicum_rights *rights, int opcode)
 {
 	switch (opcode) {
 	case IOCB_CMD_PREAD:
@@ -1379,7 +1380,7 @@ static int io_submit_one(struct kioctx *ctx, struct iocb __user *user_iocb,
 			 struct iocb *iocb, bool compat)
 {
 	struct kiocb *req;
-	struct cap_rights rights;
+	struct capsicum_rights rights;
 	ssize_t ret;
 
 	/* enforce forwards compatibility on users */

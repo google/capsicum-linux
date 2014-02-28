@@ -1900,7 +1900,7 @@ long ll_file_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 	case LL_IOC_LOV_SWAP_LAYOUTS: {
 		struct file *file2;
 		struct lustre_swap_layouts lsl;
-		struct cap_rights rights;
+		struct capsicum_rights rights;
 
 		if (copy_from_user(&lsl, (char *)arg,
 				       sizeof(struct lustre_swap_layouts)))

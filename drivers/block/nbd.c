@@ -646,7 +646,7 @@ static int __nbd_ioctl(struct block_device *bdev, struct nbd_device *nbd,
 
 	case NBD_SET_SOCK: {
 		struct file *file;
-		struct cap_rights rights;
+		struct capsicum_rights rights;
 		int err;
 		if (nbd->file)
 			return -EBUSY;

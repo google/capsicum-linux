@@ -193,7 +193,7 @@ static int atm_tc_change(struct Qdisc *sch, u32 classid, u32 parent,
 	struct socket *sock;
 	int fd, error, hdr_len;
 	void *hdr;
-	struct cap_rights rights;
+	struct capsicum_rights rights;
 
 	pr_debug("atm_tc_change(sch %p,[qdisc %p],classid %x,parent %x,"
 		"flow %p,opt %p)\n", sch, p, classid, parent, flow, opt);

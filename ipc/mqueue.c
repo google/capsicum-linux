@@ -964,7 +964,7 @@ SYSCALL_DEFINE5(mq_timedsend, mqd_t, mqdes, const char __user *, u_msg_ptr,
 	ktime_t expires, *timeout = NULL;
 	struct timespec ts;
 	struct posix_msg_tree_node *new_leaf = NULL;
-	struct cap_rights rights;
+	struct capsicum_rights rights;
 	int ret = 0;
 
 	if (u_abs_timeout) {
@@ -1085,7 +1085,7 @@ SYSCALL_DEFINE5(mq_timedreceive, mqd_t, mqdes, char __user *, u_msg_ptr,
 	ktime_t expires, *timeout = NULL;
 	struct timespec ts;
 	struct posix_msg_tree_node *new_leaf = NULL;
-	struct cap_rights rights;
+	struct capsicum_rights rights;
 
 	if (u_abs_timeout) {
 		int res = prepare_timeout(u_abs_timeout, &expires, &ts);
@@ -1191,7 +1191,7 @@ SYSCALL_DEFINE2(mq_notify, mqd_t, mqdes,
 	struct sigevent notification;
 	struct mqueue_inode_info *info;
 	struct sk_buff *nc;
-	struct cap_rights rights;
+	struct capsicum_rights rights;
 
 	if (u_notification) {
 		if (copy_from_user(&notification, u_notification,
@@ -1324,7 +1324,7 @@ SYSCALL_DEFINE3(mq_getsetattr, mqd_t, mqdes,
 	struct fd f;
 	struct inode *inode;
 	struct mqueue_inode_info *info;
-	struct cap_rights rights;
+	struct capsicum_rights rights;
 
 	if (u_mqstat != NULL) {
 		if (copy_from_user(&mqstat, u_mqstat, sizeof(struct mq_attr)))

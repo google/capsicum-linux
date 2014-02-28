@@ -146,7 +146,7 @@ SYSCALL_DEFINE4(osf_getdirentries, unsigned int, fd,
 		long __user *, basep)
 {
 	int error;
-	struct cap_rights rights;
+	struct capsicum_rights rights;
 	struct fd arg;
 	struct osf_dirent_callback buf = {
 		.ctx.actor = osf_filldir,

@@ -72,7 +72,7 @@ static int cmtp_sock_ioctl(struct socket *sock, unsigned int cmd, unsigned long 
 	struct socket *nsock;
 	void __user *argp = (void __user *)arg;
 	int err;
-	struct cap_rights rights;
+	struct capsicum_rights rights;
 
 	BT_DBG("cmd %x arg %lx", cmd, arg);
 

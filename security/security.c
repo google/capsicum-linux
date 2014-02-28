@@ -474,7 +474,8 @@ int security_path_chroot(struct path *path)
 	return security_ops->path_chroot(path);
 }
 
-int security_path_lookup(struct cap_rights *base_rights, struct dentry *dentry,
+int security_path_lookup(const struct capsicum_rights *base_rights,
+			 struct dentry *dentry,
 			 const char *name)
 {
 	return security_ops->path_lookup(base_rights, dentry, name);
@@ -796,13 +797,13 @@ int security_file_open(struct file *file, const struct cred *cred)
 }
 
 struct file *security_file_lookup(struct file *file,
-				  struct cap_rights *required_rights,
-				  struct cap_rights *actual_rights)
+				  const struct capsicum_rights *required_rights,
+				  const struct capsicum_rights **actual_rights)
 {
 	return security_ops->file_lookup(file, required_rights, actual_rights);
 }
 
-struct file *security_file_install(struct cap_rights *base_rights,
+struct file *security_file_install(const struct capsicum_rights *base_rights,
 				   struct file *file)
 {
 	return security_ops->file_install(base_rights, file);

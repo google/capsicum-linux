@@ -4014,7 +4014,7 @@ static int cgroup_write_event_control(struct cgroup_subsys_state *dummy_css,
 	unsigned int efd, cfd;
 	struct fd efile;
 	struct fd cfile;
-	struct cap_rights rights;
+	struct capsicum_rights rights;
 	char *endp;
 	int ret;
 

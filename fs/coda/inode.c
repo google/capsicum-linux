@@ -115,7 +115,7 @@ static int get_device_index(struct coda_mount_data *data)
 {
 	struct fd f;
 	struct inode *inode;
-	struct cap_rights rights;
+	struct capsicum_rights rights;
 	int idx;
 
 	if (data == NULL) {

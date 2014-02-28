@@ -345,7 +345,7 @@ static int check_fcntl_cmd(unsigned cmd)
 	return 0;
 }
 
-static bool fcntl_rights(unsigned int cmd, struct cap_rights *rights)
+static bool fcntl_rights(unsigned int cmd, struct capsicum_rights *rights)
 {
 	switch (cmd) {
 	case F_DUPFD:
@@ -354,11 +354,11 @@ static bool fcntl_rights(unsigned int cmd, struct cap_rights *rights)
 		 * Returning true (=>use wrapped file) implies that no rights
 		 * are needed.
 		 */
-		CAP_SET_NONE(rights);
+		cap_rights_init(rights, 0);
 		return true;
 	case F_GETFD:
 	case F_SETFD:
-		CAP_SET_NONE(rights);
+		cap_rights_init(rights, 0);
 		return false;
 	case F_GETFL:
 	case F_SETFL:
@@ -397,14 +397,14 @@ static bool fcntl_rights(unsigned int cmd, struct cap_rights *rights)
 		cap_rights_init(rights, CAP_GETSOCKOPT);
 		return false;
 	default:
-		CAP_SET_ALL(rights);
+		cap_rights_set_all(rights);
 		return false;
 	}
 }
 
 SYSCALL_DEFINE3(fcntl, unsigned int, fd, unsigned int, cmd, unsigned long, arg)
 {
-	struct cap_rights rights;
+	struct capsicum_rights rights;
 	bool use_wrapped = fcntl_rights(cmd, &rights);
 	struct fd f;
 	long err = -EBADF;
@@ -440,7 +440,7 @@ out:
 SYSCALL_DEFINE3(fcntl64, unsigned int, fd, unsigned int, cmd,
 		unsigned long, arg)
 {	
-	struct cap_rights rights;
+	struct capsicum_rights rights;
 	bool use_wrapped = fcntl_rights(cmd, &rights);
 	struct fd f;
 	long err = -EBADF;

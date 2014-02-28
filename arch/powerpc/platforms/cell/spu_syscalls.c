@@ -77,7 +77,7 @@ SYSCALL_DEFINE4(spu_create, const char __user *, name, unsigned int, flags,
 		return -ENOSYS;
 
 	if (flags & SPU_CREATE_AFFINITY_SPU) {
-		struct cap_rights rights;
+		struct capsicum_rights rights;
 		struct fd neighbor;
 		cap_rights_init(&rights, CAP_READ, CAP_WRITE, CAP_MAPEXEC);
 		neighbor = fdget(neighbor_fd, &rights);
@@ -99,7 +99,7 @@ asmlinkage long sys_spu_run(int fd, __u32 __user *unpc, __u32 __user *ustatus)
 	long ret;
 	struct fd arg;
 	struct spufs_calls *calls;
-	struct cap_rights rights;
+	struct capsicum_rights rights;
 
 	calls = spufs_calls_get();
 	if (!calls)

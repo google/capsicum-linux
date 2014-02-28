@@ -472,7 +472,7 @@ static int ncp_fill_super(struct super_block *sb, void *raw_data, int silent)
 	struct inode *root_inode;
 	struct inode *sock_inode;
 	struct socket *sock;
-	struct cap_rights rights;
+	struct capsicum_rights rights;
 	int error;
 	int default_bufsize;
 #ifdef CONFIG_NCPFS_PACKET_SIGNING

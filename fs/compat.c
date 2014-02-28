@@ -873,7 +873,7 @@ asmlinkage long compat_sys_old_readdir(unsigned int fd,
 	struct compat_old_linux_dirent __user *dirent, unsigned int count)
 {
 	int error;
-	struct cap_rights rights;
+	struct capsicum_rights rights;
 	struct fd f = fdget(fd, cap_rights_init(&rights, CAP_READ));
 	struct compat_readdir_callback buf = {
 		.ctx.actor = compat_fillonedir,
@@ -959,7 +959,7 @@ asmlinkage long compat_sys_getdents(unsigned int fd,
 		.current_dir = dirent,
 		.count = count
 	};
-	struct cap_rights rights;
+	struct capsicum_rights rights;
 	int error;
 
 	if (!access_ok(VERIFY_WRITE, dirent, count))
@@ -1045,7 +1045,7 @@ asmlinkage long compat_sys_getdents64(unsigned int fd,
 		.current_dir = dirent,
 		.count = count
 	};
-	struct cap_rights rights;
+	struct capsicum_rights rights;
 	int error;
 
 	if (!access_ok(VERIFY_WRITE, dirent, count))

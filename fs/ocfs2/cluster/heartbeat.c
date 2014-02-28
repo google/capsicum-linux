@@ -1721,7 +1721,7 @@ static ssize_t o2hb_region_dev_write(struct o2hb_region *reg,
 	int sectsize;
 	char *p = (char *)page;
 	struct fd f;
-	struct cap_rights rights;
+	struct capsicum_rights rights;
 	struct inode *inode;
 	ssize_t ret = -EINVAL;
 	int live_threshold;

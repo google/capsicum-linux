@@ -431,7 +431,7 @@ static int cgroupstats_user_cmd(struct sk_buff *skb, struct genl_info *info)
 	size_t size;
 	u32 fd;
 	struct fd f;
-	struct cap_rights rights;
+	struct capsicum_rights rights;
 
 	na = info->attrs[CGROUPSTATS_CMD_ATTR_FD];
 	if (!na)

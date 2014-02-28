@@ -4671,7 +4671,7 @@ long btrfs_ioctl_send(struct file *mnt_file, void __user *arg_)
 	struct btrfs_ioctl_send_args *arg = NULL;
 	struct btrfs_key key;
 	struct send_ctx *sctx = NULL;
-	struct cap_rights rights;
+	struct capsicum_rights rights;
 	u32 i;
 	u64 *clone_sources_tmp = NULL;
 

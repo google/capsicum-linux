@@ -80,9 +80,10 @@ static inline void get_page_foll(struct page *page)
 	}
 }
 
-static inline struct cap_rights *mmap_rights(struct cap_rights *rights,
-					     unsigned long prot,
-					     unsigned long flags)
+static inline struct capsicum_rights *
+mmap_rights(struct capsicum_rights *rights,
+	    unsigned long prot,
+	    unsigned long flags)
 {
 	cap_rights_init(rights, CAP_MMAP);
 	if (prot & PROT_READ)

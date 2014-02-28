@@ -29,18 +29,20 @@
 
 #include <stdarg.h>
 #include <linux/capsicum.h>
+#include <linux/slab.h>
+#include <asm/fcntl.h>
 #include <asm/bug.h>
+
+#include "capsicum-rights.h"
 
 #ifdef CONFIG_SECURITY_CAPSICUM
 #define CAPARSIZE_MIN	(CAP_RIGHTS_VERSION_00 + 2)
 #define CAPARSIZE_MAX	(CAP_RIGHTS_VERSION + 2)
 
-/* -1 indicates invalid index value, otherwise log2(v), ie.: */
-/* 0x001 -> 0 */
-/* 0x002 -> 1 */
-/* 0x004 -> 2 */
-/* 0x008 -> 3 */
-/* 0x010 -> 4 */
+/*
+ * -1 indicates invalid index value, otherwise log2(v), ie.:
+ * 0x001 -> 0, 0x002 -> 1, 0x004 -> 2, 0x008 -> 3, 0x010 -> 4, rest -> -1
+ */
 static const int bit2idx[] = {
 	-1, 0, 1, -1, 2, -1, -1, -1, 3, -1, -1, -1, -1, -1, -1, -1,
 	4, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1
@@ -48,16 +50,21 @@ static const int bit2idx[] = {
 
 static inline int right_to_index(__u64 right)
 {
-	int idx = CAPIDXBIT(right);
-	return (bit2idx[idx]);
+	return (bit2idx[CAPIDXBIT(right)]);
 }
 
-static void cap_rights_vset(struct cap_rights *rights, va_list ap)
+static inline bool has_right(const struct capsicum_rights *rights, u64 right)
+{
+	int idx = right_to_index(right);
+	return (rights->primary.cr_rights[idx] & right) == right;
+}
+
+static void cap_rights_vset(struct capsicum_rights *rights, va_list ap)
 {
 	u64 right;
 	int i, n;
 
-	n = CAPARSIZE(rights);
+	n = CAPARSIZE(&rights->primary);
 	BUG_ON(n < CAPARSIZE_MIN || n > CAPARSIZE_MAX);
 
 	while (true) {
@@ -67,69 +74,40 @@ static void cap_rights_vset(struct cap_rights *rights, va_list ap)
 		BUG_ON(CAPRVER(right) != 0);
 		i = right_to_index(right);
 		BUG_ON(i < 0 || i >= n);
-		BUG_ON(CAPIDXBIT(rights->cr_rights[i]) != CAPIDXBIT(right));
-		rights->cr_rights[i] |= right;
+		BUG_ON(CAPIDXBIT(rights->primary.cr_rights[i]) != CAPIDXBIT(right));
+		rights->primary.cr_rights[i] |= right;
 	}
 }
 
-static void cap_rights_vclear(struct cap_rights *rights, va_list ap)
+void cap_rights_regularize(struct capsicum_rights *rights)
 {
-	u64 right;
-	int i, n;
-
-	n = CAPARSIZE(rights);
-	BUG_ON(n < CAPARSIZE_MIN || n > CAPARSIZE_MAX);
-
-	while (true) {
-		right = va_arg(ap, u64);
-		if (right == 0)
-			break;
-		BUG_ON(CAPRVER(right) != 0);
-		i = right_to_index(right);
-		BUG_ON(i < 0 || i >= n);
-		BUG_ON(CAPIDXBIT(rights->cr_rights[i]) != CAPIDXBIT(right));
-		rights->cr_rights[i] &= ~(right & 0x01FFFFFFFFFFFFFFULL);
+	if (!has_right(rights, CAP_FCNTL)) {
+		rights->fcntls = 0x00;
+	}
+	if (!has_right(rights, CAP_IOCTL)) {
+		rights->nioctls = 0;
+		kfree(rights->ioctls);
+		rights->ioctls = NULL;
 	}
 }
 
-static bool cap_rights_is_vset(const struct cap_rights *rights, va_list ap)
-{
-	u64 right;
-	int i, n;
-
-	n = CAPARSIZE(rights);
-	BUG_ON(n < CAPARSIZE_MIN || n > CAPARSIZE_MAX);
-
-	while (true) {
-		right = va_arg(ap, u64);
-		if (right == 0)
-			break;
-		BUG_ON(CAPRVER(right) != 0);
-		i = right_to_index(right);
-		BUG_ON(i < 0 || i >= n);
-		BUG_ON(CAPIDXBIT(rights->cr_rights[i]) != CAPIDXBIT(right));
-		if ((rights->cr_rights[i] & right) != right)
-			return false;
-	}
-	return true;
-}
-
-struct cap_rights *_cap_rights_init(struct cap_rights *rights, ...)
+struct capsicum_rights *_cap_rights_init(struct capsicum_rights *rights, ...)
 {
 	va_list ap;
-	CAP_SET_NONE(rights);
+	CAP_SET_NONE(&rights->primary);
+	rights->nioctls = 0;
+	rights->ioctls = NULL;
+	rights->fcntls = 0;
 	va_start(ap, rights);
 	cap_rights_vset(rights, ap);
 	va_end(ap);
-
 	return rights;
 }
 EXPORT_SYMBOL(_cap_rights_init);
 
-struct cap_rights *_cap_rights_set(struct cap_rights *rights, ...)
+struct capsicum_rights *_cap_rights_set(struct capsicum_rights *rights, ...)
 {
 	va_list ap;
-	BUG_ON(CAPVER(rights) != CAP_RIGHTS_VERSION_00);
 	va_start(ap, rights);
 	cap_rights_vset(rights, ap);
 	va_end(ap);
@@ -137,97 +115,38 @@ struct cap_rights *_cap_rights_set(struct cap_rights *rights, ...)
 }
 EXPORT_SYMBOL(_cap_rights_set);
 
-struct cap_rights *_cap_rights_clear(struct cap_rights *rights, ...)
+struct capsicum_rights *cap_rights_set_all(struct capsicum_rights *rights)
 {
-	va_list ap;
-	BUG_ON(CAPVER(rights) != CAP_RIGHTS_VERSION_00);
-	va_start(ap, rights);
-	cap_rights_vclear(rights, ap);
-	va_end(ap);
+	CAP_SET_ALL(&rights->primary);
+	rights->nioctls = -1;
+	rights->ioctls = NULL;
+	rights->fcntls = CAP_FCNTL_ALL;
 	return rights;
 }
-EXPORT_SYMBOL(_cap_rights_clear);
+EXPORT_SYMBOL(cap_rights_set_all);
 
-bool _cap_rights_is_set(const struct cap_rights *rights, ...)
+static bool cap_rights_ioctls_contains(const struct capsicum_rights *big,
+				       const struct capsicum_rights *little)
 {
-	va_list ap;
-	bool ret;
-	BUG_ON(CAPVER(rights) != CAP_RIGHTS_VERSION_00);
-	va_start(ap, rights);
-	ret = cap_rights_is_vset(rights, ap);
-	va_end(ap);
-	return ret;
-}
-
-bool cap_rights_is_valid(const struct cap_rights *rights)
-{
-	struct cap_rights allrights;
 	int i, j;
 
-	if (CAPVER(rights) != CAP_RIGHTS_VERSION_00)
+	if (big->nioctls == -1)
+		return true;
+	if (big->nioctls < little->nioctls)
 		return false;
-	if (CAPARSIZE(rights) < CAPARSIZE_MIN ||
-	    CAPARSIZE(rights) > CAPARSIZE_MAX) {
-		return false;
-	}
-	CAP_SET_ALL(&allrights);
-	if (!cap_rights_contains(&allrights, rights))
-		return false;
-	for (i = 0; i < CAPARSIZE(rights); i++) {
-		j = right_to_index(rights->cr_rights[i]);
-		if (i != j)
-			return false;
-		if (i > 0) {
-			if (CAPRVER(rights->cr_rights[i]) != 0)
-				return false;
+	for (i = 0; i < little->nioctls; i++) {
+		for (j = 0; j < big->nioctls; j++) {
+			if (little->ioctls[i] == big->ioctls[j])
+				break;
 		}
+		if (j == big->nioctls)
+			return false;
 	}
 	return true;
 }
 
-struct cap_rights *cap_rights_merge(struct cap_rights *dst,
-				    const struct cap_rights *src)
-{
-	unsigned int i, n;
-
-	BUG_ON(CAPVER(dst) != CAP_RIGHTS_VERSION_00);
-	BUG_ON(CAPVER(src) != CAP_RIGHTS_VERSION_00);
-	BUG_ON(!cap_rights_is_valid(src));
-	BUG_ON(!cap_rights_is_valid(dst));
-
-	n = CAPARSIZE(dst);
-	BUG_ON(n < CAPARSIZE_MIN || n > CAPARSIZE_MAX);
-
-	for (i = 0; i < n; i++)
-		dst->cr_rights[i] |= src->cr_rights[i];
-
-	BUG_ON(!cap_rights_is_valid(dst));
-	return dst;
-}
-
-struct cap_rights *cap_rights_remove(struct cap_rights *dst,
-				     const struct cap_rights *src)
-{
-	unsigned int i, n;
-
-	BUG_ON(CAPVER(dst) != CAP_RIGHTS_VERSION_00);
-	BUG_ON(CAPVER(src) != CAP_RIGHTS_VERSION_00);
-	BUG_ON(!cap_rights_is_valid(src));
-	BUG_ON(!cap_rights_is_valid(dst));
-
-	n = CAPARSIZE(dst);
-	BUG_ON(n < CAPARSIZE_MIN || n > CAPARSIZE_MAX);
-
-	for (i = 0; i < n; i++) {
-		dst->cr_rights[i] &= ~(src->cr_rights[i] & 0x01FFFFFFFFFFFFFFULL);
-	}
-
-	BUG_ON(!cap_rights_is_valid(dst));
-	return dst;
-}
-
-bool cap_rights_contains(const struct cap_rights *big,
-			 const struct cap_rights *little)
+static bool cap_rights_primary_contains(const struct cap_rights *big,
+					const struct cap_rights *little)
 {
 	unsigned int i, n;
 
@@ -246,4 +165,19 @@ bool cap_rights_contains(const struct cap_rights *big,
 	return true;
 }
 
-#endif
+bool cap_rights_contains(const struct capsicum_rights *big,
+			const struct capsicum_rights *little)
+{
+	return (cap_rights_primary_contains(&big->primary, &little->primary) &&
+		((big->fcntls & little->fcntls) == little->fcntls) &&
+		cap_rights_ioctls_contains(big, little));
+}
+
+bool cap_rights_is_all(const struct capsicum_rights *rights)
+{
+	return (CAP_IS_ALL(&rights->primary) &&
+		rights->fcntls == CAP_FCNTL_ALL &&
+		rights->nioctls == -1);
+}
+
+#endif  /* CONFIG_SECURITY_CAPSICUM */

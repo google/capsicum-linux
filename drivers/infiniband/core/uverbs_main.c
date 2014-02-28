@@ -566,10 +566,7 @@ struct file *ib_uverbs_alloc_event_file(struct ib_uverbs_file *uverbs_file,
 struct ib_uverbs_event_file *ib_uverbs_lookup_comp_file(int fd)
 {
 	struct ib_uverbs_event_file *ev_file = NULL;
-	struct cap_rights rights;
-	struct fd f;
-	CAP_SET_NONE(&rights);
-	f = fdget(fd, &rights);
+	struct fd f = fdget(fd, NULL);
 
 	if (IS_ERR(f.file))
 		return NULL;

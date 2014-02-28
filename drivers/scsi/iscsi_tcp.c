@@ -649,7 +649,7 @@ iscsi_sw_tcp_conn_bind(struct iscsi_cls_session *cls_session,
 	struct iscsi_sw_tcp_conn *tcp_sw_conn = tcp_conn->dd_data;
 	struct sock *sk;
 	struct socket *sock;
-	struct cap_rights rights;
+	struct capsicum_rights rights;
 	int err;
 
 	/* lookup for existing socket */

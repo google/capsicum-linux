@@ -838,7 +838,7 @@ static int lmv_hsm_ct_register(struct lmv_obd *lmv, unsigned int cmd, int len,
 			       struct lustre_kernelcomm *lk, void *uarg)
 {
 	struct file	*filp;
-	struct cap_rights rights;
+	struct capsicum_rights rights;
 	int		 i, j, err;
 	int		 rc = 0;
 	bool		 any_set = false;

@@ -357,7 +357,7 @@ static int autofs_dev_ioctl_setpipefd(struct file *fp,
 		mutex_unlock(&sbi->wq_mutex);
 		return -EBUSY;
 	} else {
-		struct cap_rights rights;
+		struct capsicum_rights rights;
 		struct file *pipe;
 		cap_rights_init(&rights, CAP_READ, CAP_WRITE, CAP_FSYNC);
 		pipe = fget(pipefd, &rights);
@@ -653,7 +653,7 @@ static int _autofs_dev_ioctl(unsigned int command, struct autofs_dev_ioctl __use
 	 */
 	if (cmd != AUTOFS_DEV_IOCTL_OPENMOUNT_CMD &&
 	    cmd != AUTOFS_DEV_IOCTL_CLOSEMOUNT_CMD) {
-		struct cap_rights rights;
+		struct capsicum_rights rights;
 		fp = fget(param->ioctlfd,
 			  cap_rights_init(&rights, CAP_IOCTL, CAP_FSTAT));
 		if (IS_ERR(fp)) {

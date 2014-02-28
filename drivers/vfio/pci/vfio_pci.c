@@ -649,7 +649,7 @@ reset_info_exit:
 		 */
 		for (i = 0; i < hdr.count; i++) {
 			struct vfio_group *group;
-			struct cap_rights rights;
+			struct capsicum_rights rights;
 			struct fd f = fdget(group_fds[i],
 					    cap_rights_init(&rights, CAP_FSTAT));
 			if (IS_ERR(f.file)) {

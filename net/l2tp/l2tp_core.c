@@ -177,7 +177,7 @@ l2tp_session_id_hash_2(struct l2tp_net *pn, u32 session_id)
  * released using l2tp_tunnel_sock_put once you're done with it.
  */
 struct sock *l2tp_tunnel_sock_lookup(struct l2tp_tunnel *tunnel,
-				     struct cap_rights *required_rights)
+				     struct capsicum_rights *rights)
 {
 	int err = 0;
 	struct socket *sock = NULL;
@@ -191,7 +191,7 @@ struct sock *l2tp_tunnel_sock_lookup(struct l2tp_tunnel *tunnel,
 		 * of closing it.  Look the socket up using the fd to ensure
 		 * consistency.
 		 */
-		sock = sockfd_lookup(tunnel->fd, required_rights, &err);
+		sock = sockfd_lookup(tunnel->fd, rights, &err);
 		if (sock)
 			sk = sock->sk;
 	} else {
@@ -1435,7 +1435,7 @@ static void l2tp_tunnel_del_work(struct work_struct *work)
 	struct l2tp_tunnel *tunnel = NULL;
 	struct socket *sock = NULL;
 	struct sock *sk = NULL;
-	struct cap_rights rights;
+	struct capsicum_rights rights;
 
 	tunnel = container_of(work, struct l2tp_tunnel, del_work);
 	sk = l2tp_tunnel_sock_lookup(tunnel, cap_rights_init(&rights, CAP_SHUTDOWN));
@@ -1628,7 +1628,7 @@ int l2tp_tunnel_create(struct net *net, int fd, int version, u32 tunnel_id, u32 
 	struct sock *sk = NULL;
 	struct l2tp_net *pn;
 	enum l2tp_encap_type encap = L2TP_ENCAPTYPE_UDP;
-	struct cap_rights rights;
+	struct capsicum_rights rights;
 
 	/* Get the tunnel socket from the fd, which was opened by
 	 * the userspace L2TP daemon. If not specified, create a

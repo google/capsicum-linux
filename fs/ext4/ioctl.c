@@ -423,7 +423,7 @@ group_extend_out:
 	case EXT4_IOC_MOVE_EXT: {
 		struct move_extent me;
 		struct fd donor;
-		struct cap_rights rights;
+		struct capsicum_rights rights;
 		int err;
 
 		if (!(filp->f_mode & FMODE_READ) ||

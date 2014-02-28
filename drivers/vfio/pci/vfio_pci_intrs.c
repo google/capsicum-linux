@@ -133,7 +133,7 @@ static int virqfd_enable(struct vfio_pci_device *vdev,
 	struct fd irqfd;
 	struct eventfd_ctx *ctx;
 	struct virqfd *virqfd;
-	struct cap_rights rights;
+	struct capsicum_rights rights;
 	int ret = 0;
 	unsigned int events;
 

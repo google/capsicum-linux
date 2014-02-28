@@ -654,8 +654,8 @@ void do_close_on_exec(struct files_struct *files)
  * if necessary.
  */
 static struct file *unwrap_file(struct file *orig,
-				struct cap_rights *required_rights,
-				struct cap_rights *actual_rights,
+				const struct capsicum_rights *required_rights,
+				const struct capsicum_rights **actual_rights,
 				bool update_refcnt)
 {
 	struct file *f;
@@ -680,7 +680,7 @@ static struct file *unwrap_file(struct file *orig,
 	return f;
 }
 
-struct file *fget(unsigned int fd, struct cap_rights *required_rights)
+struct file *fget(unsigned int fd, const struct capsicum_rights *rights)
 {
 	struct file *file;
 	struct files_struct *files = current->files;
@@ -693,14 +693,14 @@ struct file *fget(unsigned int fd, struct cap_rights *required_rights)
 		    !atomic_long_inc_not_zero(&file->f_count))
 			file = ERR_PTR(-EBADF);
 	}
-	file = unwrap_file(file, required_rights, NULL, true);
+	file = unwrap_file(file, rights, NULL, true);
 	rcu_read_unlock();
 
 	return file;
 }
 EXPORT_SYMBOL(fget);
 
-struct file *fget_raw(unsigned int fd, struct cap_rights *required_rights)
+struct file *fget_raw(unsigned int fd, const struct capsicum_rights *rights)
 {
 	struct file *file;
 	struct files_struct *files = current->files;
@@ -712,7 +712,7 @@ struct file *fget_raw(unsigned int fd, struct cap_rights *required_rights)
 		if (!atomic_long_inc_not_zero(&file->f_count))
 			file = ERR_PTR(-EBADF);
 	}
-	file = unwrap_file(file, required_rights, NULL, true);
+	file = unwrap_file(file, rights, NULL, true);
 	rcu_read_unlock();
 
 	return file;
@@ -755,7 +755,7 @@ EXPORT_SYMBOL(fget_raw_no_unwrap);
  * The fput_needed flag returned by fget_light should be passed to the
  * corresponding fput_light.
  */
-struct file *fget_light(unsigned int fd, struct cap_rights *required_rights,
+struct file *fget_light(unsigned int fd, const struct capsicum_rights *rights,
 			int *fput_needed)
 {
 	struct file *file;
@@ -767,7 +767,7 @@ struct file *fget_light(unsigned int fd, struct cap_rights *required_rights,
 		if (file && (file->f_mode & FMODE_PATH))
 			file = ERR_PTR(-EBADF);
 		else
-			file = unwrap_file(file, required_rights, NULL, false);
+			file = unwrap_file(file, rights, NULL, false);
 	} else {
 		rcu_read_lock();
 		file = fcheck_files(files, fd);
@@ -779,7 +779,7 @@ struct file *fget_light(unsigned int fd, struct cap_rights *required_rights,
 				/* Didn't get the reference, someone's freed */
 				file = ERR_PTR(-EBADF);
 		}
-		file = unwrap_file(file, required_rights, NULL, true);
+		file = unwrap_file(file, rights, NULL, true);
 		rcu_read_unlock();
 	}
 
@@ -788,8 +788,8 @@ struct file *fget_light(unsigned int fd, struct cap_rights *required_rights,
 EXPORT_SYMBOL(fget_light);
 
 struct file *fget_raw_light(unsigned int fd,
-			    struct cap_rights *required_rights,
-			    struct cap_rights *actual_rights,
+			    const struct capsicum_rights *required_rights,
+			    const struct capsicum_rights **actual_rights,
 			    int *fput_needed)
 {
 	struct file *file;

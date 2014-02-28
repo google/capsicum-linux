@@ -782,7 +782,7 @@ static int p9_fd_open(struct p9_client *client, int rfd, int wfd)
 {
 	struct p9_trans_fd *ts = kmalloc(sizeof(struct p9_trans_fd),
 					   GFP_KERNEL);
-	struct cap_rights rights;
+	struct capsicum_rights rights;
 	if (!ts)
 		return -ENOMEM;
 

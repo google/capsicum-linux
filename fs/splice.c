@@ -1684,7 +1684,7 @@ SYSCALL_DEFINE4(vmsplice, int, fd, const struct iovec __user *, iov,
 		unsigned long, nr_segs, unsigned int, flags)
 {
 	struct fd f;
-	struct cap_rights rights;
+	struct capsicum_rights rights;
 	long error;
 
 	if (unlikely(nr_segs > UIO_MAXIOV))
@@ -1734,7 +1734,7 @@ SYSCALL_DEFINE6(splice, int, fd_in, loff_t __user *, off_in,
 		size_t, len, unsigned int, flags)
 {
 	struct fd in, out;
-	struct cap_rights rights;
+	struct capsicum_rights rights;
 	long error;
 
 	if (unlikely(!len))
@@ -2071,7 +2071,7 @@ static long do_tee(struct file *in, struct file *out, size_t len,
 SYSCALL_DEFINE4(tee, int, fdin, int, fdout, size_t, len, unsigned int, flags)
 {
 	struct fd in;
-	struct cap_rights rights;
+	struct capsicum_rights rights;
 	int error;
 
 	if (unlikely(!len))

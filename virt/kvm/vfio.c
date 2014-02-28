@@ -105,7 +105,7 @@ static int kvm_vfio_set_group(struct kvm_device *dev, long attr, u64 arg)
 	struct fd f;
 	int32_t fd;
 	int ret;
-	struct cap_rights rights;
+	struct capsicum_rights rights;
 
 	switch (attr) {
 	case KVM_DEV_VFIO_GROUP_ADD:

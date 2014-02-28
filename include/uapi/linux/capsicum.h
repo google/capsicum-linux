@@ -32,8 +32,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD: release/10.0.0/sys/sys/capability.h 258324 2013-11-18 22:37:01Z pjd $
  */
 
 /*
@@ -58,6 +56,7 @@
 */
 #define CAP_RIGHTS_VERSION	CAP_RIGHTS_VERSION_00
 
+/* Primary rights */
 struct cap_rights {
 	__u64	cr_rights[CAP_RIGHTS_VERSION + 2];
 };
@@ -303,7 +302,6 @@ typedef struct cap_rights cap_rights_t;
 /* Allow performance monitoring operations */
 #define CAP_PERFMON             CAPRIGHT(1, 0x0000000002000000ULL)
 
-
 /* All used bits for index 1. */
 #define CAP_ALL1		CAPRIGHT(1, 0x0000000003FFFFFFULL)
 
@@ -347,6 +345,6 @@ typedef struct cap_rights cap_rights_t;
 #define CAP_FCNTL_ALL		(CAP_FCNTL_GETFL | CAP_FCNTL_SETFL | \
 				 CAP_FCNTL_GETOWN | CAP_FCNTL_SETOWN)
 
-#define CAP_IOCTLS_ALL	SSIZE_MAX
+#define CAP_IOCTLS_ALL	-1
 
 #endif /* _UAPI_LINUX_CAPSICUM_H */

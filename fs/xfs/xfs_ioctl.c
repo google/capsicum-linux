@@ -72,7 +72,7 @@ xfs_find_handle(
 	struct inode		*inode;
 	struct fd		f = {NULL};
 	struct path		path;
-	struct cap_rights	rights;
+	struct capsicum_rights	rights;
 	int			error;
 	struct xfs_inode	*ip;
 
@@ -1476,7 +1476,7 @@ xfs_ioc_swapext(
 	xfs_swapext_t	*sxp)
 {
 	xfs_inode_t     *ip, *tip;
-	struct cap_rights rights;
+	struct capsicum_rights rights;
 	struct fd	f, tmp;
 	int		error = 0;
 

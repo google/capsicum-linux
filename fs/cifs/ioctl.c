@@ -46,7 +46,7 @@ static long cifs_ioctl_clone(unsigned int xid, struct file *dst_file,
 	struct cifsFileInfo *smb_file_src;
 	struct inode *src_inode;
 	struct cifs_tcon *src_tcon;
-	struct cap_rights rights;
+	struct capsicum_rights rights;
 
 	cifs_dbg(FYI, "ioctl clone range\n");
 	/* the destination must be opened for writing */

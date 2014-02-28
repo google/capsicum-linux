@@ -53,7 +53,7 @@ struct msg_queue;
 struct xattr;
 struct xfrm_sec_ctx;
 struct mm_struct;
-struct cap_rights;
+struct capsicum_rights;
 
 /* Maximum number of letters for an LSM name string */
 #define SECURITY_NAME_MAX	10
@@ -410,7 +410,7 @@ static inline void security_free_mnt_opts(struct security_mnt_opts *opts)
  * @path_lookup:
  *      Check permission before looking up a path segment.
  *	@base_rights are the rights associated with the directory the lookup
- *	is relative to.
+ *	is relative to, or NULL if no directory is associated.
  *      @dentry is the context of the lookup, or NULL for the first stage of
  *      an absolute lookup.
  *      @name is the rest of the path.
@@ -683,12 +683,13 @@ static inline void security_free_mnt_opts(struct security_mnt_opts *opts)
  *	substitute a new return value for fget().
  *	@file is the file in the process's file table, which may be replaced by
  *	another file as the return value from the hook.
- *	@required_rights is the rights that the file descriptor should hold.
- *	@actual_rights is filled in (if it is non-NLL) with the rights that the
- *	file descriptor holds.
+ *	@required_rights is the rights that the file descriptor should hold, or
+ *	may be NULL to indicate that no specific rights are needed.
+ *	@actual_rights is returned (if it is non-NULL) as a pointer to the
+ *	rights that the file descriptor has.  The caller does not own this
+ *	memory, and should only use if while maintaining a refcount to the
+ *	returned unwrapped file.
  *	Return PTR_ERR holding the unwrapped file.
- *	This hook is called within an rcu_read_lock() section, and is not
- *	expected to obtain or release references to the old or new file.
  * @file_install:
  *	This hook allows security modules to intercept newly created files that
  *	are about to be installed in the file descriptor table, to potentially
@@ -1537,7 +1538,7 @@ struct security_operations {
 	int (*path_chmod) (struct path *path, umode_t mode);
 	int (*path_chown) (struct path *path, kuid_t uid, kgid_t gid);
 	int (*path_chroot) (struct path *path);
-	int (*path_lookup) (struct cap_rights *base_rights,
+	int (*path_lookup) (const struct capsicum_rights *base_rights,
 			    struct dentry *dentry, const char *name);
 #endif
 
@@ -1599,9 +1600,9 @@ struct security_operations {
 	int (*file_receive) (struct file *file);
 	int (*file_open) (struct file *file, const struct cred *cred);
 	struct file *(*file_lookup) (struct file *orig,
-				     struct cap_rights *required_rights,
-				     struct cap_rights *actual_rights);
-	struct file *(*file_install) (struct cap_rights *base_rights,
+				     const struct capsicum_rights *required_rights,
+				     const struct capsicum_rights **actual_rights);
+	struct file *(*file_install) (const struct capsicum_rights *base_rights,
 				      struct file *file);
 
 	int (*task_create) (unsigned long clone_flags);
@@ -1878,9 +1879,9 @@ int security_file_send_sigiotask(struct task_struct *tsk,
 int security_file_receive(struct file *file);
 int security_file_open(struct file *file, const struct cred *cred);
 struct file *security_file_lookup(struct file *orig,
-				struct cap_rights *required_rights,
-				struct cap_rights *actual_rights);
-struct file *security_file_install(struct cap_rights *base_rights,
+				  const struct capsicum_rights *required_rights,
+				  const struct capsicum_rights **actual_rights);
+struct file *security_file_install(const struct capsicum_rights *base_rights,
 				   struct file *file);
 int security_task_create(unsigned long clone_flags);
 void security_task_free(struct task_struct *task);
@@ -2381,8 +2382,10 @@ static inline int security_file_open(struct file *file,
 	return 0;
 }
 
-static inline struct file *security_file_lookup(struct file *orig,
-						struct cap_rights *required_rights)
+static inline struct file *
+security_file_lookup(struct file *orig,
+		const struct capsicum_rights *required_rights,
+		const struct capsicum_rights **actual_rights)
 {
 	return orig;
 }
@@ -2392,7 +2395,7 @@ static inline int security_fd_alloc(unsigned int fd)
 	return 0;
 }
 
-static inline int security_path_lookup(struct cap_rights *base_rights,
+static inline int security_path_lookup(const struct capsicum_rights *base_rights,
 				       struct dentry *dentry, const char *name)
 {
 	return 0;
@@ -3032,7 +3035,7 @@ int security_path_rename(struct path *old_dir, struct dentry *old_dentry,
 int security_path_chmod(struct path *path, umode_t mode);
 int security_path_chown(struct path *path, kuid_t uid, kgid_t gid);
 int security_path_chroot(struct path *path);
-int security_path_lookup(struct cap_rights *base_rights,
+int security_path_lookup(const struct capsicum_rights *base_rights,
 			 struct dentry *dentry, const char *name);
 #else	/* CONFIG_SECURITY_PATH */
 static inline int security_path_unlink(struct path *dir, struct dentry *dentry)
@@ -3098,7 +3101,7 @@ static inline int security_path_chroot(struct path *path)
 	return 0;
 }
 
-static inline int security_path_lookup(struct cap_rights *base_rights,
+static inline int security_path_lookup(const struct capsicum_rights *base_rights,
 				       struct dentry *dentry, const char *name)
 {
 	return 0;

@@ -1412,7 +1412,7 @@ int svc_addsock(struct svc_serv *serv, const int fd, char *name_return,
 		const size_t len)
 {
 	int err = 0;
-	struct cap_rights rights;
+	struct capsicum_rights rights;
 	struct socket *so = sockfd_lookup(fd,
 					  cap_rights_init(&rights, CAP_LISTEN),
 					  &err);

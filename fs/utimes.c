@@ -148,7 +148,7 @@ long do_utimes(int dfd, const char __user *filename, struct timespec *times,
 
 	if (filename == NULL && dfd != AT_FDCWD) {
 		struct fd f;
-		struct cap_rights rights;
+		struct capsicum_rights rights;
 
 		if (flags & AT_SYMLINK_NOFOLLOW)
 			goto out;
