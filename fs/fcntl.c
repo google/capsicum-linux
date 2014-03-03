@@ -361,13 +361,23 @@ static bool fcntl_rights(unsigned int cmd, struct capsicum_rights *rights)
 		cap_rights_init(rights, 0);
 		return false;
 	case F_GETFL:
+		cap_rights_init(rights, CAP_FCNTL);
+		rights->fcntls = CAP_FCNTL_GETFL;
+		return false;
 	case F_SETFL:
+		cap_rights_init(rights, CAP_FCNTL);
+		rights->fcntls = CAP_FCNTL_SETFL;
+		return false;
 	case F_GETOWN:
-	case F_SETOWN:
 	case F_GETOWN_EX:
-	case F_SETOWN_EX:
 	case F_GETOWNER_UIDS:
 		cap_rights_init(rights, CAP_FCNTL);
+		rights->fcntls = CAP_FCNTL_GETOWN;
+		return false;
+	case F_SETOWN:
+	case F_SETOWN_EX:
+		cap_rights_init(rights, CAP_FCNTL);
+		rights->fcntls = CAP_FCNTL_SETOWN;
 		return false;
 	case F_GETLK:
 	case F_SETLK:
