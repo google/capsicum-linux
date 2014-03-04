@@ -1541,8 +1541,13 @@ asmlinkage long compat_sys_ioctl(unsigned int fd, unsigned int cmd,
 				unsigned long arg)
 {
 	struct capsicum_rights rights;
-	struct fd f = fdget(fd, cap_rights_init(&rights, CAP_IOCTL));
+	struct fd f;
 	int error;
+
+	cap_rights_init(&rights, CAP_IOCTL);
+	rights.nioctls = 1;
+	rights.ioctls = &cmd;
+	f = fdget(fd, &rights);
 	if (IS_ERR(f.file)) {
 		error = PTR_ERR(f.file);
 		goto out;

@@ -605,7 +605,11 @@ SYSCALL_DEFINE3(ioctl, unsigned int, fd, unsigned int, cmd, unsigned long, arg)
 {
 	int error;
 	struct capsicum_rights rights;
-	struct fd f = fdget(fd, cap_rights_init(&rights, CAP_IOCTL));
+	struct fd f;
+	cap_rights_init(&rights, CAP_IOCTL);
+	rights.nioctls = 1;
+	rights.ioctls = &cmd;
+	f = fdget(fd, &rights);
 
 	if (IS_ERR(f.file))
 		return PTR_ERR(f.file);

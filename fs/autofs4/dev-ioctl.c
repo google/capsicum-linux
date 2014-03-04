@@ -654,8 +654,10 @@ static int _autofs_dev_ioctl(unsigned int command, struct autofs_dev_ioctl __use
 	if (cmd != AUTOFS_DEV_IOCTL_OPENMOUNT_CMD &&
 	    cmd != AUTOFS_DEV_IOCTL_CLOSEMOUNT_CMD) {
 		struct capsicum_rights rights;
-		fp = fget(param->ioctlfd,
-			  cap_rights_init(&rights, CAP_IOCTL, CAP_FSTAT));
+		cap_rights_init(&rights, CAP_IOCTL, CAP_FSTAT);
+		rights.nioctls = 1;
+		rights.ioctls = &cmd;
+		fp = fget(param->ioctlfd, &rights);
 		if (IS_ERR(fp)) {
 			if (cmd == AUTOFS_DEV_IOCTL_ISMOUNTPOINT_CMD)
 				goto cont;
