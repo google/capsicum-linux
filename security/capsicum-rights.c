@@ -79,16 +79,20 @@ static void cap_rights_vset(struct capsicum_rights *rights, va_list ap)
 	}
 }
 
-void cap_rights_regularize(struct capsicum_rights *rights)
+bool cap_rights_regularize(struct capsicum_rights *rights)
 {
-	if (!has_right(rights, CAP_FCNTL)) {
+	bool changed = false;
+	if (!has_right(rights, CAP_FCNTL) && rights->fcntls != 0x00) {
+		changed = true;
 		rights->fcntls = 0x00;
 	}
-	if (!has_right(rights, CAP_IOCTL)) {
+	if (!has_right(rights, CAP_IOCTL) && (rights->nioctls != 0)) {
+		changed = true;
 		rights->nioctls = 0;
 		kfree(rights->ioctls);
 		rights->ioctls = NULL;
 	}
+	return changed;
 }
 
 struct capsicum_rights *_cap_rights_init(struct capsicum_rights *rights, ...)

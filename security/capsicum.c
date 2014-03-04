@@ -198,6 +198,8 @@ SYSCALL_DEFINE5(cap_rights_limit,
 	} else {
 		rights.ioctls = NULL;
 	}
+	if (cap_rights_regularize(&rights))
+		return -ENOTCAPABLE;
 
 	return capsicum_rights_limit(fd, &rights);
 }
