@@ -70,7 +70,7 @@ static struct file *capsicum_wrap(struct file *underlying,
 	struct file *capf;
 	/* memory to be freed on error exit: */
 	struct capsicum_capability *cap = NULL;
-	unsigned long *ioctls = (take_ioctls ? rights->ioctls : NULL);
+	unsigned int *ioctls = (take_ioctls ? rights->ioctls : NULL);
 
 	BUG_ON((rights->nioctls > 0) != (rights->ioctls != NULL));
 
@@ -83,7 +83,7 @@ static struct file *capsicum_wrap(struct file *underlying,
 	cap->rights = *rights;
 	if (!take_ioctls && rights->nioctls > 0) {
 		cap->rights.ioctls = kmemdup(rights->ioctls,
-					     rights->nioctls * sizeof(unsigned long),
+					     rights->nioctls * sizeof(unsigned int),
 					      GFP_KERNEL);
 		if (!cap->rights.ioctls) {
 			err = -ENOMEM;
@@ -168,9 +168,9 @@ out_err:
 SYSCALL_DEFINE5(cap_rights_limit,
 		unsigned int, fd,
 		const struct cap_rights __user *, new_rights,
-		unsigned long, new_fcntls,
-		long, nioctls,
-		unsigned long __user *, new_ioctls)
+		unsigned int, new_fcntls,
+		int, nioctls,
+		unsigned int __user *, new_ioctls)
 {
 	struct capsicum_rights rights;
 
@@ -187,7 +187,7 @@ SYSCALL_DEFINE5(cap_rights_limit,
 		size_t size;
 		if (!rights.ioctls)
 			return -EINVAL;
-		size = rights.nioctls * sizeof(unsigned long);
+		size = rights.nioctls * sizeof(unsigned int);
 		rights.ioctls = kmalloc(size, GFP_KERNEL);
 		if (!rights.ioctls)
 			return -ENOMEM;
@@ -207,14 +207,14 @@ SYSCALL_DEFINE5(cap_rights_limit,
 SYSCALL_DEFINE5(cap_rights_get,
 		unsigned int, fd,
 		struct cap_rights __user *, rightsp,
-		unsigned long __user *, fcntls,
-		long __user *, nioctls,
-		unsigned long __user *, ioctls)
+		unsigned int __user *, fcntls,
+		int __user *, nioctls,
+		unsigned int __user *, ioctls)
 {
 	int result = -EFAULT;
 	struct file *file;
         struct capsicum_rights *rights = &all_rights;
-	long ioctls_to_copy = -1;
+	int ioctls_to_copy = -1;
 
 	file = fget_raw_no_unwrap(fd);
 	if (IS_ERR(file)) {
@@ -234,7 +234,7 @@ SYSCALL_DEFINE5(cap_rights_get,
 			goto out;
 	}
 	if (nioctls) {
-		long n;
+		int n;
 		if (get_user(n, nioctls))
 			goto out;
 		if (put_user(rights->nioctls, nioctls))
@@ -243,7 +243,7 @@ SYSCALL_DEFINE5(cap_rights_get,
 	}
 	if (ioctls && ioctls_to_copy > 0) {
 		if (copy_to_user(ioctls, rights->ioctls,
-				 ioctls_to_copy * sizeof(unsigned long)))
+				 ioctls_to_copy * sizeof(unsigned int)))
 			goto out;
 	}
 	result = 0;
@@ -291,11 +291,11 @@ static int capsicum_show_fdinfo(struct seq_file *m, struct file *capf)
 	for (i = 0; i < (CAP_RIGHTS_VERSION + 2); i++)
 		seq_printf(m, "\t%#016llx", cap->rights.primary.cr_rights[i]);
 	seq_printf(m, "\n");
-	seq_printf(m, " fcntls: %#08lx\n", cap->rights.fcntls);
+	seq_printf(m, " fcntls: %#08x\n", cap->rights.fcntls);
 	if (cap->rights.nioctls > 0) {
 		seq_printf(m, " ioctls:");
 		for (i = 0; i < cap->rights.nioctls; i++)
-			seq_printf(m, "\t%#08lx", cap->rights.ioctls[i]);
+			seq_printf(m, "\t%#08x", cap->rights.ioctls[i]);
 		seq_printf(m, "\n");
 	}
 	return 0;

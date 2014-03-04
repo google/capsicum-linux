@@ -850,14 +850,14 @@ asmlinkage long sys_kcmp(pid_t pid1, pid_t pid2, int type,
 asmlinkage long sys_finit_module(int fd, const char __user *uargs, int flags);
 asmlinkage long sys_cap_rights_limit(unsigned int orig_fd,
 				     const struct cap_rights __user *new_rights,
-				     unsigned long fcntls,
-				     long nioctls,
-				     unsigned long __user *ioctls);
+				     unsigned int fcntls,
+				     int nioctls,
+				     unsigned int __user *ioctls);
 asmlinkage long sys_cap_rights_get(unsigned int fd,
 				   struct cap_rights __user *rightsp,
-				   unsigned long __user *fcntls,
-				   long __user *nioctls,
-				   unsigned long __user *ioctls);
+				   unsigned int __user *fcntls,
+				   int __user *nioctls,
+				   unsigned int __user *ioctls);
 asmlinkage long sys_pdfork(int __user *fdp, int  flags);
 asmlinkage long sys_pdgetpid(int fd, pid_t __user * pidp);
 asmlinkage long sys_pdkill(int fd, int signum);

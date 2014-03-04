@@ -62,6 +62,7 @@ struct cap_rights {
 };
 
 #ifndef __KERNEL__
+#include <limits.h>
 #ifndef _CAP_RIGHTS_T_DECLARED
 #define _CAP_RIGHTS_T_DECLARED
 typedef struct cap_rights cap_rights_t;
@@ -345,6 +346,6 @@ typedef struct cap_rights cap_rights_t;
 #define CAP_FCNTL_ALL		(CAP_FCNTL_GETFL | CAP_FCNTL_SETFL | \
 				 CAP_FCNTL_GETOWN | CAP_FCNTL_SETOWN)
 
-#define CAP_IOCTLS_ALL	-1
+#define CAP_IOCTLS_ALL		SSIZE_MAX
 
 #endif /* _UAPI_LINUX_CAPSICUM_H */

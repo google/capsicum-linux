@@ -8,9 +8,9 @@ struct file;
 /* Complete rights structure (primary and subrights). */
 struct capsicum_rights {
 	struct cap_rights primary;
-	unsigned long fcntls;  /* Only valid if CAP_FCNTL set in primary. */
-	long nioctls;  /* Only valid if CAP_IOCTL set in primary; -1 => all ioctls allowed */
-	unsigned long *ioctls;
+	unsigned int fcntls;  /* Only valid if CAP_FCNTL set in primary. */
+	int nioctls;  /* Only valid if CAP_IOCTL set in primary; -1 => all ioctls allowed */
+	unsigned int *ioctls;
 };
 
 
