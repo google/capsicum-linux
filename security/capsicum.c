@@ -185,7 +185,7 @@ SYSCALL_DEFINE5(cap_rights_limit,
 	rights.nioctls = nioctls;
 	if (rights.nioctls > 0) {
 		size_t size;
-		if (!rights.ioctls)
+		if (!new_ioctls)
 			return -EINVAL;
 		size = rights.nioctls * sizeof(unsigned int);
 		rights.ioctls = kmalloc(size, GFP_KERNEL);
