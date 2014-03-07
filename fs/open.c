@@ -519,8 +519,10 @@ SYSCALL_DEFINE3(fchmodat, int, dfd, const char __user *, filename, umode_t, mode
 	struct path path;
 	int error;
 	unsigned int lookup_flags = LOOKUP_FOLLOW;
+	struct capsicum_rights rights;
+	cap_rights_init(&rights, CAP_FCHMODAT);
 retry:
-	error = user_path_at(dfd, filename, lookup_flags, &path);
+	error = user_path_at_rights(dfd, &rights, filename, lookup_flags, &path);
 	if (!error) {
 		error = chmod_common(&path, mode);
 		path_put(&path);
@@ -585,6 +587,7 @@ SYSCALL_DEFINE5(fchownat, int, dfd, const char __user *, filename, uid_t, user,
 	struct path path;
 	int error = -EINVAL;
 	int lookup_flags;
+	struct capsicum_rights rights;
 
 	if ((flag & ~(AT_SYMLINK_NOFOLLOW | AT_EMPTY_PATH)) != 0)
 		goto out;
@@ -592,8 +595,9 @@ SYSCALL_DEFINE5(fchownat, int, dfd, const char __user *, filename, uid_t, user,
 	lookup_flags = (flag & AT_SYMLINK_NOFOLLOW) ? 0 : LOOKUP_FOLLOW;
 	if (flag & AT_EMPTY_PATH)
 		lookup_flags |= LOOKUP_EMPTY;
+	cap_rights_init(&rights, CAP_FCHOWNAT);
 retry:
-	error = user_path_at(dfd, filename, lookup_flags, &path);
+	error = user_path_at_rights(dfd, &rights, filename, lookup_flags, &path);
 	if (error)
 		goto out;
 	error = mnt_want_write(path.mnt);

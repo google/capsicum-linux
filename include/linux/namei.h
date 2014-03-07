@@ -6,6 +6,7 @@
 #include <linux/linkage.h>
 #include <linux/path.h>
 
+struct capsicum_rights;
 struct vfsmount;
 
 enum { MAX_NESTED_LINKS = 8 };
@@ -57,6 +58,7 @@ enum {LAST_NORM, LAST_ROOT, LAST_DOT, LAST_DOTDOT, LAST_BIND};
 #define LOOKUP_EMPTY		0x4000
 
 extern int user_path_at(int, const char __user *, unsigned, struct path *);
+extern int user_path_at_rights(int, const struct capsicum_rights *, const char __user *, unsigned, struct path *);
 extern int user_path_at_empty(int, const char __user *, unsigned, struct path *, int *empty);
 
 #define user_path(name, path) user_path_at(AT_FDCWD, name, LOOKUP_FOLLOW, path)
