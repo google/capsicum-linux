@@ -452,12 +452,12 @@ static int fanotify_find_path(int dfd, const char __user *filename,
 			      struct path *path, unsigned int flags)
 {
 	int ret;
+	struct capsicum_rights rights;
 
 	pr_debug("%s: dfd=%d filename=%p flags=%x\n", __func__,
 		 dfd, filename, flags);
 
 	if (filename == NULL) {
-		struct capsicum_rights rights;
 		struct fd f = fdget(dfd, cap_rights_init(&rights, CAP_FSTAT));
 
 		if (IS_ERR(f.file)) {
@@ -483,7 +483,9 @@ static int fanotify_find_path(int dfd, const char __user *filename,
 		if (flags & FAN_MARK_ONLYDIR)
 			lookup_flags |= LOOKUP_DIRECTORY;
 
-		ret = user_path_at(dfd, filename, lookup_flags, path);
+		ret = user_path_at_rights(dfd,
+					  cap_rights_init(&rights, CAP_FSTAT, CAP_LOOKUP),
+					  filename, lookup_flags, path);
 		if (ret)
 			goto out;
 	}

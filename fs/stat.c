@@ -96,6 +96,7 @@ int vfs_fstatat(int dfd, const char __user *filename, struct kstat *stat,
 	struct path path;
 	int error = -EINVAL;
 	unsigned int lookup_flags = 0;
+	struct capsicum_rights rights;
 
 	if ((flag & ~(AT_SYMLINK_NOFOLLOW | AT_NO_AUTOMOUNT |
 		      AT_EMPTY_PATH)) != 0)
@@ -105,8 +106,9 @@ int vfs_fstatat(int dfd, const char __user *filename, struct kstat *stat,
 		lookup_flags |= LOOKUP_FOLLOW;
 	if (flag & AT_EMPTY_PATH)
 		lookup_flags |= LOOKUP_EMPTY;
+	cap_rights_init(&rights, CAP_FSTAT);
 retry:
-	error = user_path_at(dfd, filename, lookup_flags, &path);
+	error = user_path_at_rights(dfd, &rights, filename, lookup_flags, &path);
 	if (error)
 		goto out;
 
