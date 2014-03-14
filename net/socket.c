@@ -95,6 +95,7 @@
 #include <net/compat.h>
 #include <net/wext.h>
 #include <net/cls_cgroup.h>
+#include <net/sctp/sctp.h>
 
 #include <net/sock.h>
 #include <linux/netfilter.h>
@@ -1971,8 +1972,10 @@ SYSCALL_DEFINE5(getsockopt, int, fd, int, level, int, optname,
 	struct socket *sock;
 	struct capsicum_rights rights;
 
-	sock = sockfd_lookup_light(fd, cap_rights_init(&rights, CAP_GETSOCKOPT),
-				   &err, &fput_needed);
+	cap_rights_init(&rights, CAP_GETSOCKOPT,
+			(level == SOL_SCTP && optname == SCTP_SOCKOPT_PEELOFF) ? CAP_PEELOFF : 0);
+
+	sock = sockfd_lookup_light(fd, &rights, &err, &fput_needed);
 	if (sock != NULL) {
 		err = security_socket_getsockopt(sock, level, optname);
 		if (err)
