@@ -267,8 +267,7 @@ EXPORT_SYMBOL(vfs_llseek);
 SYSCALL_DEFINE3(lseek, unsigned int, fd, off_t, offset, unsigned int, whence)
 {
 	off_t retval;
-	struct capsicum_rights rights;
-	struct fd f = fdget(fd, cap_rights_init(&rights, CAP_SEEK));
+	struct fd f = fdgetr(fd, CAP_SEEK);
 	if (IS_ERR(f.file))
 		return PTR_ERR(f.file);
 
@@ -296,8 +295,7 @@ SYSCALL_DEFINE5(llseek, unsigned int, fd, unsigned long, offset_high,
 		unsigned int, whence)
 {
 	int retval;
-	struct capsicum_rights rights;
-	struct fd f = fdget(fd, cap_rights_init(&rights, CAP_SEEK));
+	struct fd f = fdgetr(fd, CAP_SEEK);
 	loff_t offset;
 
 	if (IS_ERR(f.file))
@@ -500,8 +498,7 @@ static inline void file_pos_write(struct file *file, loff_t pos)
 
 SYSCALL_DEFINE3(read, unsigned int, fd, char __user *, buf, size_t, count)
 {
-	struct capsicum_rights rights;
-	struct fd f = fdget(fd, cap_rights_init(&rights, CAP_READ));
+	struct fd f = fdgetr(fd, CAP_READ);
 	ssize_t ret;
 
 	if (!IS_ERR(f.file)) {
@@ -519,8 +516,7 @@ SYSCALL_DEFINE3(read, unsigned int, fd, char __user *, buf, size_t, count)
 SYSCALL_DEFINE3(write, unsigned int, fd, const char __user *, buf,
 		size_t, count)
 {
-	struct capsicum_rights rights;
-	struct fd f = fdget(fd, cap_rights_init(&rights, CAP_WRITE));
+	struct fd f = fdgetr(fd, CAP_WRITE);
 	ssize_t ret;
 
 	if (!IS_ERR(f.file)) {
@@ -540,13 +536,12 @@ SYSCALL_DEFINE4(pread64, unsigned int, fd, char __user *, buf,
 			size_t, count, loff_t, pos)
 {
 	struct fd f;
-	struct capsicum_rights rights;
 	ssize_t ret = -EBADF;
 
 	if (pos < 0)
 		return -EINVAL;
 
-	f = fdget(fd, cap_rights_init(&rights, CAP_PREAD));
+	f = fdgetr(fd, CAP_PREAD);
 	if (!IS_ERR(f.file)) {
 		ret = -ESPIPE;
 		if (f.file->f_mode & FMODE_PREAD)
@@ -563,13 +558,12 @@ SYSCALL_DEFINE4(pwrite64, unsigned int, fd, const char __user *, buf,
 			 size_t, count, loff_t, pos)
 {
 	struct fd f;
-	struct capsicum_rights rights;
 	ssize_t ret = -EBADF;
 
 	if (pos < 0)
 		return -EINVAL;
 
-	f = fdget(fd, cap_rights_init(&rights, CAP_PWRITE));
+	f = fdgetr(fd, CAP_PWRITE);
 	if (!IS_ERR(f.file)) {
 		ret = -ESPIPE;
 		if (f.file->f_mode & FMODE_PWRITE)  
@@ -811,8 +805,7 @@ EXPORT_SYMBOL(vfs_writev);
 SYSCALL_DEFINE3(readv, unsigned long, fd, const struct iovec __user *, vec,
 		unsigned long, vlen)
 {
-	struct capsicum_rights rights;
-	struct fd f = fdget(fd, cap_rights_init(&rights, CAP_READ));
+	struct fd f = fdgetr(fd, CAP_READ);
 	ssize_t ret;
 
 	if (!IS_ERR(f.file)) {
@@ -834,8 +827,7 @@ SYSCALL_DEFINE3(readv, unsigned long, fd, const struct iovec __user *, vec,
 SYSCALL_DEFINE3(writev, unsigned long, fd, const struct iovec __user *, vec,
 		unsigned long, vlen)
 {
-	struct capsicum_rights rights;
-	struct fd f = fdget(fd, cap_rights_init(&rights, CAP_WRITE));
+	struct fd f = fdgetr(fd, CAP_WRITE);
 	ssize_t ret;
 
 	if (!IS_ERR(f.file)) {
@@ -865,13 +857,12 @@ SYSCALL_DEFINE5(preadv, unsigned long, fd, const struct iovec __user *, vec,
 {
 	loff_t pos = pos_from_hilo(pos_h, pos_l);
 	struct fd f;
-	struct capsicum_rights rights;
 	ssize_t ret;
 
 	if (pos < 0)
 		return -EINVAL;
 
-	f = fdget(fd, cap_rights_init(&rights, CAP_PREAD));
+	f = fdgetr(fd, CAP_PREAD);
 	if (!IS_ERR(f.file)) {
 		ret = -ESPIPE;
 		if (f.file->f_mode & FMODE_PREAD)
@@ -892,13 +883,12 @@ SYSCALL_DEFINE5(pwritev, unsigned long, fd, const struct iovec __user *, vec,
 {
 	loff_t pos = pos_from_hilo(pos_h, pos_l);
 	struct fd f;
-	struct capsicum_rights rights;
 	ssize_t ret;
 
 	if (pos < 0)
 		return -EINVAL;
 
-	f = fdget(fd, cap_rights_init(&rights, CAP_PWRITE));
+	f = fdgetr(fd, CAP_PWRITE);
 	if (!IS_ERR(f.file)) {
 		ret = -ESPIPE;
 		if (f.file->f_mode & FMODE_PWRITE)
@@ -998,8 +988,7 @@ COMPAT_SYSCALL_DEFINE3(readv, unsigned long, fd,
 		const struct compat_iovec __user *,vec,
 		unsigned long, vlen)
 {
-	struct capsicum_rights rights;
-	struct fd f = fdget(fd, cap_rights_init(&rights, CAP_READ));
+	struct fd f = fdgetr(fd, CAP_READ);
 	ssize_t ret;
 	loff_t pos;
 
@@ -1018,12 +1007,11 @@ COMPAT_SYSCALL_DEFINE4(preadv64, unsigned long, fd,
 		unsigned long, vlen, loff_t, pos)
 {
 	struct fd f;
-	struct capsicum_rights rights;
 	ssize_t ret;
 
 	if (pos < 0)
 		return -EINVAL;
-	f = fdget(fd, cap_rights_init(&rights, CAP_PREAD));
+	f = fdgetr(fd, CAP_PREAD);
 	if (IS_ERR(f.file))
 		return PTR_ERR(f.file);
 	ret = -ESPIPE;
@@ -1067,8 +1055,7 @@ COMPAT_SYSCALL_DEFINE3(writev, unsigned long, fd,
 		const struct compat_iovec __user *, vec,
 		unsigned long, vlen)
 {
-	struct capsicum_rights rights;
-	struct fd f = fdget(fd, cap_rights_init(&rights, CAP_WRITE));
+	struct fd f = fdgetr(fd, CAP_WRITE);
 	ssize_t ret;
 	loff_t pos;
 
@@ -1087,12 +1074,11 @@ COMPAT_SYSCALL_DEFINE4(pwritev64, unsigned long, fd,
 		unsigned long, vlen, loff_t, pos)
 {
 	struct fd f;
-	struct capsicum_rights rights;
 	ssize_t ret;
 
 	if (pos < 0)
 		return -EINVAL;
-	f = fdget(fd, cap_rights_init(&rights, CAP_PWRITE));
+	f = fdgetr(fd, CAP_PWRITE);
 	if (IS_ERR(f.file))
 		return PTR_ERR(f.file);
 	ret = -ESPIPE;
@@ -1115,7 +1101,6 @@ static ssize_t do_sendfile(int out_fd, int in_fd, loff_t *ppos,
 		  	   size_t count, loff_t max)
 {
 	struct fd in, out;
-	struct capsicum_rights rights;
 	struct inode *in_inode, *out_inode;
 	loff_t pos;
 	loff_t out_pos;
@@ -1126,7 +1111,7 @@ static ssize_t do_sendfile(int out_fd, int in_fd, loff_t *ppos,
 	 * Get input file, and verify that it is ok..
 	 */
 	retval = -EBADF;
-	in = fdget(in_fd, cap_rights_init(&rights, CAP_PREAD));
+	in = fdgetr(in_fd, CAP_PREAD);
 	if (IS_ERR(in.file)) {
 		retval = PTR_ERR(in.file);
 		goto out;
@@ -1150,7 +1135,7 @@ static ssize_t do_sendfile(int out_fd, int in_fd, loff_t *ppos,
 	 * Get output file, and verify that it is ok..
 	 */
 	retval = -EBADF;
-	out = fdget(out_fd, cap_rights_init(&rights, CAP_WRITE));
+	out = fdgetr(out_fd, CAP_WRITE);
 	if (IS_ERR(out.file)) {
 		retval = PTR_ERR(out.file);
 		goto fput_in;

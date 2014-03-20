@@ -734,7 +734,6 @@ SYSCALL_DEFINE3(inotify_add_watch, int, fd, const char __user *, pathname,
 	struct inode *inode;
 	struct path path;
 	struct fd f;
-	struct capsicum_rights rights;
 	int ret;
 	unsigned flags = 0;
 
@@ -742,7 +741,7 @@ SYSCALL_DEFINE3(inotify_add_watch, int, fd, const char __user *, pathname,
 	if (unlikely(!(mask & ALL_INOTIFY_BITS)))
 		return -EINVAL;
 
-	f = fdget(fd, cap_rights_init(&rights, CAP_NOTIFY));
+	f = fdgetr(fd, CAP_NOTIFY);
 	if (unlikely(IS_ERR(f.file)))
 		return PTR_ERR(f.file);
 
@@ -778,10 +777,9 @@ SYSCALL_DEFINE2(inotify_rm_watch, int, fd, __s32, wd)
 	struct fsnotify_group *group;
 	struct inotify_inode_mark *i_mark;
 	struct fd f;
-	struct capsicum_rights rights;
 	int ret = 0;
 
-	f = fdget(fd, cap_rights_init(&rights, CAP_NOTIFY));
+	f = fdgetr(fd, CAP_NOTIFY);
 	if (unlikely(IS_ERR(f.file)))
 		return PTR_ERR(f.file);
 

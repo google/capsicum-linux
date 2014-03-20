@@ -646,6 +646,7 @@ void do_close_on_exec(struct files_struct *files)
 	spin_unlock(&files->file_lock);
 }
 
+#ifdef CONFIG_SECURITY_CAPSICUM
 /*
  * The LSM might want to change the return value of fget() and friends.
  * This function is called with the intended return value, and fget()
@@ -680,7 +681,7 @@ static struct file *unwrap_file(struct file *orig,
 	return f;
 }
 
-struct file *fget(unsigned int fd, const struct capsicum_rights *rights)
+struct file *fget_rights(unsigned int fd, const struct capsicum_rights *rights)
 {
 	struct file *file;
 	struct files_struct *files = current->files;
@@ -698,9 +699,9 @@ struct file *fget(unsigned int fd, const struct capsicum_rights *rights)
 
 	return file;
 }
-EXPORT_SYMBOL(fget);
+EXPORT_SYMBOL(fget_rights);
 
-struct file *fget_raw(unsigned int fd, const struct capsicum_rights *rights)
+struct file *fget_raw_rights(unsigned int fd, const struct capsicum_rights *rights)
 {
 	struct file *file;
 	struct files_struct *files = current->files;
@@ -717,46 +718,10 @@ struct file *fget_raw(unsigned int fd, const struct capsicum_rights *rights)
 
 	return file;
 }
-EXPORT_SYMBOL(fget_raw);
+EXPORT_SYMBOL(fget_raw_rights);
 
-struct file *fget_raw_no_unwrap(unsigned int fd)
-{
-	struct file *file;
-	struct files_struct *files = current->files;
-
-	rcu_read_lock();
-	file = fcheck_files(files, fd);
-	if (file) {
-		/* File object ref couldn't be taken */
-		if (!atomic_long_inc_not_zero(&file->f_count))
-			file = ERR_PTR(-EBADF);
-	} else {
-		file = ERR_PTR(-EBADF);
-	}
-	rcu_read_unlock();
-
-	return file;
-}
-EXPORT_SYMBOL(fget_raw_no_unwrap);
-
-/*
- * Lightweight file lookup - no refcnt increment if fd table isn't shared.
- *
- * You can use this instead of fget if you satisfy all of the following
- * conditions:
- * 1) You must call fput_light before exiting the syscall and returning control
- *    to userspace (i.e. you cannot remember the returned struct file * after
- *    returning to userspace).
- * 2) You must not call filp_close on the returned struct file * in between
- *    calls to fget_light and fput_light.
- * 3) You must not clone the current task in between the calls to fget_light
- *    and fput_light.
- *
- * The fput_needed flag returned by fget_light should be passed to the
- * corresponding fput_light.
- */
-struct file *fget_light(unsigned int fd, const struct capsicum_rights *rights,
-			int *fput_needed)
+struct file *fget_light_rights(unsigned int fd, int *fput_needed,
+			      const struct capsicum_rights *rights)
 {
 	struct file *file;
 	struct files_struct *files = current->files;
@@ -785,12 +750,12 @@ struct file *fget_light(unsigned int fd, const struct capsicum_rights *rights,
 
 	return file;
 }
-EXPORT_SYMBOL(fget_light);
+EXPORT_SYMBOL(fget_light_rights);
 
-struct file *fget_raw_light(unsigned int fd,
-			    const struct capsicum_rights *required_rights,
-			    const struct capsicum_rights **actual_rights,
-			    int *fput_needed)
+struct file *fget_raw_light_rights(unsigned int fd,
+				   int *fput_needed,
+				   const struct capsicum_rights **actual_rights,
+				   const struct capsicum_rights *required_rights)
 {
 	struct file *file;
 	struct files_struct *files = current->files;
@@ -815,7 +780,191 @@ struct file *fget_raw_light(unsigned int fd,
 
 	return file;
 }
-EXPORT_SYMBOL(fget_raw_light);
+EXPORT_SYMBOL(fget_raw_light_rights);
+
+struct file *_fgetr(unsigned int fd, ...)
+{
+	struct capsicum_rights rights;
+	struct file *f;
+	va_list ap;
+	va_start(ap, fd);
+	f = fget_rights(fd, cap_rights_vinit(&rights, ap));
+	va_end(ap);
+	return f;
+}
+EXPORT_SYMBOL(_fgetr);
+
+struct file *_fgetr_light(unsigned int fd, int *fput_needed, ...)
+{
+	struct capsicum_rights rights;
+	struct file *f;
+	va_list ap;
+	va_start(ap, fput_needed);
+	f = fget_light_rights(fd, fput_needed, cap_rights_vinit(&rights, ap));
+	va_end(ap);
+	return f;
+}
+EXPORT_SYMBOL(_fgetr_light);
+
+struct fd _fdgetr(unsigned int fd, ...)
+{
+	struct capsicum_rights rights;
+	struct file *f;
+	int b;
+	va_list ap;
+	va_start(ap, fd);
+	f = fget_light_rights(fd, &b, cap_rights_vinit(&rights, ap));
+	va_end(ap);
+	return (struct fd){f,b};
+}
+EXPORT_SYMBOL(_fdgetr);
+
+struct file *_fgetr_raw(unsigned int fd, ...)
+{
+	struct capsicum_rights rights;
+	struct file *f;
+	va_list ap;
+	va_start(ap, fd);
+	f = fget_raw_rights(fd, cap_rights_vinit(&rights, ap));
+	va_end(ap);
+	return f;
+}
+EXPORT_SYMBOL(_fgetr_raw);
+
+struct file *_fgetr_raw_light(unsigned int fd, int *fput_needed,
+			      const struct capsicum_rights **actual_rights, ...)
+{
+	struct capsicum_rights rights;
+	struct file *f;
+	va_list ap;
+	va_start(ap, actual_rights);
+	f = fget_raw_light_rights(fd, fput_needed, actual_rights,
+				  cap_rights_vinit(&rights, ap));
+	va_end(ap);
+	return f;
+}
+EXPORT_SYMBOL(_fgetr_raw_light);
+
+struct fd _fdgetr_raw(unsigned int fd, ...)
+{
+	struct capsicum_rights rights;
+	struct file *f;
+	int b;
+	va_list ap;
+	va_start(ap, fd);
+	f = fget_raw_light_rights(fd, &b, NULL, cap_rights_vinit(&rights, ap));
+	va_end(ap);
+	return (struct fd){f,b};
+}
+EXPORT_SYMBOL(_fdgetr_raw);
+#endif
+
+struct file *fget(unsigned int fd)
+{
+	struct file *file;
+	struct files_struct *files = current->files;
+
+	rcu_read_lock();
+	file = fcheck_files(files, fd);
+	if (file) {
+		/* File object ref couldn't be taken */
+		if (file->f_mode & FMODE_PATH ||
+		    !atomic_long_inc_not_zero(&file->f_count))
+			file = NULL;
+	}
+	rcu_read_unlock();
+
+	return file;
+}
+
+EXPORT_SYMBOL(fget);
+
+struct file *fget_raw(unsigned int fd)
+{
+	struct file *file;
+	struct files_struct *files = current->files;
+
+	rcu_read_lock();
+	file = fcheck_files(files, fd);
+	if (file) {
+		/* File object ref couldn't be taken */
+		if (!atomic_long_inc_not_zero(&file->f_count))
+			file = NULL;
+	}
+	rcu_read_unlock();
+
+	return file;
+}
+
+EXPORT_SYMBOL(fget_raw);
+
+/*
+ * Lightweight file lookup - no refcnt increment if fd table isn't shared.
+ *
+ * You can use this instead of fget if you satisfy all of the following
+ * conditions:
+ * 1) You must call fput_light before exiting the syscall and returning control
+ *    to userspace (i.e. you cannot remember the returned struct file * after
+ *    returning to userspace).
+ * 2) You must not call filp_close on the returned struct file * in between
+ *    calls to fget_light and fput_light.
+ * 3) You must not clone the current task in between the calls to fget_light
+ *    and fput_light.
+ *
+ * The fput_needed flag returned by fget_light should be passed to the
+ * corresponding fput_light.
+ */
+struct file *fget_light(unsigned int fd, int *fput_needed)
+{
+	struct file *file;
+	struct files_struct *files = current->files;
+
+	*fput_needed = 0;
+	if (atomic_read(&files->count) == 1) {
+		file = fcheck_files(files, fd);
+		if (file && (file->f_mode & FMODE_PATH))
+			file = NULL;
+	} else {
+		rcu_read_lock();
+		file = fcheck_files(files, fd);
+		if (file) {
+			if (!(file->f_mode & FMODE_PATH) &&
+			    atomic_long_inc_not_zero(&file->f_count))
+				*fput_needed = 1;
+			else
+				/* Didn't get the reference, someone's freed */
+				file = NULL;
+		}
+		rcu_read_unlock();
+	}
+
+	return file;
+}
+EXPORT_SYMBOL(fget_light);
+
+struct file *fget_raw_light(unsigned int fd, int *fput_needed)
+{
+	struct file *file;
+	struct files_struct *files = current->files;
+
+	*fput_needed = 0;
+	if (atomic_read(&files->count) == 1) {
+		file = fcheck_files(files, fd);
+	} else {
+		rcu_read_lock();
+		file = fcheck_files(files, fd);
+		if (file) {
+			if (atomic_long_inc_not_zero(&file->f_count))
+				*fput_needed = 1;
+			else
+				/* Didn't get the reference, someone's freed */
+				file = NULL;
+		}
+		rcu_read_unlock();
+	}
+
+	return file;
+}
 
 void set_close_on_exec(unsigned int fd, int flag)
 {
@@ -959,16 +1108,14 @@ SYSCALL_DEFINE2(dup2, unsigned int, oldfd, unsigned int, newfd)
 SYSCALL_DEFINE1(dup, unsigned int, fildes)
 {
 	int ret = -EBADF;
-	struct file *file = fget_raw_no_unwrap(fildes);
+	struct file *file = fget_raw(fildes);
 
-	if (!IS_ERR(file)) {
+	if (file) {
 		ret = get_unused_fd();
 		if (ret >= 0)
 			fd_install(ret, file);
 		else
 			fput(file);
-	} else {
-		ret = PTR_ERR(file);
 	}
 	return ret;
 }

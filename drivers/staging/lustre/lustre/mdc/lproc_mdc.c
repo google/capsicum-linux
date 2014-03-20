@@ -132,8 +132,7 @@ static ssize_t mdc_kuc_write(struct file *file, const char *buffer,
 	if (fd == 0) {
 		rc = libcfs_kkuc_group_put(KUC_GRP_HSM, lh);
 	} else {
-		struct capsicum_rights rights;
-		struct file *fp = fget(fd, cap_rights_init(&rights, CAP_WRITE));
+		struct file *fp = fgetr(fd, CAP_WRITE);
 		if (IS_ERR(fp)) {
 			rc = PTR_ERR(fp);
 		} else {

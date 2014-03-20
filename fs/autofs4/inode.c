@@ -206,7 +206,6 @@ int autofs4_fill_super(struct super_block *s, void *data, int silent)
 	int pipefd;
 	struct autofs_sb_info *sbi;
 	struct autofs_info *ino;
-	struct capsicum_rights rights;
 
 	sbi = kzalloc(sizeof(*sbi), GFP_KERNEL);
 	if (!sbi)
@@ -286,7 +285,7 @@ int autofs4_fill_super(struct super_block *s, void *data, int silent)
 	sbi->sub_version = AUTOFS_PROTO_SUBVERSION;
 
 	DPRINTK("pipe fd = %d, pgrp = %u", pipefd, sbi->oz_pgrp);
-	pipe = fget(pipefd, cap_rights_init(&rights, CAP_WRITE, CAP_FSYNC));
+	pipe = fgetr(pipefd, CAP_WRITE, CAP_FSYNC);
 	
 	if (IS_ERR(pipe)) {
 		printk("autofs: could not open pipe file descriptor\n");

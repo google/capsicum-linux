@@ -35,13 +35,19 @@ int capsicum_path_lookup(const struct capsicum_rights *base_rights,
 	_cap_rights_set((rights), __VA_ARGS__, 0ULL)
 struct capsicum_rights *_cap_rights_init(struct capsicum_rights *rights, ...);
 struct capsicum_rights *_cap_rights_set(struct capsicum_rights *rights, ...);
+struct capsicum_rights *cap_rights_vinit(struct capsicum_rights *rights, va_list ap);
+struct capsicum_rights *cap_rights_vset(struct capsicum_rights *rights, va_list ap);
 struct capsicum_rights *cap_rights_set_all(struct capsicum_rights *rights);
 
 #else
 
-#define cap_rights_init(rights, ...) (rights)
-#define cap_rights_set(rights, ...) (rights)
-#define cap_rights_set_all(rights) (rights)
+#define cap_rights_init(rights, ...) _cap_rights_noop(rights)
+#define cap_rights_set(rights, ...) _cap_rights_noop(rights)
+#define cap_rights_set_all(rights) _cap_rights_noop(rights)
+static inline struct capsicum_rights *_cap_rights_noop(struct capsicum_rights *rights)
+{
+	return rights;
+}
 
 #endif
 

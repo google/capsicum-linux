@@ -218,10 +218,22 @@ int sock_sendmsg(struct socket *sock, struct msghdr *msg, size_t len);
 int sock_recvmsg(struct socket *sock, struct msghdr *msg, size_t size,
 		 int flags);
 struct file *sock_alloc_file(struct socket *sock, int flags, const char *dname);
-struct socket *sockfd_lookup(int fd, struct capsicum_rights *rights, int *err);
+struct socket *sockfd_lookup(int fd, int *err);
 struct socket *sock_from_file(struct file *file, int *err);
 #define		     sockfd_put(sock) fput(sock->file)
 int net_ratelimit(void);
+
+#ifdef CONFIG_SECURITY_CAPSICUM
+struct socket *sockfd_lookup_rights(int fd, int *err, struct capsicum_rights *rights);
+struct socket *_sockfd_lookupr(int fd, int *err, ...);
+#define sockfd_lookupr(fd, err, ...)	_sockfd_lookupr((fd), (err), __VA_ARGS__, 0ULL)
+#else
+static inline struct socket *sockfd_lookup_rights(int fd, int *err, struct capsicum_rights *rights)
+{
+	return sockfd_lookup(fd, err);
+}
+#define sockfd_lookupr(fd, err, ...)	sockfd_lookup((fd), (err))
+#endif
 
 #define net_ratelimited_function(function, ...)			\
 do {								\

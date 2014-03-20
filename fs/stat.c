@@ -76,8 +76,7 @@ EXPORT_SYMBOL(vfs_getattr);
 
 int vfs_fstat(unsigned int fd, struct kstat *stat)
 {
-	struct capsicum_rights rights;
-	struct fd f = fdget_raw(fd, cap_rights_init(&rights, CAP_FSTAT));
+	struct fd f = fdgetr_raw(fd, CAP_FSTAT);
 	int error;
 
 	if (!IS_ERR(f.file)) {
@@ -96,7 +95,6 @@ int vfs_fstatat(int dfd, const char __user *filename, struct kstat *stat,
 	struct path path;
 	int error = -EINVAL;
 	unsigned int lookup_flags = 0;
-	struct capsicum_rights rights;
 
 	if ((flag & ~(AT_SYMLINK_NOFOLLOW | AT_NO_AUTOMOUNT |
 		      AT_EMPTY_PATH)) != 0)
@@ -106,9 +104,8 @@ int vfs_fstatat(int dfd, const char __user *filename, struct kstat *stat,
 		lookup_flags |= LOOKUP_FOLLOW;
 	if (flag & AT_EMPTY_PATH)
 		lookup_flags |= LOOKUP_EMPTY;
-	cap_rights_init(&rights, CAP_FSTAT);
 retry:
-	error = user_path_at_rights(dfd, &rights, filename, lookup_flags, &path);
+	error = user_path_atr(dfd, filename, lookup_flags, &path, CAP_FSTAT);
 	if (error)
 		goto out;
 

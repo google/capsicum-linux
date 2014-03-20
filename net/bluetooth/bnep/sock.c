@@ -58,7 +58,6 @@ static int bnep_sock_ioctl(struct socket *sock, unsigned int cmd, unsigned long 
 	struct socket *nsock;
 	void __user *argp = (void __user *)arg;
 	int err;
-	struct capsicum_rights rights;
 
 	BT_DBG("cmd %x arg %lx", cmd, arg);
 
@@ -70,8 +69,7 @@ static int bnep_sock_ioctl(struct socket *sock, unsigned int cmd, unsigned long 
 		if (copy_from_user(&ca, argp, sizeof(ca)))
 			return -EFAULT;
 
-		cap_rights_init(&rights, CAP_READ, CAP_WRITE);
-		nsock = sockfd_lookup(ca.sock, &rights, &err);
+		nsock = sockfd_lookupr(ca.sock, &err, CAP_READ, CAP_WRITE);
 		if (!nsock)
 			return err;
 

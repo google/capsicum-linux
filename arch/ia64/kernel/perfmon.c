@@ -4868,7 +4868,7 @@ restart_args:
 
 	if (unlikely((cmd_flags & PFM_CMD_FD) == 0)) goto skip_fd;
 
-	f = fdget(fd, cap_rights_init(&rights, pfm_cmd_tab[cmd].cmd_right));
+	f = fdgetr(fd, pfm_cmd_tab[cmd].cmd_right);
 	if (unlikely(IS_ERR(f.file)) {
 		DPRINT(("invalid fd %d\n", fd));
 		ret = PTR_ERR(f.file);

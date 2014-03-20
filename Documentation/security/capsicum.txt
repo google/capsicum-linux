@@ -44,18 +44,19 @@ FD to File Conversion
 
 The primary policing of Capsicum capabilities occurs when a user-provided file
 descriptor is converted to a struct file object, normally using one of the
-fget() family of functions.
+fgetr() family of functions.
 
 All such operations in the kernel are annotated with information about the
 operations that are going to be performed on the retrieved struct file.  For
-example, a file that is retrieved for a read operation has its fget() call
+example, a file that is retrieved for a read operation has its fgetr() call
 annotated with CAP_READ, indicating that any capability FD that reaches this
 point needs to include the CAP_READ right to progress further.  If the
 appropriate right is not available, -ENOTCAPABLE is returned.
 
 This change is the most significant change to the kernel, as it affects all
-FD-to-file conversions.  However, for non-capabilities the run-time impact is
-minimal as the additional required_rights parameter can be ignored.
+FD-to-file conversions.  However, for a non-Capsicum build of the kernel the
+impact is minimal as the additional rights parameters to fgetr*() are macroed
+out.
 
 
 Capability Mode

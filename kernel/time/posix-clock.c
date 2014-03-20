@@ -246,11 +246,10 @@ struct posix_clock_desc {
 	struct posix_clock *clk;
 };
 
-static int get_clock_desc(const clockid_t id,
-			  struct capsicum_rights *rights,
-			  struct posix_clock_desc *cd)
+static int get_clock_desc(const clockid_t id, struct posix_clock_desc *cd,
+			  u64 right)
 {
-	struct file *fp = fget(CLOCKID_TO_FD(id), rights);
+	struct file *fp = fgetr(CLOCKID_TO_FD(id), right);
 	int err = -EINVAL;
 
 	if (IS_ERR(fp)) {
@@ -282,10 +281,9 @@ static void put_clock_desc(struct posix_clock_desc *cd)
 static int pc_clock_adjtime(clockid_t id, struct timex *tx)
 {
 	struct posix_clock_desc cd;
-	struct capsicum_rights rights;
 	int err;
 
-	err = get_clock_desc(id, cap_rights_init(&rights, CAP_WRITE), &cd);
+	err = get_clock_desc(id, &cd, CAP_WRITE);
 	if (err)
 		return err;
 
@@ -307,10 +305,9 @@ out:
 static int pc_clock_gettime(clockid_t id, struct timespec *ts)
 {
 	struct posix_clock_desc cd;
-	struct capsicum_rights rights;
 	int err;
 
-	err = get_clock_desc(id, cap_rights_init(&rights, CAP_READ), &cd);
+	err = get_clock_desc(id, &cd, CAP_READ);
 	if (err)
 		return err;
 
@@ -327,10 +324,9 @@ static int pc_clock_gettime(clockid_t id, struct timespec *ts)
 static int pc_clock_getres(clockid_t id, struct timespec *ts)
 {
 	struct posix_clock_desc cd;
-	struct capsicum_rights rights;
 	int err;
 
-	err = get_clock_desc(id, cap_rights_init(&rights, CAP_READ), &cd);
+	err = get_clock_desc(id, &cd, CAP_READ);
 	if (err)
 		return err;
 
@@ -347,10 +343,9 @@ static int pc_clock_getres(clockid_t id, struct timespec *ts)
 static int pc_clock_settime(clockid_t id, const struct timespec *ts)
 {
 	struct posix_clock_desc cd;
-	struct capsicum_rights rights;
 	int err;
 
-	err = get_clock_desc(id, cap_rights_init(&rights, CAP_WRITE), &cd);
+	err = get_clock_desc(id, &cd, CAP_WRITE);
 	if (err)
 		return err;
 
@@ -373,10 +368,9 @@ static int pc_timer_create(struct k_itimer *kit)
 {
 	clockid_t id = kit->it_clock;
 	struct posix_clock_desc cd;
-	struct capsicum_rights rights;
 	int err;
 
-	err = get_clock_desc(id, cap_rights_init(&rights, CAP_WRITE), &cd);
+	err = get_clock_desc(id, &cd, CAP_WRITE);
 	if (err)
 		return err;
 
@@ -394,10 +388,9 @@ static int pc_timer_delete(struct k_itimer *kit)
 {
 	clockid_t id = kit->it_clock;
 	struct posix_clock_desc cd;
-	struct capsicum_rights rights;
 	int err;
 
-	err = get_clock_desc(id, cap_rights_init(&rights, CAP_WRITE), &cd);
+	err = get_clock_desc(id, &cd, CAP_WRITE);
 	if (err)
 		return err;
 
@@ -415,9 +408,8 @@ static void pc_timer_gettime(struct k_itimer *kit, struct itimerspec *ts)
 {
 	clockid_t id = kit->it_clock;
 	struct posix_clock_desc cd;
-	struct capsicum_rights rights;
 
-	if (get_clock_desc(id, cap_rights_init(&rights, CAP_READ), &cd))
+	if (get_clock_desc(id, &cd, CAP_READ))
 		return;
 
 	if (cd.clk->ops.timer_gettime)
@@ -431,10 +423,9 @@ static int pc_timer_settime(struct k_itimer *kit, int flags,
 {
 	clockid_t id = kit->it_clock;
 	struct posix_clock_desc cd;
-	struct capsicum_rights rights;
 	int err;
 
-	err = get_clock_desc(id, cap_rights_init(&rights, CAP_WRITE), &cd);
+	err = get_clock_desc(id, &cd, CAP_WRITE);
 	if (err)
 		return err;
 

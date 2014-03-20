@@ -1492,7 +1492,7 @@ SYSCALL_DEFINE6(mmap_pgoff, unsigned long, addr, unsigned long, len,
 	audit_mmap_fd(fd, flags);
 	if (!(flags & MAP_ANONYMOUS)) {
 		struct capsicum_rights rights;
-		file = fget(fd, mmap_rights(&rights, prot, flags));
+		file = fget_rights(fd, mmap_rights(&rights, prot, flags));
 		if (IS_ERR(file)) {
 			retval = PTR_ERR(file);
 			goto out;

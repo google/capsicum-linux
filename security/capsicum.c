@@ -216,9 +216,9 @@ SYSCALL_DEFINE5(cap_rights_get,
         struct capsicum_rights *rights = &all_rights;
 	int ioctls_to_copy = -1;
 
-	file = fget_raw_no_unwrap(fd);
-	if (IS_ERR(file)) {
-		return PTR_ERR(file);
+	file = fget(fd);
+	if (file == NULL) {
+		return -EBADF;
 	}
 	if (capsicum_is_cap(file)) {
 		struct capsicum_capability *cap = file->private_data;

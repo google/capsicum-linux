@@ -102,11 +102,8 @@ static int scm_fp_copy(struct cmsghdr *cmsg, struct scm_fp_list **fplp)
 		int fd = fdp[i];
 		struct file *file;
 
-		if (fd < 0)
+		if (fd < 0 || !(file = fget_raw(fd)))
 			return -EBADF;
-		file = fget_raw_no_unwrap(fd);
-		if (IS_ERR(file))
-			return PTR_ERR(file);
 		*fpp++ = file;
 		fpl->count++;
 	}

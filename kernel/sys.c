@@ -1633,11 +1633,10 @@ SYSCALL_DEFINE1(umask, int, mask)
 static int prctl_set_mm_exe_file(struct mm_struct *mm, unsigned int fd)
 {
 	struct fd exe;
-	struct capsicum_rights rights;
 	struct inode *inode;
 	int err;
 
-	exe = fdget(fd, cap_rights_init(&rights, CAP_FEXECVE));
+	exe = fdgetr(fd, CAP_FEXECVE);
 	if (IS_ERR(exe.file))
 		return PTR_ERR(exe.file);
 

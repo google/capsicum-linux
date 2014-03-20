@@ -137,7 +137,6 @@ long do_utimes(int dfd, const char __user *filename, struct timespec *times,
 	       int flags)
 {
 	int error = -EINVAL;
-	struct capsicum_rights rights;
 
 	if (times && (!nsec_valid(times[0].tv_nsec) ||
 		      !nsec_valid(times[1].tv_nsec))) {
@@ -149,12 +148,11 @@ long do_utimes(int dfd, const char __user *filename, struct timespec *times,
 
 	if (filename == NULL && dfd != AT_FDCWD) {
 		struct fd f;
-		struct capsicum_rights rights;
 
 		if (flags & AT_SYMLINK_NOFOLLOW)
 			goto out;
 
-		f = fdget(dfd, cap_rights_init(&rights, CAP_FUTIMES));
+		f = fdgetr(dfd, CAP_FUTIMES);
 		if (IS_ERR(f.file)) {
 			error = PTR_ERR(f.file);
 			goto out;
@@ -169,9 +167,8 @@ long do_utimes(int dfd, const char __user *filename, struct timespec *times,
 		if (!(flags & AT_SYMLINK_NOFOLLOW))
 			lookup_flags |= LOOKUP_FOLLOW;
 retry:
-		error = user_path_at_rights(dfd,
-					cap_rights_init(&rights, CAP_FUTIMESAT),
-					filename, lookup_flags, &path);
+		error = user_path_atr(dfd, filename, lookup_flags, &path,
+				      CAP_FUTIMESAT);
 		if (error)
 			goto out;
 

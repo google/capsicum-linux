@@ -1780,8 +1780,7 @@ EXPORT_SYMBOL(flock_lock_file_wait);
  */
 SYSCALL_DEFINE2(flock, unsigned int, fd, unsigned int, cmd)
 {
-	struct capsicum_rights rights;
-	struct fd f = fdget(fd, cap_rights_init(&rights, CAP_FLOCK));
+	struct fd f = fdgetr(fd, CAP_FLOCK);
 	struct file_lock *lock;
 	int can_sleep, unlock;
 	int error;

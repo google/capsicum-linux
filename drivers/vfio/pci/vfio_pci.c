@@ -649,9 +649,7 @@ reset_info_exit:
 		 */
 		for (i = 0; i < hdr.count; i++) {
 			struct vfio_group *group;
-			struct capsicum_rights rights;
-			struct fd f = fdget(group_fds[i],
-					    cap_rights_init(&rights, CAP_FSTAT));
+			struct fd f = fdgetr(group_fds[i], CAP_FSTAT);
 			if (IS_ERR(f.file)) {
 				ret = PTR_ERR(f.file);
 				break;

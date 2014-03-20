@@ -4014,7 +4014,6 @@ static int cgroup_write_event_control(struct cgroup_subsys_state *dummy_css,
 	unsigned int efd, cfd;
 	struct fd efile;
 	struct fd cfile;
-	struct capsicum_rights rights;
 	char *endp;
 	int ret;
 
@@ -4037,7 +4036,7 @@ static int cgroup_write_event_control(struct cgroup_subsys_state *dummy_css,
 	init_waitqueue_func_entry(&event->wait, cgroup_event_wake);
 	INIT_WORK(&event->remove, cgroup_event_remove);
 
-	efile = fdget(efd, cap_rights_init(&rights, CAP_WRITE));
+	efile = fdgetr(efd, CAP_WRITE);
 	if (!efile.file) {
 		ret = -EBADF;
 		goto out_kfree;
@@ -4049,7 +4048,7 @@ static int cgroup_write_event_control(struct cgroup_subsys_state *dummy_css,
 		goto out_put_efile;
 	}
 
-	cfile = fdget(cfd, cap_rights_init(&rights, CAP_READ));
+	cfile = fdgetr(cfd, CAP_READ);
 	if (IS_ERR(cfile.file)) {
 		ret = PTR_ERR(cfile.file);
 		goto out_put_eventfd;

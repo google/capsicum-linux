@@ -452,13 +452,12 @@ static int fanotify_find_path(int dfd, const char __user *filename,
 			      struct path *path, unsigned int flags)
 {
 	int ret;
-	struct capsicum_rights rights;
 
 	pr_debug("%s: dfd=%d filename=%p flags=%x\n", __func__,
 		 dfd, filename, flags);
 
 	if (filename == NULL) {
-		struct fd f = fdget(dfd, cap_rights_init(&rights, CAP_FSTAT));
+		struct fd f = fdgetr(dfd, CAP_FSTAT);
 
 		if (IS_ERR(f.file)) {
 			ret = PTR_ERR(f.file);
@@ -483,9 +482,8 @@ static int fanotify_find_path(int dfd, const char __user *filename,
 		if (flags & FAN_MARK_ONLYDIR)
 			lookup_flags |= LOOKUP_DIRECTORY;
 
-		ret = user_path_at_rights(dfd,
-					  cap_rights_init(&rights, CAP_FSTAT, CAP_LOOKUP),
-					  filename, lookup_flags, path);
+		ret = user_path_atr(dfd, filename, lookup_flags, path,
+				    CAP_FSTAT, CAP_LOOKUP);
 		if (ret)
 			goto out;
 	}
@@ -791,7 +789,6 @@ SYSCALL_DEFINE5(fanotify_mark, int, fanotify_fd, unsigned int, flags,
 	struct fsnotify_group *group;
 	struct fd f;
 	struct path path;
-	struct capsicum_rights rights;
 	int ret;
 
 	pr_debug("%s: fanotify_fd=%d flags=%x dfd=%d pathname=%p mask=%llx\n",
@@ -826,7 +823,7 @@ SYSCALL_DEFINE5(fanotify_mark, int, fanotify_fd, unsigned int, flags,
 #endif
 		return -EINVAL;
 
-	f = fdget(fanotify_fd, cap_rights_init(&rights, CAP_NOTIFY));
+	f = fdgetr(fanotify_fd, CAP_NOTIFY);
 	if (unlikely(IS_ERR(f.file)))
 		return PTR_ERR(f.file);
 

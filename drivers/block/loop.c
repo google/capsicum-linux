@@ -640,7 +640,6 @@ static int loop_change_fd(struct loop_device *lo, struct block_device *bdev,
 {
 	struct file	*file, *old_file;
 	struct inode	*inode;
-	struct capsicum_rights rights;
 	int		error;
 
 	error = -ENXIO;
@@ -652,8 +651,7 @@ static int loop_change_fd(struct loop_device *lo, struct block_device *bdev,
 	if (!(lo->lo_flags & LO_FLAGS_READ_ONLY))
 		goto out;
 
-	cap_rights_init(&rights, CAP_PWRITE, CAP_PREAD, CAP_FSYNC, CAP_FSTAT);
-	file = fget(arg, &rights);
+	file = fgetr(arg, CAP_PWRITE, CAP_PREAD, CAP_FSYNC, CAP_FSTAT);
 	if (IS_ERR(file)) {
 		error = PTR_ERR(file);
 		goto out;
@@ -827,7 +825,6 @@ static int loop_set_fd(struct loop_device *lo, fmode_t mode,
 {
 	struct file	*file, *f;
 	struct inode	*inode;
-	struct capsicum_rights rights;
 	struct address_space *mapping;
 	unsigned lo_blocksize;
 	int		lo_flags = 0;
@@ -837,8 +834,7 @@ static int loop_set_fd(struct loop_device *lo, fmode_t mode,
 	/* This is safe, since we have a reference from open(). */
 	__module_get(THIS_MODULE);
 
-	cap_rights_init(&rights, CAP_PWRITE, CAP_PREAD, CAP_FSYNC, CAP_FSTAT);
-	file = fget(arg, &rights);
+	file = fgetr(arg, CAP_PWRITE, CAP_PREAD, CAP_FSYNC, CAP_FSTAT);
 	if (IS_ERR(file)) {
 		error = PTR_ERR(file);
 		goto out;

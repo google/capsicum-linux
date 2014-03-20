@@ -1721,7 +1721,6 @@ static ssize_t o2hb_region_dev_write(struct o2hb_region *reg,
 	int sectsize;
 	char *p = (char *)page;
 	struct fd f;
-	struct capsicum_rights rights;
 	struct inode *inode;
 	ssize_t ret = -EINVAL;
 	int live_threshold;
@@ -1741,7 +1740,7 @@ static ssize_t o2hb_region_dev_write(struct o2hb_region *reg,
 	if (fd < 0 || fd >= INT_MAX)
 		goto out;
 
-	f = fdget(fd, cap_rights_init(&rights, CAP_FSTAT));
+	f = fdgetr(fd, CAP_FSTAT);
 	if (IS_ERR(f.file)) {
 		ret = PTR_ERR(f.file);
 		if (ret == -EBADF)

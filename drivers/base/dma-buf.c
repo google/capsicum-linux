@@ -215,10 +215,8 @@ EXPORT_SYMBOL_GPL(dma_buf_fd);
 struct dma_buf *dma_buf_get(int fd)
 {
 	struct file *file;
-	struct capsicum_rights rights;
 
-	cap_rights_init(&rights, CAP_MMAP, CAP_READ, CAP_WRITE);
-	file = fget(fd, &rights);
+	file = fgetr(fd, CAP_MMAP, CAP_READ, CAP_WRITE);
 
 	if (IS_ERR(file))
 		return (struct dma_buf *)file;

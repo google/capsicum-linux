@@ -154,13 +154,12 @@ static long do_sys_ftruncate(unsigned int fd, loff_t length, int small)
 	struct inode *inode;
 	struct dentry *dentry;
 	struct fd f;
-	struct capsicum_rights rights;
 	int error;
 
 	error = -EINVAL;
 	if (length < 0)
 		goto out;
-	f = fdget(fd, cap_rights_init(&rights, CAP_FTRUNCATE));
+	f = fdgetr(fd, CAP_FTRUNCATE);
 	if (IS_ERR(f.file)) {
 		error = PTR_ERR(f.file);
 		goto out;
@@ -284,8 +283,7 @@ int do_fallocate(struct file *file, int mode, loff_t offset, loff_t len)
 
 SYSCALL_DEFINE4(fallocate, int, fd, int, mode, loff_t, offset, loff_t, len)
 {
-	struct capsicum_rights rights;
-	struct fd f = fdget(fd, cap_rights_init(&rights, CAP_WRITE));
+	struct fd f = fdgetr(fd, CAP_WRITE);
 	int error;
 
 	if (!IS_ERR(f.file)) {
@@ -310,7 +308,6 @@ SYSCALL_DEFINE3(faccessat, int, dfd, const char __user *, filename, int, mode)
 	struct inode *inode;
 	int res;
 	unsigned int lookup_flags = LOOKUP_FOLLOW;
-	struct capsicum_rights rights;
 
 	if (mode & ~S_IRWXO)	/* where's F_OK, X_OK, W_OK, R_OK? */
 		return -EINVAL;
@@ -333,9 +330,8 @@ SYSCALL_DEFINE3(faccessat, int, dfd, const char __user *, filename, int, mode)
 	}
 
 	old_cred = override_creds(override_cred);
-	cap_rights_init(&rights, CAP_FSTAT);
 retry:
-	res = user_path_at_rights(dfd, &rights, filename, lookup_flags, &path);
+	res = user_path_atr(dfd, filename, lookup_flags, &path, CAP_FSTAT);
 	if (res)
 		goto out;
 
@@ -413,8 +409,7 @@ out:
 
 SYSCALL_DEFINE1(fchdir, unsigned int, fd)
 {
-	struct capsicum_rights rights;
-	struct fd f = fdget_raw(fd, cap_rights_init(&rights, CAP_FCHDIR));
+	struct fd f = fdgetr_raw(fd, CAP_FCHDIR);
 	struct inode *inode;
 	int error = -EBADF;
 
@@ -502,8 +497,7 @@ out_unlock:
 
 SYSCALL_DEFINE2(fchmod, unsigned int, fd, umode_t, mode)
 {
-	struct capsicum_rights rights;
-	struct fd f = fdget(fd, cap_rights_init(&rights, CAP_FCHMOD));
+	struct fd f = fdgetr(fd, CAP_FCHMOD);
 	int err = -EBADF;
 
 	if (!IS_ERR(f.file)) {
@@ -521,10 +515,8 @@ SYSCALL_DEFINE3(fchmodat, int, dfd, const char __user *, filename, umode_t, mode
 	struct path path;
 	int error;
 	unsigned int lookup_flags = LOOKUP_FOLLOW;
-	struct capsicum_rights rights;
-	cap_rights_init(&rights, CAP_FCHMODAT);
 retry:
-	error = user_path_at_rights(dfd, &rights, filename, lookup_flags, &path);
+	error = user_path_atr(dfd, filename, lookup_flags, &path, CAP_FCHMODAT);
 	if (!error) {
 		error = chmod_common(&path, mode);
 		path_put(&path);
@@ -589,7 +581,6 @@ SYSCALL_DEFINE5(fchownat, int, dfd, const char __user *, filename, uid_t, user,
 	struct path path;
 	int error = -EINVAL;
 	int lookup_flags;
-	struct capsicum_rights rights;
 
 	if ((flag & ~(AT_SYMLINK_NOFOLLOW | AT_EMPTY_PATH)) != 0)
 		goto out;
@@ -597,9 +588,8 @@ SYSCALL_DEFINE5(fchownat, int, dfd, const char __user *, filename, uid_t, user,
 	lookup_flags = (flag & AT_SYMLINK_NOFOLLOW) ? 0 : LOOKUP_FOLLOW;
 	if (flag & AT_EMPTY_PATH)
 		lookup_flags |= LOOKUP_EMPTY;
-	cap_rights_init(&rights, CAP_FCHOWNAT);
 retry:
-	error = user_path_at_rights(dfd, &rights, filename, lookup_flags, &path);
+	error = user_path_atr(dfd, filename, lookup_flags, &path, CAP_FCHOWNAT);
 	if (error)
 		goto out;
 	error = mnt_want_write(path.mnt);
@@ -630,8 +620,7 @@ SYSCALL_DEFINE3(lchown, const char __user *, filename, uid_t, user, gid_t, group
 
 SYSCALL_DEFINE3(fchown, unsigned int, fd, uid_t, user, gid_t, group)
 {
-	struct capsicum_rights rights;
-	struct fd f = fdget(fd, cap_rights_init(&rights, CAP_FCHOWN));
+	struct fd f = fdgetr(fd, CAP_FCHOWN);
 	int error;
 
 	if (IS_ERR(f.file)) {

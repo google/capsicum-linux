@@ -38,35 +38,85 @@ static inline void fdput(struct fd fd)
 		fput(fd.file);
 }
 
-extern struct file *fget(unsigned int fd, const struct capsicum_rights *rights);
-extern struct file *fget_light(unsigned int fd,
-			       const struct capsicum_rights *rights,
-			       int *fput_needed);
+extern struct file *fget(unsigned int fd);
+extern struct file *fget_light(unsigned int fd, int *fput_needed);
 
-static inline struct fd fdget(unsigned int fd,
-			      const struct capsicum_rights *rights)
+static inline struct fd fdget(unsigned int fd)
 {
 	int b;
-	struct file *f = fget_light(fd, rights, &b);
+	struct file *f = fget_light(fd, &b);
 	return (struct fd){f,b};
 }
 
-extern struct file *fget_raw(unsigned int fd,
-			     const struct capsicum_rights *rights);
-extern struct file *fget_raw_no_unwrap(unsigned int fd);
-extern struct file *fget_raw_light(unsigned int fd,
-				   const struct capsicum_rights *required_rights,
-				   const struct capsicum_rights **actual_rights,
-				   int *fput_needed);
+extern struct file *fget_raw(unsigned int fd);
+extern struct file *fget_raw_light(unsigned int fd, int *fput_needed);
 
-static inline struct fd fdget_raw(unsigned int fd,
-				  const struct capsicum_rights *rights)
+static inline struct fd fdget_raw(unsigned int fd)
 {
 	int b;
-	struct file *f;
-	f = fget_raw_light(fd, rights, NULL, &b);
+	struct file *f = fget_raw_light(fd, &b);
 	return (struct fd){f,b};
 }
+
+#ifdef CONFIG_SECURITY_CAPSICUM
+
+extern struct file *fget_rights(unsigned int fd,
+				const struct capsicum_rights *rights);
+extern struct file *fget_light_rights(unsigned int fd, int *fput_needed,
+				      const struct capsicum_rights *rights);
+extern struct file *fget_raw_rights(unsigned int fd,
+				    const struct capsicum_rights *rights);
+extern struct file *fget_raw_light_rights(unsigned int fd, int *fput_needed,
+					  const struct capsicum_rights **actual_rights,
+					  const struct capsicum_rights *rights);
+
+extern struct file *_fgetr(unsigned int fd, ...);
+extern struct file *_fgetr_light(unsigned int fd, int *fput_needed, ...);
+extern struct fd _fdgetr(unsigned int fd, ...);
+extern struct file *_fgetr_raw(unsigned int fd, ...);
+extern struct file *_fgetr_raw_light(unsigned int fd, int *fput_needed,
+				     const struct capsicum_rights **actual_rights, ...);
+extern struct fd _fdgetr_raw(unsigned int fd, ...);
+
+#define fgetr(fd, ...)				_fgetr((fd), __VA_ARGS__, 0ULL)
+#define fgetr_light(fd, fpn, ...)		_fgetr_light((fd), (fpn), __VA_ARGS__, 0ULL)
+#define fdgetr(fd, ...)			_fdgetr((fd), __VA_ARGS__, 0ULL)
+#define fgetr_raw(fd, ...)			_fgetr_raw((fd), __VA_ARGS__, 0ULL)
+#define fgetr_raw_light(fd, fpn, arights, ...)	_fgetr_raw_light((fd), (fpn), (arights), __VA_ARGS__, 0ULL)
+#define fdgetr_raw(fd, ...)			_fdgetr_raw((fd), __VA_ARGS__, 0ULL)
+
+#else
+
+static inline struct file *fget_rights(unsigned int fd,
+				       const struct capsicum_rights *rights)
+{
+	return fget(fd);
+}
+static inline struct file *fget_light_rights(unsigned int fd, int *fput_needed,
+					     const struct capsicum_rights *rights)
+{
+	return fget_light(fd, fput_needed);
+}
+static inline struct file *fget_raw_rights(unsigned int fd,
+					   const struct capsicum_rights *rights)
+{
+	return fget_raw(fd);
+}
+static inline struct file *fget_raw_light_rights(unsigned int fd, int *fput_needed,
+						 const struct capsicum_rights **actual_rights,
+						 const struct capsicum_rights *rights)
+{
+	return fget_raw_light(fd, fput_needed);
+}
+
+#define fgetr(fd, ...)				fget((fd))
+#define fgetr_light(fd, fpn, ...)		fget_light((fd), (fpn))
+#define fdgetr(fd, ...)			fdget((fd))
+#define fgetr_raw(fd, ...)			fget_raw((fd))
+#define fgetr_raw_light(fd, fpn, arights, ...)	fget_raw_light((fd), (fpn))
+#define fdgetr_raw(fd, ...)			fdget_raw((fd))
+
+#endif
 
 extern int f_dupfd(unsigned int from, struct file *file, unsigned flags);
 extern int replace_fd(unsigned fd, struct file *file, unsigned flags);

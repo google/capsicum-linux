@@ -151,8 +151,7 @@ void emergency_sync(void)
  */
 SYSCALL_DEFINE1(syncfs, int, fd)
 {
-	struct capsicum_rights rights;
-	struct fd f = fdget(fd, cap_rights_init(&rights, CAP_FSYNC));
+	struct fd f = fdgetr(fd, CAP_FSYNC);
 	struct super_block *sb;
 	int ret;
 
@@ -203,8 +202,7 @@ EXPORT_SYMBOL(vfs_fsync);
 
 static int do_fsync(unsigned int fd, int datasync)
 {
-	struct capsicum_rights rights;
-	struct fd f = fdget(fd, cap_rights_init(&rights, CAP_FSYNC));
+	struct fd f = fdgetr(fd, CAP_FSYNC);
 	int ret;
 
 	if (!IS_ERR(f.file)) {
@@ -296,7 +294,6 @@ SYSCALL_DEFINE4(sync_file_range, int, fd, loff_t, offset, loff_t, nbytes,
 	int ret;
 	struct fd f;
 	struct address_space *mapping;
-	struct capsicum_rights rights;
 	loff_t endbyte;			/* inclusive */
 	umode_t i_mode;
 
@@ -335,7 +332,7 @@ SYSCALL_DEFINE4(sync_file_range, int, fd, loff_t, offset, loff_t, nbytes,
 	else
 		endbyte--;		/* inclusive */
 
-	f = fdget(fd, cap_rights_init(&rights, CAP_FSYNC, CAP_SEEK));
+	f = fdgetr(fd, CAP_FSYNC, CAP_SEEK);
 	if (IS_ERR(f.file)) {
 		ret = PTR_ERR(f.file);
 		goto out;

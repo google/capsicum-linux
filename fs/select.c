@@ -445,13 +445,11 @@ int do_select(int n, fd_set_bits *fds, struct timespec *end_time)
 
 			for (j = 0; j < BITS_PER_LONG; ++j, ++i, bit <<= 1) {
 				struct fd f;
-				struct capsicum_rights rights;
 				if (i >= n)
 					break;
 				if (!(bit & all_bits))
 					continue;
-				f = fdget(i, cap_rights_init(&rights,
-							     CAP_POLL_EVENT));
+				f = fdgetr(i, CAP_POLL_EVENT);
 				if (!IS_ERR(f.file)) {
 					const struct file_operations *f_op;
 					f_op = f.file->f_op;
@@ -762,9 +760,7 @@ static inline unsigned int do_pollfd(struct pollfd *pollfd, poll_table *pwait,
 	mask = 0;
 	fd = pollfd->fd;
 	if (fd >= 0) {
-		struct capsicum_rights rights;
-		struct fd f = fdget(fd, cap_rights_init(&rights,
-							CAP_POLL_EVENT));
+		struct fd f = fdgetr(fd, CAP_POLL_EVENT);
 		mask = POLLNVAL;
 		if (!IS_ERR(f.file)) {
 			mask = DEFAULT_POLLMASK;

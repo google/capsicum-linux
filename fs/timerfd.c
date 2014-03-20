@@ -291,9 +291,17 @@ static const struct file_operations timerfd_fops = {
 	.llseek		= noop_llseek,
 };
 
-static int timerfd_fget(int fd, struct fd *p, struct capsicum_rights *rights)
+#ifdef CONFIG_SECURITY_CAPSICUM
+#define timerfd_fgetr(f, p, ...)	_timerfd_fgetr((f), (p), __VA_ARGS__, 0ULL)
+static int _timerfd_fgetr(int fd, struct fd *p, ...)
 {
-	struct fd f = fdget(fd, rights);
+	struct capsicum_rights rights;
+	struct fd f;
+	va_list ap;
+
+	va_start(ap, p);
+	f.file = fget_light_rights(fd, &f.need_put, cap_rights_vinit(&rights, ap));
+	va_end(ap);
 	if (IS_ERR(f.file))
 		return PTR_ERR(f.file);
 	if (f.file->f_op != &timerfd_fops) {
@@ -303,6 +311,24 @@ static int timerfd_fget(int fd, struct fd *p, struct capsicum_rights *rights)
 	*p = f;
 	return 0;
 }
+
+#else
+
+#define timerfd_fgetr(f, p, ...)	timerfd_fget((f), (p))
+static int timerfd_fget(int fd, struct fd *p)
+{
+	struct fd f = fdget(fd);
+	if (!f.file)
+		return -EBADF;
+	if (f.file->f_op != &timerfd_fops) {
+		fdput(f);
+		return -EINVAL;
+	}
+	*p = f;
+	return 0;
+}
+
+#endif
 
 SYSCALL_DEFINE2(timerfd_create, int, clockid, int, flags)
 {
@@ -351,7 +377,6 @@ static int do_timerfd_settime(int ufd, int flags,
 {
 	struct fd f;
 	struct timerfd_ctx *ctx;
-	struct capsicum_rights rights;
 	int ret;
 
 	if ((flags & ~TFD_SETTIME_FLAGS) ||
@@ -359,8 +384,7 @@ static int do_timerfd_settime(int ufd, int flags,
 	    !timespec_valid(&new->it_interval))
 		return -EINVAL;
 
-	cap_rights_init(&rights, CAP_WRITE, (old ? CAP_READ : 0));
-	ret = timerfd_fget(ufd, &f, &rights);
+	ret = timerfd_fgetr(ufd, &f, CAP_WRITE, (old ? CAP_READ : 0));
 	if (ret)
 		return ret;
 	ctx = f.file->private_data;
@@ -417,8 +441,7 @@ static int do_timerfd_gettime(int ufd, struct itimerspec *t)
 {
 	struct fd f;
 	struct timerfd_ctx *ctx;
-	struct capsicum_rights rights;
-	int ret = timerfd_fget(ufd, &f, cap_rights_init(&rights, CAP_READ));
+	int ret = timerfd_fgetr(ufd, &f, CAP_READ);
 	if (ret)
 		return ret;
 	ctx = f.file->private_data;

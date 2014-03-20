@@ -59,7 +59,7 @@ static inline bool has_right(const struct capsicum_rights *rights, u64 right)
 	return (rights->primary.cr_rights[idx] & right) == right;
 }
 
-static void cap_rights_vset(struct capsicum_rights *rights, va_list ap)
+struct capsicum_rights *cap_rights_vset(struct capsicum_rights *rights, va_list ap)
 {
 	u64 right;
 	int i, n;
@@ -77,7 +77,20 @@ static void cap_rights_vset(struct capsicum_rights *rights, va_list ap)
 		BUG_ON(CAPIDXBIT(rights->primary.cr_rights[i]) != CAPIDXBIT(right));
 		rights->primary.cr_rights[i] |= right;
 	}
+	return rights;
 }
+EXPORT_SYMBOL(cap_rights_vset);
+
+struct capsicum_rights *cap_rights_vinit(struct capsicum_rights *rights, va_list ap)
+{
+	CAP_SET_NONE(&rights->primary);
+	rights->nioctls = 0;
+	rights->ioctls = NULL;
+	rights->fcntls = 0;
+	cap_rights_vset(rights, ap);
+	return rights;
+}
+EXPORT_SYMBOL(cap_rights_vinit);
 
 bool cap_rights_regularize(struct capsicum_rights *rights)
 {
@@ -98,12 +111,8 @@ bool cap_rights_regularize(struct capsicum_rights *rights)
 struct capsicum_rights *_cap_rights_init(struct capsicum_rights *rights, ...)
 {
 	va_list ap;
-	CAP_SET_NONE(&rights->primary);
-	rights->nioctls = 0;
-	rights->ioctls = NULL;
-	rights->fcntls = 0;
 	va_start(ap, rights);
-	cap_rights_vset(rights, ap);
+	cap_rights_vinit(rights, ap);
 	va_end(ap);
 	return rights;
 }

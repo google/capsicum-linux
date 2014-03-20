@@ -4671,7 +4671,6 @@ long btrfs_ioctl_send(struct file *mnt_file, void __user *arg_)
 	struct btrfs_ioctl_send_args *arg = NULL;
 	struct btrfs_key key;
 	struct send_ctx *sctx = NULL;
-	struct capsicum_rights rights;
 	u32 i;
 	u64 *clone_sources_tmp = NULL;
 
@@ -4748,8 +4747,7 @@ long btrfs_ioctl_send(struct file *mnt_file, void __user *arg_)
 
 	sctx->flags = arg->flags;
 
-	sctx->send_filp = fget(arg->send_fd,
-			       cap_rights_init(&rights, CAP_PWRITE));
+	sctx->send_filp = fgetr(arg->send_fd, CAP_PWRITE);
 	if (IS_ERR(sctx->send_filp)) {
 		ret = PTR_ERR(sctx->send_filp);
 		sctx->send_filp = NULL;

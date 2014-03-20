@@ -472,7 +472,6 @@ static int ncp_fill_super(struct super_block *sb, void *raw_data, int silent)
 	struct inode *root_inode;
 	struct inode *sock_inode;
 	struct socket *sock;
-	struct capsicum_rights rights;
 	int error;
 	int default_bufsize;
 #ifdef CONFIG_NCPFS_PACKET_SIGNING
@@ -541,8 +540,7 @@ static int ncp_fill_super(struct super_block *sb, void *raw_data, int silent)
 	    !gid_valid(data.gid))
 		goto out;
 	error = -EBADF;
-	cap_rights_init(&rights, CAP_WRITE, CAP_FSTAT);
-	ncp_filp = fget(data.ncp_fd, &rights);
+	ncp_filp = fgetr(data.ncp_fd, CAP_WRITE, CAP_FSTAT);
 	if (!ncp_filp)
 		goto out;
 	error = -ENOTSOCK;
@@ -581,7 +579,7 @@ static int ncp_fill_super(struct super_block *sb, void *raw_data, int silent)
 		struct socket *info_sock;
 
 		error = -EBADF;
-		server->info_filp = fget(data.info_fd, &rights);
+		server->info_filp = fgetr(data.info_fd, CAP_WRITE, CAP_FSTAT);
 		if (IS_ERR(server->info_filp)) {
 			error = PTR_ERR(server->info_filp);
 			server->info_filp = NULL;

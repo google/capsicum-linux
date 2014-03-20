@@ -838,7 +838,6 @@ static int lmv_hsm_ct_register(struct lmv_obd *lmv, unsigned int cmd, int len,
 			       struct lustre_kernelcomm *lk, void *uarg)
 {
 	struct file	*filp;
-	struct capsicum_rights rights;
 	int		 i, j, err;
 	int		 rc = 0;
 	bool		 any_set = false;
@@ -878,7 +877,7 @@ static int lmv_hsm_ct_register(struct lmv_obd *lmv, unsigned int cmd, int len,
 		return -ENOTCONN;
 
 	/* at least one registration done, with no failure */
-	filp = fget(lk->lk_wfd, cap_rights_init(&rights, CAP_READ));
+	filp = fgetr(lk->lk_wfd, CAP_READ);
 	if (IS_ERR(filp)) {
 		return PTR_ERR(filp);
 	}

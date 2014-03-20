@@ -420,10 +420,11 @@ SYSCALL_DEFINE3(fcntl, unsigned int, fd, unsigned int, cmd, unsigned long, arg)
 	long err = -EBADF;
 
 	if (use_wrapped) {
-		f.file = fget_raw_no_unwrap(fd);
-		f.need_put = 1;
+		f = fdget_raw(fd);
+		if (f.file == NULL)
+			f.file = ERR_PTR(-EBADF);
 	} else {
-		f = fdget_raw(fd, &rights);
+		f.file = fget_raw_light_rights(fd, &f.need_put, NULL, &rights);
 	}
 
 	if (IS_ERR(f.file)) {
@@ -456,10 +457,11 @@ SYSCALL_DEFINE3(fcntl64, unsigned int, fd, unsigned int, cmd,
 	long err = -EBADF;
 
 	if (use_wrapped) {
-		f.file = fget_raw_no_unwrap(fd);
-		f.need_put = 1;
+		f = fdget_raw(fd);
+		if (f.file == NULL)
+			f.file = ERR_PTR(-EBADF);
 	} else {
-		f = fdget_raw(fd, rights);
+		f.file = fget_raw_light_rights(fd, &f.need_put, NULL, &rights);
 	}
 
 	if (IS_ERR(f.file)) {

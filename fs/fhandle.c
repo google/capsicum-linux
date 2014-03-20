@@ -121,8 +121,7 @@ static struct vfsmount *get_vfsmount_from_fd(int fd)
 		mnt = mntget(fs->pwd.mnt);
 		spin_unlock(&fs->lock);
 	} else {
-		struct capsicum_rights rights;
-		struct fd f = fdget(fd, cap_rights_init(&rights, CAP_LOOKUP));
+		struct fd f = fdgetr(fd, CAP_LOOKUP);
 		if (IS_ERR(f.file))
 			return (struct vfsmount *)f.file;
 		mnt = mntget(f.file->f_path.mnt);

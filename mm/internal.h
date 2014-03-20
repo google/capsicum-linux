@@ -85,6 +85,7 @@ mmap_rights(struct capsicum_rights *rights,
 	    unsigned long prot,
 	    unsigned long flags)
 {
+#ifdef CONFIG_SECURITY_CAPSICUM
 	cap_rights_init(rights, CAP_MMAP);
 	if (prot & PROT_READ)
 		cap_rights_set(rights, CAP_MMAP_R);
@@ -92,6 +93,7 @@ mmap_rights(struct capsicum_rights *rights,
 		cap_rights_set(rights, CAP_MMAP_W);
 	if (prot & PROT_EXEC)
 		cap_rights_set(rights, CAP_MMAP_X);
+#endif
 	return rights;
 }
 

@@ -586,8 +586,7 @@ static inline int perf_cgroup_connect(int fd, struct perf_event *event,
 {
 	struct perf_cgroup *cgrp;
 	struct cgroup_subsys_state *css;
-	struct capsicum_rights rights;
-	struct fd f = fdget(fd, cap_rights_init(&rights, CAP_FSTAT));
+	struct fd f = fdgetr(fd, CAP_FSTAT);
 	int ret = 0;
 
 	if (IS_ERR(f.file))
@@ -3575,10 +3574,9 @@ unlock:
 
 static const struct file_operations perf_fops;
 
-static inline int perf_fget_light(int fd, struct capsicum_rights *rights,
-				  struct fd *p)
+static inline int perf_fget_light(int fd, struct fd *p)
 {
-	struct fd f = fdget(fd, rights);
+	struct fd f = fdgetr(fd, CAP_WRITE);
 	if (IS_ERR(f.file))
 		return PTR_ERR(f.file);
 
@@ -3631,10 +3629,8 @@ static long perf_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 		int ret;
 		if (arg != -1) {
 			struct perf_event *output_event;
-			struct capsicum_rights rights;
 			struct fd output = { .file = NULL };
-			cap_rights_init(&rights, CAP_WRITE);
-			ret = perf_fget_light(arg, &rights, &output);
+			ret = perf_fget_light(arg, &output);
 			if (ret)
 				return ret;
 			output_event = output.file->private_data;
@@ -7017,9 +7013,7 @@ SYSCALL_DEFINE5(perf_event_open,
 		return event_fd;
 
 	if (group_fd != -1) {
-		struct capsicum_rights rights;
-		cap_rights_init(&rights, CAP_WRITE);
-		err = perf_fget_light(group_fd, &rights, &group);
+		err = perf_fget_light(group_fd, &group);
 		if (err)
 			goto err_fd;
 		group_leader = group.file->private_data;

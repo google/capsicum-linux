@@ -5971,7 +5971,6 @@ abort_export:
 
 static int set_bitmap_file(struct mddev *mddev, int fd)
 {
-	struct capsicum_rights rights;
 	int err;
 
 	if (mddev->pers) {
@@ -5986,8 +5985,7 @@ static int set_bitmap_file(struct mddev *mddev, int fd)
 	if (fd >= 0) {
 		if (mddev->bitmap)
 			return -EEXIST; /* cannot add when bitmap is present */
-		mddev->bitmap_info.file = fget(fd, cap_rights_init(&rights,
-								   CAP_READ));
+		mddev->bitmap_info.file = fgetr(fd, CAP_READ);
 
 		if (IS_ERR(mddev->bitmap_info.file)) {
 			err = PTR_ERR(mddev->bitmap_info.file);

@@ -718,8 +718,7 @@ ssize_t ib_uverbs_open_xrcd(struct ib_uverbs_file *file,
 
 	if (cmd.fd != -1) {
 		/* search for file descriptor */
-		struct capsicum_rights rights;
-		f = fdget(cmd.fd, cap_rights_init(&rights, CAP_FSTAT));
+		f = fdgetr(cmd.fd, CAP_FSTAT);
 		if (IS_ERR(f.file)) {
 			ret = PTR_ERR(f.file);
 			goto err_tree_mutex_unlock;

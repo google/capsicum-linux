@@ -1900,7 +1900,6 @@ long ll_file_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 	case LL_IOC_LOV_SWAP_LAYOUTS: {
 		struct file *file2;
 		struct lustre_swap_layouts lsl;
-		struct capsicum_rights rights;
 
 		if (copy_from_user(&lsl, (char *)arg,
 				       sizeof(struct lustre_swap_layouts)))
@@ -1909,7 +1908,7 @@ long ll_file_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 		if ((file->f_flags & O_ACCMODE) == 0) /* O_RDONLY */
 			return -EPERM;
 
-		file2 = fget(lsl.sl_fd, cap_rights_init(&rights, CAP_FSTAT));
+		file2 = fgetr(lsl.sl_fd, CAP_FSTAT);
 		if (IS_ERR(file2))
 			return PTR_ERR(file2);
 

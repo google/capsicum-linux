@@ -964,7 +964,6 @@ SYSCALL_DEFINE5(mq_timedsend, mqd_t, mqdes, const char __user *, u_msg_ptr,
 	ktime_t expires, *timeout = NULL;
 	struct timespec ts;
 	struct posix_msg_tree_node *new_leaf = NULL;
-	struct capsicum_rights rights;
 	int ret = 0;
 
 	if (u_abs_timeout) {
@@ -979,7 +978,7 @@ SYSCALL_DEFINE5(mq_timedsend, mqd_t, mqdes, const char __user *, u_msg_ptr,
 
 	audit_mq_sendrecv(mqdes, msg_len, msg_prio, timeout ? &ts : NULL);
 
-	f = fdget(mqdes, cap_rights_init(&rights, CAP_WRITE));
+	f = fdgetr(mqdes, CAP_WRITE);
 	if (unlikely(IS_ERR(f.file))) {
 		ret = PTR_ERR(f.file);
 		goto out;
@@ -1085,7 +1084,6 @@ SYSCALL_DEFINE5(mq_timedreceive, mqd_t, mqdes, char __user *, u_msg_ptr,
 	ktime_t expires, *timeout = NULL;
 	struct timespec ts;
 	struct posix_msg_tree_node *new_leaf = NULL;
-	struct capsicum_rights rights;
 
 	if (u_abs_timeout) {
 		int res = prepare_timeout(u_abs_timeout, &expires, &ts);
@@ -1096,7 +1094,7 @@ SYSCALL_DEFINE5(mq_timedreceive, mqd_t, mqdes, char __user *, u_msg_ptr,
 
 	audit_mq_sendrecv(mqdes, msg_len, 0, timeout ? &ts : NULL);
 
-	f = fdget(mqdes, cap_rights_init(&rights, CAP_READ));
+	f = fdgetr(mqdes, CAP_READ);
 	if (unlikely(IS_ERR(f.file))) {
 		ret = PTR_ERR(f.file);
 		goto out;
@@ -1191,7 +1189,6 @@ SYSCALL_DEFINE2(mq_notify, mqd_t, mqdes,
 	struct sigevent notification;
 	struct mqueue_inode_info *info;
 	struct sk_buff *nc;
-	struct capsicum_rights rights;
 
 	if (u_notification) {
 		if (copy_from_user(&notification, u_notification,
@@ -1232,8 +1229,7 @@ SYSCALL_DEFINE2(mq_notify, mqd_t, mqdes,
 			skb_put(nc, NOTIFY_COOKIE_LEN);
 			/* and attach it to the socket */
 retry:
-			f = fdget(notification.sigev_signo,
-				  cap_rights_init(&rights, CAP_POLL_EVENT));
+			f = fdgetr(notification.sigev_signo, CAP_POLL_EVENT);
 			if (IS_ERR(f.file)) {
 				ret = PTR_ERR(f.file);
 				goto out;
@@ -1258,7 +1254,7 @@ retry:
 		}
 	}
 
-	f = fdget(mqdes, cap_rights_init(&rights, CAP_POLL_EVENT));
+	f = fdgetr(mqdes, CAP_POLL_EVENT);
 	if (IS_ERR(f.file)) {
 		ret = PTR_ERR(f.file);
 		goto out;
@@ -1324,7 +1320,6 @@ SYSCALL_DEFINE3(mq_getsetattr, mqd_t, mqdes,
 	struct fd f;
 	struct inode *inode;
 	struct mqueue_inode_info *info;
-	struct capsicum_rights rights;
 
 	if (u_mqstat != NULL) {
 		if (copy_from_user(&mqstat, u_mqstat, sizeof(struct mq_attr)))
@@ -1333,7 +1328,7 @@ SYSCALL_DEFINE3(mq_getsetattr, mqd_t, mqdes,
 			return -EINVAL;
 	}
 
-	f = fdget(mqdes, cap_rights_init(&rights, CAP_POLL_EVENT));
+	f = fdgetr(mqdes, CAP_POLL_EVENT);
 	if (IS_ERR(f.file)) {
 		ret = PTR_ERR(f.file);
 		goto out;

@@ -77,10 +77,8 @@ SYSCALL_DEFINE4(spu_create, const char __user *, name, unsigned int, flags,
 		return -ENOSYS;
 
 	if (flags & SPU_CREATE_AFFINITY_SPU) {
-		struct capsicum_rights rights;
 		struct fd neighbor;
-		cap_rights_init(&rights, CAP_READ, CAP_WRITE, CAP_MAPEXEC);
-		neighbor = fdget(neighbor_fd, &rights);
+		neighbor = fdgetr(neighbor_fd, CAP_READ, CAP_WRITE, CAP_MAPEXEC);
 		if (!IS_ERR(neighbor.file)) {
 			ret = calls->create_thread(name, flags, mode, neighbor.file);
 			fdput(neighbor);
@@ -99,14 +97,12 @@ asmlinkage long sys_spu_run(int fd, __u32 __user *unpc, __u32 __user *ustatus)
 	long ret;
 	struct fd arg;
 	struct spufs_calls *calls;
-	struct capsicum_rights rights;
 
 	calls = spufs_calls_get();
 	if (!calls)
 		return -ENOSYS;
 
-	cap_rights_init(&rights, CAP_READ, CAP_WRITE, CAP_MAPEXEC);
-	arg = fdget(fd, &rights)
+	arg = fdgetr(fd, CAP_READ, CAP_WRITE, CAP_MAPEXEC);
 	if (!IS_ERR(arg.file)) {
 		ret = calls->spu_run(arg.file, unpc, ustatus);
 		fdput(arg);

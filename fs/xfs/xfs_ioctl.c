@@ -72,12 +72,11 @@ xfs_find_handle(
 	struct inode		*inode;
 	struct fd		f = {NULL};
 	struct path		path;
-	struct capsicum_rights	rights;
 	int			error;
 	struct xfs_inode	*ip;
 
 	if (cmd == XFS_IOC_FD_TO_HANDLE) {
-		f = fdget(hreq->fd, cap_rights_init(&rights, CAP_FSTAT));
+		f = fdgetr(hreq->fd, CAP_FSTAT);
 		if (IS_ERR(f.file))
 			return PTR_ERR(f.file);
 		inode = file_inode(f.file);
@@ -1476,13 +1475,11 @@ xfs_ioc_swapext(
 	xfs_swapext_t	*sxp)
 {
 	xfs_inode_t     *ip, *tip;
-	struct capsicum_rights rights;
 	struct fd	f, tmp;
 	int		error = 0;
 
 	/* Pull information for the target fd */
-	cap_rights_init(&rights, CAP_READ, CAP_WRITE, CAP_FSTAT);
-	f = fdget((int)sxp->sx_fdtarget, &rights);
+	f = fdgetr((int)sxp->sx_fdtarget, CAP_READ, CAP_WRITE, CAP_FSTAT);
 	if (IS_ERR(f.file)) {
 		error = XFS_ERROR(EINVAL);
 		goto out;
@@ -1495,7 +1492,7 @@ xfs_ioc_swapext(
 		goto out_put_file;
 	}
 
-	tmp = fdget((int)sxp->sx_fdtmp, &rights);
+	tmp = fdgetr((int)sxp->sx_fdtmp, CAP_READ, CAP_WRITE, CAP_FSTAT);
 	if (IS_ERR(tmp.file)) {
 		error = XFS_ERROR(EINVAL);
 		goto out_put_file;

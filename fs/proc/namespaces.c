@@ -277,9 +277,8 @@ const struct inode_operations proc_ns_dir_inode_operations = {
 struct file *proc_ns_fget(int fd)
 {
 	struct file *file;
-	struct capsicum_rights rights;
 
-	file = fget(fd, cap_rights_init(&rights, CAP_SETNS));
+	file = fgetr(fd, CAP_SETNS);
 	if (IS_ERR(file))
 		return file;
 

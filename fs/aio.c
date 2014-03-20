@@ -1403,8 +1403,8 @@ static int io_submit_one(struct kioctx *ctx, struct iocb __user *user_iocb,
 	if (unlikely(!req))
 		return -EAGAIN;
 
-	req->ki_filp = fget(iocb->aio_fildes,
-			    aio_opcode_rights(&rights, iocb->aio_lio_opcode));
+	req->ki_filp = fget_rights(iocb->aio_fildes,
+				   aio_opcode_rights(&rights, iocb->aio_lio_opcode));
 	if (unlikely(IS_ERR(req->ki_filp))) {
 		ret = PTR_ERR(req->ki_filp);
 		req->ki_filp = NULL;

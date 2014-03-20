@@ -1410,15 +1410,13 @@ static ssize_t ucma_migrate_id(struct ucma_file *new_file,
 	struct ucma_context *ctx;
 	struct fd f;
 	struct ucma_file *cur_file;
-	struct capsicum_rights rights;
 	int ret = 0;
 
 	if (copy_from_user(&cmd, inbuf, sizeof(cmd)))
 		return -EFAULT;
 
 	/* Get current fd to protect against it being closed */
-	cap_rights_init(&rights, CAP_READ, CAP_WRITE, CAP_POLL_EVENT);
-	f = fdget(cmd.fd, &rights);
+	f = fdgetr(cmd.fd, CAP_READ, CAP_WRITE, CAP_POLL_EVENT);
 	if (IS_ERR(f.file))
 		return -ENOENT;
 

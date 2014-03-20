@@ -405,10 +405,8 @@ struct socket *sockfd_to_socket(unsigned int sockfd)
 	struct socket *socket;
 	struct file *file;
 	struct inode *inode;
-	struct capsicum_rights rights;
 
-	file = fget(sockfd, cap_rights_init(&rights, CAP_READ, CAP_WRITE,
-					    CAP_SHUTDOWN));
+	file = fgetr(sockfd, CAP_READ, CAP_WRITE, CAP_SHUTDOWN);
 	if (!file) {
 		pr_err("invalid sockfd\n");
 		return NULL;

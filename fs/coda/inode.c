@@ -115,7 +115,6 @@ static int get_device_index(struct coda_mount_data *data)
 {
 	struct fd f;
 	struct inode *inode;
-	struct capsicum_rights rights;
 	int idx;
 
 	if (data == NULL) {
@@ -128,7 +127,7 @@ static int get_device_index(struct coda_mount_data *data)
 		return -1;
 	}
 
-	f = fdget(data->fd, cap_rights_init(&rights, CAP_FSTAT));
+	f = fdgetr(data->fd, CAP_FSTAT);
 	if (IS_ERR(f.file))
 		goto Ebadf;
 	inode = file_inode(f.file);
