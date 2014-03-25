@@ -1370,7 +1370,8 @@ aio_opcode_rights(struct capsicum_rights *rights, int opcode)
 		break;
 
 	default:
-		cap_rights_init(rights,  CAP_PREAD, CAP_PWRITE, CAP_POLL_EVENT, CAP_FSYNC);
+		cap_rights_init(rights,  CAP_PREAD, CAP_PWRITE, CAP_POLL_EVENT,
+				CAP_FSYNC);
 		break;
 	}
 	return rights;
@@ -1404,7 +1405,8 @@ static int io_submit_one(struct kioctx *ctx, struct iocb __user *user_iocb,
 		return -EAGAIN;
 
 	req->ki_filp = fget_rights(iocb->aio_fildes,
-				   aio_opcode_rights(&rights, iocb->aio_lio_opcode));
+				   aio_opcode_rights(&rights,
+						     iocb->aio_lio_opcode));
 	if (unlikely(IS_ERR(req->ki_filp))) {
 		ret = PTR_ERR(req->ki_filp);
 		req->ki_filp = NULL;

@@ -30,8 +30,8 @@
 #include <stdarg.h>
 #include <linux/capsicum.h>
 #include <linux/slab.h>
-#include <asm/fcntl.h>
-#include <asm/bug.h>
+#include <linux/fcntl.h>
+#include <linux/bug.h>
 
 #include "capsicum-rights.h"
 
@@ -50,7 +50,7 @@ static const int bit2idx[] = {
 
 static inline int right_to_index(__u64 right)
 {
-	return (bit2idx[CAPIDXBIT(right)]);
+	return bit2idx[CAPIDXBIT(right)];
 }
 
 static inline bool has_right(const struct capsicum_rights *rights, u64 right)
@@ -59,7 +59,8 @@ static inline bool has_right(const struct capsicum_rights *rights, u64 right)
 	return (rights->primary.cr_rights[idx] & right) == right;
 }
 
-struct capsicum_rights *cap_rights_vset(struct capsicum_rights *rights, va_list ap)
+struct capsicum_rights *
+cap_rights_vset(struct capsicum_rights *rights, va_list ap)
 {
 	u64 right;
 	int i, n;
@@ -74,14 +75,16 @@ struct capsicum_rights *cap_rights_vset(struct capsicum_rights *rights, va_list 
 		BUG_ON(CAPRVER(right) != 0);
 		i = right_to_index(right);
 		BUG_ON(i < 0 || i >= n);
-		BUG_ON(CAPIDXBIT(rights->primary.cr_rights[i]) != CAPIDXBIT(right));
+		BUG_ON(CAPIDXBIT(rights->primary.cr_rights[i]) !=
+		       CAPIDXBIT(right));
 		rights->primary.cr_rights[i] |= right;
 	}
 	return rights;
 }
 EXPORT_SYMBOL(cap_rights_vset);
 
-struct capsicum_rights *cap_rights_vinit(struct capsicum_rights *rights, va_list ap)
+struct capsicum_rights *
+cap_rights_vinit(struct capsicum_rights *rights, va_list ap)
 {
 	CAP_SET_NONE(&rights->primary);
 	rights->nioctls = 0;
@@ -181,16 +184,17 @@ static bool cap_rights_primary_contains(const struct cap_rights *big,
 bool cap_rights_contains(const struct capsicum_rights *big,
 			const struct capsicum_rights *little)
 {
-	return (cap_rights_primary_contains(&big->primary, &little->primary) &&
-		((big->fcntls & little->fcntls) == little->fcntls) &&
-		cap_rights_ioctls_contains(big, little));
+	return cap_rights_primary_contains(&big->primary,
+					   &little->primary) &&
+	       ((big->fcntls & little->fcntls) == little->fcntls) &&
+	       cap_rights_ioctls_contains(big, little);
 }
 
 bool cap_rights_is_all(const struct capsicum_rights *rights)
 {
-	return (CAP_IS_ALL(&rights->primary) &&
-		rights->fcntls == CAP_FCNTL_ALL &&
-		rights->nioctls == -1);
+	return CAP_IS_ALL(&rights->primary) &&
+	       rights->fcntls == CAP_FCNTL_ALL &&
+	       rights->nioctls == -1;
 }
 
 #endif  /* CONFIG_SECURITY_CAPSICUM */

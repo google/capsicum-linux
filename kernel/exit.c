@@ -972,8 +972,8 @@ static int eligible_child(struct wait_opts *wo, struct task_struct *p)
 	 * set; otherwise, wait for non-clone children *only*.  (Note:
 	 * A "clone" child here is one that reports to its parent
 	 * using a signal other than SIGCHLD and is not pdforked.) */
-	if (((p->exit_signal != SIGCHLD && !p->quiet_forked) ^ !!(wo->wo_flags & __WCLONE))
-	    && !(wo->wo_flags & __WALL))
+	if (((p->exit_signal != SIGCHLD && !p->quiet_forked) ^
+	      !!(wo->wo_flags & __WCLONE)) && !(wo->wo_flags & __WALL))
 		return 0;
 
 	return 1;

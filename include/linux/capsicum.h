@@ -9,7 +9,7 @@ struct file;
 struct capsicum_rights {
 	struct cap_rights primary;
 	unsigned int fcntls;  /* Only valid if CAP_FCNTL set in primary. */
-	int nioctls;  /* Only valid if CAP_IOCTL set in primary; -1 => all ioctls allowed */
+	int nioctls;  /* -1=>all; only valid if CAP_IOCTL set in primary */
 	unsigned int *ioctls;
 };
 
@@ -35,8 +35,10 @@ int capsicum_path_lookup(const struct capsicum_rights *base_rights,
 	_cap_rights_set((rights), __VA_ARGS__, 0ULL)
 struct capsicum_rights *_cap_rights_init(struct capsicum_rights *rights, ...);
 struct capsicum_rights *_cap_rights_set(struct capsicum_rights *rights, ...);
-struct capsicum_rights *cap_rights_vinit(struct capsicum_rights *rights, va_list ap);
-struct capsicum_rights *cap_rights_vset(struct capsicum_rights *rights, va_list ap);
+struct capsicum_rights *cap_rights_vinit(struct capsicum_rights *rights,
+					 va_list ap);
+struct capsicum_rights *cap_rights_vset(struct capsicum_rights *rights,
+					va_list ap);
 struct capsicum_rights *cap_rights_set_all(struct capsicum_rights *rights);
 
 #else
@@ -44,7 +46,8 @@ struct capsicum_rights *cap_rights_set_all(struct capsicum_rights *rights);
 #define cap_rights_init(rights, ...) _cap_rights_noop(rights)
 #define cap_rights_set(rights, ...) _cap_rights_noop(rights)
 #define cap_rights_set_all(rights) _cap_rights_noop(rights)
-static inline struct capsicum_rights *_cap_rights_noop(struct capsicum_rights *rights)
+static inline struct capsicum_rights *
+_cap_rights_noop(struct capsicum_rights *rights)
 {
 	return rights;
 }

@@ -1438,7 +1438,8 @@ static void l2tp_tunnel_del_work(struct work_struct *work)
 	struct capsicum_rights rights;
 
 	tunnel = container_of(work, struct l2tp_tunnel, del_work);
-	sk = l2tp_tunnel_sock_lookup(tunnel, cap_rights_init(&rights, CAP_SHUTDOWN));
+	sk = l2tp_tunnel_sock_lookup(tunnel,
+				     cap_rights_init(&rights, CAP_SHUTDOWN));
 	if (!sk)
 		return;
 

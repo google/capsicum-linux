@@ -66,24 +66,32 @@ extern struct file *fget_light_rights(unsigned int fd, int *fput_needed,
 				      const struct capsicum_rights *rights);
 extern struct file *fget_raw_rights(unsigned int fd,
 				    const struct capsicum_rights *rights);
-extern struct file *fget_raw_light_rights(unsigned int fd, int *fput_needed,
-					  const struct capsicum_rights **actual_rights,
-					  const struct capsicum_rights *rights);
+extern struct file *
+fget_raw_light_rights(unsigned int fd, int *fput_needed,
+		      const struct capsicum_rights **actual_rights,
+		      const struct capsicum_rights *rights);
 
 extern struct file *_fgetr(unsigned int fd, ...);
 extern struct file *_fgetr_light(unsigned int fd, int *fput_needed, ...);
 extern struct fd _fdgetr(unsigned int fd, ...);
 extern struct file *_fgetr_raw(unsigned int fd, ...);
-extern struct file *_fgetr_raw_light(unsigned int fd, int *fput_needed,
-				     const struct capsicum_rights **actual_rights, ...);
+extern struct file *
+_fgetr_raw_light(unsigned int fd, int *fput_needed,
+		 const struct capsicum_rights **actual_rights, ...);
 extern struct fd _fdgetr_raw(unsigned int fd, ...);
 
-#define fgetr(fd, ...)				_fgetr((fd), __VA_ARGS__, 0ULL)
-#define fgetr_light(fd, fpn, ...)		_fgetr_light((fd), (fpn), __VA_ARGS__, 0ULL)
-#define fdgetr(fd, ...)			_fdgetr((fd), __VA_ARGS__, 0ULL)
-#define fgetr_raw(fd, ...)			_fgetr_raw((fd), __VA_ARGS__, 0ULL)
-#define fgetr_raw_light(fd, fpn, arights, ...)	_fgetr_raw_light((fd), (fpn), (arights), __VA_ARGS__, 0ULL)
-#define fdgetr_raw(fd, ...)			_fdgetr_raw((fd), __VA_ARGS__, 0ULL)
+#define fgetr(fd, ...) \
+	_fgetr((fd), __VA_ARGS__, 0ULL)
+#define fgetr_light(fd, fpn, ...) \
+	_fgetr_light((fd), (fpn), __VA_ARGS__, 0ULL)
+#define fdgetr(fd, ...) \
+	_fdgetr((fd), __VA_ARGS__, 0ULL)
+#define fgetr_raw(fd, ...) \
+	_fgetr_raw((fd), __VA_ARGS__, 0ULL)
+#define fgetr_raw_light(fd, fpn, arights, ...) \
+	_fgetr_raw_light((fd), (fpn), (arights), __VA_ARGS__, 0ULL)
+#define fdgetr_raw(fd, ...) \
+	_fdgetr_raw((fd), __VA_ARGS__, 0ULL)
 
 #else
 
@@ -92,8 +100,9 @@ static inline struct file *fget_rights(unsigned int fd,
 {
 	return fget(fd);
 }
-static inline struct file *fget_light_rights(unsigned int fd, int *fput_needed,
-					     const struct capsicum_rights *rights)
+static inline struct file *
+fget_light_rights(unsigned int fd, int *fput_needed,
+		  const struct capsicum_rights *rights)
 {
 	return fget_light(fd, fput_needed);
 }
@@ -102,9 +111,10 @@ static inline struct file *fget_raw_rights(unsigned int fd,
 {
 	return fget_raw(fd);
 }
-static inline struct file *fget_raw_light_rights(unsigned int fd, int *fput_needed,
-						 const struct capsicum_rights **actual_rights,
-						 const struct capsicum_rights *rights)
+static inline struct file *
+fget_raw_light_rights(unsigned int fd, int *fput_needed,
+		      const struct capsicum_rights **actual_rights,
+		      const struct capsicum_rights *rights)
 {
 	return fget_raw_light(fd, fput_needed);
 }

@@ -61,14 +61,6 @@ struct cap_rights {
 	__u64	cr_rights[CAP_RIGHTS_VERSION + 2];
 };
 
-#ifndef __KERNEL__
-#include <limits.h>
-#ifndef _CAP_RIGHTS_T_DECLARED
-#define _CAP_RIGHTS_T_DECLARED
-typedef struct cap_rights cap_rights_t;
-#endif
-#endif
-
 #define CAPRIGHT(idx, bit)	((1ULL << (57 + (idx))) | (bit))
 
 /*

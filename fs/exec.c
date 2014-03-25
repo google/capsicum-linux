@@ -1745,8 +1745,8 @@ asmlinkage long compat_sys_execve(const char __user * filename,
  */
 SYSCALL_DEFINE3(fexecve,
 		int, fd,
-		const char __user *const __user *,argv,
-		const char __user *const __user *,envp)
+		const char __user *const __user *, argv,
+		const char __user *const __user *, envp)
 {
 	return do_fexecve(fd, argv, envp);
 }

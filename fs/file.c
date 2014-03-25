@@ -672,9 +672,8 @@ static struct file *unwrap_file(struct file *orig,
 		 * release that reference and obtain a reference to the new
 		 * return value, if any.
 		 */
-		if (!IS_ERR(f) && !atomic_long_inc_not_zero(&f->f_count)) {
+		if (!IS_ERR(f) && !atomic_long_inc_not_zero(&f->f_count))
 			f = ERR_PTR(-EBADF);
-		}
 		atomic_long_dec(&orig->f_count);
 	}
 
@@ -701,7 +700,8 @@ struct file *fget_rights(unsigned int fd, const struct capsicum_rights *rights)
 }
 EXPORT_SYMBOL(fget_rights);
 
-struct file *fget_raw_rights(unsigned int fd, const struct capsicum_rights *rights)
+struct file *fget_raw_rights(unsigned int fd,
+			     const struct capsicum_rights *rights)
 {
 	struct file *file;
 	struct files_struct *files = current->files;
@@ -752,10 +752,11 @@ struct file *fget_light_rights(unsigned int fd, int *fput_needed,
 }
 EXPORT_SYMBOL(fget_light_rights);
 
-struct file *fget_raw_light_rights(unsigned int fd,
-				   int *fput_needed,
-				   const struct capsicum_rights **actual_rights,
-				   const struct capsicum_rights *required_rights)
+struct file *
+fget_raw_light_rights(unsigned int fd,
+		      int *fput_needed,
+		      const struct capsicum_rights **actual_rights,
+		      const struct capsicum_rights *required_rights)
 {
 	struct file *file;
 	struct files_struct *files = current->files;
@@ -815,7 +816,7 @@ struct fd _fdgetr(unsigned int fd, ...)
 	va_start(ap, fd);
 	f = fget_light_rights(fd, &b, cap_rights_vinit(&rights, ap));
 	va_end(ap);
-	return (struct fd){f,b};
+	return (struct fd){f, b};
 }
 EXPORT_SYMBOL(_fdgetr);
 
@@ -854,7 +855,7 @@ struct fd _fdgetr_raw(unsigned int fd, ...)
 	va_start(ap, fd);
 	f = fget_raw_light_rights(fd, &b, NULL, cap_rights_vinit(&rights, ap));
 	va_end(ap);
-	return (struct fd){f,b};
+	return (struct fd){f, b};
 }
 EXPORT_SYMBOL(_fdgetr_raw);
 #endif

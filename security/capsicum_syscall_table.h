@@ -18,12 +18,13 @@
 #include <asm/unistd.h>
 #include <asm/syscall.h>
 
-/* TODO(drysdale): use a more general method for architecture-specific policing */
+/* TODO(drysdale): use a more general method for arch-specific policing */
 #if defined(CONFIG_X86) || defined(CONFIG_UML_X86)
 #include <asm/prctl.h>
 static int check_arch_prctl(unsigned long *args)
 {
-	return (args[0] & ~(ARCH_SET_FS|ARCH_GET_FS|ARCH_SET_GS|ARCH_GET_GS) ? -ECAPMODE : 0);
+	return (args[0] & ~(ARCH_SET_FS|ARCH_GET_FS|ARCH_SET_GS|ARCH_GET_GS))
+	       ? -ECAPMODE : 0;
 }
 #else
 static int check_arch_prctl(unsigned long *args)
@@ -59,7 +60,10 @@ static int check_openat(unsigned long *args)
 
 	if (fd == AT_FDCWD)
 		return -ECAPMODE;
-	return (flags & ~(O_WRONLY|O_RDWR|O_CREAT|O_EXCL|O_TRUNC|O_APPEND|FASYNC|O_CLOEXEC|O_DIRECT|O_DIRECTORY|O_LARGEFILE|O_NOATIME|O_NOCTTY|O_NOFOLLOW|O_NONBLOCK|O_SYNC) ? -ECAPMODE : 0);
+	return (flags & ~(O_WRONLY|O_RDWR|O_CREAT|O_EXCL|O_TRUNC|O_APPEND|
+			  FASYNC|O_CLOEXEC|O_DIRECT|O_DIRECTORY|O_LARGEFILE|
+			  O_NOATIME|O_NOCTTY|O_NOFOLLOW|O_NONBLOCK|O_SYNC))
+		? -ECAPMODE : 0;
 }
 
 static int check_prctl(unsigned long *args)
@@ -98,7 +102,8 @@ static unsigned char *syscalls_result;
 static int __init init_syscalls_result(void)
 {
 	int i;
-	syscalls_result = kcalloc(NR_syscalls, sizeof(unsigned char), GFP_KERNEL);
+	syscalls_result = kcalloc(NR_syscalls, sizeof(unsigned char),
+				  GFP_KERNEL);
 	if (!syscalls_result) {
 		WARN_ON(1);
 		return -ENOMEM;

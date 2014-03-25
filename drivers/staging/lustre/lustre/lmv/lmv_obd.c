@@ -878,9 +878,8 @@ static int lmv_hsm_ct_register(struct lmv_obd *lmv, unsigned int cmd, int len,
 
 	/* at least one registration done, with no failure */
 	filp = fgetr(lk->lk_wfd, CAP_READ);
-	if (IS_ERR(filp)) {
+	if (IS_ERR(filp))
 		return PTR_ERR(filp);
-	}
 	rc = libcfs_kkuc_group_add(filp, lk->lk_uid, lk->lk_group, lk->lk_data);
 	if (rc != 0 && filp != NULL)
 		fput(filp);

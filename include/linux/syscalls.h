@@ -859,10 +859,10 @@ asmlinkage long sys_cap_rights_get(unsigned int fd,
 				   int __user *nioctls,
 				   unsigned int __user *ioctls);
 asmlinkage long sys_pdfork(int __user *fdp, int  flags);
-asmlinkage long sys_pdgetpid(int fd, pid_t __user * pidp);
+asmlinkage long sys_pdgetpid(int fd, pid_t __user *pidp);
 asmlinkage long sys_pdkill(int fd, int signum);
-asmlinkage long sys_pdwait4(int fd, int __user * status, int options,
-			struct rusage __user * rusage);
+asmlinkage long sys_pdwait4(int fd, int __user *status, int options,
+			struct rusage __user *rusage);
 asmlinkage long sys_fexecve(int fd,
 			const char __user *const __user *argv,
 			const char __user *const __user *envp);

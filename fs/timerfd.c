@@ -292,7 +292,8 @@ static const struct file_operations timerfd_fops = {
 };
 
 #ifdef CONFIG_SECURITY_CAPSICUM
-#define timerfd_fgetr(f, p, ...)	_timerfd_fgetr((f), (p), __VA_ARGS__, 0ULL)
+#define timerfd_fgetr(f, p, ...) \
+	_timerfd_fgetr((f), (p), __VA_ARGS__, 0ULL)
 static int _timerfd_fgetr(int fd, struct fd *p, ...)
 {
 	struct capsicum_rights rights;
@@ -300,7 +301,8 @@ static int _timerfd_fgetr(int fd, struct fd *p, ...)
 	va_list ap;
 
 	va_start(ap, p);
-	f.file = fget_light_rights(fd, &f.need_put, cap_rights_vinit(&rights, ap));
+	f.file = fget_light_rights(fd, &f.need_put,
+				   cap_rights_vinit(&rights, ap));
 	va_end(ap);
 	if (IS_ERR(f.file))
 		return PTR_ERR(f.file);
@@ -314,7 +316,8 @@ static int _timerfd_fgetr(int fd, struct fd *p, ...)
 
 #else
 
-#define timerfd_fgetr(f, p, ...)	timerfd_fget((f), (p))
+#define timerfd_fgetr(f, p, ...) \
+	timerfd_fget((f), (p))
 static int timerfd_fget(int fd, struct fd *p)
 {
 	struct fd f = fdget(fd);

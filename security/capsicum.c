@@ -1,7 +1,8 @@
 /*
  * Main implementation of Capsicum, a capability framework for UNIX.
  *
- * Copyright (C) 2012-2013 The Chromium OS Authors <chromium-os-dev@chromium.org>
+ * Copyright (C) 2012-2013 The Chromium OS Authors
+ *                         <chromium-os-dev@chromium.org>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2, as
@@ -22,7 +23,7 @@
 #include <linux/security.h>
 #include <linux/syscalls.h>
 #include <linux/capsicum.h>
-#include <asm/fcntl.h>
+#include <linux/fcntl.h>
 
 #include "capsicum-rights.h"
 
@@ -37,12 +38,45 @@ struct capsicum_capability {
 	struct file *underlying;
 };
 
-extern struct file_operations capsicum_file_ops;
+static void capsicum_panic_not_unwrapped(void);
+static int capsicum_release(struct inode *i, struct file *capf);
+static int capsicum_show_fdinfo(struct seq_file *m, struct file *capf);
+
+#define panic_ptr ((void *)&capsicum_panic_not_unwrapped)
+static const struct file_operations capsicum_file_ops = {
+	.owner = NULL,
+	.llseek = panic_ptr,
+	.read = panic_ptr,
+	.write = panic_ptr,
+	.aio_read = panic_ptr,
+	.aio_write = panic_ptr,
+	.iterate = panic_ptr,
+	.poll = panic_ptr,
+	.unlocked_ioctl = panic_ptr,
+	.compat_ioctl = panic_ptr,
+	.mmap = panic_ptr,
+	.open = panic_ptr,
+	.flush = NULL,  /* This is called on close if implemented. */
+	.release = capsicum_release,  /* This is the only one we want. */
+	.fsync = panic_ptr,
+	.aio_fsync = panic_ptr,
+	.fasync = panic_ptr,
+	.lock = panic_ptr,
+	.sendpage = panic_ptr,
+	.get_unmapped_area = panic_ptr,
+	.check_flags = panic_ptr,
+	.flock = panic_ptr,
+	.splice_write = panic_ptr,
+	.splice_read = panic_ptr,
+	.setlease = panic_ptr,
+	.fallocate = panic_ptr,
+	.show_fdinfo = capsicum_show_fdinfo
+};
 
 static inline bool capsicum_in_cap_mode(void)
 {
-	return (test_thread_flag(TIF_SECCOMP) &&
-		current->seccomp.mode == SECCOMP_MODE_LSM);
+	return test_thread_flag(TIF_SECCOMP) &&
+	       current->seccomp.mode == SECCOMP_MODE_LSM;
 }
 
 static inline bool capsicum_is_cap(const struct file *file)
@@ -51,7 +85,7 @@ static inline bool capsicum_is_cap(const struct file *file)
 }
 
 static struct capsicum_rights all_rights = {
-	.primary = {.cr_rights = {CAP_ALL0, CAP_ALL1}},
+	.primary = {.cr_rights = {CAP_ALL0, CAP_ALL1} },
 	.fcntls = CAP_FCNTL_ALL,
 	.nioctls = -1,
 	.ioctls = NULL
@@ -83,8 +117,8 @@ static struct file *capsicum_wrap(struct file *underlying,
 	cap->rights = *rights;
 	if (!take_ioctls && rights->nioctls > 0) {
 		cap->rights.ioctls = kmemdup(rights->ioctls,
-					     rights->nioctls * sizeof(unsigned int),
-					      GFP_KERNEL);
+					rights->nioctls * sizeof(unsigned int),
+					GFP_KERNEL);
 		if (!cap->rights.ioctls) {
 			err = -ENOMEM;
 			goto out_err;
@@ -213,20 +247,20 @@ SYSCALL_DEFINE5(cap_rights_get,
 {
 	int result = -EFAULT;
 	struct file *file;
-        struct capsicum_rights *rights = &all_rights;
+	struct capsicum_rights *rights = &all_rights;
 	int ioctls_to_copy = -1;
 
 	file = fget(fd);
-	if (file == NULL) {
+	if (file == NULL)
 		return -EBADF;
-	}
 	if (capsicum_is_cap(file)) {
 		struct capsicum_capability *cap = file->private_data;
 		rights = &cap->rights;
 	}
 
 	if (rightsp) {
-		if (copy_to_user(rightsp, &rights->primary, sizeof(struct cap_rights)))
+		if (copy_to_user(rightsp, &rights->primary,
+				 sizeof(struct cap_rights)))
 			goto out;
 	}
 	if (fcntls) {
@@ -287,16 +321,16 @@ static int capsicum_show_fdinfo(struct seq_file *m, struct file *capf)
 
 	cap = capf->private_data;
 	BUG_ON(!cap);
-	seq_printf(m, "rights:");
+	seq_puts(m, "rights:");
 	for (i = 0; i < (CAP_RIGHTS_VERSION + 2); i++)
 		seq_printf(m, "\t%#016llx", cap->rights.primary.cr_rights[i]);
-	seq_printf(m, "\n");
+	seq_puts(m, "\n");
 	seq_printf(m, " fcntls: %#08x\n", cap->rights.fcntls);
 	if (cap->rights.nioctls > 0) {
-		seq_printf(m, " ioctls:");
+		seq_puts(m, " ioctls:");
 		for (i = 0; i < cap->rights.nioctls; i++)
 			seq_printf(m, "\t%#08x", cap->rights.ioctls[i]);
-		seq_printf(m, "\n");
+		seq_puts(m, "\n");
 	}
 	return 0;
 }
@@ -363,7 +397,8 @@ struct file *capsicum_file_install(const struct capsicum_rights *base_rights,
 {
 	if (!base_rights || cap_rights_is_all(base_rights))
 		return file;
-	return capsicum_wrap(file, (struct capsicum_rights *)base_rights, false);
+	return capsicum_wrap(file, (struct capsicum_rights *)base_rights,
+			     false);
 }
 EXPORT_SYMBOL(capsicum_file_install);
 
@@ -391,36 +426,6 @@ int capsicum_path_lookup(const struct capsicum_rights *base_rights,
 EXPORT_SYMBOL(capsicum_path_lookup);
 #endif
 
-#define panic_ptr ((void *)&capsicum_panic_not_unwrapped)
-struct file_operations capsicum_file_ops = {
-	.owner = NULL,
-	.llseek = panic_ptr,
-	.read = panic_ptr,
-	.write = panic_ptr,
-	.aio_read = panic_ptr,
-	.aio_write = panic_ptr,
-	.iterate = panic_ptr,
-	.poll = panic_ptr,
-	.unlocked_ioctl = panic_ptr,
-	.compat_ioctl = panic_ptr,
-	.mmap = panic_ptr,
-	.open = panic_ptr,
-	.flush = NULL,  /* This one is called on close if implemented. */
-	.release = capsicum_release,  /* This is the only one we want. */
-	.fsync = panic_ptr,
-	.aio_fsync = panic_ptr,
-	.fasync = panic_ptr,
-	.lock = panic_ptr,
-	.sendpage = panic_ptr,
-	.get_unmapped_area = panic_ptr,
-	.check_flags = panic_ptr,
-	.flock = panic_ptr,
-	.splice_write = panic_ptr,
-	.splice_read = panic_ptr,
-	.setlease = panic_ptr,
-	.fallocate = panic_ptr,
-	.show_fdinfo = capsicum_show_fdinfo
-};
 
 #else
 
@@ -437,8 +442,9 @@ struct file *capsicum_file_lookup(struct file *file,
 	return file;
 }
 
-struct file *capsicum_file_install(const const struct capsicum_rights *base_rights,
-				   struct file *file)
+struct file *
+capsicum_file_install(const const struct capsicum_rights *base_rights,
+		      struct file *file)
 {
 	return file;
 }

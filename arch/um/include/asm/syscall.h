@@ -98,30 +98,38 @@ static inline void syscall_get_arguments(struct task_struct *task,
 {
 	struct uml_pt_regs *r = &(regs->regs);
 # ifdef CONFIG_IA32_EMULATION
-# error Not implemented yet! Is task_thread_info(task)->status & TS_COMPAT \
-	the right flag in this mode?
+# error Not implemented yet!
+	/* Is task_thread_info(task)->status & TS_COMPAT the right flag in this
+	 * mode? */
 	if (task_thread_info(task)->status & TS_COMPAT)
 		switch (i) {
 		case 0:
-			if (!n--) break;
+			if (!n--)
+				break;
 			*args++ = UPT_RBX(r);
 		case 1:
-			if (!n--) break;
+			if (!n--)
+				break;
 			*args++ = UPT_RCX(r);
 		case 2:
-			if (!n--) break;
+			if (!n--)
+				break;
 			*args++ = UPT_RDX(r);
 		case 3:
-			if (!n--) break;
+			if (!n--)
+				break;
 			*args++ = UPT_RSI(r);
 		case 4:
-			if (!n--) break;
+			if (!n--)
+				break;
 			*args++ = UPT_RDI(r);
 		case 5:
-			if (!n--) break;
+			if (!n--)
+				break;
 			*args++ = UPT_RBP(r);
 		case 6:
-			if (!n--) break;
+			if (!n--)
+				break;
 		default:
 			BUG();
 			break;
@@ -130,25 +138,32 @@ static inline void syscall_get_arguments(struct task_struct *task,
 # endif
 		switch (i) {
 		case 0:
-			if (!n--) break;
+			if (!n--)
+				break;
 			*args++ = UPT_DI(r);
 		case 1:
-			if (!n--) break;
+			if (!n--)
+				break;
 			*args++ = UPT_SI(r);
 		case 2:
-			if (!n--) break;
+			if (!n--)
+				break;
 			*args++ = UPT_DX(r);
 		case 3:
-			if (!n--) break;
+			if (!n--)
+				break;
 			*args++ = UPT_R10(r);
 		case 4:
-			if (!n--) break;
+			if (!n--)
+				break;
 			*args++ = UPT_R8(r);
 		case 5:
-			if (!n--) break;
+			if (!n--)
+				break;
 			*args++ = UPT_R9(r);
 		case 6:
-			if (!n--) break;
+			if (!n--)
+				break;
 		default:
 			BUG();
 			break;
@@ -165,25 +180,32 @@ static inline void syscall_set_arguments(struct task_struct *task,
 	if (task_thread_info(task)->status & TS_COMPAT)
 		switch (i) {
 		case 0:
-			if (!n--) break;
+			if (!n--)
+				break;
 			UPT_RBX(r) = *args++;
 		case 1:
-			if (!n--) break;
+			if (!n--)
+				break;
 			UPT_RCX(r) = *args++;
 		case 2:
-			if (!n--) break;
+			if (!n--)
+				break;
 			UPT_RDX(r) = *args++;
 		case 3:
-			if (!n--) break;
+			if (!n--)
+				break;
 			UPT_RSI(r) = *args++;
 		case 4:
-			if (!n--) break;
+			if (!n--)
+				break;
 			UPT_RDI(r) = *args++;
 		case 5:
-			if (!n--) break;
+			if (!n--)
+				break;
 			UPT_RBP(r) = *args++;
 		case 6:
-			if (!n--) break;
+			if (!n--)
+				break;
 		default:
 			BUG();
 			break;
@@ -192,25 +214,32 @@ static inline void syscall_set_arguments(struct task_struct *task,
 # endif
 		switch (i) {
 		case 0:
-			if (!n--) break;
+			if (!n--)
+				break;
 			UPT_DI(r) = *args++;
 		case 1:
-			if (!n--) break;
+			if (!n--)
+				break;
 			UPT_SI(r) = *args++;
 		case 2:
-			if (!n--) break;
+			if (!n--)
+				break;
 			UPT_DX(r) = *args++;
 		case 3:
-			if (!n--) break;
+			if (!n--)
+				break;
 			UPT_R10(r) = *args++;
 		case 4:
-			if (!n--) break;
+			if (!n--)
+				break;
 			UPT_R8(r) = *args++;
 		case 5:
-			if (!n--) break;
+			if (!n--)
+				break;
 			UPT_R9(r) = *args++;
 		case 6:
-			if (!n--) break;
+			if (!n--)
+				break;
 		default:
 			BUG();
 			break;

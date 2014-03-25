@@ -26,7 +26,16 @@ struct procdesc {
 	bool daemon;
 };
 
-extern const struct file_operations procdesc_file_ops;
+static unsigned int procdesc_poll(struct file *f,
+				  struct poll_table_struct *wait);
+static int procdesc_release(struct inode *inode, struct file *f);
+static int procdesc_show_fdinfo(struct seq_file *m, struct file *f);
+
+static const struct file_operations procdesc_file_ops = {
+	.poll = procdesc_poll,
+	.release = procdesc_release,
+	.show_fdinfo = procdesc_show_fdinfo
+};
 
 static inline bool file_is_procdesc(struct file *f)
 {
@@ -172,7 +181,7 @@ static int procdesc_release(struct inode *inode, struct file *f)
 }
 
 static unsigned int procdesc_poll(struct file *f,
-				   struct poll_table_struct *wait)
+				  struct poll_table_struct *wait)
 {
 	struct procdesc *pd = procdesc_get(f);
 	BUG_ON(!pd);
@@ -195,8 +204,4 @@ static int procdesc_show_fdinfo(struct seq_file *m, struct file *f)
 	seq_printf(m, "pid:\t%d\n", pid);
 	return 0;
 }
-const struct file_operations procdesc_file_ops = {
-	.poll = procdesc_poll,
-	.release = procdesc_release,
-	.show_fdinfo = procdesc_show_fdinfo
-};
+

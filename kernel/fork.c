@@ -1650,7 +1650,8 @@ long do_fork(unsigned long clone_flags,
 		int __user *parent_tidptr,
 		int __user *child_tidptr)
 {
-	return do_fork_task(clone_flags, stack_start, stack_size, NULL, parent_tidptr, child_tidptr);
+	return do_fork_task(clone_flags, stack_start, stack_size, NULL,
+			    parent_tidptr, child_tidptr);
 }
 
 /*

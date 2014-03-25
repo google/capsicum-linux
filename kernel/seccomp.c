@@ -528,9 +528,9 @@ long prctl_set_seccomp(unsigned long seccomp_mode, char __user *filter)
 	case SECCOMP_MODE_LSM:
 		/*
 		 * Enabling LSM syscall filtering requires that the task have
-		 * CAP_SYS_ADMIN in its namespace or be running with no_new_privs.
-		 * This avoids scenarios where unprivileged tasks can affect the
-		 * behavior of privileged children.
+		 * CAP_SYS_ADMIN in its namespace or be running with
+		 * no_new_privs.  This avoids scenarios where unprivileged tasks
+		 * can affect the behavior of privileged children.
 		 */
 		if (!current->no_new_privs &&
 		    security_capable_noaudit(current_cred(), current_user_ns(),
@@ -557,10 +557,14 @@ long prctl_set_seccomp(unsigned long seccomp_mode, char __user *filter)
 
 		/* TODO(drysdale): fix locking */
 		rcu_read_lock();
-		/* First check none of the threads are already in a different seccomp mode */
+		/*
+		 * Check none of the threads are already in a different seccomp
+		 * mode
+		 */
 		t = current;
 		do {
-			if (t->seccomp.mode && t->seccomp.mode != seccomp_mode) {
+			if (t->seccomp.mode &&
+			    t->seccomp.mode != seccomp_mode) {
 				rcu_read_unlock();
 				goto out;
 			}

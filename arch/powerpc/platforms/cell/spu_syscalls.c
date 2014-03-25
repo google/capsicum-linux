@@ -78,7 +78,8 @@ SYSCALL_DEFINE4(spu_create, const char __user *, name, unsigned int, flags,
 
 	if (flags & SPU_CREATE_AFFINITY_SPU) {
 		struct fd neighbor;
-		neighbor = fdgetr(neighbor_fd, CAP_READ, CAP_WRITE, CAP_MAPEXEC);
+		neighbor = fdgetr(neighbor_fd, CAP_READ, CAP_WRITE,
+				  CAP_MAPEXEC);
 		if (!IS_ERR(neighbor.file)) {
 			ret = calls->create_thread(name, flags, mode, neighbor.file);
 			fdput(neighbor);

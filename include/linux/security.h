@@ -1600,8 +1600,8 @@ struct security_operations {
 	int (*file_receive) (struct file *file);
 	int (*file_open) (struct file *file, const struct cred *cred);
 	struct file *(*file_lookup) (struct file *orig,
-				     const struct capsicum_rights *required_rights,
-				     const struct capsicum_rights **actual_rights);
+				const struct capsicum_rights *required_rights,
+				const struct capsicum_rights **actual_rights);
 	struct file *(*file_install) (const struct capsicum_rights *base_rights,
 				      struct file *file);
 
@@ -2059,7 +2059,8 @@ static inline int security_bprm_secureexec(struct linux_binprm *bprm)
 	return cap_bprm_secureexec(bprm);
 }
 
-static inline int security_intercept_syscall(int arch, int callnr, unsigned long *args)
+static inline int security_intercept_syscall(int arch, int callnr,
+					     unsigned long *args)
 {
 	return 0;
 }
@@ -2395,8 +2396,9 @@ static inline int security_fd_alloc(unsigned int fd)
 	return 0;
 }
 
-static inline int security_path_lookup(const struct capsicum_rights *base_rights,
-				       struct dentry *dentry, const char *name)
+static inline int
+security_path_lookup(const struct capsicum_rights *base_rights,
+		     struct dentry *dentry, const char *name)
 {
 	return 0;
 }
@@ -3101,8 +3103,9 @@ static inline int security_path_chroot(struct path *path)
 	return 0;
 }
 
-static inline int security_path_lookup(const struct capsicum_rights *base_rights,
-				       struct dentry *dentry, const char *name)
+static inline int
+security_path_lookup(const struct capsicum_rights *base_rights,
+		     struct dentry *dentry, const char *name)
 {
 	return 0;
 }

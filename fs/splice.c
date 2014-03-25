@@ -2087,8 +2087,8 @@ SYSCALL_DEFINE4(tee, int, fdin, int, fdout, size_t, len, unsigned int, flags)
 				error = PTR_ERR(out.file);
 			}
 		}
- 		fdput(in);
- 	} else {
+		fdput(in);
+	} else {
 		error = PTR_ERR(in.file);
 	}
 

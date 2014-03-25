@@ -224,11 +224,14 @@ struct socket *sock_from_file(struct file *file, int *err);
 int net_ratelimit(void);
 
 #ifdef CONFIG_SECURITY_CAPSICUM
-struct socket *sockfd_lookup_rights(int fd, int *err, struct capsicum_rights *rights);
+struct socket *sockfd_lookup_rights(int fd, int *err,
+				    struct capsicum_rights *rights);
 struct socket *_sockfd_lookupr(int fd, int *err, ...);
-#define sockfd_lookupr(fd, err, ...)	_sockfd_lookupr((fd), (err), __VA_ARGS__, 0ULL)
+#define sockfd_lookupr(fd, err, ...) \
+	_sockfd_lookupr((fd), (err), __VA_ARGS__, 0ULL)
 #else
-static inline struct socket *sockfd_lookup_rights(int fd, int *err, struct capsicum_rights *rights)
+static inline struct socket *
+sockfd_lookup_rights(int fd, int *err, struct capsicum_rights *rights)
 {
 	return sockfd_lookup(fd, err);
 }
