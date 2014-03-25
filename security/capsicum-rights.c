@@ -104,8 +104,8 @@ bool cap_rights_regularize(struct capsicum_rights *rights)
 	}
 	if (!has_right(rights, CAP_IOCTL) && (rights->nioctls != 0)) {
 		changed = true;
-		rights->nioctls = 0;
 		kfree(rights->ioctls);
+		rights->nioctls = 0;
 		rights->ioctls = NULL;
 	}
 	return changed;
