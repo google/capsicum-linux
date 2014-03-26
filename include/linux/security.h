@@ -2385,20 +2385,20 @@ static inline int security_file_open(struct file *file,
 
 static inline struct file *
 security_file_lookup(struct file *orig,
-		const struct capsicum_rights *required_rights,
-		const struct capsicum_rights **actual_rights)
+		     const struct capsicum_rights *required_rights,
+		     const struct capsicum_rights **actual_rights)
 {
 	return orig;
 }
 
-static inline int security_fd_alloc(unsigned int fd)
+static inline struct file *
+security_file_install(const struct capsicum_rights *base_rights,
+		      struct file *file)
 {
-	return 0;
+	return file;
 }
 
-static inline int
-security_path_lookup(const struct capsicum_rights *base_rights,
-		     struct dentry *dentry, const char *name)
+static inline int security_fd_alloc(unsigned int fd)
 {
 	return 0;
 }
