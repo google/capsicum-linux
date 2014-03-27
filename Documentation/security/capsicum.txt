@@ -124,7 +124,8 @@ New System Calls
 
 Capsicum implements the following new system calls:
  - cap_rights_limit: restrict the rights associated with file descriptor, thus turning
-   it into a capability FD (security/capsicum.c)
+   it into a capability FD; internally this is implemented by wrapping the original
+   struct file with a capability file (security/capsicum.c)
  - cap_rights_get: return the rights associated with a capability FD
    (security/capsicum.c)
  - fexecve: execve via a file descriptor (fs/exec.c)

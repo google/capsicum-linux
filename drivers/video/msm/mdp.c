@@ -257,7 +257,7 @@ int get_img(struct mdp_img *img, struct fb_info *info,
 	    struct file **filep)
 {
 	int ret = 0;
-	struct fd f = fdgert(img->memory_id, CAP_FSTAT);
+	struct fd f = fdgetr(img->memory_id, CAP_FSTAT);
 	if (IS_ERR(f.file))
 		return -1;
 

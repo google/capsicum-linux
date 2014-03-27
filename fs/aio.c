@@ -1370,7 +1370,7 @@ aio_opcode_rights(struct capsicum_rights *rights, int opcode)
 		break;
 
 	default:
-		cap_rights_init(rights,  CAP_PREAD, CAP_PWRITE, CAP_POLL_EVENT,
+		cap_rights_init(rights, CAP_PREAD, CAP_PWRITE, CAP_POLL_EVENT,
 				CAP_FSYNC);
 		break;
 	}
