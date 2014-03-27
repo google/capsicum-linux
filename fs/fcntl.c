@@ -412,20 +412,27 @@ static bool fcntl_rights(unsigned int cmd, struct capsicum_rights *rights)
 	}
 }
 
-SYSCALL_DEFINE3(fcntl, unsigned int, fd, unsigned int, cmd, unsigned long, arg)
+static inline struct fd fcntl_fdget_raw(unsigned int fd, unsigned int cmd,
+					struct capsicum_rights *rights)
 {
-	struct capsicum_rights rights;
-	bool use_wrapped = fcntl_rights(cmd, &rights);
 	struct fd f;
-	long err = -EBADF;
 
-	if (use_wrapped) {
+	if (fcntl_rights(cmd, rights)) {
+		/* Use the file directly, don't attempt to unwrap */
 		f = fdget_raw(fd);
 		if (f.file == NULL)
 			f.file = ERR_PTR(-EBADF);
 	} else {
-		f.file = fget_raw_light_rights(fd, &f.need_put, NULL, &rights);
+		f.file = fget_raw_light_rights(fd, &f.need_put, NULL, rights);
 	}
+	return f;
+}
+
+SYSCALL_DEFINE3(fcntl, unsigned int, fd, unsigned int, cmd, unsigned long, arg)
+{
+	struct capsicum_rights rights;
+	struct fd f = fcntl_fdget_raw(fd, cmd, &rights);
+	long err = -EBADF;
 
 	if (IS_ERR(f.file)) {
 		err = PTR_ERR(f.file);
@@ -450,19 +457,10 @@ out:
 #if BITS_PER_LONG == 32
 SYSCALL_DEFINE3(fcntl64, unsigned int, fd, unsigned int, cmd,
 		unsigned long, arg)
-{	
+{
 	struct capsicum_rights rights;
-	bool use_wrapped = fcntl_rights(cmd, &rights);
-	struct fd f;
+	struct fd f = fcntl_fdget_raw(fd, cmd, &rights);
 	long err = -EBADF;
-
-	if (use_wrapped) {
-		f = fdget_raw(fd);
-		if (f.file == NULL)
-			f.file = ERR_PTR(-EBADF);
-	} else {
-		f.file = fget_raw_light_rights(fd, &f.need_put, NULL, &rights);
-	}
 
 	if (IS_ERR(f.file)) {
 		err = PTR_ERR(f.file);
