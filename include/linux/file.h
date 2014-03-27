@@ -8,6 +8,7 @@
 #include <linux/compiler.h>
 #include <linux/types.h>
 #include <linux/posix_types.h>
+#include <linux/err.h>
 #include <linux/capsicum.h>
 
 struct file;
@@ -98,33 +99,49 @@ extern struct fd _fdgetr_raw(unsigned int fd, ...);
 static inline struct file *fget_rights(unsigned int fd,
 				       const struct capsicum_rights *rights)
 {
-	return fget(fd);
+	return fget(fd) ?: ERR_PTR(-EBADF);
 }
 static inline struct file *
 fget_light_rights(unsigned int fd, int *fput_needed,
 		  const struct capsicum_rights *rights)
 {
-	return fget_light(fd, fput_needed);
+	return fget_light(fd, fput_needed) ?: ERR_PTR(-EBADF);
 }
 static inline struct file *fget_raw_rights(unsigned int fd,
 					   const struct capsicum_rights *rights)
 {
-	return fget_raw(fd);
+	return fget_raw(fd) ?: ERR_PTR(-EBADF);
 }
 static inline struct file *
 fget_raw_light_rights(unsigned int fd, int *fput_needed,
 		      const struct capsicum_rights **actual_rights,
 		      const struct capsicum_rights *rights)
 {
-	return fget_raw_light(fd, fput_needed);
+	return fget_raw_light(fd, fput_needed) ?: ERR_PTR(-EBADF);
 }
 
-#define fgetr(fd, ...)				fget((fd))
-#define fgetr_light(fd, fpn, ...)		fget_light((fd), (fpn))
-#define fdgetr(fd, ...)			fdget((fd))
-#define fgetr_raw(fd, ...)			fget_raw((fd))
-#define fgetr_raw_light(fd, fpn, arights, ...)	fget_raw_light((fd), (fpn))
-#define fdgetr_raw(fd, ...)			fdget_raw((fd))
+#define fgetr(fd, ...) \
+	(fget(fd) ?: ERR_PTR(-EBADF))
+#define fgetr_light(fd, fpn, ...) \
+	(fget_light((fd), (fpn)) ?: ERR_PTR(-EBADF))
+#define fgetr_raw(fd, ...) \
+	(fget_raw(fd) ?: ERR_PTR(-EBADF))
+#define fgetr_raw_light(fd, fpn, arights, ...) \
+	(fget_raw_light((fd), (fpn)) ?: ERR_PTR(-EBADF))
+static inline struct fd fdgetr(int fd, ...)
+{
+	struct fd f = fdget(fd);
+	if (f.file == NULL)
+		f.file = ERR_PTR(-EBADF);
+	return f;
+}
+static inline struct fd fdgetr_raw(int fd, ...)
+{
+	struct fd f = fdget_raw(fd);
+	if (f.file == NULL)
+		f.file = ERR_PTR(-EBADF);
+	return f;
+}
 
 #endif
 
