@@ -566,7 +566,7 @@ struct file *ib_uverbs_alloc_event_file(struct ib_uverbs_file *uverbs_file,
 struct ib_uverbs_event_file *ib_uverbs_lookup_comp_file(int fd)
 {
 	struct ib_uverbs_event_file *ev_file = NULL;
-	struct fd f = fdgetr(fd, 0ULL);
+	struct fd f = fdgetr(fd, CAP_LIST_END);
 
 	if (IS_ERR(f.file))
 		return NULL;

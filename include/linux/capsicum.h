@@ -27,12 +27,14 @@ int capsicum_path_lookup(const struct capsicum_rights *base_rights,
 			 struct dentry *dentry, const char *name);
 #endif
 
+#define CAP_LIST_END	0ULL
+
 #ifdef CONFIG_SECURITY_CAPSICUM
 /* Rights manipulation functions */
 #define cap_rights_init(rights, ...) \
-	_cap_rights_init((rights), __VA_ARGS__, 0ULL)
+	_cap_rights_init((rights), __VA_ARGS__, CAP_LIST_END)
 #define cap_rights_set(rights, ...) \
-	_cap_rights_set((rights), __VA_ARGS__, 0ULL)
+	_cap_rights_set((rights), __VA_ARGS__, CAP_LIST_END)
 struct capsicum_rights *_cap_rights_init(struct capsicum_rights *rights, ...);
 struct capsicum_rights *_cap_rights_set(struct capsicum_rights *rights, ...);
 struct capsicum_rights *cap_rights_vinit(struct capsicum_rights *rights,

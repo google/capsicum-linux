@@ -36,7 +36,7 @@ SYSCALL_DEFINE4(fadvise64_64, int, fd, loff_t, offset, loff_t, len, int, advice)
 	unsigned long nrpages;
 	int ret = 0;
 
-	f = fdgetr(fd, 0ULL);
+	f = fdgetr(fd, CAP_LIST_END);
 	if (IS_ERR(f.file))
 		return PTR_ERR(f.file);
 
