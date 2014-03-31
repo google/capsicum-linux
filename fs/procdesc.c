@@ -170,7 +170,7 @@ static int procdesc_release(struct inode *inode, struct file *f)
 	struct procdesc *pd = procdesc_get(f);
 	BUG_ON(!pd);
 	if (pd->task) {
-		if (!pd->daemon && !task_is_dead(pd->task))
+		if (!pd->daemon && (pd->task->exit_state == 0))
 			do_pdkill(pd->task, SIGKILL);
 
 		BUG_ON(atomic_read(&pd->task->usage) < 1);
@@ -187,7 +187,7 @@ static unsigned int procdesc_poll(struct file *f,
 	BUG_ON(!pd);
 	poll_wait(f, &pd->task->wait_exit, wait);
 
-	if (task_is_dead(pd->task))
+	if (pd->task->exit_state != 0)
 		return POLLHUP;
 	else
 		return 0;

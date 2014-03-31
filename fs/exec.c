@@ -1594,14 +1594,20 @@ int do_fexecve(int fd,
 	struct user_arg_ptr argv = { .ptr.native = __argv };
 	struct user_arg_ptr envp = { .ptr.native = __envp };
 	int retval;
-	struct file *file = fgetr(fd, CAP_FEXECVE);
-	struct filename tmp = { .separate = false };
+	struct file *file;
+	struct filename *tmp;
+
+	file = fgetr(fd, CAP_FEXECVE);
 	if (IS_ERR(file))
 		return PTR_ERR(file);
 
-	/* TODO(drysdale): use of d_name is not safe */
-	tmp.name = file->f_path.dentry->d_name.name;
-	retval = do_execve_common(&tmp, file, argv, envp);
+	/* TODO(drysdale): use of d_name is not safe? */
+	tmp = getname_kernel(file->f_path.dentry->d_name.name);
+	if (!IS_ERR(tmp)) {
+		retval = do_execve_common(tmp, file, argv, envp);
+	} else {
+		retval = PTR_ERR(tmp);
+	}
 	fput(file);
 	return retval;
 }
