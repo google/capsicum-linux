@@ -33,6 +33,16 @@ static int check_arch_prctl(unsigned long *args)
 }
 #endif
 
+static int check_execveat(unsigned long *args)
+{
+	/*
+	  int dfd = args[0];
+	  const char __user *path = args[1];
+	*/
+	/* TODO(drysdale): check whether the path checks in cap mode police this for us */
+	return 0;
+}
+
 static int check_kill(unsigned long *args)
 {
 	pid_t pid = args[0];
@@ -117,6 +127,7 @@ static int __init init_syscalls_result(void)
 	syscalls_result[__NR_mmap] = CAPMODE_SPECIAL;
 	syscalls_result[__NR_openat] = CAPMODE_SPECIAL;
 	syscalls_result[__NR_prctl] = CAPMODE_SPECIAL;
+	syscalls_result[__NR_execveat] = CAPMODE_SPECIAL;
 
 	/* Allowed syscalls */
 	syscalls_result[__NR_accept] = CAPMODE_ALLOW;
@@ -140,7 +151,7 @@ static int __init init_syscalls_result(void)
 	syscalls_result[__NR_fchownat] = CAPMODE_ALLOW;
 	syscalls_result[__NR_fcntl] = CAPMODE_ALLOW;
 	syscalls_result[__NR_fdatasync] = CAPMODE_ALLOW;
-	syscalls_result[__NR_fexecve] = CAPMODE_ALLOW;
+	syscalls_result[__NR_execveat] = CAPMODE_ALLOW;
 	syscalls_result[__NR_fgetxattr] = CAPMODE_ALLOW;
 	syscalls_result[__NR_finit_module] = CAPMODE_ALLOW;
 	syscalls_result[__NR_flistxattr] = CAPMODE_ALLOW;
@@ -289,6 +300,8 @@ static int capsicum_run_syscall_table(int arch, int callnr, unsigned long *args)
 	switch (callnr) {
 	case (__NR_arch_prctl):
 		return check_arch_prctl(args);
+	case (__NR_execveat):
+		return check_execveat(args);
 	case (__NR_kill):
 		return check_kill(args);
 	case (__NR_mmap):

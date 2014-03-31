@@ -856,6 +856,9 @@ asmlinkage long sys_process_vm_writev(pid_t pid,
 asmlinkage long sys_kcmp(pid_t pid1, pid_t pid2, int type,
 			 unsigned long idx1, unsigned long idx2);
 asmlinkage long sys_finit_module(int fd, const char __user *uargs, int flags);
+asmlinkage long sys_execveat(int dfd, const char __user *filename,
+			const char __user *const __user *argv,
+			const char __user *const __user *envp, int flags);
 asmlinkage long sys_cap_rights_limit(unsigned int orig_fd,
 				     const struct cap_rights __user *new_rights,
 				     unsigned int fcntls,
@@ -871,8 +874,5 @@ asmlinkage long sys_pdgetpid(int fd, pid_t __user *pidp);
 asmlinkage long sys_pdkill(int fd, int signum);
 asmlinkage long sys_pdwait4(int fd, int __user *status, int options,
 			struct rusage __user *rusage);
-asmlinkage long sys_fexecve(int fd,
-			const char __user *const __user *argv,
-			const char __user *const __user *envp);
 
 #endif

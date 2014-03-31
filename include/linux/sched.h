@@ -2322,9 +2322,10 @@ extern int disallow_signal(int);
 extern int do_execve(struct filename *,
 		     const char __user * const __user *,
 		     const char __user * const __user *);
-extern int do_fexecve(int,
-		     const char __user * const __user *,
-		     const char __user * const __user *);
+extern int do_execveat(int, struct filename *,
+		       const char __user * const __user *,
+		       const char __user * const __user *,
+		       int);
 extern long do_fork_task(unsigned long, unsigned long,
 			unsigned long, struct task_struct **,
 			int __user *, int __user *);

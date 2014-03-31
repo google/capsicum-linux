@@ -9,6 +9,13 @@
  * it's possible to override them.
  */
 
+#ifndef sys_execveat
+asmlinkage long sys_execveat(int dfd, const char __user *filename,
+			     const char __user *const __user *argv,
+			     const char __user *const __user *envp,
+			     int flags, struct pt_regs *regs);
+#endif
+
 #ifndef sys_mmap2
 asmlinkage long sys_mmap2(unsigned long addr, unsigned long len,
 			unsigned long prot, unsigned long flags,

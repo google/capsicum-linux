@@ -128,7 +128,7 @@ Capsicum implements the following new system calls:
    struct file with a capability file (security/capsicum.c)
  - cap_rights_get: return the rights associated with a capability FD
    (security/capsicum.c)
- - fexecve: execve via a file descriptor (fs/exec.c)
+ - execveat: execve via a file descriptor/path pair (fs/exec.c)
  - pdfork: fork and generate a process descriptor (kernel/fork.c)
  - pdgetpid: get the pid associated with a process descriptor (fs/procdesc.c)
  - pdkill: send a signal to a process identified by a process descriptor

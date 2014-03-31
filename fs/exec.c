@@ -763,7 +763,7 @@ static int check_exec_and_deny_write(struct file *file)
 	return deny_write_access(file);
 }
 
-static struct file *do_open_exec(struct filename *name)
+static struct file *do_open_execat(int fd, struct filename *name, int flags)
 {
 	struct file *file;
 	int err;
@@ -773,16 +773,41 @@ static struct file *do_open_exec(struct filename *name)
 		.intent = LOOKUP_OPEN,
 		.lookup_flags = LOOKUP_FOLLOW,
 	};
+	static const struct open_flags open_exec_nofollow_flags = {
+		.open_flag = O_LARGEFILE | O_RDONLY | __FMODE_EXEC,
+		.acc_mode = MAY_EXEC | MAY_OPEN,
+		.intent = LOOKUP_OPEN,
+		.lookup_flags = 0,
+	};
 
-	file = do_filp_open(AT_FDCWD, name, &open_exec_flags);
-	if (IS_ERR(file))
-		goto out;
+	if (flags & ~AT_SYMLINK_NOFOLLOW)
+		return ERR_PTR(-EINVAL);
+
+	if (name) {
+		const struct open_flags *oflags = ((flags & AT_SYMLINK_NOFOLLOW)
+						   ? &open_exec_nofollow_flags
+						   : &open_exec_flags);
+
+		file = do_filp_open(fd, name, oflags);
+		if (IS_ERR(file))
+			goto out;
+	} else {
+		file = fgetr(fd, CAP_FEXECVE);
+		if (IS_ERR(file))
+			goto out;
+
+		err = inode_permission(file->f_path.dentry->d_inode,
+				open_exec_flags.acc_mode);
+		if (err)
+			goto exit;
+	}
 
 	err = check_exec_and_deny_write(file);
 	if (err)
 		goto exit;
 
-	fsnotify_open(file);
+	if (name)
+		fsnotify_open(file);
 
 out:
 	return file;
@@ -795,7 +820,7 @@ exit:
 struct file *open_exec(const char *name)
 {
 	struct filename tmp = { .name = name };
-	return do_open_exec(&tmp);
+	return do_open_execat(AT_FDCWD, &tmp, 0);
 }
 EXPORT_SYMBOL(open_exec);
 
@@ -1445,10 +1470,11 @@ static int exec_binprm(struct linux_binprm *bprm)
 /*
  * sys_execve() executes a new program.
  */
-static int do_execve_common(struct filename *filename,
-				struct file *file,
-				struct user_arg_ptr argv,
-				struct user_arg_ptr envp)
+static int do_execveat_common(int fd, struct filename *filename,
+			      struct file *file,
+			      struct user_arg_ptr argv,
+			      struct user_arg_ptr envp,
+			      int flags)
 {
 	struct linux_binprm *bprm;
 	struct files_struct *displaced;
@@ -1490,7 +1516,7 @@ static int do_execve_common(struct filename *filename,
 	current->in_execve = 1;
 
 	if (!file) {
-		file = do_open_exec(filename);
+		file = do_open_execat(fd, filename, flags);
 		retval = PTR_ERR(file);
 		if (IS_ERR(file))
 			goto out_unmark;
@@ -1511,7 +1537,14 @@ static int do_execve_common(struct filename *filename,
 	sched_exec();
 
 	bprm->file = file;
-	bprm->filename = bprm->interp = filename->name;
+        /*
+	 * TODO(drysdale): this is wrong; Al Viro: "Absolutely not.  If nothing
+	 * else, ->d_name can change on rename() *and* get underlying memory
+	 * freed.  At zero notice."
+	 */
+	bprm->filename = filename ? filename->name:
+			(const char *) file->f_path.dentry->d_name.name;
+	bprm->interp = bprm->filename;
 
 	retval = bprm_mm_init(bprm);
 	if (retval)
@@ -1552,7 +1585,8 @@ static int do_execve_common(struct filename *filename,
 	acct_update_integrals(current);
 	task_numa_free(current);
 	free_bprm(bprm);
-	putname(filename);
+	if (filename)
+		putname(filename);
 	if (displaced)
 		put_files_struct(displaced);
 	return retval;
@@ -1574,7 +1608,8 @@ out_files:
 	if (displaced)
 		reset_files_struct(displaced);
 out_ret:
-	putname(filename);
+	if (filename)
+		putname(filename);
 	return retval;
 }
 
@@ -1584,32 +1619,17 @@ int do_execve(struct filename *filename,
 {
 	struct user_arg_ptr argv = { .ptr.native = __argv };
 	struct user_arg_ptr envp = { .ptr.native = __envp };
-	return do_execve_common(filename, NULL, argv, envp);
+	return do_execveat_common(AT_FDCWD, filename, NULL, argv, envp, 0);
 }
 
-int do_fexecve(int fd,
-	const char __user *const __user *__argv,
-	const char __user *const __user *__envp)
+int do_execveat(int fd, struct filename *filename,
+		const char __user *const __user *__argv,
+		const char __user *const __user *__envp,
+		int flags)
 {
 	struct user_arg_ptr argv = { .ptr.native = __argv };
 	struct user_arg_ptr envp = { .ptr.native = __envp };
-	int retval;
-	struct file *file;
-	struct filename *tmp;
-
-	file = fgetr(fd, CAP_FEXECVE);
-	if (IS_ERR(file))
-		return PTR_ERR(file);
-
-	/* TODO(drysdale): use of d_name is not safe? */
-	tmp = getname_kernel(file->f_path.dentry->d_name.name);
-	if (!IS_ERR(tmp)) {
-		retval = do_execve_common(tmp, file, argv, envp);
-	} else {
-		retval = PTR_ERR(tmp);
-	}
-	fput(file);
-	return retval;
+	return do_execveat_common(fd, filename, NULL, argv, envp, flags);
 }
 
 #ifdef CONFIG_COMPAT
@@ -1625,7 +1645,23 @@ static int compat_do_execve(struct filename *filename,
 		.is_compat = true,
 		.ptr.compat = __envp,
 	};
-	return do_execve_common(filename, NULL, argv, envp);
+	return do_execveat_common(AT_FDCWD, filename, NULL, argv, envp, 0);
+}
+
+static int compat_do_execveat(int fd, struct filename *filename,
+			      const compat_uptr_t __user *__argv,
+			      const compat_uptr_t __user *__envp,
+			      int flags)
+{
+	struct user_arg_ptr argv = {
+		.is_compat = true,
+		.ptr.compat = __argv,
+	};
+	struct user_arg_ptr envp = {
+		.is_compat = true,
+		.ptr.compat = __envp,
+	};
+	return do_execveat_common(fd, filename, NULL, argv, envp, flags);
 }
 #endif
 
@@ -1665,6 +1701,22 @@ SYSCALL_DEFINE3(execve,
 {
 	return do_execve(getname(filename), argv, envp);
 }
+
+SYSCALL_DEFINE5(execveat,
+		int, fd, const char __user *, filename,
+		const char __user *const __user *, argv,
+		const char __user *const __user *, envp,
+		int, flags)
+{
+	struct filename *path = NULL;
+	if (filename) {
+		path = getname(filename);
+		if (IS_ERR(path))
+			return PTR_ERR(path);
+	}
+	return do_execveat(fd, path, argv, envp, flags);
+}
+
 #ifdef CONFIG_COMPAT
 asmlinkage long compat_sys_execve(const char __user * filename,
 	const compat_uptr_t __user * argv,
@@ -1672,15 +1724,19 @@ asmlinkage long compat_sys_execve(const char __user * filename,
 {
 	return compat_do_execve(getname(filename), argv, envp);
 }
-#endif
 
-/*
- * sys_fexecve() executes a new program from a file descriptor.
- */
-SYSCALL_DEFINE3(fexecve,
-		int, fd,
-		const char __user *const __user *, argv,
-		const char __user *const __user *, envp)
+asmlinkage long compat_sys_execveat(int fd,
+	const char __user * filename,
+	const compat_uptr_t __user * argv,
+	const compat_uptr_t __user * envp,
+	int flags)
 {
-	return do_fexecve(fd, argv, envp);
+	struct filename *path = NULL;
+	if (filename) {
+		path = getname(filename);
+		if (IS_ERR(path))
+			return PTR_ERR(path);
+	}
+	return compat_do_execveat(fd, path, argv, envp, flags);
 }
+#endif
