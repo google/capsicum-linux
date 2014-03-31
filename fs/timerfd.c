@@ -301,8 +301,7 @@ static int _timerfd_fgetr(int fd, struct fd *p, ...)
 	va_list ap;
 
 	va_start(ap, p);
-	f.file = fget_light_rights(fd, &f.need_put,
-				   cap_rights_vinit(&rights, ap));
+	f = fdget_rights(fd, cap_rights_vinit(&rights, ap));
 	va_end(ap);
 	if (IS_ERR(f.file))
 		return PTR_ERR(f.file);

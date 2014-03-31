@@ -1899,11 +1899,9 @@ static int path_init(int dfd, const char *name, unsigned int flags,
 		}
 	} else {
 		/* Caller must check execute permissions on the starting path component */
-		struct fd f;
+		struct fd f = fdget_raw_rights(dfd, dfd_rights, rights);
 		struct dentry *dentry;
 
-		f.file = fget_raw_light_rights(dfd, &f.need_put,
-					       dfd_rights, rights);
 		if (IS_ERR(f.file))
 			return PTR_ERR(f.file);
 

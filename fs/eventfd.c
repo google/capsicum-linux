@@ -351,9 +351,9 @@ EXPORT_SYMBOL_GPL(eventfd_fget);
 struct eventfd_ctx *eventfd_ctx_fdget(int fd)
 {
 	struct eventfd_ctx *ctx;
-	struct fd f = fdget(fd);
-	if (!f.file)
-		return ERR_PTR(-EBADF);
+	struct fd f = fdgetr(fd, CAP_WRITE);
+	if (IS_ERR(f.file))
+		return (struct eventfd_ctx *) f.file;
 	ctx = eventfd_ctx_fileget(f.file);
 	fdput(f);
 	return ctx;

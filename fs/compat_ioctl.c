@@ -1548,7 +1548,7 @@ asmlinkage long compat_sys_ioctl(unsigned int fd, unsigned int cmd,
 	cap_rights_init(&rights, CAP_IOCTL);
 	rights.nioctls = 1;
 	rights.ioctls = &cmd;
-	f.file = fget_light_rights(fd, &f.need_put, &rights);
+	f = fdget_rights(fd, &rights);
 	if (IS_ERR(f.file)) {
 		error = PTR_ERR(f.file);
 		goto out;

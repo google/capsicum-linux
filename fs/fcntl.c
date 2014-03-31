@@ -423,7 +423,7 @@ static inline struct fd fcntl_fdget_raw(unsigned int fd, unsigned int cmd,
 		if (f.file == NULL)
 			f.file = ERR_PTR(-EBADF);
 	} else {
-		f.file = fget_raw_light_rights(fd, &f.need_put, NULL, rights);
+		f = fdget_raw_rights(fd, NULL, rights);
 	}
 	return f;
 }

@@ -6127,9 +6127,9 @@ static int memcg_write_event_control(struct cgroup_subsys_state *css,
 	init_waitqueue_func_entry(&event->wait, memcg_event_wake);
 	INIT_WORK(&event->remove, memcg_event_remove);
 
-	efile = fdget(efd);
-	if (!efile.file) {
-		ret = -EBADF;
+	efile = fdgetr(efd, CAP_WRITE);
+	if (IS_ERR(efile.file)) {
+		ret = PTR_ERR(efile.file);
 		goto out_kfree;
 	}
 
@@ -6139,9 +6139,9 @@ static int memcg_write_event_control(struct cgroup_subsys_state *css,
 		goto out_put_efile;
 	}
 
-	cfile = fdget(cfd);
-	if (!cfile.file) {
-		ret = -EBADF;
+	cfile = fdgetr(cfd, CAP_READ);
+	if (IS_ERR(cfile.file)) {
+		ret = PTR_ERR(cfile.file);
 		goto out_put_eventfd;
 	}
 

@@ -62,83 +62,72 @@ static inline struct fd fdget_raw(unsigned int fd)
 	return __to_fd(__fdget_raw(fd));
 }
 
-#ifdef CONFIG_SECURITY_CAPSICUM
+static inline struct fd fdget_pos(unsigned int fd)
+{
+	return __to_fd(__fdget_pos(fd));
+}
 
+#ifdef CONFIG_SECURITY_CAPSICUM
+/*
+ * fget() variants that check that the FD has particular rights associated with
+ * it, specified as a full capsicum_rights structure.
+ */
 extern struct file *fget_rights(unsigned int fd,
 				const struct capsicum_rights *rights);
-extern struct file *fget_light_rights(unsigned int fd, int *fput_needed,
-				      const struct capsicum_rights *rights);
 extern struct file *fget_raw_rights(unsigned int fd,
 				    const struct capsicum_rights *rights);
-extern struct file *
-fget_raw_light_rights(unsigned int fd, int *fput_needed,
-		      const struct capsicum_rights **actual_rights,
-		      const struct capsicum_rights *rights);
+extern struct fd fdget_rights(unsigned int fd,
+			      const struct capsicum_rights *rights);
+/*
+ * The fdget_raw_rights variant also optionally returns the complete set of
+ * rights associated with the file descriptor.
+ */
+extern struct fd fdget_raw_rights(unsigned int fd,
+				  const struct capsicum_rights **actual_rights,
+				  const struct capsicum_rights *rights);
 
+/*
+ * fget() variants that check that the FD has particular rights associated with
+ * it, specified as a varargs list of primary rights.
+ */
+#define fgetr(fd, ...)		_fgetr((fd), __VA_ARGS__, CAP_LIST_END)
+#define fgetr_raw(fd, ...)	_fgetr_raw((fd), __VA_ARGS__, CAP_LIST_END)
+#define fdgetr(fd, ...)	_fdgetr((fd), __VA_ARGS__, CAP_LIST_END)
+#define fdgetr_raw(fd, ...)	_fdgetr_raw((fd), __VA_ARGS__, CAP_LIST_END)
+#define fdgetr_pos(fd, ...)	_fdgetr_pos((fd), __VA_ARGS__, CAP_LIST_END)
 extern struct file *_fgetr(unsigned int fd, ...);
-extern struct file *_fgetr_light(unsigned int fd, int *fput_needed, ...);
-extern struct fd _fdgetr(unsigned int fd, ...);
 extern struct file *_fgetr_raw(unsigned int fd, ...);
-extern struct file *
-_fgetr_raw_light(unsigned int fd, int *fput_needed,
-		 const struct capsicum_rights **actual_rights, ...);
+extern struct fd _fdgetr(unsigned int fd, ...);
 extern struct fd _fdgetr_raw(unsigned int fd, ...);
-
-#define fgetr(fd, ...) \
-	_fgetr((fd), __VA_ARGS__, 0ULL)
-#define fgetr_light(fd, fpn, ...) \
-	_fgetr_light((fd), (fpn), __VA_ARGS__, 0ULL)
-#define fdgetr(fd, ...) \
-	_fdgetr((fd), __VA_ARGS__, 0ULL)
-#define fgetr_raw(fd, ...) \
-	_fgetr_raw((fd), __VA_ARGS__, 0ULL)
-#define fgetr_raw_light(fd, fpn, arights, ...) \
-	_fgetr_raw_light((fd), (fpn), (arights), __VA_ARGS__, 0ULL)
-#define fdgetr_raw(fd, ...) \
-	_fdgetr_raw((fd), __VA_ARGS__, 0ULL)
+extern struct fd _fdgetr_pos(unsigned int fd, ...);
 
 #else
-
+/*
+ * In a non-Capsicum build, all rights-checking fget() variants fall back to the
+ * normal versions (but still return errors as ERR_PTR values not just NULL).
+ */
 static inline struct file *fget_rights(unsigned int fd,
 				       const struct capsicum_rights *rights)
 {
 	return fget(fd) ?: ERR_PTR(-EBADF);
-}
-static inline struct file *
-fget_light_rights(unsigned int fd, int *fput_needed,
-		  const struct capsicum_rights *rights)
-{
-	return fget_light(fd, fput_needed) ?: ERR_PTR(-EBADF);
 }
 static inline struct file *fget_raw_rights(unsigned int fd,
 					   const struct capsicum_rights *rights)
 {
 	return fget_raw(fd) ?: ERR_PTR(-EBADF);
 }
-static inline struct file *
-fget_raw_light_rights(unsigned int fd, int *fput_needed,
-		      const struct capsicum_rights **actual_rights,
-		      const struct capsicum_rights *rights)
-{
-	return fget_raw_light(fd, fput_needed) ?: ERR_PTR(-EBADF);
-}
-
-#define fgetr(fd, ...) \
-	(fget(fd) ?: ERR_PTR(-EBADF))
-#define fgetr_light(fd, fpn, ...) \
-	(fget_light((fd), (fpn)) ?: ERR_PTR(-EBADF))
-#define fgetr_raw(fd, ...) \
-	(fget_raw(fd) ?: ERR_PTR(-EBADF))
-#define fgetr_raw_light(fd, fpn, arights, ...) \
-	(fget_raw_light((fd), (fpn)) ?: ERR_PTR(-EBADF))
-static inline struct fd fdgetr(int fd, ...)
+static inline struct fd fdget_rights(unsigned int fd,
+				     const struct capsicum_rights *rights)
 {
 	struct fd f = fdget(fd);
 	if (f.file == NULL)
 		f.file = ERR_PTR(-EBADF);
 	return f;
 }
-static inline struct fd fdgetr_raw(int fd, ...)
+static inline struct fd
+fdget_raw_rights(unsigned int fd,
+		 const struct capsicum_rights **actual_rights,
+		 const struct capsicum_rights *rights)
 {
 	struct fd f = fdget_raw(fd);
 	if (f.file == NULL)
@@ -146,6 +135,17 @@ static inline struct fd fdgetr_raw(int fd, ...)
 	return f;
 }
 
+#define fgetr(fd, ...)		(fget(fd) ?: ERR_PTR(-EBADF))
+#define fgetr_raw(fd, ...)	(fget_raw(fd) ?: ERR_PTR(-EBADF))
+#define fdgetr(fd, ...)	fdget_rights((fd), NULL)
+#define fdgetr_raw(fd, ...)	fdget_raw_rights((fd), NULL, NULL)
+static inline struct fd fdgetr_pos(int fd, ...)
+{
+	struct fd f = fdget_pos(fd);
+	if (f.file == NULL)
+		f.file = ERR_PTR(-EBADF);
+	return f;
+}
 #endif
 
 extern int f_dupfd(unsigned int from, struct file *file, unsigned flags);

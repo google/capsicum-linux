@@ -443,19 +443,19 @@ sockfd_lookup_light_rights(int fd, int *err, int *fput_needed,
 			   const struct capsicum_rights **actual_rights,
 			   const struct capsicum_rights *required_rights)
 {
-	struct file *file;
+	struct fd f = fdget_raw_rights(fd, actual_rights, required_rights);
 	struct socket *sock;
 
 	*err = -EBADF;
-	file = fget_raw_light_rights(fd, fput_needed,
-				     actual_rights, required_rights);
-	if (!IS_ERR(file)) {
-		sock = sock_from_file(file, err);
-		if (sock)
+	if (!IS_ERR(f.file)) {
+		sock = sock_from_file(f.file, err);
+		if (likely(sock)) {
+			*fput_needed = f.flags;
 			return sock;
-		fput_light(file, *fput_needed);
+		}
+		fdput(f);
 	} else {
-		*err = PTR_ERR(file);
+		*err = PTR_ERR(f.file);
 	}
 	return NULL;
 }
@@ -463,21 +463,11 @@ sockfd_lookup_light_rights(int fd, int *err, int *fput_needed,
 struct socket *_sockfd_lookupr(int fd, int *err, ...)
 {
 	struct capsicum_rights rights;
-	struct file *file;
 	struct socket *sock;
 	va_list ap;
-
 	va_start(ap, err);
-	file = fget_rights(fd, cap_rights_vinit(&rights, ap));
+	sock = sockfd_lookup_rights(fd, err, cap_rights_vinit(&rights, ap));
 	va_end(ap);
-	if (!file) {
-		*err = -EBADF;
-		return NULL;
-	}
-
-	sock = sock_from_file(file, err);
-	if (!sock)
-		fput(file);
 	return sock;
 }
 EXPORT_SYMBOL(_sockfd_lookupr);
@@ -485,13 +475,13 @@ EXPORT_SYMBOL(_sockfd_lookupr);
 struct socket *_sockfd_lookupr_light(int fd, int *err, int *fput_needed, ...)
 {
 	struct capsicum_rights rights;
-	struct socket *s;
+	struct socket *sock;
 	va_list ap;
 	va_start(ap, fput_needed);
-	s = sockfd_lookup_light_rights(fd, err, fput_needed,
-				       NULL, cap_rights_vinit(&rights, ap));
+	sock = sockfd_lookup_light_rights(fd, err, fput_needed,
+					  NULL, cap_rights_vinit(&rights, ap));
 	va_end(ap);
-	return s;
+	return sock;
 }
 #define sockfd_lookupr_light(fd, err, fpn, ...) \
 	_sockfd_lookupr_light((fd), (err), (fpn), __VA_ARGS__, 0ULL)

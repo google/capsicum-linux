@@ -638,220 +638,6 @@ void do_close_on_exec(struct files_struct *files)
 	spin_unlock(&files->file_lock);
 }
 
-#ifdef CONFIG_SECURITY_CAPSICUM
-/*
- * The LSM might want to change the return value of fget() and friends.
- * This function is called with the intended return value, and fget()
- * will /actually/ return whatever is returned from here. We call an
- * LSM hook, and return what it returns. We adjust the reference counter
- * if necessary.
- */
-static struct file *unwrap_file(struct file *orig,
-				const struct capsicum_rights *required_rights,
-				const struct capsicum_rights **actual_rights,
-				bool update_refcnt)
-{
-	struct file *f;
-
-	if (orig == NULL)
-		return ERR_PTR(-EBADF);
-	if (IS_ERR(orig))
-		return orig;
-	f = security_file_lookup(orig, required_rights, actual_rights);
-	if (f != orig && update_refcnt) {
-		/* We're not returning the original, and the calling code
-		 * has already incremented the refcount on it, we need to
-		 * release that reference and obtain a reference to the new
-		 * return value, if any.
-		 */
-		if (!IS_ERR(f) && !atomic_long_inc_not_zero(&f->f_count))
-			f = ERR_PTR(-EBADF);
-		atomic_long_dec(&orig->f_count);
-	}
-
-	return f;
-}
-
-struct file *fget_rights(unsigned int fd, const struct capsicum_rights *rights)
-{
-	struct file *file;
-	struct files_struct *files = current->files;
-
-	rcu_read_lock();
-	file = fcheck_files(files, fd);
-	if (file) {
-		/* File object ref couldn't be taken */
-		if (file->f_mode & FMODE_PATH ||
-		    !atomic_long_inc_not_zero(&file->f_count))
-			file = ERR_PTR(-EBADF);
-	}
-	file = unwrap_file(file, rights, NULL, true);
-	rcu_read_unlock();
-
-	return file;
-}
-EXPORT_SYMBOL(fget_rights);
-
-struct file *fget_raw_rights(unsigned int fd,
-			     const struct capsicum_rights *rights)
-{
-	struct file *file;
-	struct files_struct *files = current->files;
-
-	rcu_read_lock();
-	file = fcheck_files(files, fd);
-	if (file) {
-		/* File object ref couldn't be taken */
-		if (!atomic_long_inc_not_zero(&file->f_count))
-			file = ERR_PTR(-EBADF);
-	}
-	file = unwrap_file(file, rights, NULL, true);
-	rcu_read_unlock();
-
-	return file;
-}
-EXPORT_SYMBOL(fget_raw_rights);
-
-struct file *fget_light_rights(unsigned int fd, int *fput_needed,
-			      const struct capsicum_rights *rights)
-{
-	struct file *file;
-	struct files_struct *files = current->files;
-
-	*fput_needed = 0;
-	if (atomic_read(&files->count) == 1) {
-		file = fcheck_files(files, fd);
-		if (file && (file->f_mode & FMODE_PATH))
-			file = ERR_PTR(-EBADF);
-		else
-			file = unwrap_file(file, rights, NULL, false);
-	} else {
-		rcu_read_lock();
-		file = fcheck_files(files, fd);
-		if (file) {
-			if (!(file->f_mode & FMODE_PATH) &&
-			    atomic_long_inc_not_zero(&file->f_count))
-				*fput_needed = 1;
-			else
-				/* Didn't get the reference, someone's freed */
-				file = ERR_PTR(-EBADF);
-		}
-		file = unwrap_file(file, rights, NULL, true);
-		rcu_read_unlock();
-	}
-
-	return file;
-}
-EXPORT_SYMBOL(fget_light_rights);
-
-struct file *
-fget_raw_light_rights(unsigned int fd,
-		      int *fput_needed,
-		      const struct capsicum_rights **actual_rights,
-		      const struct capsicum_rights *required_rights)
-{
-	struct file *file;
-	struct files_struct *files = current->files;
-
-	*fput_needed = 0;
-	if (atomic_read(&files->count) == 1) {
-		file = fcheck_files(files, fd);
-		file = unwrap_file(file, required_rights, actual_rights, false);
-	} else {
-		rcu_read_lock();
-		file = fcheck_files(files, fd);
-		if (file) {
-			if (atomic_long_inc_not_zero(&file->f_count))
-				*fput_needed = 1;
-			else
-				/* Didn't get the reference, someone's freed */
-				file = ERR_PTR(-EBADF);
-		}
-		file = unwrap_file(file, required_rights, actual_rights, true);
-		rcu_read_unlock();
-	}
-
-	return file;
-}
-EXPORT_SYMBOL(fget_raw_light_rights);
-
-struct file *_fgetr(unsigned int fd, ...)
-{
-	struct capsicum_rights rights;
-	struct file *f;
-	va_list ap;
-	va_start(ap, fd);
-	f = fget_rights(fd, cap_rights_vinit(&rights, ap));
-	va_end(ap);
-	return f;
-}
-EXPORT_SYMBOL(_fgetr);
-
-struct file *_fgetr_light(unsigned int fd, int *fput_needed, ...)
-{
-	struct capsicum_rights rights;
-	struct file *f;
-	va_list ap;
-	va_start(ap, fput_needed);
-	f = fget_light_rights(fd, fput_needed, cap_rights_vinit(&rights, ap));
-	va_end(ap);
-	return f;
-}
-EXPORT_SYMBOL(_fgetr_light);
-
-struct fd _fdgetr(unsigned int fd, ...)
-{
-	struct capsicum_rights rights;
-	struct file *f;
-	int b;
-	va_list ap;
-	va_start(ap, fd);
-	f = fget_light_rights(fd, &b, cap_rights_vinit(&rights, ap));
-	va_end(ap);
-	return (struct fd){f, b};
-}
-EXPORT_SYMBOL(_fdgetr);
-
-struct file *_fgetr_raw(unsigned int fd, ...)
-{
-	struct capsicum_rights rights;
-	struct file *f;
-	va_list ap;
-	va_start(ap, fd);
-	f = fget_raw_rights(fd, cap_rights_vinit(&rights, ap));
-	va_end(ap);
-	return f;
-}
-EXPORT_SYMBOL(_fgetr_raw);
-
-struct file *_fgetr_raw_light(unsigned int fd, int *fput_needed,
-			      const struct capsicum_rights **actual_rights, ...)
-{
-	struct capsicum_rights rights;
-	struct file *f;
-	va_list ap;
-	va_start(ap, actual_rights);
-	f = fget_raw_light_rights(fd, fput_needed, actual_rights,
-				  cap_rights_vinit(&rights, ap));
-	va_end(ap);
-	return f;
-}
-EXPORT_SYMBOL(_fgetr_raw_light);
-
-struct fd _fdgetr_raw(unsigned int fd, ...)
-{
-	struct capsicum_rights rights;
-	struct file *f;
-	int b;
-	va_list ap;
-	va_start(ap, fd);
-	f = fget_raw_light_rights(fd, &b, NULL, cap_rights_vinit(&rights, ap));
-	va_end(ap);
-	return (struct fd){f, b};
-}
-EXPORT_SYMBOL(_fdgetr_raw);
-#endif
-
 static struct file *__fget(unsigned int fd, fmode_t mask)
 {
 	struct files_struct *files = current->files;
@@ -939,6 +725,135 @@ unsigned long __fdget_pos(unsigned int fd)
 	}
 	return v;
 }
+
+#ifdef CONFIG_SECURITY_CAPSICUM
+/*
+ * The LSM might want to change the return value of fget() and friends.
+ * This function is called with the intended return value, and fget()
+ * will /actually/ return whatever is returned from here. We call an
+ * LSM hook, and return what it returns. We adjust the reference counter
+ * if necessary.
+ */
+static struct file *unwrap_file(struct file *orig,
+				const struct capsicum_rights *required_rights,
+				const struct capsicum_rights **actual_rights,
+				bool update_refcnt)
+{
+	struct file *f;
+
+	if (orig == NULL)
+		return ERR_PTR(-EBADF);
+	if (IS_ERR(orig))
+		return orig;
+	f = security_file_lookup(orig, required_rights, actual_rights);
+	if (f != orig && update_refcnt) {
+		/* We're not returning the original, and the calling code
+		 * has already incremented the refcount on it, we need to
+		 * release that reference and obtain a reference to the new
+		 * return value, if any.
+		 */
+		if (!IS_ERR(f) && !atomic_long_inc_not_zero(&f->f_count))
+			f = ERR_PTR(-EBADF);
+		atomic_long_dec(&orig->f_count);
+	}
+
+	return f;
+}
+
+struct file *fget_rights(unsigned int fd, const struct capsicum_rights *rights)
+{
+	return unwrap_file(fget(fd), rights, NULL, true);
+}
+EXPORT_SYMBOL(fget_rights);
+
+struct file *fget_raw_rights(unsigned int fd,
+			     const struct capsicum_rights *rights)
+{
+	return unwrap_file(fget_raw(fd), rights, NULL, true);
+}
+EXPORT_SYMBOL(fget_raw_rights);
+
+struct fd fdget_rights(unsigned int fd, const struct capsicum_rights *rights)
+{
+	struct fd f = fdget(fd);
+	f.file = unwrap_file(f.file, rights, NULL, (f.flags & FDPUT_FPUT));
+	return f;
+}
+EXPORT_SYMBOL(fdget_rights);
+
+struct fd fdget_raw_rights(unsigned int fd,
+			   const struct capsicum_rights **actual_rights,
+			   const struct capsicum_rights *rights)
+{
+	struct fd f = fdget_raw(fd);
+	f.file = unwrap_file(f.file, rights, actual_rights,
+			     (f.flags & FDPUT_FPUT));
+	return f;
+}
+EXPORT_SYMBOL(fdget_raw_rights);
+
+struct file *_fgetr(unsigned int fd, ...)
+{
+	struct capsicum_rights rights;
+	struct file *f;
+	va_list ap;
+	va_start(ap, fd);
+	f = fget_rights(fd, cap_rights_vinit(&rights, ap));
+	va_end(ap);
+	return f;
+}
+EXPORT_SYMBOL(_fgetr);
+
+struct file *_fgetr_raw(unsigned int fd, ...)
+{
+	struct capsicum_rights rights;
+	struct file *f;
+	va_list ap;
+	va_start(ap, fd);
+	f = fget_raw_rights(fd, cap_rights_vinit(&rights, ap));
+	va_end(ap);
+	return f;
+}
+EXPORT_SYMBOL(_fgetr_raw);
+
+struct fd _fdgetr(unsigned int fd, ...)
+{
+	struct fd f;
+	struct capsicum_rights rights;
+	va_list ap;
+	va_start(ap, fd);
+	f = fdget_rights(fd, cap_rights_vinit(&rights, ap));
+	va_end(ap);
+	return f;
+}
+EXPORT_SYMBOL(_fdgetr);
+
+struct fd _fdgetr_raw(unsigned int fd, ...)
+{
+	struct fd f;
+	struct capsicum_rights rights;
+	va_list ap;
+	va_start(ap, fd);
+	f = fdget_raw_rights(fd, NULL, cap_rights_vinit(&rights, ap));
+	va_end(ap);
+	return f;
+}
+EXPORT_SYMBOL(_fdgetr_raw);
+
+struct fd _fdgetr_pos(unsigned int fd, ...)
+{
+	struct fd f;
+	struct capsicum_rights rights;
+	va_list ap;
+	f = __to_fd(__fdget_pos(fd));
+	va_start(ap, fd);
+	f.file = unwrap_file(f.file, cap_rights_vinit(&rights, ap), NULL,
+			     (f.flags & FDPUT_FPUT));
+	va_end(ap);
+	return f;
+}
+EXPORT_SYMBOL(_fdgetr_pos);
+#endif
 
 /*
  * We only lock f_pos if we have threads or if the file might be

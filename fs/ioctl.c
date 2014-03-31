@@ -609,7 +609,7 @@ SYSCALL_DEFINE3(ioctl, unsigned int, fd, unsigned int, cmd, unsigned long, arg)
 	cap_rights_init(&rights, CAP_IOCTL);
 	rights.nioctls = 1;
 	rights.ioctls = &cmd;
-	f.file = fget_light_rights(fd, &f.need_put, &rights);
+	f = fdget_rights(fd, &rights);
 
 	if (IS_ERR(f.file))
 		return PTR_ERR(f.file);
