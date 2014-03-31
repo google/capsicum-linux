@@ -320,13 +320,16 @@
 311	64	process_vm_writev	sys_process_vm_writev
 312	common	kcmp			sys_kcmp
 313	common	finit_module		sys_finit_module
-314	common	cap_rights_limit	sys_cap_rights_limit
-315	common	cap_rights_get		sys_cap_rights_get
-316	common	pdfork			stub_pdfork
-317	common	pdgetpid		sys_pdgetpid
-318	common	pdkill			sys_pdkill
-319	common	pdwait4			sys_pdwait4
-320	common	fexecve			stub_fexecve
+314	common	sched_setattr		sys_sched_setattr
+315	common	sched_getattr		sys_sched_getattr
+316	common	fexecve		stub_fexecve
+317	common	cap_rights_limit	sys_cap_rights_limit
+318	common	cap_rights_get		sys_cap_rights_get
+319	common	pdfork			stub_pdfork
+320	common	pdgetpid		sys_pdgetpid
+321	common	pdkill			sys_pdkill
+322	common	pdwait4		sys_pdwait4
+
 #
 # x32-specific system call numbers start at 512 to avoid cache impact
 # for native 64-bit operation.
