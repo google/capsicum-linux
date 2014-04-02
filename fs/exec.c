@@ -1476,6 +1476,7 @@ static int do_execveat_common(int fd, struct filename *filename,
 			      struct user_arg_ptr envp,
 			      int flags)
 {
+	char *pathbuf = NULL;
 	struct linux_binprm *bprm;
 	struct files_struct *displaced;
 	int retval;
@@ -1537,13 +1538,20 @@ static int do_execveat_common(int fd, struct filename *filename,
 	sched_exec();
 
 	bprm->file = file;
-        /*
-	 * TODO(drysdale): this is wrong; Al Viro: "Absolutely not.  If nothing
-	 * else, ->d_name can change on rename() *and* get underlying memory
-	 * freed.  At zero notice."
-	 */
-	bprm->filename = filename ? filename->name:
-			(const char *) file->f_path.dentry->d_name.name;
+	if (filename) {
+		bprm->filename = filename->name;
+	} else {
+		pathbuf = kmalloc(PATH_MAX, GFP_TEMPORARY);
+		if (!pathbuf) {
+			retval = -ENOMEM;
+			goto out_unmark;
+		}
+		bprm->filename = d_path(&file->f_path, pathbuf, PATH_MAX);
+		if (IS_ERR(bprm->filename)) {
+			retval = PTR_ERR(bprm->filename);
+			goto out_unmark;
+		}
+	}
 	bprm->interp = bprm->filename;
 
 	retval = bprm_mm_init(bprm);
@@ -1603,6 +1611,7 @@ out_unmark:
 
 out_free:
 	free_bprm(bprm);
+	kfree(pathbuf);
 
 out_files:
 	if (displaced)
