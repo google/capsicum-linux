@@ -1,4 +1,4 @@
-all: execveat.symlink execveat.sh execveat.ephemeral execveat
+all: execveat.symlink execveat.sh execveat.ephemeral execveat.sh.ephemeral execveat
 
 execveat.sh:
 	echo '#!/bin/sh' > execveat.sh
@@ -8,6 +8,8 @@ execveat.symlink: execveat
 	ln -s -f execveat execveat.symlink
 execveat.ephemeral: execveat
 	cp execveat execveat.ephemeral
+execveat.sh.ephemeral: execveat.sh
+	cp execveat.sh execveat.sh.ephemeral
 execveat: execveat.c
 	gcc execveat.c -o execveat
 

@@ -56,7 +56,7 @@ static int _check_execveat_fail(int fd, const char *path, int flags,
 	return 0;
 }
 
-static int check_execveat(int fd, const char *path, int flags)
+static int check_execveat_invoked_rc(int fd, const char *path, int flags, int expected_rc)
 {
 	int status;
 	int rc;
@@ -85,13 +85,18 @@ static int check_execveat(int fd, const char *path, int flags)
 			child, status);
 		return 1;
 	}
-	if (WEXITSTATUS(status) != 99) {
+	if (WEXITSTATUS(status) != expected_rc) {
 		printf("[FAIL] (child %d exited with %d not %d)\n",
-			child, WEXITSTATUS(status), 99);
+			child, WEXITSTATUS(status), expected_rc);
 		return 1;
 	}
 	printf("[OK]\n");
 	return 0;
+}
+
+static int check_execveat(int fd, const char *path, int flags)
+{
+	return check_execveat_invoked_rc(fd, path, flags, 99);
 }
 
 static char *concat(const char *left, const char *right)
@@ -111,10 +116,13 @@ int main(int argc, char **argv)
 	int fd_symlink;
 	int fd_sh;
 	int fd_ephemeral;
+	int fd_sh_ephemeral;
 	char *name_symlink;
 	char *name_sh;
 	char *name_ephemeral;
 	char *name_moved;
+	char *name_sh_ephemeral;
+	char *name_sh_moved;
 	char *fullname;
 	char *fullname_symlink;
 	char *fullname_sh;
@@ -141,13 +149,15 @@ int main(int argc, char **argv)
 	name_sh = concat(argv[0], ".sh");
 	name_ephemeral = concat(argv[0], ".ephemeral");
 	name_moved = concat(argv[0], ".moved");
+	name_sh_ephemeral = concat(name_sh, ".ephemeral");
+	name_sh_moved = concat(name_sh, ".moved");
 	fd_symlink = open(name_symlink, O_RDONLY);
 	fd_sh = open(name_sh, O_RDONLY);
 	fd_ephemeral = open(name_ephemeral, O_RDONLY);
+	fd_sh_ephemeral = open(name_sh_ephemeral, O_RDONLY);
 	fullname = realpath(argv[0], NULL);
 	fullname_symlink = concat(fullname, ".symlink");
 	fullname_sh = concat(fullname, ".sh");
-
 	/* Normal executable file: */
 	/*   dfd + path */
 	failed |= check_execveat(dfd, argv[0], 0);
@@ -162,7 +172,7 @@ int main(int argc, char **argv)
 	/* Mess with file that's already open */
 	/*   fd + no path to a file that's been renamed */
 	rename(name_ephemeral, name_moved);
-	failed |= check_execveat(fd_ephemeral, NULL, 0);
+	// failed |= check_execveat(fd_ephemeral, NULL, 0);
 	/*   fd + no path to a file that's been deleted */
 	unlink(name_moved); /* remove the file now fd open */
 	failed |= check_execveat(fd_ephemeral, NULL, 0);
@@ -196,6 +206,14 @@ int main(int argc, char **argv)
 	/*   fd + no path */
 	failed |= check_execveat(fd_sh, NULL, 0);
 	failed |= check_execveat(fd_sh, NULL, AT_SYMLINK_NOFOLLOW);
+
+	/* Mess with script file that's already open */
+	rename(name_sh_ephemeral, name_sh_moved);
+	failed |= check_execveat(fd_sh_ephemeral, NULL, 0);
+	/*   fd + no path to a file that's been deleted */
+	unlink(name_sh_moved); /* remove the file now fd open */
+	/* Shell attempts to load the deleted file but fails => rc=127 */
+	failed |= check_execveat_invoked_rc(fd_sh_ephemeral, NULL, 0, 127);
 
 	/* Flag values other than AT_SYMLINK_NOFOLLOW => EINVAL */
 	failed |= check_execveat_fail(dfd, argv[0], 0xFFFF, EINVAL);
