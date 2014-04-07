@@ -1,0 +1,181 @@
+Capsicum Security Framework
+===========================
+
+Capsicum is a lightweight object-capability and sandbox framework, which
+allows security-aware userspace applications to sandbox parts of their own
+code in a highly granular way, reducing the attack surface in the event of
+subversion.
+
+Originally developed at the University of Cambridge Computer Laboratory, and
+initially implemented in FreeBSD 9.x, Capsicum extends the POSIX API,
+providing several new OS primitives to support object-capability security on
+UNIX-like operating systems [1].
+
+Note that Capsicum capabilities are radically different to the POSIX.1e
+capabilities that are already available in Linux:
+
+ - POSIX.1e capabilities subdivide the root user's authority into different
+   areas of functionality.
+ - Capsicum capabilities restrict individual file descriptors so that only
+   operations permitted by that particular FD's rights are allowed.
+
+
+Overview
+--------
+
+Object-capability security is a security model where objects can only be
+accessed via *capabilities*, which are unforgeable tokens of authority that
+only give rights to perform certain operations, and which can be passed
+between applications.
+
+Capsicum is a pragmatic blend of object-capability security with standard
+UNIX/POSIX system semantics.  This is based on the observation that a file
+descriptor is an example of an object capability: it identifies a kernel
+object, cannot be forged (by userspace), and can be passed between
+applications (over a UNIX domain socket).
+
+However, a normal file descriptor allows a wide range of operations to be
+performed on it, with no way to significantly limit that range.  For example,
+a file descriptor that was opened O_RDONLY does not prevent an fchmod()
+operation on the file.
+
+A Capsicum capability is therefore a file descriptor that has an associated
+*rights* bitmask that is much more fine-grained.  The kernel then polices
+operations using that file descriptor, failing operations with insufficient
+rights (returning a new ENOTCAPABLE errno).
+
+Note that these checks are in addition to normal DAC/MAC checks; in other
+words, holding a Capsicum capability for a kernel object does not allow any
+existing controls to be bypassed.
+
+  [This is a consequence of Capsicum being a mix of object-capability concepts
+  with existing semantics; a pure object-capability system would just use
+  capability rights checks and not DAC/MAC.]
+
+Capsicum also includes *capability mode*, which prevents most of the ways that
+a new file descriptor could be created to bypass these checks.  In capability
+mode, attempts to use system calls that access global namespaces results in
+failure (returning a new ECAPMODE errno).
+
+For example, tcpdump might restrict itself at start-of-day so that it can only
+read from the network file descriptor, and only write to stdout.  It can then
+enter capability mode and begin processing; if the untrusted input does cause
+an exploit, the only thing that the exploit code can write to is stdout.
+
+
+Capability Data Structure
+-------------------------
+
+Capsicum logically associates a bitmask of rights with a file descriptor.
+Having the rights associated with a file descriptor rather than a file means
+that it is possible to have different Capsicum capabilities for the same
+object.  For example, an application with a wide range of rights on a file
+descriptor can create a dup()licated copy with only the CAP_READ right, and
+safely pass that copy across a UNIX domain socket to another, untrusted,
+application.
+
+However, actually storing the Capsicum rights with the file descriptor would
+involve occupancy overhead for non-Capsicum systems, so Capsicum capabilities
+are instead implemented as a particular kind of struct file that wraps an
+underlying normal file. The private data for the wrapper indicates the wrapped
+file, and holds the rights information for the capability.
+
+  [This is approximately the implementation that was present in FreeBSD 9.x.
+  For FreeBSD 10.x, the wrapper file was removed and the rights associated
+  with a file descriptor are now stored in the fdtable; it would be fairly
+  straightforward to make this change to the Linux implementation too.]
+
+
+FD to File Conversion
+---------------------
+
+The primary policing of Capsicum capabilities occurs when a user-provided file
+descriptor is converted to a struct file object, normally using one of the
+fgetr*() family of functions.
+
+  [Policing the rights checks anywhere else, for example at the system call
+  boundary, isn't a good idea because it opens up the possibility of
+  time-of-check/time-of-use (TOCTOU) attacks [2] where FDs are changed (as
+  openat/close/dup2 are allowed in capability mode) between the 'check' at
+  syscall entry and the 'use' at fget() invocation.]
+
+All such operations in the kernel are annotated with information about the
+operations that are going to be performed on the retrieved struct file.  For
+example, a file that is retrieved for a read operation has its fgetr() call
+annotated with CAP_READ, indicating that any capability FD that reaches this
+point needs to include the CAP_READ right to progress further.  If the
+appropriate right is not available, -ENOTCAPABLE is returned; otherwise, the
+wrapper struct file is removed and the underlying file is returned.
+
+This change is the most significant change to the kernel, as it affects all
+FD-to-file conversions.  However, for a non-Capsicum build of the kernel the
+impact is minimal as the additional rights parameters to fgetr*() are macroed
+out.
+
+Note also that the fgetr*() functions use varargs macros to allow variable
+numbers of rights arguments without the need for an explicit terminator,
+e.g. fgetr(fd, CAP_READ, CAP_WRITE).
+
+
+Path Traversal
+--------------
+
+Although Capsicum prevents operations that create new file descriptors based
+on some name in a global namespace (such as the filesystem or the network), it
+does allow new file descriptors to be created when they are derived from
+existing file descriptors.  In particular, the openat(dfd, path, ...)
+operation is allowed, provided that the application has suitable Capsicum
+capability rights (including CAP_LOOKUP) for the directory file descriptor.
+
+The newly-created file descriptor from such an openat(2) operation inherits
+the rights of the parent directory file descriptor.  To allow this, the path
+traversal code maintains a reference to the parent dfd and its rights (in
+struct nameidata) during the traversal process, so that a new wrapper file
+can be created and installed in the fdtable in place of the newly created
+file.
+
+Also, to prevent escape from the directory, path traversals are policed for
+"/" and ".." components by implicitly setting the O_BENEATH flag for file-open
+operations.
+
+
+Capability Mode
+---------------
+
+The majority of Capsicum's capability mode is implemented in userspace as a
+seccomp-bpf program that prevents access to any system call that involves a
+global namespace.  However, there are a few additional features of capability
+mode that are implemented in the kernel.
+
+ - The prctl(PR_SET_OPENAT_BENEATH, ...) sets a task flag to indicate that
+   all open operations should implicitly have the O_BENEATH flag set.
+ - The seccomp_data structure that provides the input data that the
+   seccomp-bpf program operates on is extended to include the task's tid and
+   tgid values.  This allows a filter to pass through kill/tgkill-self
+   operations.
+
+
+New System Calls
+----------------
+
+Capsicum implements the following 2 new system calls:
+
+ - cap_rights_limit: restrict the rights associated with a file descriptor to
+   a subset of the existing rights (which can implictly be 'all rights' for
+   a normal file descriptor, in which case this system call converts it into
+   a capability FD); internally this is implemented by wrapping the original
+   struct file with a capability file (security/capsicum.c)
+ - cap_rights_get: return the rights associated with a capability FD
+   (security/capsicum.c)
+
+  [FreeBSD 10.x actually includes six new syscalls for manipulating the
+  rights associated with a Capsicum capability -- the capability rights
+  can police that only specific fcntl(2) or ioctl(2) commands are
+  allowed, and FreeBSD sets these with distinct syscalls.]
+
+
+References
+----------
+
+[1] http://www.cl.cam.ac.uk/research/security/capsicum/papers/2010usenix-security-capsicum-website.pdf
+[2] http://www.watson.org/~robert/2007woot/
