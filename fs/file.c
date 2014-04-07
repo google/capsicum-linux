@@ -13,6 +13,7 @@
 #include <linux/mmzone.h>
 #include <linux/time.h>
 #include <linux/sched.h>
+#include <linux/security.h>
 #include <linux/slab.h>
 #include <linux/vmalloc.h>
 #include <linux/file.h>
@@ -716,6 +717,141 @@ unsigned long __fdget_pos(unsigned int fd)
 	}
 	return v;
 }
+
+#ifdef CONFIG_SECURITY_CAPSICUM
+/*
+ * We might want to change the return value of fget() and friends.  This
+ * function is called with the intended return value, and fget() will /actually/
+ * return whatever is returned from here. We adjust the reference counter if
+ * necessary.
+ */
+static struct file *unwrap_file(struct file *orig,
+				const struct capsicum_rights *required_rights,
+				const struct capsicum_rights **actual_rights,
+				bool update_refcnt)
+{
+	struct file *f;
+
+	if (orig == NULL)
+		return ERR_PTR(-EBADF);
+	if (IS_ERR(orig))
+		return orig;
+	f = orig;  /* TODO: change the value of f here */
+	if (f != orig && update_refcnt) {
+		/* We're not returning the original, and the calling code
+		 * has already incremented the refcount on it, we need to
+		 * release that reference and obtain a reference to the new
+		 * return value, if any.
+		 */
+		if (!IS_ERR(f) && !atomic_long_inc_not_zero(&f->f_count))
+			f = ERR_PTR(-EBADF);
+		atomic_long_dec(&orig->f_count);
+	}
+
+	return f;
+}
+
+struct file *fget_rights(unsigned int fd, const struct capsicum_rights *rights)
+{
+	return unwrap_file(fget(fd), rights, NULL, true);
+}
+EXPORT_SYMBOL(fget_rights);
+
+struct file *fget_raw_rights(unsigned int fd,
+			     const struct capsicum_rights *rights)
+{
+	return unwrap_file(fget_raw(fd), rights, NULL, true);
+}
+EXPORT_SYMBOL(fget_raw_rights);
+
+struct fd fdget_rights(unsigned int fd, const struct capsicum_rights *rights)
+{
+	struct fd f = fdget(fd);
+
+	f.file = unwrap_file(f.file, rights, NULL, (f.flags & FDPUT_FPUT));
+	return f;
+}
+EXPORT_SYMBOL(fdget_rights);
+
+struct fd fdget_raw_rights(unsigned int fd,
+			   const struct capsicum_rights **actual_rights,
+			   const struct capsicum_rights *rights)
+{
+	struct fd f = fdget_raw(fd);
+
+	f.file = unwrap_file(f.file, rights, actual_rights,
+			     (f.flags & FDPUT_FPUT));
+	return f;
+}
+EXPORT_SYMBOL(fdget_raw_rights);
+
+struct file *_fgetr(unsigned int fd, ...)
+{
+	struct capsicum_rights rights;
+	struct file *f;
+	va_list ap;
+
+	va_start(ap, fd);
+	f = fget_rights(fd, cap_rights_vinit(&rights, ap));
+	va_end(ap);
+	return f;
+}
+EXPORT_SYMBOL(_fgetr);
+
+struct file *_fgetr_raw(unsigned int fd, ...)
+{
+	struct capsicum_rights rights;
+	struct file *f;
+	va_list ap;
+
+	va_start(ap, fd);
+	f = fget_raw_rights(fd, cap_rights_vinit(&rights, ap));
+	va_end(ap);
+	return f;
+}
+EXPORT_SYMBOL(_fgetr_raw);
+
+struct fd _fdgetr(unsigned int fd, ...)
+{
+	struct fd f;
+	struct capsicum_rights rights;
+	va_list ap;
+
+	va_start(ap, fd);
+	f = fdget_rights(fd, cap_rights_vinit(&rights, ap));
+	va_end(ap);
+	return f;
+}
+EXPORT_SYMBOL(_fdgetr);
+
+struct fd _fdgetr_raw(unsigned int fd, ...)
+{
+	struct fd f;
+	struct capsicum_rights rights;
+	va_list ap;
+
+	va_start(ap, fd);
+	f = fdget_raw_rights(fd, NULL, cap_rights_vinit(&rights, ap));
+	va_end(ap);
+	return f;
+}
+EXPORT_SYMBOL(_fdgetr_raw);
+
+struct fd _fdgetr_pos(unsigned int fd, ...)
+{
+	struct fd f;
+	struct capsicum_rights rights;
+	va_list ap;
+
+	f = __to_fd(__fdget_pos(fd));
+	va_start(ap, fd);
+	f.file = unwrap_file(f.file, cap_rights_vinit(&rights, ap), NULL,
+			     (f.flags & FDPUT_FPUT));
+	va_end(ap);
+	return f;
+}
+EXPORT_SYMBOL(_fdgetr_pos);
+#endif
 
 /*
  * We only lock f_pos if we have threads or if the file might be
