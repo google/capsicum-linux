@@ -11,6 +11,7 @@ TARGETS += vm
 TARGETS += powerpc
 TARGETS += user
 TARGETS += execveat
+TARGETS += seccomp
 
 all:
 	for TARGET in $(TARGETS); do \
