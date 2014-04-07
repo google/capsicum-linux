@@ -1,0 +1,80 @@
+Capsicum Object Capabilities
+============================
+
+Capsicum is a lightweight OS capability and sandbox framework, which allows
+security-aware userspace applications to sandbox parts of their own code in a
+highly granular way, reducing the attack surface in the event of subversion.
+
+Originally developed at the University of Cambridge Computer Laboratory, and
+initially implemented in FreeBSD 9.x, Capsicum extends the POSIX API, providing
+several new OS primitives to support object-capability security on UNIX-like
+operating systems.
+
+Note that Capsicum capability file descriptors are radically different to the
+POSIX.1e capabilities that are already available in Linux:
+ - POSIX.1e capabilities subdivide the root user's authority into different
+   areas of functionality.
+ - Capsicum capabilities restrict individual file descriptors so that
+   only operations permitted by that particular FD's rights are allowed.
+
+
+Overview
+--------
+
+Capability-based security is a security model where objects can only be
+accessed via capabilities, which are unforgeable tokens of authority that only
+give rights to perform certain operations.
+
+Capsicum is a pragmatic blend of capability-based security with standard
+UNIX/POSIX system semantics.  A Capsicum capability is a file descriptor that
+has an associated rights bitmask, and the kernel polices operations using that
+file descriptor, failing operations with insufficient rights.
+
+
+Capability Data Structure
+-------------------------
+
+Internally, a capability is a particular kind of struct file that wraps an
+underlying normal file.   The private data for the wrapper indicates the
+wrapped file, and holds the rights information for the capability.
+
+
+FD to File Conversion
+---------------------
+
+The primary policing of Capsicum capabilities occurs when a user-provided file
+descriptor is converted to a struct file object, normally using one of the
+fgetr() family of functions.
+
+All such operations in the kernel are annotated with information about the
+operations that are going to be performed on the retrieved struct file.  For
+example, a file that is retrieved for a read operation has its fgetr() call
+annotated with CAP_READ, indicating that any capability FD that reaches this
+point needs to include the CAP_READ right to progress further.  If the
+appropriate right is not available, -ENOTCAPABLE is returned.
+
+This change is the most significant change to the kernel, as it affects all
+FD-to-file conversions.  However, for a non-Capsicum build of the kernel the
+impact is minimal as the additional rights parameters to fgetr*() are macroed
+out.
+
+
+Path Traversal
+--------------
+
+Capsicum does allow new files to be accessed beneath a directory for which the
+application has a suitable capability FD (one including the CAP_LOOKUP right),
+using the openat(2) system call.  To prevent escape from the directory, path
+traversals are policed for "/" and ".." components by implicitly setting the
+O_BENEATH flag for file-open operations.
+
+
+New System Calls
+----------------
+
+Capsicum implements the following new system calls:
+ - cap_rights_limit: restrict the rights associated with file descriptor, thus
+   turning it into a capability FD; internally this is implemented by wrapping
+   the original struct file with a capability file (security/capsicum.c)
+ - cap_rights_get: return the rights associated with a capability FD
+   (security/capsicum.c)

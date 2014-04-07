@@ -117,6 +117,21 @@ config LSM_MMAP_MIN_ADDR
 	  this low address space will need the permission specific to the
 	  systems running LSM.
 
+config SECURITY_CAPSICUM
+	bool "Capsicum capabilities"
+	default y
+	depends on SECURITY
+	depends on SECURITY_PATH
+	depends on SECCOMP
+	help
+	  Enable the Capsicum capability framework, which implements security
+	  primitives that support fine-grained capabilities on file
+	  descriptors; see Documentation/security/capsicum.txt for more
+	  details.
+
+	  If you are unsure as to whether this is required, answer N.
+
+
 source security/selinux/Kconfig
 source security/smack/Kconfig
 source security/tomoyo/Kconfig
