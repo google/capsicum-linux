@@ -827,6 +827,19 @@ static void set_root(struct nameidata *nd)
 	}
 }
 
+/*
+ * Retrieval of files against a directory file descriptor requires
+ * CAP_LOOKUP. As this is common in this file, set up the required rights once
+ * and for all.
+ */
+static struct capsicum_rights lookup_rights;
+static int __init init_lookup_rights(void)
+{
+	cap_rights_init(&lookup_rights, CAP_LOOKUP);
+	return 0;
+}
+fs_initcall(init_lookup_rights);
+
 static void path_put_conditional(struct path *path, struct nameidata *nd)
 {
 	dput(path->dentry);
@@ -2560,13 +2573,43 @@ int path_pts(struct path *path)
 }
 #endif
 
-int user_path_at_empty(int dfd, const char __user *name, unsigned flags,
-		 struct path *path, int *empty)
+static int user_path_at_empty_rights(int dfd,
+				const char __user *name,
+				unsigned flags,
+				struct path *path,
+				int *empty,
+				const struct capsicum_rights *rights)
 {
 	return filename_lookup(dfd, getname_flags(name, flags, empty),
 			       flags, path, NULL);
 }
+
+int user_path_at_empty(int dfd, const char __user *name, unsigned flags,
+		 struct path *path, int *empty)
+{
+	return user_path_at_empty_rights(dfd, name, flags, path, empty,
+					&lookup_rights);
+}
 EXPORT_SYMBOL(user_path_at_empty);
+
+#ifdef CONFIG_SECURITY_CAPSICUM
+int _user_path_atr(int dfd,
+		   const char __user *name,
+		   unsigned flags,
+		   struct path *path,
+		   ...)
+{
+	struct capsicum_rights rights;
+	int rc;
+	va_list ap;
+
+	va_start(ap, path);
+	rc = user_path_at_empty_rights(dfd, name, flags, path, NULL,
+				       cap_rights_vinit(&rights, ap));
+	va_end(ap);
+	return rc;
+}
+#endif
 
 /*
  * NB: most callers don't do anything directly with the reference to the
