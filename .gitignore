@@ -34,6 +34,7 @@
 *.gcno
 modules.builtin
 Module.symvers
+build*
 *.dwo
 
 #
@@ -51,6 +52,8 @@ Module.symvers
 # Debian directory (make deb-pkg)
 #
 /debian/
+*.deb
+*.diff
 
 #
 # git files that we don't want to ignore even it they are dot-files
