@@ -2679,6 +2679,14 @@ F:	include/uapi/linux/capability.h
 F:	security/commoncap.c
 F:	kernel/capability.c
 
+CAPSICUM
+M:	David Drysdale <drysdale@google.com>
+T:	git git://github.com/google/capsicum-linux.git
+S:	Supported
+F:	include/linux/capsicum.h
+F:	include/uapi/linux/capsicum.h
+F:	security/capsicum*
+
 CAPELLA MICROSYSTEMS LIGHT SENSOR DRIVER
 M:	Kevin Tsai <ktsai@capellamicro.com>
 S:	Maintained
