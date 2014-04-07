@@ -1,0 +1,42 @@
+#!/bin/bash
+# Part of a Linux implementation of Capsicum, a capability API for UNIX.
+#
+# Copyright (C) 2012 The Chromium OS Authors <chromium-os-dev@chromium.org>
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License version 2, as
+# published by the Free Software Foundation.
+
+mount /proc
+
+export TEST_DIR="`grep -oP 'cwd=\".*?\"' /proc/cmdline`"
+export TEST_DIR=${TEST_DIR#cwd=\"}
+export TEST_DIR=${TEST_DIR%\"}
+echo "Mounting test-files/ from $TEST_DIR at /tests"
+mkdir -p /tests
+mount -t hostfs proc /tests -o "$TEST_DIR/test-files"
+
+mkdir -p /debug
+mount /debug
+mount / -o remount,rw
+ifconfig lo 127.0.0.1
+
+export TESTRUN="`grep -oP 'runtest=(\".*?\"|[^\s]+)' /proc/cmdline`"
+export TESTRUN=${TESTRUN#runtest=}
+export TESTRUN=${TESTRUN#\"}
+export TESTRUN=${TESTRUN%\"}
+
+if [ "$TESTRUN" != "" ]; then
+  echo "---- Executing: $TESTRUN ----"
+  cd /tests
+  export PATH=$PATH:.
+  sh -c "$TESTRUN"
+  halt --force
+
+  echo "THIS LINE SHOULD NEVER BE REACHED"
+  while true ; do sleep 1 ; done
+else
+  unset TESTRUN
+  echo "Starting normal init..."
+  exec /sbin/init.orig
+fi
