@@ -4621,10 +4621,10 @@ pfm_exit_thread(struct task_struct *task)
 /*
  * functions MUST be listed in the increasing order of their index (see permfon.h)
  */
-#define PFM_CMD(name, flags, arg_count, arg_type, rights, getsz) \
-	{ name, #name, flags, arg_count, sizeof(arg_type), rights, getsz }
-#define PFM_CMD_S(name, flags, rights) \
-	{ name, #name, flags, 0, 0, rights, NULL }
+#define PFM_CMD(name, flags, arg_count, arg_type, right, getsz) \
+	{ name, #name, flags, arg_count, sizeof(arg_type), right, getsz }
+#define PFM_CMD_S(name, flags, right) \
+	{ name, #name, flags, 0, 0, right, NULL }
 #define PFM_CMD_PCLRWS	(PFM_CMD_FD|PFM_CMD_ARG_RW|PFM_CMD_STOP)
 #define PFM_CMD_PCLRW	(PFM_CMD_FD|PFM_CMD_ARG_RW)
 #define PFM_CMD_NONE	{ NULL, "no-cmd", 0, 0, 0, 0, NULL}
@@ -4784,7 +4784,6 @@ asmlinkage long
 sys_perfmonctl (int fd, int cmd, void __user *arg, int count)
 {
 	struct fd f = {NULL, 0};
-	struct cap_right rights;
 	pfm_context_t *ctx = NULL;
 	unsigned long flags = 0UL;
 	void *args_k = NULL;

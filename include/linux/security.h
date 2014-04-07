@@ -408,13 +408,13 @@ static inline void security_free_mnt_opts(struct security_mnt_opts *opts)
  *	@old_name contains the pathname of file.
  *	Return 0 if permission is granted.
  * @path_lookup:
- *      Check permission before looking up a path segment.
+ *	Check permission before looking up a path segment.
  *	@base_rights are the rights associated with the directory the lookup
  *	is relative to, or NULL if no directory is associated.
- *      @dentry is the context of the lookup, or NULL for the first stage of
- *      an absolute lookup.
- *      @name is the rest of the path.
- *      Return 0 if permission is granted.
+ *	@dentry is the context of the lookup, or NULL for the first stage of
+ *	an absolute lookup.
+ *	@name is the rest of the path.
+ *	Return 0 if permission is granted.
  * @inode_mkdir:
  *	Check permissions to create a new directory in the existing directory
  *	associated with inode structure @dir.
@@ -1523,6 +1523,7 @@ struct security_operations {
 					struct qstr *name, void **ctx,
 					u32 *ctxlen);
 
+
 #ifdef CONFIG_SECURITY_PATH
 	int (*path_unlink) (struct path *dir, struct dentry *dentry);
 	int (*path_mkdir) (struct path *dir, struct dentry *dentry, umode_t mode);
@@ -2399,11 +2400,6 @@ security_file_install(const struct capsicum_rights *base_rights,
 	return file;
 }
 
-static inline int security_fd_alloc(unsigned int fd)
-{
-	return 0;
-}
-
 static inline int security_task_create(unsigned long clone_flags)
 {
 	return 0;
@@ -3271,3 +3267,4 @@ static inline int yama_task_prctl(int option, unsigned long arg2,
 #endif /* CONFIG_SECURITY_YAMA */
 
 #endif /* ! __LINUX_SECURITY_H */
+

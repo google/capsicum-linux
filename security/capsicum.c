@@ -356,11 +356,6 @@ EXPORT_SYMBOL(capsicum_intercept_syscall);
  * We are looking up a file by its file descriptor. If it is a Capsicum
  * capability, and has the required rights, we unwrap it and return the
  * underlying file.
- *
- * If we were in capability mode and this call was triggered by a syscall, we
- * performed a rights check on entry to the syscall. This function checks that
- * the file we are unwrapping is the same as the one which was examined in
- * capsicum_intercept_syscall().
  */
 struct file *capsicum_file_lookup(struct file *file,
 				  const struct capsicum_rights *required_rights,

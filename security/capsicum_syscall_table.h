@@ -122,8 +122,12 @@ static int __init init_syscalls_result(void)
 	syscalls_result[__NR_accept] = CAPMODE_ALLOW;
 	syscalls_result[__NR_accept4] = CAPMODE_ALLOW;
 	syscalls_result[__NR_brk] = CAPMODE_ALLOW;
+#ifdef __NR_cap_rights_get
 	syscalls_result[__NR_cap_rights_get] = CAPMODE_ALLOW;
+#endif
+#ifdef __NR_cap_rights_limit
 	syscalls_result[__NR_cap_rights_limit] = CAPMODE_ALLOW;
+#endif
 	syscalls_result[__NR_clock_getres] = CAPMODE_ALLOW;
 	syscalls_result[__NR_clock_gettime] = CAPMODE_ALLOW;
 	syscalls_result[__NR_clone] = CAPMODE_ALLOW;
@@ -131,7 +135,9 @@ static int __init init_syscalls_result(void)
 	syscalls_result[__NR_dup] = CAPMODE_ALLOW;
 	syscalls_result[__NR_dup2] = CAPMODE_ALLOW;
 	syscalls_result[__NR_dup3] = CAPMODE_ALLOW;
+#ifdef __NR_execveat
 	syscalls_result[__NR_execveat] = CAPMODE_ALLOW;
+#endif
 	syscalls_result[__NR_exit] = CAPMODE_ALLOW;
 	syscalls_result[__NR_exit_group] = CAPMODE_ALLOW;
 	syscalls_result[__NR_faccessat] = CAPMODE_ALLOW;
@@ -196,10 +202,18 @@ static int __init init_syscalls_result(void)
 	syscalls_result[__NR_munmap] = CAPMODE_ALLOW;
 	syscalls_result[__NR_nanosleep] = CAPMODE_ALLOW;
 	syscalls_result[__NR_newfstatat] = CAPMODE_ALLOW;
+#ifdef __NR_pdfork
 	syscalls_result[__NR_pdfork] = CAPMODE_ALLOW;
+#endif
+#ifdef __NR_pdgetpid
 	syscalls_result[__NR_pdgetpid] = CAPMODE_ALLOW;
+#endif
+#ifdef __NR_pdkill
 	syscalls_result[__NR_pdkill] = CAPMODE_ALLOW;
+#endif
+#ifdef __NR_pdwait4
 	syscalls_result[__NR_pdwait4] = CAPMODE_ALLOW;
+#endif
 	syscalls_result[__NR_pipe] = CAPMODE_ALLOW;
 	syscalls_result[__NR_pipe2] = CAPMODE_ALLOW;
 	syscalls_result[__NR_poll] = CAPMODE_ALLOW;

@@ -6,7 +6,6 @@
 #include <linux/linkage.h>
 #include <linux/path.h>
 
-struct capsicum_rights;
 struct vfsmount;
 
 enum { MAX_NESTED_LINKS = 8 };

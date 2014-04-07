@@ -13,7 +13,6 @@ struct capsicum_rights {
 	unsigned int *ioctls;
 };
 
-
 /* LSM hook fallback functions */
 int capsicum_intercept_syscall(int arch, int callnr, unsigned long *args);
 struct file *capsicum_file_lookup(struct file *file,
@@ -56,5 +55,4 @@ _cap_rights_noop(struct capsicum_rights *rights)
 
 #endif
 
-
-#endif /* _LINUX_SECCOMP_H */
+#endif /* _LINUX_CAPSICUM_H */

@@ -347,8 +347,8 @@ enum {
 
 enum {
 	/* Sentinal to indicate "no capability" */
-	CAP_DEV_NONE,
-	CAP_DEV_ALL,			/* ALL capabilities */
+	CAP_NONE,
+	CAP_ALL,			/* ALL capabilities */
 	CAP_TARGET_VERSION,
 	CAP_TARGET_REVISION,
 	CAP_MAC_VERSION,

@@ -305,7 +305,6 @@ static int cap_path_chroot(struct path *root)
 {
 	return 0;
 }
-
 #endif
 
 static int cap_file_permission(struct file *file, int mask)
