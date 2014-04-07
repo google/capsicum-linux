@@ -69,6 +69,16 @@ static inline int user_path_dir(const char __user *name, struct path *path)
 				  LOOKUP_FOLLOW | LOOKUP_DIRECTORY, path, NULL);
 }
 
+#ifdef CONFIG_SECURITY_CAPSICUM
+extern int _user_path_atr(int, const char __user *, unsigned,
+			  struct path *, ...);
+#define user_path_atr(f, n, x, p, ...) \
+	_user_path_atr((f), (n), (x), (p), __VA_ARGS__, 0ULL)
+#else
+#define user_path_atr(f, n, x, p, ...) \
+	user_path_at((f), (n), (x), (p))
+#endif
+
 extern int kern_path(const char *, unsigned, struct path *);
 
 extern struct dentry *kern_path_create(int, const char *, struct path *, unsigned int);
