@@ -35,6 +35,7 @@
 *.gcno
 modules.builtin
 Module.symvers
+build*
 *.dwo
 *.su
 *.c.[012]*.*
@@ -56,6 +57,9 @@ Module.symvers
 # Debian directory (make deb-pkg)
 #
 /debian/
+*.deb
+*.diff
+*.changes
 
 #
 # tar directory (make tar*-pkg)

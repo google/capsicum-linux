@@ -1,7 +1,7 @@
 VERSION = 4
 PATCHLEVEL = 8
 SUBLEVEL = 0
-EXTRAVERSION =
+EXTRAVERSION = -capsicum
 NAME = Psychotic Stoned Sheep
 
 # *DOCUMENTATION*
