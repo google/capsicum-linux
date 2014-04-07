@@ -76,6 +76,7 @@ header-y += btrfs.h
 header-y += can.h
 header-y += capability.h
 header-y += capi.h
+header-y += capsicum.h
 header-y += cciss_defs.h
 header-y += cciss_ioctl.h
 header-y += cdrom.h
