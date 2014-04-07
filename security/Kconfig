@@ -158,6 +158,20 @@ config HARDENED_USERCOPY_PAGESPAN
 	  been removed. This config is intended to be used only while
 	  trying to find such users.
 
+config SECURITY_CAPSICUM
+	bool "Capsicum capabilities"
+	default y
+	depends on SECURITY
+	depends on SECURITY_PATH
+	depends on SECCOMP
+	help
+	  Enable the Capsicum capability framework, which implements security
+	  primitives that support fine-grained capabilities on file
+	  descriptors; see Documentation/security/capsicum.txt for more
+	  details.
+
+	  If you are unsure as to whether this is required, answer N.
+
 source security/selinux/Kconfig
 source security/smack/Kconfig
 source security/tomoyo/Kconfig
