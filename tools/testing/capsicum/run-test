@@ -1,0 +1,60 @@
+#!/bin/bash
+# Part of a Linux implementation of Capsicum, a capability API for UNIX.
+#
+# Copyright (C) 2012 The Chromium OS Authors <chromium-os-dev@chromium.org>
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License version 2, as
+# published by the Free Software Foundation.
+cd `dirname $0`
+CWD=`pwd`
+TARGET=linux
+BUILDSUBDIR=build
+BUILDCMD="$TARGET ARCH=um O=$BUILDSUBDIR"
+TOPDIR=../../..
+THREADS=5
+BUILD=false
+VERBOSE=false
+INVOKE=""
+
+while [ $# -gt 0 ]
+do
+    case $1 in
+        -b) BUILD=true;;
+        -v) VERBOSE=true;;
+        -gdb)
+            INVOKE="gdb --args"
+            VERBOSE=true;;
+        *) break;;
+    esac
+    shift
+done
+
+TESTS="$@"
+if [ "$TESTS" = "" ]; then
+  echo "You must specify a test command to run on the hosted system (/tests/ maps to test-files/)"
+  echo "Usage: $0 [options] <test-command>"
+  exit 1
+fi
+
+if $BUILD ; then
+    echo "Building..."
+    if $VERBOSE ; then
+        make -C $TOPDIR -j $THREADS $BUILDCMD
+    else
+        make -C $TOPDIR -j $THREADS $BUILDCMD > /dev/null
+    fi
+    rc=$?
+    if [ $rc != 0 ]; then
+        exit $rc
+    fi
+fi
+
+TESTARGS="ubd0=test.img rw con0=fd:2 con1=fd:0,fd:1 con=pts mem=4096M security=apparmor cwd=\"$CWD\" runtest=\"$TESTS\""
+if $VERBOSE ; then
+    $INVOKE $TOPDIR/$BUILDSUBDIR/$TARGET $TESTARGS
+else
+    ($INVOKE $TOPDIR/$BUILDSUBDIR/$TARGET $TESTARGS 2>&1 | \
+        sed -n '/---- Executing: .* ----/,$p' | \
+        grep --perl-regexp --text --invert-match 'System halted.')
+fi
