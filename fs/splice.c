@@ -1648,14 +1648,16 @@ SYSCALL_DEFINE4(vmsplice, int, fd, const struct iovec __user *, iov,
 		return 0;
 
 	error = -EBADF;
-	f = fdget(fd);
-	if (f.file) {
+	f = fdgetr(fd, CAP_WRITE);
+	if (!IS_ERR(f.file)) {
 		if (f.file->f_mode & FMODE_WRITE)
 			error = vmsplice_to_pipe(f.file, iov, nr_segs, flags);
 		else if (f.file->f_mode & FMODE_READ)
 			error = vmsplice_to_user(f.file, iov, nr_segs, flags);
 
 		fdput(f);
+	} else {
+		error = PTR_ERR(f.file);
 	}
 
 	return error;
@@ -1693,19 +1695,23 @@ SYSCALL_DEFINE6(splice, int, fd_in, loff_t __user *, off_in,
 		return 0;
 
 	error = -EBADF;
-	in = fdget(fd_in);
-	if (in.file) {
+	in = fdgetr(fd_in, CAP_PREAD);
+	if (!IS_ERR(in.file)) {
 		if (in.file->f_mode & FMODE_READ) {
-			out = fdget(fd_out);
-			if (out.file) {
+			out = fdgetr(fd_out, CAP_PWRITE);
+			if (!IS_ERR(out.file)) {
 				if (out.file->f_mode & FMODE_WRITE)
 					error = do_splice(in.file, off_in,
 							  out.file, off_out,
 							  len, flags);
 				fdput(out);
+			} else {
+				error = PTR_ERR(out.file);
 			}
 		}
 		fdput(in);
+	} else {
+		error = PTR_ERR(in.file);
 	}
 	return error;
 }
@@ -2024,19 +2030,24 @@ SYSCALL_DEFINE4(tee, int, fdin, int, fdout, size_t, len, unsigned int, flags)
 		return 0;
 
 	error = -EBADF;
-	in = fdget(fdin);
-	if (in.file) {
+	in = fdgetr(fdin, CAP_READ);
+	if (!IS_ERR(in.file)) {
 		if (in.file->f_mode & FMODE_READ) {
-			struct fd out = fdget(fdout);
-			if (out.file) {
+			struct fd out = fdgetr(fdout, CAP_WRITE);
+
+			if (!IS_ERR(out.file)) {
 				if (out.file->f_mode & FMODE_WRITE)
 					error = do_tee(in.file, out.file,
 							len, flags);
 				fdput(out);
+			} else {
+				error = PTR_ERR(out.file);
 			}
 		}
- 		fdput(in);
- 	}
+		fdput(in);
+	} else {
+		error = PTR_ERR(in.file);
+	}
 
 	return error;
 }

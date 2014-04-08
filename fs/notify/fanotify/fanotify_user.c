@@ -445,11 +445,12 @@ static int fanotify_find_path(int dfd, const char __user *filename,
 		 dfd, filename, flags);
 
 	if (filename == NULL) {
-		struct fd f = fdget(dfd);
+		struct fd f = fdgetr(dfd, CAP_FSTAT);
 
-		ret = -EBADF;
-		if (!f.file)
+		if (IS_ERR(f.file)) {
+			ret = PTR_ERR(f.file);
 			goto out;
+		}
 
 		ret = -ENOTDIR;
 		if ((flags & FAN_MARK_ONLYDIR) &&
@@ -469,7 +470,8 @@ static int fanotify_find_path(int dfd, const char __user *filename,
 		if (flags & FAN_MARK_ONLYDIR)
 			lookup_flags |= LOOKUP_DIRECTORY;
 
-		ret = user_path_at(dfd, filename, lookup_flags, path);
+		ret = user_path_atr(dfd, filename, lookup_flags, path,
+				    CAP_FSTAT, CAP_LOOKUP);
 		if (ret)
 			goto out;
 	}
@@ -834,9 +836,9 @@ SYSCALL_DEFINE5(fanotify_mark, int, fanotify_fd, unsigned int, flags,
 #endif
 		return -EINVAL;
 
-	f = fdget(fanotify_fd);
-	if (unlikely(!f.file))
-		return -EBADF;
+	f = fdgetr(fanotify_fd, CAP_NOTIFY);
+	if (unlikely(IS_ERR(f.file)))
+		return PTR_ERR(f.file);
 
 	/* verify that this is indeed an fanotify instance */
 	ret = -EINVAL;

@@ -449,8 +449,8 @@ int do_select(int n, fd_set_bits *fds, struct timespec *end_time)
 					break;
 				if (!(bit & all_bits))
 					continue;
-				f = fdget(i);
-				if (f.file) {
+				f = fdgetr(i, CAP_POLL_EVENT);
+				if (!IS_ERR(f.file)) {
 					const struct file_operations *f_op;
 					f_op = f.file->f_op;
 					mask = DEFAULT_POLLMASK;
@@ -487,6 +487,9 @@ int do_select(int n, fd_set_bits *fds, struct timespec *end_time)
 					} else if (busy_flag & mask)
 						can_busy_loop = true;
 
+				} else if (PTR_ERR(f.file) != -EBADF) {
+					retval = PTR_ERR(f.file);
+					break;
 				}
 			}
 			if (res_in)
@@ -757,9 +760,9 @@ static inline unsigned int do_pollfd(struct pollfd *pollfd, poll_table *pwait,
 	mask = 0;
 	fd = pollfd->fd;
 	if (fd >= 0) {
-		struct fd f = fdget(fd);
+		struct fd f = fdgetr(fd, CAP_POLL_EVENT);
 		mask = POLLNVAL;
-		if (f.file) {
+		if (!IS_ERR(f.file)) {
 			mask = DEFAULT_POLLMASK;
 			if (f.file->f_op->poll) {
 				pwait->_key = pollfd->events|POLLERR|POLLHUP;
