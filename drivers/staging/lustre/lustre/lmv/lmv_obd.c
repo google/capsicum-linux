@@ -875,9 +875,9 @@ static int lmv_hsm_ct_register(struct lmv_obd *lmv, unsigned int cmd, int len,
 		return -ENOTCONN;
 
 	/* at least one registration done, with no failure */
-	filp = fget(lk->lk_wfd);
-	if (!filp)
-		return -EBADF;
+	filp = fgetr(lk->lk_wfd, CAP_READ);
+	if (IS_ERR(filp))
+		return PTR_ERR(filp);
 
 	kcd.kcd_magic = KKUC_CT_DATA_MAGIC;
 	kcd.kcd_uuid = lmv->cluuid;

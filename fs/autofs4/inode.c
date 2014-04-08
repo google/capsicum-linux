@@ -309,9 +309,9 @@ int autofs4_fill_super(struct super_block *s, void *data, int silent)
 	sbi->sub_version = AUTOFS_PROTO_SUBVERSION;
 
 	pr_debug("pipe fd = %d, pgrp = %u\n", pipefd, pid_nr(sbi->oz_pgrp));
-	pipe = fget(pipefd);
+	pipe = fgetr(pipefd, CAP_WRITE, CAP_FSYNC);
 
-	if (!pipe) {
+	if (IS_ERR(pipe)) {
 		pr_err("could not open pipe file descriptor\n");
 		goto fail_dput;
 	}

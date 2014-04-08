@@ -223,7 +223,11 @@ static inline struct file *file_unwrap(struct file *orig,
 }
 #endif
 
->>>>>>> capsicum: implement fgetr() and friends
+static inline int map_ebadf_to(const struct file *file, int err)
+{
+	return (PTR_ERR(file) == -EBADF) ? err : PTR_ERR(file);
+}
+
 extern int f_dupfd(unsigned int from, struct file *file, unsigned flags);
 extern int replace_fd(unsigned fd, struct file *file, unsigned flags);
 extern void set_close_on_exec(unsigned int fd, int flag);

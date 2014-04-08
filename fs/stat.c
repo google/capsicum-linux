@@ -76,12 +76,14 @@ EXPORT_SYMBOL(vfs_getattr);
 
 int vfs_fstat(unsigned int fd, struct kstat *stat)
 {
-	struct fd f = fdget_raw(fd);
-	int error = -EBADF;
+	struct fd f = fdgetr_raw(fd, CAP_FSTAT);
+	int error;
 
-	if (f.file) {
+	if (!IS_ERR(f.file)) {
 		error = vfs_getattr(&f.file->f_path, stat);
 		fdput(f);
+	} else {
+		error = PTR_ERR(f.file);
 	}
 	return error;
 }
@@ -103,7 +105,7 @@ int vfs_fstatat(int dfd, const char __user *filename, struct kstat *stat,
 	if (flag & AT_EMPTY_PATH)
 		lookup_flags |= LOOKUP_EMPTY;
 retry:
-	error = user_path_at(dfd, filename, lookup_flags, &path);
+	error = user_path_atr(dfd, filename, lookup_flags, &path, CAP_FSTAT);
 	if (error)
 		goto out;
 

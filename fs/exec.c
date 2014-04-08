@@ -965,14 +965,13 @@ EXPORT_SYMBOL_GPL(kernel_read_file_from_path);
 int kernel_read_file_from_fd(int fd, void **buf, loff_t *size, loff_t max_size,
 			     enum kernel_read_file_id id)
 {
-	struct fd f = fdget(fd);
+	struct fd f = fdgetr(fd, CAP_PREAD);
 	int ret = -EBADF;
 
-	if (!f.file)
-		goto out;
+	if (IS_ERR(f.file))
+		return PTR_ERR(f.file);
 
 	ret = kernel_read_file(f.file, buf, size, max_size, id);
-out:
 	fdput(f);
 	return ret;
 }

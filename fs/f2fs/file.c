@@ -2168,9 +2168,9 @@ static int f2fs_ioc_move_range(struct file *filp, unsigned long arg)
 							sizeof(range)))
 		return -EFAULT;
 
-	dst = fdget(range.dst_fd);
-	if (!dst.file)
-		return -EBADF;
+	dst = fdgetr(range.dst_fd, CAP_PWRITE);
+	if (IS_ERR(dst.file))
+		return PTR_ERR(dst.file);
 
 	if (!(dst.file->f_mode & FMODE_WRITE)) {
 		err = -EBADF;

@@ -106,9 +106,9 @@ EXPORT_SYMBOL(sync_file_create);
  */
 static struct sync_file *sync_file_fdget(int fd)
 {
-	struct file *file = fget(fd);
+	struct file *file = fgetr(fd, CAP_IOCTL);
 
-	if (!file)
+	if (IS_ERR(file))
 		return NULL;
 
 	if (file->f_op != &sync_file_fops)

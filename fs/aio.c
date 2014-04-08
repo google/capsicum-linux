@@ -271,6 +271,37 @@ static int __init aio_setup(void)
 }
 __initcall(aio_setup);
 
+
+/*
+ * aio operations on Capsicum capability file descriptors requires rights
+ * that are specific to the operation being performed. Set up such rights
+ * once and for all, relying on the IOCB_CMD_* constants being low-numbered.
+ */
+static struct capsicum_rights aio_rights[IOCB_CMD_PWRITEV + 1];
+static int __init init_aio_rights(void)
+{
+	int ii;
+
+	for (ii = 0; ii <= IOCB_CMD_PWRITEV; ii++)
+		cap_rights_init(&aio_rights[ii], CAP_PREAD, CAP_PWRITE,
+				CAP_POLL_EVENT, CAP_FSYNC);
+	cap_rights_init(&aio_rights[IOCB_CMD_PREAD], CAP_PREAD);
+	cap_rights_init(&aio_rights[IOCB_CMD_PREADV], CAP_PREAD);
+	cap_rights_init(&aio_rights[IOCB_CMD_PWRITE], CAP_PWRITE);
+	cap_rights_init(&aio_rights[IOCB_CMD_PWRITEV], CAP_PWRITE);
+	cap_rights_init(&aio_rights[IOCB_CMD_FSYNC], CAP_FSYNC);
+	cap_rights_init(&aio_rights[IOCB_CMD_FDSYNC], CAP_FSYNC);
+	return 0;
+}
+fs_initcall(init_aio_rights);
+
+static inline const struct capsicum_rights *aio_opcode_rights(int opcode)
+{
+	int index = (opcode <= IOCB_CMD_PWRITEV) ? opcode : IOCB_CMD_NOOP;
+
+	return &aio_rights[index];
+}
+
 static void put_aio_ring_file(struct kioctx *ctx)
 {
 	struct file *aio_ring_file = ctx->aio_ring_file;
@@ -1527,9 +1558,11 @@ static int io_submit_one(struct kioctx *ctx, struct iocb __user *user_iocb,
 	if (unlikely(!req))
 		return -EAGAIN;
 
-	req->common.ki_filp = fget(iocb->aio_fildes);
-	if (unlikely(!req->common.ki_filp)) {
-		ret = -EBADF;
+	req->common.ki_filp = fget_rights(iocb->aio_fildes,
+				      aio_opcode_rights(iocb->aio_lio_opcode));
+	if (unlikely(IS_ERR(req->common.ki_filp))) {
+		ret = PTR_ERR(req->common.ki_filp);
+		req->common.ki_filp = NULL;
 		goto out_put_req;
 	}
 	req->common.ki_pos = iocb->aio_offset;
