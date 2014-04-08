@@ -1083,9 +1083,9 @@ static int ppp_nl_newlink(struct net *src_net, struct net_device *dev,
 	struct file *file;
 	int err;
 
-	file = fget(nla_get_s32(data[IFLA_PPP_DEV_FD]));
-	if (!file)
-		return -EBADF;
+	file = fgetr(nla_get_s32(data[IFLA_PPP_DEV_FD]), CAP_IOCTL);
+	if (IS_ERR(file))
+		return PTR_ERR(file);
 
 	/* rtnl_lock is already held here, but ppp_create_interface() locks
 	 * ppp_mutex before holding rtnl_lock. Using mutex_trylock() avoids

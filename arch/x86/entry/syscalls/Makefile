@@ -28,7 +28,7 @@ $(uapi)/unistd_32.h: $(syscall32) $(syshdr)
 
 syshdr_abi_unistd_32_ia32 := i386
 syshdr_pfx_unistd_32_ia32 := ia32_
-$(out)/unistd_32_ia32.h: $(syscall32) $(syshdr)
+$(uapi)/unistd_32_ia32.h: $(syscall32) $(syshdr)
 	$(call if_changed,syshdr)
 
 syshdr_abi_unistd_x32 := common,x32
@@ -42,7 +42,12 @@ $(uapi)/unistd_64.h: $(syscall64) $(syshdr)
 
 syshdr_abi_unistd_64_x32 := x32
 syshdr_pfx_unistd_64_x32 := x32_
-$(out)/unistd_64_x32.h: $(syscall64) $(syshdr)
+$(uapi)/unistd_64_x32.h: $(syscall64) $(syshdr)
+	$(call if_changed,syshdr)
+
+syshdr_abi_unistd_64_amd64 := common,64
+syshdr_pfx_unistd_64_amd64 := amd64_
+$(uapi)/unistd_64_amd64.h: $(syscall64) $(syshdr)
 	$(call if_changed,syshdr)
 
 $(out)/syscalls_32.h: $(syscall32) $(systbl)
@@ -56,8 +61,8 @@ $(out)/xen-hypercalls.h: $(srctree)/scripts/xen-hypercalls.sh
 $(out)/xen-hypercalls.h: $(srctree)/include/xen/interface/xen*.h
 
 uapisyshdr-y			+= unistd_32.h unistd_64.h unistd_x32.h
+uapisyshdr-$(CONFIG_X86_64)		+= unistd_32_ia32.h unistd_64_amd64.h unistd_64_x32.h
 syshdr-y			+= syscalls_32.h
-syshdr-$(CONFIG_X86_64)		+= unistd_32_ia32.h unistd_64_x32.h
 syshdr-$(CONFIG_X86_64)		+= syscalls_64.h
 syshdr-$(CONFIG_XEN)		+= xen-hypercalls.h
 

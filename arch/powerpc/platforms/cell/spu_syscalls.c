@@ -77,11 +77,13 @@ SYSCALL_DEFINE4(spu_create, const char __user *, name, unsigned int, flags,
 		return -ENOSYS;
 
 	if (flags & SPU_CREATE_AFFINITY_SPU) {
-		struct fd neighbor = fdget(neighbor_fd);
-		ret = -EBADF;
-		if (neighbor.file) {
+		struct fd neighbor = fdgetr(neighbor_fd, CAP_READ, CAP_WRITE,
+					    CAP_MAPEXEC);
+		if (!IS_ERR(neighbor.file)) {
 			ret = calls->create_thread(name, flags, mode, neighbor.file);
 			fdput(neighbor);
+		} else {
+			ret = PTR_ERR(neighbor.file);
 		}
 	} else
 		ret = calls->create_thread(name, flags, mode, NULL);
@@ -100,11 +102,12 @@ asmlinkage long sys_spu_run(int fd, __u32 __user *unpc, __u32 __user *ustatus)
 	if (!calls)
 		return -ENOSYS;
 
-	ret = -EBADF;
-	arg = fdget(fd);
-	if (arg.file) {
+	arg = fdgetr(fd, CAP_READ, CAP_WRITE, CAP_MAPEXEC);
+	if (!IS_ERR(arg.file)) {
 		ret = calls->spu_run(arg.file, unpc, ustatus);
 		fdput(arg);
+	} else {
+		ret = PTR_ERR(arg.file);
 	}
 
 	spufs_calls_put(calls);

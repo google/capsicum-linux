@@ -1810,10 +1810,10 @@ static int snd_pcm_link(struct snd_pcm_substream *substream, int fd)
 	struct snd_pcm_file *pcm_file;
 	struct snd_pcm_substream *substream1;
 	struct snd_pcm_group *group;
-	struct fd f = fdget(fd);
+	struct fd f = fdgetr(fd, CAP_LIST_END);
 
-	if (!f.file)
-		return -EBADFD;
+	if (IS_ERR(f.file))
+		return map_ebadf_to(f.file, -EBADFD);
 	if (!is_pcm_file(f.file)) {
 		res = -EBADFD;
 		goto _badf;
