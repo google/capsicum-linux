@@ -122,9 +122,9 @@ struct file *proc_ns_fget(int fd)
 {
 	struct file *file;
 
-	file = fget(fd);
-	if (!file)
-		return ERR_PTR(-EBADF);
+	file = fgetr(fd, CAP_SETNS);
+	if (IS_ERR(file))
+		return file;
 
 	if (file->f_op != &ns_file_operations)
 		goto out_invalid;

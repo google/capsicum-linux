@@ -2242,7 +2242,7 @@ static long fuse_dev_ioctl(struct file *file, unsigned int cmd,
 
 		err = -EFAULT;
 		if (!get_user(oldfd, (__u32 __user *) arg)) {
-			struct file *old = fget(oldfd);
+			struct file *old = fgetr(oldfd, CAP_LIST_END);
 
 			err = -EINVAL;
 			if (old) {
