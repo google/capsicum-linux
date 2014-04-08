@@ -1619,10 +1619,12 @@ static noinline int btrfs_ioctl_snap_create_transid(struct file *file,
 		ret = btrfs_mksubvol(&file->f_path, name, namelen,
 				     NULL, transid, readonly, inherit);
 	} else {
-		struct fd src = fdget(fd);
+		struct fd src = fdgetr(fd, CAP_FSTAT);
 		struct inode *src_inode;
-		if (!src.file) {
-			ret = -EINVAL;
+		if (IS_ERR(src.file)) {
+			ret = PTR_ERR(src.file);
+			if (ret == -EBADF)
+				ret = -EINVAL;
 			goto out_drop_write;
 		}
 
@@ -2999,9 +3001,10 @@ static long btrfs_ioctl_file_extent_same(struct file *file,
 
 	for (i = 0, info = same->info; i < count; i++, info++) {
 		struct inode *dst;
-		struct fd dst_file = fdget(info->fd);
-		if (!dst_file.file) {
-			info->status = -EBADF;
+		struct fd dst_file = fdgetr(info->fd, CAP_FSTAT);
+
+		if (IS_ERR(dst_file.file)) {
+			info->status = PTR_ERR(dst_file.file);
 			continue;
 		}
 		dst = file_inode(dst_file.file);
@@ -3571,9 +3574,9 @@ static noinline long btrfs_ioctl_clone(struct file *file, unsigned long srcfd,
 	if (ret)
 		return ret;
 
-	src_file = fdget(srcfd);
-	if (!src_file.file) {
-		ret = -EBADF;
+	src_file = fdgetr(srcfd, CAP_FSTAT);
+	if (IS_ERR(src_file.file)) {
+		ret = PTR_ERR(src_file.file);
 		goto out_drop_write;
 	}
 

@@ -380,10 +380,10 @@ struct dma_buf *dma_buf_get(int fd)
 {
 	struct file *file;
 
-	file = fget(fd);
+	file = fgetr(fd, CAP_MMAP, CAP_READ, CAP_WRITE);
 
-	if (!file)
-		return ERR_PTR(-EBADF);
+	if (IS_ERR(file))
+		return (struct dma_buf *)file;
 
 	if (!is_dma_buf_file(file)) {
 		fput(file);

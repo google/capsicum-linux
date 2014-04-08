@@ -322,9 +322,9 @@ kvm_irqfd_assign(struct kvm *kvm, struct kvm_irqfd *args)
 	INIT_WORK(&irqfd->shutdown, irqfd_shutdown);
 	seqcount_init(&irqfd->irq_entry_sc);
 
-	f = fdget(args->fd);
-	if (!f.file) {
-		ret = -EBADF;
+	f = fdgetr(args->fd, CAP_WRITE);
+	if (IS_ERR(f.file)) {
+		ret = PTR_ERR(f.file);
 		goto out;
 	}
 
