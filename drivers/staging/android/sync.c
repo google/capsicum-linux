@@ -218,9 +218,9 @@ EXPORT_SYMBOL(sync_fence_create);
 
 struct sync_fence *sync_fence_fdget(int fd)
 {
-	struct file *file = fget(fd);
+	struct file *file = fgetr(fd, CAP_IOCTL);
 
-	if (!file)
+	if (IS_ERR(file))
 		return NULL;
 
 	if (file->f_op != &sync_fence_fops)

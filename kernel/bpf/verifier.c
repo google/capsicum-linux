@@ -1998,7 +1998,7 @@ static int replace_map_fd_with_map_ptr(struct verifier_env *env)
 				return -EINVAL;
 			}
 
-			f = fdget(insn->imm);
+			f = fdgetr(insn->imm, CAP_BPF);
 			map = __bpf_map_get(f);
 			if (IS_ERR(map)) {
 				verbose("fd %d is not pointing to valid bpf_map\n",

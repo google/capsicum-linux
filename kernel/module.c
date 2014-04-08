@@ -2696,14 +2696,14 @@ static int copy_module_from_user(const void __user *umod, unsigned long len,
 /* Sets info->hdr and info->len. */
 static int copy_module_from_fd(int fd, struct load_info *info)
 {
-	struct fd f = fdget(fd);
+	struct fd f = fdgetr(fd, CAP_FEXECVE);
 	int err;
 	struct kstat stat;
 	loff_t pos;
 	ssize_t bytes = 0;
 
-	if (!f.file)
-		return -ENOEXEC;
+	if (IS_ERR(f.file))
+		return map_ebadf_to(f.file, -ENOEXEC);
 
 	err = security_kernel_module_from_file(f.file);
 	if (err)

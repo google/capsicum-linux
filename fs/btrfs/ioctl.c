@@ -1647,10 +1647,10 @@ static noinline int btrfs_ioctl_snap_create_transid(struct file *file,
 		ret = btrfs_mksubvol(&file->f_path, name, namelen,
 				     NULL, transid, readonly, inherit);
 	} else {
-		struct fd src = fdget(fd);
+		struct fd src = fdgetr(fd, CAP_FSTAT);
 		struct inode *src_inode;
-		if (!src.file) {
-			ret = -EINVAL;
+		if (IS_ERR(src.file)) {
+			ret = map_ebadf_to(src.file, -EINVAL);
 			goto out_drop_write;
 		}
 
