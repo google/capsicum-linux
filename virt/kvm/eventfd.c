@@ -306,9 +306,9 @@ kvm_irqfd_assign(struct kvm *kvm, struct kvm_irqfd *args)
 	INIT_WORK(&irqfd->inject, irqfd_inject);
 	INIT_WORK(&irqfd->shutdown, irqfd_shutdown);
 
-	f = fdget(args->fd);
-	if (!f.file) {
-		ret = -EBADF;
+	f = fdgetr(args->fd, CAP_WRITE);
+	if (IS_ERR(f.file)) {
+		ret = PTR_ERR(f.file);
 		goto out;
 	}
 

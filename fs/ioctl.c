@@ -604,10 +604,15 @@ int do_vfs_ioctl(struct file *filp, unsigned int fd, unsigned int cmd,
 SYSCALL_DEFINE3(ioctl, unsigned int, fd, unsigned int, cmd, unsigned long, arg)
 {
 	int error;
-	struct fd f = fdget(fd);
+	struct capsicum_rights rights;
+	struct fd f;
+	cap_rights_init(&rights, CAP_IOCTL);
+	rights.nioctls = 1;
+	rights.ioctls = &cmd;
+	f = fdget_rights(fd, &rights);
 
-	if (!f.file)
-		return -EBADF;
+	if (IS_ERR(f.file))
+		return PTR_ERR(f.file);
 	error = security_file_ioctl(f.file, cmd, arg);
 	if (!error)
 		error = do_vfs_ioctl(f.file, fd, cmd, arg);
