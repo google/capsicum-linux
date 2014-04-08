@@ -353,13 +353,105 @@ static int check_fcntl_cmd(unsigned cmd)
 	return 0;
 }
 
+static bool fcntl_rights(unsigned int cmd, struct capsicum_rights *rights)
+{
+	switch (cmd) {
+	case F_DUPFD:
+	case F_DUPFD_CLOEXEC:
+		/*
+		 * Returning true (=>use wrapped file) implies that no rights
+		 * are needed.
+		 */
+		cap_rights_init(rights, 0);
+		return true;
+	case F_GETFD:
+	case F_SETFD:
+		cap_rights_init(rights, 0);
+		return false;
+	case F_GETFL:
+		cap_rights_init(rights, CAP_FCNTL);
+		rights->fcntls = CAP_FCNTL_GETFL;
+		return false;
+	case F_SETFL:
+		cap_rights_init(rights, CAP_FCNTL);
+		rights->fcntls = CAP_FCNTL_SETFL;
+		return false;
+	case F_GETOWN:
+	case F_GETOWN_EX:
+	case F_GETOWNER_UIDS:
+		cap_rights_init(rights, CAP_FCNTL);
+		rights->fcntls = CAP_FCNTL_GETOWN;
+		return false;
+	case F_SETOWN:
+	case F_SETOWN_EX:
+		cap_rights_init(rights, CAP_FCNTL);
+		rights->fcntls = CAP_FCNTL_SETOWN;
+		return false;
+	case F_GETLK:
+	case F_SETLK:
+	case F_SETLKW:
+#if BITS_PER_LONG == 32
+	case F_GETLK64:
+	case F_SETLK64:
+	case F_SETLKW64:
+#endif
+		cap_rights_init(rights, CAP_FLOCK);
+		return false;
+	case F_GETSIG:
+	case F_SETSIG:
+		cap_rights_init(rights, CAP_POLL_EVENT, CAP_FSIGNAL);
+		return false;
+	case F_GETLEASE:
+	case F_SETLEASE:
+		cap_rights_init(rights, CAP_FLOCK, CAP_FSIGNAL);
+		return false;
+	case F_NOTIFY:
+		cap_rights_init(rights, CAP_NOTIFY);
+		return false;
+	case F_SETPIPE_SZ:
+		cap_rights_init(rights, CAP_SETSOCKOPT);
+		return false;
+	case F_GETPIPE_SZ:
+		cap_rights_init(rights, CAP_GETSOCKOPT);
+		return false;
+	case F_ADD_SEALS:
+		cap_rights_init(rights, CAP_FCHMOD);
+		return false;
+	case F_GET_SEALS:
+		cap_rights_init(rights, CAP_FSTAT);
+		return false;
+	default:
+		cap_rights_set_all(rights);
+		return false;
+	}
+}
+
+static inline struct fd fcntl_fdget_raw(unsigned int fd, unsigned int cmd,
+					struct capsicum_rights *rights)
+{
+	struct fd f;
+
+	if (fcntl_rights(cmd, rights)) {
+		/* Use the file directly, don't attempt to unwrap */
+		f = fdget_raw(fd);
+		if (f.file == NULL)
+			f.file = ERR_PTR(-EBADF);
+	} else {
+		f = fdget_raw_rights(fd, NULL, rights);
+	}
+	return f;
+}
+
 SYSCALL_DEFINE3(fcntl, unsigned int, fd, unsigned int, cmd, unsigned long, arg)
-{	
-	struct fd f = fdget_raw(fd);
+{
+	struct capsicum_rights rights;
+	struct fd f = fcntl_fdget_raw(fd, cmd, &rights);
 	long err = -EBADF;
 
-	if (!f.file)
+	if (IS_ERR(f.file)) {
+		err = PTR_ERR(f.file);
 		goto out;
+	}
 
 	if (unlikely(f.file->f_mode & FMODE_PATH)) {
 		if (!check_fcntl_cmd(cmd))
@@ -379,12 +471,15 @@ out:
 #if BITS_PER_LONG == 32
 SYSCALL_DEFINE3(fcntl64, unsigned int, fd, unsigned int, cmd,
 		unsigned long, arg)
-{	
-	struct fd f = fdget_raw(fd);
+{
+	struct capsicum_rights rights;
+	struct fd f = fcntl_fdget_raw(fd, cmd, &rights);
 	long err = -EBADF;
 
-	if (!f.file)
+	if (IS_ERR(f.file)) {
+		err = PTR_ERR(f.file);
 		goto out;
+	}
 
 	if (unlikely(f.file->f_mode & FMODE_PATH)) {
 		if (!check_fcntl_cmd(cmd))

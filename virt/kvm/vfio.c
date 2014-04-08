@@ -125,9 +125,9 @@ static int kvm_vfio_set_group(struct kvm_device *dev, long attr, u64 arg)
 		if (get_user(fd, argp))
 			return -EFAULT;
 
-		f = fdget(fd);
-		if (!f.file)
-			return -EBADF;
+		f = fdgetr(fd, CAP_FSTAT);
+		if (IS_ERR(f.file))
+			return PTR_ERR(f.file);
 
 		vfio_group = kvm_vfio_group_get_external_user(f.file);
 		fdput(f);
@@ -165,9 +165,9 @@ static int kvm_vfio_set_group(struct kvm_device *dev, long attr, u64 arg)
 		if (get_user(fd, argp))
 			return -EFAULT;
 
-		f = fdget(fd);
-		if (!f.file)
-			return -EBADF;
+		f = fdgetr(fd, CAP_FSTAT);
+		if (IS_ERR(f.file))
+			return PTR_ERR(f.file);
 
 		vfio_group = kvm_vfio_group_get_external_user(f.file);
 		fdput(f);

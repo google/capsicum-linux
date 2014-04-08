@@ -134,7 +134,7 @@ struct socket *usnic_transport_get_socket(int sock_fd)
 	char buf[25];
 
 	/* sockfd_lookup will internally do a fget */
-	sock = sockfd_lookup(sock_fd, &err);
+	sock = sockfd_lookupr(sock_fd, &err, CAP_SOCK_SERVER);
 	if (!sock) {
 		usnic_err("Unable to lookup socket for fd %d with err %d\n",
 				sock_fd, err);

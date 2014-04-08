@@ -565,8 +565,8 @@ SYSCALL_DEFINE3(readahead, int, fd, loff_t, offset, size_t, count)
 	struct fd f;
 
 	ret = -EBADF;
-	f = fdget(fd);
-	if (f.file) {
+	f = fdgetr(fd, CAP_PREAD);
+	if (!IS_ERR(f.file)) {
 		if (f.file->f_mode & FMODE_READ) {
 			struct address_space *mapping = f.file->f_mapping;
 			pgoff_t start = offset >> PAGE_CACHE_SHIFT;
@@ -575,6 +575,8 @@ SYSCALL_DEFINE3(readahead, int, fd, loff_t, offset, size_t, count)
 			ret = do_readahead(mapping, f.file, start, len);
 		}
 		fdput(f);
+	} else {
+		ret = PTR_ERR(f.file);
 	}
 	return ret;
 }

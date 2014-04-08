@@ -149,7 +149,7 @@ static int map_lookup_elem(union bpf_attr *attr)
 	void __user *ukey = u64_to_ptr(attr->key);
 	void __user *uvalue = u64_to_ptr(attr->value);
 	int ufd = attr->map_fd;
-	struct fd f = fdget(ufd);
+	struct fd f = fdgetr(ufd, CAP_BPF);
 	struct bpf_map *map;
 	void *key, *value, *ptr;
 	int err;
@@ -207,7 +207,7 @@ static int map_update_elem(union bpf_attr *attr)
 	void __user *ukey = u64_to_ptr(attr->key);
 	void __user *uvalue = u64_to_ptr(attr->value);
 	int ufd = attr->map_fd;
-	struct fd f = fdget(ufd);
+	struct fd f = fdgetr(ufd, CAP_BPF);
 	struct bpf_map *map;
 	void *key, *value;
 	int err;
@@ -259,7 +259,7 @@ static int map_delete_elem(union bpf_attr *attr)
 {
 	void __user *ukey = u64_to_ptr(attr->key);
 	int ufd = attr->map_fd;
-	struct fd f = fdget(ufd);
+	struct fd f = fdgetr(ufd, CAP_BPF);
 	struct bpf_map *map;
 	void *key;
 	int err;
@@ -299,7 +299,7 @@ static int map_get_next_key(union bpf_attr *attr)
 	void __user *ukey = u64_to_ptr(attr->key);
 	void __user *unext_key = u64_to_ptr(attr->next_key);
 	int ufd = attr->map_fd;
-	struct fd f = fdget(ufd);
+	struct fd f = fdgetr(ufd, CAP_BPF);
 	struct bpf_map *map;
 	void *key, *next_key;
 	int err;
@@ -456,7 +456,7 @@ static struct bpf_prog *get_prog(struct fd f)
  */
 struct bpf_prog *bpf_prog_get(u32 ufd)
 {
-	struct fd f = fdget(ufd);
+	struct fd f = fdgetr(ufd, CAP_BPF);
 	struct bpf_prog *prog;
 
 	prog = get_prog(f);
