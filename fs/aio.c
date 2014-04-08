@@ -1493,10 +1493,38 @@ rw_common:
 	return 0;
 }
 
+static struct capsicum_rights *
+aio_opcode_rights(struct capsicum_rights *rights, int opcode)
+{
+	switch (opcode) {
+	case IOCB_CMD_PREAD:
+	case IOCB_CMD_PREADV:
+		cap_rights_init(rights, CAP_PREAD);
+		break;
+
+	case IOCB_CMD_PWRITE:
+	case IOCB_CMD_PWRITEV:
+		cap_rights_init(rights, CAP_PWRITE);
+		break;
+
+	case IOCB_CMD_FSYNC:
+	case IOCB_CMD_FDSYNC:
+		cap_rights_init(rights, CAP_FSYNC);
+		break;
+
+	default:
+		cap_rights_init(rights, CAP_PREAD, CAP_PWRITE, CAP_POLL_EVENT,
+				CAP_FSYNC);
+		break;
+	}
+	return rights;
+}
+
 static int io_submit_one(struct kioctx *ctx, struct iocb __user *user_iocb,
 			 struct iocb *iocb, bool compat)
 {
 	struct aio_kiocb *req;
+	struct capsicum_rights rights;
 	ssize_t ret;
 
 	/* enforce forwards compatibility on users */
@@ -1519,9 +1547,12 @@ static int io_submit_one(struct kioctx *ctx, struct iocb __user *user_iocb,
 	if (unlikely(!req))
 		return -EAGAIN;
 
-	req->common.ki_filp = fget(iocb->aio_fildes);
-	if (unlikely(!req->common.ki_filp)) {
-		ret = -EBADF;
+	req->common.ki_filp = fget_rights(iocb->aio_fildes,
+					  aio_opcode_rights(&rights,
+							iocb->aio_lio_opcode));
+	if (unlikely(IS_ERR(req->common.ki_filp))) {
+		ret = PTR_ERR(req->common.ki_filp);
+		req->common.ki_filp = NULL;
 		goto out_put_req;
 	}
 	req->common.ki_pos = iocb->aio_offset;

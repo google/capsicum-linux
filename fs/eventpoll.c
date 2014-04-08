@@ -1833,15 +1833,18 @@ SYSCALL_DEFINE4(epoll_ctl, int, epfd, int, op, int, fd,
 	    copy_from_user(&epds, event, sizeof(struct epoll_event)))
 		goto error_return;
 
-	error = -EBADF;
-	f = fdget(epfd);
-	if (!f.file)
+	f = fdgetr(epfd, CAP_EPOLL_CTL);
+	if (IS_ERR(f.file)) {
+		error = PTR_ERR(f.file);
 		goto error_return;
+	}
 
 	/* Get the "struct file *" for the target file */
-	tf = fdget(fd);
-	if (!tf.file)
+	tf = fdgetr(fd, CAP_POLL_EVENT);
+	if (IS_ERR(tf.file)) {
+		error = PTR_ERR(tf.file);
 		goto error_fput;
+	}
 
 	/* The target file descriptor must support poll */
 	error = -EPERM;
@@ -1974,9 +1977,9 @@ SYSCALL_DEFINE4(epoll_wait, int, epfd, struct epoll_event __user *, events,
 		return -EFAULT;
 
 	/* Get the "struct file *" for the eventpoll file */
-	f = fdget(epfd);
-	if (!f.file)
-		return -EBADF;
+	f = fdgetr(epfd, CAP_POLL_EVENT);
+	if (IS_ERR(f.file))
+		return PTR_ERR(f.file);
 
 	/*
 	 * We have to check that the file structure underneath the fd

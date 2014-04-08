@@ -128,8 +128,8 @@ struct bpf_map *bpf_map_get(struct fd f)
 {
 	struct bpf_map *map;
 
-	if (!f.file)
-		return ERR_PTR(-EBADF);
+	if (IS_ERR(f.file))
+		return ERR_PTR(PTR_ERR(f.file));
 
 	if (f.file->f_op != &bpf_map_fops) {
 		fdput(f);
@@ -163,7 +163,7 @@ static int map_lookup_elem(union bpf_attr *attr)
 	if (CHECK_ATTR(BPF_MAP_LOOKUP_ELEM))
 		return -EINVAL;
 
-	f = fdget(ufd);
+	f = fdgetr(ufd, CAP_BPF);
 	map = bpf_map_get(f);
 	if (IS_ERR(map))
 		return PTR_ERR(map);
@@ -222,7 +222,7 @@ static int map_update_elem(union bpf_attr *attr)
 	if (CHECK_ATTR(BPF_MAP_UPDATE_ELEM))
 		return -EINVAL;
 
-	f = fdget(ufd);
+	f = fdgetr(ufd, CAP_BPF);
 	map = bpf_map_get(f);
 	if (IS_ERR(map))
 		return PTR_ERR(map);
@@ -275,7 +275,7 @@ static int map_delete_elem(union bpf_attr *attr)
 	if (CHECK_ATTR(BPF_MAP_DELETE_ELEM))
 		return -EINVAL;
 
-	f = fdget(ufd);
+	f = fdgetr(ufd, CAP_BPF);
 	map = bpf_map_get(f);
 	if (IS_ERR(map))
 		return PTR_ERR(map);
@@ -316,7 +316,7 @@ static int map_get_next_key(union bpf_attr *attr)
 	if (CHECK_ATTR(BPF_MAP_GET_NEXT_KEY))
 		return -EINVAL;
 
-	f = fdget(ufd);
+	f = fdgetr(ufd, CAP_BPF);
 	map = bpf_map_get(f);
 	if (IS_ERR(map))
 		return PTR_ERR(map);
@@ -496,7 +496,7 @@ static struct bpf_prog *get_prog(struct fd f)
  */
 struct bpf_prog *bpf_prog_get(u32 ufd)
 {
-	struct fd f = fdget(ufd);
+	struct fd f = fdgetr(ufd, CAP_BPF);
 	struct bpf_prog *prog;
 
 	prog = get_prog(f);

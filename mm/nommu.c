@@ -1462,13 +1462,17 @@ SYSCALL_DEFINE6(mmap_pgoff, unsigned long, addr, unsigned long, len,
 		unsigned long, fd, unsigned long, pgoff)
 {
 	struct file *file = NULL;
-	unsigned long retval = -EBADF;
+	unsigned long retval;
 
 	audit_mmap_fd(fd, flags);
 	if (!(flags & MAP_ANONYMOUS)) {
-		file = fget(fd);
-		if (!file)
+		struct capsicum_rights rights;
+
+		file = fget_rights(fd, mmap_rights(&rights, prot, flags));
+		if (IS_ERR(file)) {
+			retval = PTR_ERR(file);
 			goto out;
+		}
 	}
 
 	flags &= ~(MAP_EXECUTABLE | MAP_DENYWRITE);

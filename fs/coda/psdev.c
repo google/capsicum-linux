@@ -188,7 +188,7 @@ static ssize_t coda_psdev_write(struct file *file, const char __user *buf,
 		struct coda_open_by_fd_out *outp =
 			(struct coda_open_by_fd_out *)req->uc_data;
 		if (!outp->oh.result)
-			outp->fh = fget(outp->fd);
+			outp->fh = fgetr(outp->fd, CAP_LIST_END);
 	}
 
         wake_up(&req->uc_sleep);
