@@ -159,10 +159,11 @@ static long do_sys_ftruncate(unsigned int fd, loff_t length, int small)
 	error = -EINVAL;
 	if (length < 0)
 		goto out;
-	error = -EBADF;
-	f = fdget(fd);
-	if (!f.file)
+	f = fdgetr(fd, CAP_FTRUNCATE);
+	if (IS_ERR(f.file)) {
+		error = PTR_ERR(f.file);
 		goto out;
+	}
 
 	/* explicitly opened as large or we are on 64-bit box */
 	if (f.file->f_flags & O_LARGEFILE)
@@ -313,12 +314,14 @@ EXPORT_SYMBOL_GPL(vfs_fallocate);
 
 SYSCALL_DEFINE4(fallocate, int, fd, int, mode, loff_t, offset, loff_t, len)
 {
-	struct fd f = fdget(fd);
-	int error = -EBADF;
+	struct fd f = fdgetr(fd, CAP_WRITE);
+	int error;
 
-	if (f.file) {
+	if (!IS_ERR(f.file)) {
 		error = vfs_fallocate(f.file, mode, offset, len);
 		fdput(f);
+	} else {
+		error = PTR_ERR(f.file);
 	}
 	return error;
 }
@@ -359,7 +362,7 @@ SYSCALL_DEFINE3(faccessat, int, dfd, const char __user *, filename, int, mode)
 
 	old_cred = override_creds(override_cred);
 retry:
-	res = user_path_at(dfd, filename, lookup_flags, &path);
+	res = user_path_atr(dfd, filename, lookup_flags, &path, CAP_FSTAT);
 	if (res)
 		goto out;
 
@@ -437,13 +440,14 @@ out:
 
 SYSCALL_DEFINE1(fchdir, unsigned int, fd)
 {
-	struct fd f = fdget_raw(fd);
+	struct fd f = fdgetr_raw(fd, CAP_FCHDIR);
 	struct inode *inode;
 	int error = -EBADF;
 
-	error = -EBADF;
-	if (!f.file)
+	if (IS_ERR(f.file)) {
+		error = PTR_ERR(f.file);
 		goto out;
+	}
 
 	inode = file_inode(f.file);
 
@@ -524,13 +528,15 @@ out_unlock:
 
 SYSCALL_DEFINE2(fchmod, unsigned int, fd, umode_t, mode)
 {
-	struct fd f = fdget(fd);
+	struct fd f = fdgetr(fd, CAP_FCHMOD);
 	int err = -EBADF;
 
-	if (f.file) {
+	if (!IS_ERR(f.file)) {
 		audit_file(f.file);
 		err = chmod_common(&f.file->f_path, mode);
 		fdput(f);
+	} else {
+		err = PTR_ERR(f.file);
 	}
 	return err;
 }
@@ -541,7 +547,7 @@ SYSCALL_DEFINE3(fchmodat, int, dfd, const char __user *, filename, umode_t, mode
 	int error;
 	unsigned int lookup_flags = LOOKUP_FOLLOW;
 retry:
-	error = user_path_at(dfd, filename, lookup_flags, &path);
+	error = user_path_atr(dfd, filename, lookup_flags, &path, CAP_FCHMODAT);
 	if (!error) {
 		error = chmod_common(&path, mode);
 		path_put(&path);
@@ -614,7 +620,7 @@ SYSCALL_DEFINE5(fchownat, int, dfd, const char __user *, filename, uid_t, user,
 	if (flag & AT_EMPTY_PATH)
 		lookup_flags |= LOOKUP_EMPTY;
 retry:
-	error = user_path_at(dfd, filename, lookup_flags, &path);
+	error = user_path_atr(dfd, filename, lookup_flags, &path, CAP_FCHOWNAT);
 	if (error)
 		goto out;
 	error = mnt_want_write(path.mnt);
@@ -645,11 +651,13 @@ SYSCALL_DEFINE3(lchown, const char __user *, filename, uid_t, user, gid_t, group
 
 SYSCALL_DEFINE3(fchown, unsigned int, fd, uid_t, user, gid_t, group)
 {
-	struct fd f = fdget(fd);
-	int error = -EBADF;
+	struct fd f = fdgetr(fd, CAP_FCHOWN);
+	int error;
 
-	if (!f.file)
+	if (IS_ERR(f.file)) {
+		error = PTR_ERR(f.file);
 		goto out;
+	}
 
 	error = mnt_want_write_file(f.file);
 	if (error)

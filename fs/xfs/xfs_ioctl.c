@@ -73,9 +73,9 @@ xfs_find_handle(
 	struct xfs_inode	*ip;
 
 	if (cmd == XFS_IOC_FD_TO_HANDLE) {
-		f = fdget(hreq->fd);
-		if (!f.file)
-			return -EBADF;
+		f = fdgetr(hreq->fd, CAP_FSTAT);
+		if (IS_ERR(f.file))
+			return PTR_ERR(f.file);
 		inode = file_inode(f.file);
 	} else {
 		error = user_lpath((const char __user *)hreq->path, &path);
@@ -1449,8 +1449,8 @@ xfs_ioc_swapext(
 	int		error = 0;
 
 	/* Pull information for the target fd */
-	f = fdget((int)sxp->sx_fdtarget);
-	if (!f.file) {
+	f = fdgetr((int)sxp->sx_fdtarget, CAP_READ, CAP_WRITE, CAP_FSTAT);
+	if (IS_ERR(f.file)) {
 		error = -EINVAL;
 		goto out;
 	}
@@ -1462,8 +1462,8 @@ xfs_ioc_swapext(
 		goto out_put_file;
 	}
 
-	tmp = fdget((int)sxp->sx_fdtmp);
-	if (!tmp.file) {
+	tmp = fdgetr((int)sxp->sx_fdtmp, CAP_READ, CAP_WRITE, CAP_FSTAT);
+	if (IS_ERR(tmp.file)) {
 		error = -EINVAL;
 		goto out_put_file;
 	}

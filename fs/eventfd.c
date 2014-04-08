@@ -316,16 +316,17 @@ static const struct file_operations eventfd_fops = {
  * Returns a pointer to the eventfd file structure in case of success, or the
  * following error pointer:
  *
- * -EBADF    : Invalid @fd file descriptor.
- * -EINVAL   : The @fd file descriptor is not an eventfd file.
+ * -EBADF       : Invalid @fd file descriptor.
+ * -ENOTCAPABLE : The @fd file descriptor does not have the required rights.
+ * -EINVAL      : The @fd file descriptor is not an eventfd file.
  */
 struct file *eventfd_fget(int fd)
 {
 	struct file *file;
 
-	file = fget(fd);
-	if (!file)
-		return ERR_PTR(-EBADF);
+	file = fgetr(fd, CAP_WRITE);
+	if (IS_ERR(file))
+		return file;
 	if (file->f_op != &eventfd_fops) {
 		fput(file);
 		return ERR_PTR(-EINVAL);
@@ -347,9 +348,10 @@ EXPORT_SYMBOL_GPL(eventfd_fget);
 struct eventfd_ctx *eventfd_ctx_fdget(int fd)
 {
 	struct eventfd_ctx *ctx;
-	struct fd f = fdget(fd);
-	if (!f.file)
-		return ERR_PTR(-EBADF);
+	struct fd f = fdgetr(fd, CAP_WRITE);
+
+	if (IS_ERR(f.file))
+		return (struct eventfd_ctx *) f.file;
 	ctx = eventfd_ctx_fileget(f.file);
 	fdput(f);
 	return ctx;

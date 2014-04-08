@@ -1415,10 +1415,13 @@ SYSCALL_DEFINE6(mmap_pgoff, unsigned long, addr, unsigned long, len,
 	unsigned long retval = -EBADF;
 
 	if (!(flags & MAP_ANONYMOUS)) {
+		struct capsicum_rights rights;
 		audit_mmap_fd(fd, flags);
-		file = fget(fd);
-		if (!file)
+		file = fget_rights(fd, mmap_rights(&rights, prot, flags));
+		if (IS_ERR(file)) {
+			retval = PTR_ERR(file);
 			goto out;
+		}
 		if (is_file_hugepages(file))
 			len = ALIGN(len, huge_page_size(hstate_file(file)));
 		retval = -EINVAL;

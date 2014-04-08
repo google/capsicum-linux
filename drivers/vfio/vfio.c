@@ -1036,9 +1036,9 @@ static int vfio_group_set_container(struct vfio_group *group, int container_fd)
 	if (atomic_read(&group->container_users))
 		return -EINVAL;
 
-	f = fdget(container_fd);
-	if (!f.file)
-		return -EBADF;
+	f = fdgetr(container_fd, CAP_LIST_END);
+	if (IS_ERR(f.file))
+		return PTR_ERR(f.file);
 
 	/* Sanity check, is this really our fd? */
 	if (f.file->f_op != &vfio_fops) {

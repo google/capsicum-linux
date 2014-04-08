@@ -1648,9 +1648,9 @@ static int prctl_set_mm_exe_file_locked(struct mm_struct *mm, unsigned int fd)
 
 	VM_BUG_ON_MM(!rwsem_is_locked(&mm->mmap_sem), mm);
 
-	exe = fdget(fd);
-	if (!exe.file)
-		return -EBADF;
+	exe = fdgetr(fd, CAP_FEXECVE);
+	if (IS_ERR(exe.file))
+		return PTR_ERR(exe.file);
 
 	inode = file_inode(exe.file);
 

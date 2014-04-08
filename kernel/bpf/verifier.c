@@ -1796,7 +1796,7 @@ static int replace_map_fd_with_map_ptr(struct verifier_env *env)
 				return -EINVAL;
 			}
 
-			f = fdget(insn->imm);
+			f = fdgetr(insn->imm, CAP_BPF);
 
 			map = bpf_map_get(f);
 			if (IS_ERR(map)) {

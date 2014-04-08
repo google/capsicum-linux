@@ -132,9 +132,12 @@ static ssize_t mdc_kuc_write(struct file *file, const char *buffer,
 	if (fd == 0) {
 		rc = libcfs_kkuc_group_put(KUC_GRP_HSM, lh);
 	} else {
-		struct file *fp = fget(fd);
+		struct file *fp = fgetr(fd, CAP_WRITE);
 
-		rc = libcfs_kkuc_msg_put(fp, lh);
+		if (IS_ERR(fp))
+			rc = PTR_ERR(fp);
+		else
+			rc = libcfs_kkuc_msg_put(fp, lh);
 		fput(fp);
 	}
 	OBD_FREE(lh, len);

@@ -1012,11 +1012,15 @@ static int fuse_fill_super(struct super_block *sb, void *data, int silent)
 	sb->s_time_gran = 1;
 	sb->s_export_op = &fuse_export_operations;
 
-	file = fget(d.fd);
-	err = -EINVAL;
-	if (!file)
+	file = fgetr(d.fd, CAP_READ, CAP_WRITE);
+	if (IS_ERR(file)) {
+		err = PTR_ERR(file);
+		if (err == -EBADF)
+			err = -EINVAL;
 		goto err;
+	}
 
+	err = -EINVAL;
 	if ((file->f_op != &fuse_dev_operations) ||
 	    (file->f_cred->user_ns != &init_user_ns))
 		goto err_fput;

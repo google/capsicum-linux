@@ -404,11 +404,11 @@ SYSCALL_DEFINE5(lsetxattr, const char __user *, pathname,
 SYSCALL_DEFINE5(fsetxattr, int, fd, const char __user *, name,
 		const void __user *,value, size_t, size, int, flags)
 {
-	struct fd f = fdget(fd);
-	int error = -EBADF;
+	struct fd f = fdgetr(fd, CAP_EXTATTR_SET);
+	int error;
 
-	if (!f.file)
-		return error;
+	if (IS_ERR(f.file))
+		return PTR_ERR(f.file);
 	audit_file(f.file);
 	error = mnt_want_write_file(f.file);
 	if (!error) {
@@ -502,11 +502,11 @@ SYSCALL_DEFINE4(lgetxattr, const char __user *, pathname,
 SYSCALL_DEFINE4(fgetxattr, int, fd, const char __user *, name,
 		void __user *, value, size_t, size)
 {
-	struct fd f = fdget(fd);
+	struct fd f = fdgetr(fd, CAP_EXTATTR_GET);
 	ssize_t error = -EBADF;
 
-	if (!f.file)
-		return error;
+	if (IS_ERR(f.file))
+		return PTR_ERR(f.file);
 	audit_file(f.file);
 	error = getxattr(f.file->f_path.dentry, name, value, size);
 	fdput(f);
@@ -583,11 +583,11 @@ SYSCALL_DEFINE3(llistxattr, const char __user *, pathname, char __user *, list,
 
 SYSCALL_DEFINE3(flistxattr, int, fd, char __user *, list, size_t, size)
 {
-	struct fd f = fdget(fd);
+	struct fd f = fdgetr(fd, CAP_EXTATTR_LIST);
 	ssize_t error = -EBADF;
 
-	if (!f.file)
-		return error;
+	if (IS_ERR(f.file))
+		return PTR_ERR(f.file);
 	audit_file(f.file);
 	error = listxattr(f.file->f_path.dentry, list, size);
 	fdput(f);
@@ -648,11 +648,11 @@ SYSCALL_DEFINE2(lremovexattr, const char __user *, pathname,
 
 SYSCALL_DEFINE2(fremovexattr, int, fd, const char __user *, name)
 {
-	struct fd f = fdget(fd);
+	struct fd f = fdgetr(fd, CAP_EXTATTR_DELETE);
 	int error = -EBADF;
 
-	if (!f.file)
-		return error;
+	if (IS_ERR(f.file))
+		return PTR_ERR(f.file);
 	audit_file(f.file);
 	error = mnt_want_write_file(f.file);
 	if (!error) {

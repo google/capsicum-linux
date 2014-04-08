@@ -651,7 +651,7 @@ static int __nbd_ioctl(struct block_device *bdev, struct nbd_device *nbd,
 			nbd->disconnect = 0; /* we're connected now */
 			return 0;
 		}
-		return -EINVAL;
+		return err;
 	}
 
 	case NBD_SET_BLKSIZE:

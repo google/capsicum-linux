@@ -360,6 +360,32 @@ static const struct file_operations timerfd_fops = {
 	.unlocked_ioctl	= timerfd_ioctl,
 };
 
+#ifdef CONFIG_SECURITY_CAPSICUM
+#define timerfd_fgetr(f, p, ...) \
+	_timerfd_fgetr((f), (p), __VA_ARGS__, 0ULL)
+static int _timerfd_fgetr(int fd, struct fd *p, ...)
+{
+	struct capsicum_rights rights;
+	struct fd f;
+	va_list ap;
+
+	va_start(ap, p);
+	f = fdget_rights(fd, cap_rights_vinit(&rights, ap));
+	va_end(ap);
+	if (IS_ERR(f.file))
+		return PTR_ERR(f.file);
+	if (f.file->f_op != &timerfd_fops) {
+		fdput(f);
+		return -EINVAL;
+	}
+	*p = f;
+	return 0;
+}
+
+#else
+
+#define timerfd_fgetr(f, p, ...) \
+	timerfd_fget((f), (p))
 static int timerfd_fget(int fd, struct fd *p)
 {
 	struct fd f = fdget(fd);
@@ -372,6 +398,8 @@ static int timerfd_fget(int fd, struct fd *p)
 	*p = f;
 	return 0;
 }
+
+#endif
 
 SYSCALL_DEFINE2(timerfd_create, int, clockid, int, flags)
 {
@@ -428,7 +456,7 @@ static int do_timerfd_settime(int ufd, int flags,
 	    !timespec_valid(&new->it_interval))
 		return -EINVAL;
 
-	ret = timerfd_fget(ufd, &f);
+	ret = timerfd_fgetr(ufd, &f, CAP_WRITE, (old ? CAP_READ : 0));
 	if (ret)
 		return ret;
 	ctx = f.file->private_data;
@@ -466,8 +494,10 @@ static int do_timerfd_settime(int ufd, int flags,
 			hrtimer_forward_now(&ctx->t.tmr, ctx->tintv);
 	}
 
-	old->it_value = ktime_to_timespec(timerfd_get_remaining(ctx));
-	old->it_interval = ktime_to_timespec(ctx->tintv);
+	if (old) {
+		old->it_value = ktime_to_timespec(timerfd_get_remaining(ctx));
+		old->it_interval = ktime_to_timespec(ctx->tintv);
+	}
 
 	/*
 	 * Re-program the timer to the new value ...
@@ -483,7 +513,7 @@ static int do_timerfd_gettime(int ufd, struct itimerspec *t)
 {
 	struct fd f;
 	struct timerfd_ctx *ctx;
-	int ret = timerfd_fget(ufd, &f);
+	int ret = timerfd_fgetr(ufd, &f, CAP_READ);
 	if (ret)
 		return ret;
 	ctx = f.file->private_data;
@@ -520,7 +550,7 @@ SYSCALL_DEFINE4(timerfd_settime, int, ufd, int, flags,
 
 	if (copy_from_user(&new, utmr, sizeof(new)))
 		return -EFAULT;
-	ret = do_timerfd_settime(ufd, flags, &new, &old);
+	ret = do_timerfd_settime(ufd, flags, &new, otmr ? &old : NULL);
 	if (ret)
 		return ret;
 	if (otmr && copy_to_user(otmr, &old, sizeof(old)))
