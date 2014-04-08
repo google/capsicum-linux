@@ -1854,9 +1854,11 @@ static ssize_t o2hb_region_dev_store(struct config_item *item,
 	if (fd < 0 || fd >= INT_MAX)
 		goto out;
 
-	f = fdget(fd);
-	if (f.file == NULL)
+	f = fdgetr(fd, CAP_FSTAT);
+	if (IS_ERR(f.file)) {
+		ret = map_ebadf_to(f.file, -EINVAL);
 		goto out;
+	}
 
 	if (reg->hr_blocks == 0 || reg->hr_start_block == 0 ||
 	    reg->hr_block_bytes == 0)

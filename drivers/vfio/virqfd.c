@@ -128,9 +128,9 @@ int vfio_virqfd_enable(void *opaque,
 	INIT_WORK(&virqfd->shutdown, virqfd_shutdown);
 	INIT_WORK(&virqfd->inject, virqfd_inject);
 
-	irqfd = fdget(fd);
-	if (!irqfd.file) {
-		ret = -EBADF;
+	irqfd = fdgetr(fd, CAP_WRITE);
+	if (IS_ERR(irqfd.file)) {
+		ret = PTR_ERR(irqfd.file);
 		goto err_fd;
 	}
 

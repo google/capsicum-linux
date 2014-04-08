@@ -1172,8 +1172,8 @@ static int kvm_vcpu_ioctl_enable_cap(struct kvm_vcpu *vcpu,
 		struct kvm_device *dev;
 
 		r = -EBADF;
-		f = fdget(cap->args[0]);
-		if (!f.file)
+		f = fdgetr(cap->args[0], CAP_FSTAT);
+		if (IS_ERR(f.file))
 			break;
 
 		r = -EPERM;
@@ -1191,8 +1191,8 @@ static int kvm_vcpu_ioctl_enable_cap(struct kvm_vcpu *vcpu,
 		struct kvm_device *dev;
 
 		r = -EBADF;
-		f = fdget(cap->args[0]);
-		if (!f.file)
+		f = fdgetr(cap->args[0], CAP_FSTAT);
+		if (IS_ERR(f.file))
 			break;
 
 		r = -EPERM;
