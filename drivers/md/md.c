@@ -6330,12 +6330,12 @@ static int set_bitmap_file(struct mddev *mddev, int fd)
 
 		if (mddev->bitmap || mddev->bitmap_info.file)
 			return -EEXIST; /* cannot add when bitmap is present */
-		f = fget(fd);
+		f = fgetr(fd, CAP_READ);
 
-		if (f == NULL) {
+		if (IS_ERR(f)) {
 			pr_warn("%s: error: failed to get bitmap file\n",
 				mdname(mddev));
-			return -EBADF;
+			return PTR_ERR(f);
 		}
 
 		inode = f->f_mapping->host;
