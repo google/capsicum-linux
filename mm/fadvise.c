@@ -27,7 +27,7 @@
  */
 SYSCALL_DEFINE4(fadvise64_64, int, fd, loff_t, offset, loff_t, len, int, advice)
 {
-	struct fd f = fdget(fd);
+	struct fd f;
 	struct address_space *mapping;
 	struct backing_dev_info *bdi;
 	loff_t endbyte;			/* inclusive */
@@ -36,8 +36,9 @@ SYSCALL_DEFINE4(fadvise64_64, int, fd, loff_t, offset, loff_t, len, int, advice)
 	unsigned long nrpages;
 	int ret = 0;
 
-	if (!f.file)
-		return -EBADF;
+	f = fdgetr(fd, CAP_LIST_END);
+	if (IS_ERR(f.file))
+		return PTR_ERR(f.file);
 
 	if (S_ISFIFO(file_inode(f.file)->i_mode)) {
 		ret = -ESPIPE;
