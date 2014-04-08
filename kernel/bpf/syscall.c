@@ -208,8 +208,8 @@ free_map:
  */
 struct bpf_map *__bpf_map_get(struct fd f)
 {
-	if (!f.file)
-		return ERR_PTR(-EBADF);
+	if (IS_ERR(f.file))
+		return ERR_PTR(PTR_ERR(f.file));
 	if (f.file->f_op != &bpf_map_fops) {
 		fdput(f);
 		return ERR_PTR(-EINVAL);
@@ -234,7 +234,7 @@ struct bpf_map *bpf_map_inc(struct bpf_map *map, bool uref)
 
 struct bpf_map *bpf_map_get_with_uref(u32 ufd)
 {
-	struct fd f = fdget(ufd);
+	struct fd f = fdgetr(ufd, CAP_BPF);
 	struct bpf_map *map;
 
 	map = __bpf_map_get(f);
@@ -275,7 +275,7 @@ static int map_lookup_elem(union bpf_attr *attr)
 	if (CHECK_ATTR(BPF_MAP_LOOKUP_ELEM))
 		return -EINVAL;
 
-	f = fdget(ufd);
+	f = fdgetr(ufd, CAP_BPF);
 	map = __bpf_map_get(f);
 	if (IS_ERR(map))
 		return PTR_ERR(map);
@@ -349,7 +349,7 @@ static int map_update_elem(union bpf_attr *attr)
 	if (CHECK_ATTR(BPF_MAP_UPDATE_ELEM))
 		return -EINVAL;
 
-	f = fdget(ufd);
+	f = fdgetr(ufd, CAP_BPF);
 	map = __bpf_map_get(f);
 	if (IS_ERR(map))
 		return PTR_ERR(map);
@@ -418,7 +418,7 @@ static int map_delete_elem(union bpf_attr *attr)
 	if (CHECK_ATTR(BPF_MAP_DELETE_ELEM))
 		return -EINVAL;
 
-	f = fdget(ufd);
+	f = fdgetr(ufd, CAP_BPF);
 	map = __bpf_map_get(f);
 	if (IS_ERR(map))
 		return PTR_ERR(map);
@@ -463,7 +463,7 @@ static int map_get_next_key(union bpf_attr *attr)
 	if (CHECK_ATTR(BPF_MAP_GET_NEXT_KEY))
 		return -EINVAL;
 
-	f = fdget(ufd);
+	f = fdgetr(ufd, CAP_BPF);
 	map = __bpf_map_get(f);
 	if (IS_ERR(map))
 		return PTR_ERR(map);
@@ -655,8 +655,8 @@ int bpf_prog_new_fd(struct bpf_prog *prog)
 
 static struct bpf_prog *__bpf_prog_get(struct fd f)
 {
-	if (!f.file)
-		return ERR_PTR(-EBADF);
+	if (IS_ERR(f.file))
+		return ERR_PTR(PTR_ERR(f.file));
 	if (f.file->f_op != &bpf_prog_fops) {
 		fdput(f);
 		return ERR_PTR(-EINVAL);
@@ -679,7 +679,7 @@ struct bpf_prog *bpf_prog_inc(struct bpf_prog *prog)
  */
 struct bpf_prog *bpf_prog_get(u32 ufd)
 {
-	struct fd f = fdget(ufd);
+	struct fd f = fdgetr(ufd, CAP_BPF);
 	struct bpf_prog *prog;
 
 	prog = __bpf_prog_get(f);

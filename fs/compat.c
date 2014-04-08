@@ -884,14 +884,14 @@ COMPAT_SYSCALL_DEFINE3(old_readdir, unsigned int, fd,
 		struct compat_old_linux_dirent __user *, dirent, unsigned int, count)
 {
 	int error;
-	struct fd f = fdget(fd);
+	struct fd f = fdgetr(fd, CAP_READ);
 	struct compat_readdir_callback buf = {
 		.ctx.actor = compat_fillonedir,
 		.dirent = dirent
 	};
 
-	if (!f.file)
-		return -EBADF;
+	if (IS_ERR(f.file))
+		return PTR_ERR(f.file);
 
 	error = iterate_dir(f.file, &buf.ctx);
 	if (buf.result)
@@ -975,9 +975,9 @@ COMPAT_SYSCALL_DEFINE3(getdents, unsigned int, fd,
 	if (!access_ok(VERIFY_WRITE, dirent, count))
 		return -EFAULT;
 
-	f = fdget(fd);
-	if (!f.file)
-		return -EBADF;
+	f = fdgetr(fd, CAP_READ);
+	if (IS_ERR(f.file))
+		return PTR_ERR(f.file);
 
 	error = iterate_dir(f.file, &buf.ctx);
 	if (error >= 0)
@@ -1062,9 +1062,9 @@ COMPAT_SYSCALL_DEFINE3(getdents64, unsigned int, fd,
 	if (!access_ok(VERIFY_WRITE, dirent, count))
 		return -EFAULT;
 
-	f = fdget(fd);
-	if (!f.file)
-		return -EBADF;
+	f = fdgetr(fd, CAP_READ);
+	if (IS_ERR(f.file))
+		return PTR_ERR(f.file);
 
 	error = iterate_dir(f.file, &buf.ctx);
 	if (error >= 0)
