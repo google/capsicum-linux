@@ -13,6 +13,8 @@
 
 #include <linux/fs.h>
 #include <linux/mm.h>
+#include <linux/mman.h>
+#include <linux/capsicum.h>
 
 /*
  * The set of flags that only affect watermark checking and reclaim
@@ -108,6 +110,23 @@ static inline void get_page_foll(struct page *page)
 		VM_BUG_ON_PAGE(atomic_read(&page->_count) <= 0, page);
 		atomic_inc(&page->_count);
 	}
+}
+
+static inline struct capsicum_rights *
+mmap_rights(struct capsicum_rights *rights,
+	    unsigned long prot,
+	    unsigned long flags)
+{
+#ifdef CONFIG_SECURITY_CAPSICUM
+	cap_rights_init(rights, CAP_MMAP);
+	if (prot & PROT_READ)
+		cap_rights_set(rights, CAP_MMAP_R);
+	if ((flags & MAP_SHARED) && (prot & PROT_WRITE))
+		cap_rights_set(rights, CAP_MMAP_W);
+	if (prot & PROT_EXEC)
+		cap_rights_set(rights, CAP_MMAP_X);
+#endif
+	return rights;
 }
 
 extern unsigned long highest_memmap_pfn;
