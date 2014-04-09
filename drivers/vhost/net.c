@@ -838,7 +838,7 @@ static struct socket *get_raw_socket(int fd)
 		char  buf[MAX_ADDR_LEN];
 	} uaddr;
 	int uaddr_len = sizeof uaddr, r;
-	struct socket *sock = sockfd_lookup(fd, &r);
+	struct socket *sock = sockfd_lookupr(fd, &r, CAP_READ, CAP_WRITE);
 
 	if (!sock)
 		return ERR_PTR(-ENOTSOCK);
