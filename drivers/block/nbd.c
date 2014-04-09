@@ -643,7 +643,8 @@ static int __nbd_ioctl(struct block_device *bdev, struct nbd_device *nbd,
 		int err;
 		if (nbd->sock)
 			return -EBUSY;
-		sock = sockfd_lookup(arg, &err);
+		sock = sockfd_lookupr(arg, &err,
+				      CAP_READ, CAP_WRITE, CAP_SHUTDOWN);
 		if (sock) {
 			nbd->sock = sock;
 			if (max_part > 0)

@@ -176,7 +176,8 @@ l2tp_session_id_hash_2(struct l2tp_net *pn, u32 session_id)
  * owned by userspace.  A struct sock returned from this function must be
  * released using l2tp_tunnel_sock_put once you're done with it.
  */
-static struct sock *l2tp_tunnel_sock_lookup(struct l2tp_tunnel *tunnel)
+static struct sock *l2tp_tunnel_sock_lookup(struct l2tp_tunnel *tunnel,
+					    struct capsicum_rights *rights)
 {
 	int err = 0;
 	struct socket *sock = NULL;
@@ -190,7 +191,7 @@ static struct sock *l2tp_tunnel_sock_lookup(struct l2tp_tunnel *tunnel)
 		 * of closing it.  Look the socket up using the fd to ensure
 		 * consistency.
 		 */
-		sock = sockfd_lookup(tunnel->fd, &err);
+		sock = sockfd_lookup_rights(tunnel->fd, &err, rights);
 		if (sock)
 			sk = sock->sk;
 	} else {
@@ -1315,9 +1316,11 @@ static void l2tp_tunnel_del_work(struct work_struct *work)
 	struct l2tp_tunnel *tunnel = NULL;
 	struct socket *sock = NULL;
 	struct sock *sk = NULL;
+	struct capsicum_rights rights;
 
 	tunnel = container_of(work, struct l2tp_tunnel, del_work);
-	sk = l2tp_tunnel_sock_lookup(tunnel);
+	sk = l2tp_tunnel_sock_lookup(tunnel,
+				     cap_rights_init(&rights, CAP_SHUTDOWN));
 	if (!sk)
 		return;
 
@@ -1490,7 +1493,7 @@ int l2tp_tunnel_create(struct net *net, int fd, int version, u32 tunnel_id, u32 
 		if (err < 0)
 			goto err;
 	} else {
-		sock = sockfd_lookup(fd, &err);
+		sock = sockfd_lookupr(fd, &err, CAP_READ, CAP_WRITE);
 		if (!sock) {
 			pr_err("tunl %u: sockfd_lookup(fd=%d) returned %d\n",
 			       tunnel_id, fd, err);
