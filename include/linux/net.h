@@ -25,6 +25,7 @@
 #include <linux/kmemcheck.h>
 #include <linux/rcupdate.h>
 #include <linux/once.h>
+#include <linux/capsicum.h>
 
 #include <uapi/linux/net.h>
 
@@ -225,6 +226,21 @@ struct socket *sockfd_lookup(int fd, int *err);
 struct socket *sock_from_file(struct file *file, int *err);
 #define		     sockfd_put(sock) fput(sock->file)
 int net_ratelimit(void);
+
+#ifdef CONFIG_SECURITY_CAPSICUM
+struct socket *sockfd_lookup_rights(int fd, int *err,
+				    struct capsicum_rights *rights);
+struct socket *_sockfd_lookupr(int fd, int *err, ...);
+#define sockfd_lookupr(fd, err, ...) \
+	_sockfd_lookupr((fd), (err), __VA_ARGS__, 0ULL)
+#else
+static inline struct socket *
+sockfd_lookup_rights(int fd, int *err, struct capsicum_rights *rights)
+{
+	return sockfd_lookup(fd, err);
+}
+#define sockfd_lookupr(fd, err, ...)	sockfd_lookup((fd), (err))
+#endif
 
 #define net_ratelimited_function(function, ...)			\
 do {								\
