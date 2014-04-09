@@ -96,6 +96,7 @@
 #include <net/compat.h>
 #include <net/wext.h>
 #include <net/cls_cgroup.h>
+#include <net/sctp/sctp.h>
 
 #include <net/sock.h>
 #include <linux/netfilter.h>
@@ -416,6 +417,108 @@ struct socket *sock_from_file(struct file *file, int *err)
 }
 EXPORT_SYMBOL(sock_from_file);
 
+static struct socket *sockfd_lookup_light(int fd, int *err, int *fput_needed)
+{
+	struct fd f = fdget(fd);
+	struct socket *sock;
+
+	*err = -EBADF;
+	if (f.file) {
+		sock = sock_from_file(f.file, err);
+		if (likely(sock)) {
+			*fput_needed = f.flags;
+			return sock;
+		}
+		fdput(f);
+	}
+	return NULL;
+}
+
+#ifdef CONFIG_SECURITY_CAPSICUM
+struct socket *sockfd_lookup_rights(int fd, int *err,
+				    struct capsicum_rights *rights)
+{
+	struct file *file;
+	struct socket *sock;
+
+	file = fget_rights(fd, rights);
+	if (IS_ERR(file)) {
+		*err = PTR_ERR(file);
+		return NULL;
+	}
+
+	sock = sock_from_file(file, err);
+	if (!sock)
+		fput(file);
+	return sock;
+}
+EXPORT_SYMBOL(sockfd_lookup_rights);
+
+static struct socket *
+sockfd_lookup_light_rights(int fd, int *err, int *fput_needed,
+			   const struct capsicum_rights **actual_rights,
+			   const struct capsicum_rights *required_rights)
+{
+	struct fd f = fdget_raw_rights(fd, actual_rights, required_rights);
+	struct socket *sock;
+
+	*err = -EBADF;
+	if (!IS_ERR(f.file)) {
+		sock = sock_from_file(f.file, err);
+		if (likely(sock)) {
+			*fput_needed = f.flags;
+			return sock;
+		}
+		fdput(f);
+	} else {
+		*err = PTR_ERR(f.file);
+	}
+	return NULL;
+}
+
+struct socket *_sockfd_lookupr(int fd, int *err, ...)
+{
+	struct capsicum_rights rights;
+	struct socket *sock;
+	va_list ap;
+
+	va_start(ap, err);
+	sock = sockfd_lookup_rights(fd, err, cap_rights_vinit(&rights, ap));
+	va_end(ap);
+	return sock;
+}
+EXPORT_SYMBOL(_sockfd_lookupr);
+
+struct socket *_sockfd_lookupr_light(int fd, int *err, int *fput_needed, ...)
+{
+	struct capsicum_rights rights;
+	struct socket *sock;
+	va_list ap;
+
+	va_start(ap, fput_needed);
+	sock = sockfd_lookup_light_rights(fd, err, fput_needed,
+					  NULL, cap_rights_vinit(&rights, ap));
+	va_end(ap);
+	return sock;
+}
+#define sockfd_lookupr_light(fd, err, fpn, ...) \
+	_sockfd_lookupr_light((fd), (err), (fpn), __VA_ARGS__, 0ULL)
+
+#else
+
+static inline struct socket *
+sockfd_lookup_light_rights(int fd, int *err, int *fput_needed,
+			   const struct capsicum_rights **actual_rights,
+			   const struct capsicum_rights *required_rights)
+{
+	return sockfd_lookup_light(fd, err, fput_needed);
+}
+
+#define sockfd_lookupr_light(f, e, p, ...) \
+	sockfd_lookup_light((f), (e), (p))
+
+#endif
+
 /**
  *	sockfd_lookup - Go from a file number to its socket slot
  *	@fd: file handle
@@ -446,23 +549,6 @@ struct socket *sockfd_lookup(int fd, int *err)
 	return sock;
 }
 EXPORT_SYMBOL(sockfd_lookup);
-
-static struct socket *sockfd_lookup_light(int fd, int *err, int *fput_needed)
-{
-	struct fd f = fdget(fd);
-	struct socket *sock;
-
-	*err = -EBADF;
-	if (f.file) {
-		sock = sock_from_file(f.file, err);
-		if (likely(sock)) {
-			*fput_needed = f.flags;
-			return sock;
-		}
-		fdput(f);
-	}
-	return NULL;
-}
 
 #define XATTR_SOCKPROTONAME_SUFFIX "sockprotoname"
 #define XATTR_NAME_SOCKPROTONAME (XATTR_SYSTEM_PREFIX XATTR_SOCKPROTONAME_SUFFIX)
