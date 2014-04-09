@@ -1424,7 +1424,7 @@ static struct svc_sock *svc_setup_socket(struct svc_serv *serv,
 bool svc_alien_sock(struct net *net, int fd)
 {
 	int err;
-	struct socket *sock = sockfd_lookup(fd, &err);
+	struct socket *sock = sockfd_lookupr(fd, &err, CAP_LIST_END);
 	bool ret = false;
 
 	if (!sock)
@@ -1452,7 +1452,7 @@ int svc_addsock(struct svc_serv *serv, const int fd, char *name_return,
 		const size_t len)
 {
 	int err = 0;
-	struct socket *so = sockfd_lookup(fd, &err);
+	struct socket *so = sockfd_lookupr(fd, &err, CAP_LISTEN);
 	struct svc_sock *svsk = NULL;
 	struct sockaddr_storage addr;
 	struct sockaddr *sin = (struct sockaddr *)&addr;
