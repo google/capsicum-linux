@@ -1762,7 +1762,7 @@ static int kcm_attach_ioctl(struct socket *sock, struct kcm_attach *info)
 	struct bpf_prog *prog;
 	int err;
 
-	csock = sockfd_lookup(info->fd, &err);
+	csock = sockfd_lookupr(info->fd, &err, CAP_LIST_END);
 	if (!csock)
 		return -ENOENT;
 
@@ -1887,7 +1887,7 @@ static int kcm_unattach_ioctl(struct socket *sock, struct kcm_unattach *info)
 	struct sock *csk;
 	int err;
 
-	csock = sockfd_lookup(info->fd, &err);
+	csock = sockfd_lookupr(info->fd, &err, CAP_LIST_END);
 	if (!csock)
 		return -ENOENT;
 

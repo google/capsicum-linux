@@ -732,7 +732,8 @@ static int __nbd_ioctl(struct block_device *bdev, struct nbd_device *nbd,
 
 	case NBD_SET_SOCK: {
 		int err;
-		struct socket *sock = sockfd_lookup(arg, &err);
+		struct socket *sock = sockfd_lookupr(arg, &err, CAP_READ,
+						     CAP_WRITE, CAP_SHUTDOWN);
 
 		if (!sock)
 			return err;
