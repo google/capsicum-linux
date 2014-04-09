@@ -619,7 +619,7 @@ static int nbd_add_socket(struct nbd_device *nbd, struct block_device *bdev,
 	struct nbd_sock *nsock;
 	int err;
 
-	sock = sockfd_lookup(arg, &err);
+	sock = sockfd_lookupr(arg, &err, CAP_READ, CAP_WRITE, CAP_SHUTDOWN);
 	if (!sock)
 		return err;
 
