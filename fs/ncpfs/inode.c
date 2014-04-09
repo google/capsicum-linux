@@ -539,7 +539,7 @@ static int ncp_fill_super(struct super_block *sb, void *raw_data, int silent)
 	if (!uid_valid(data.mounted_uid) || !uid_valid(data.uid) ||
 	    !gid_valid(data.gid))
 		goto out;
-	sock = sockfd_lookup(data.ncp_fd, &error);
+	sock = sockfd_lookupr(data.ncp_fd, &error, CAP_WRITE, CAP_FSTAT);
 	if (!sock)
 		goto out;
 
@@ -567,7 +567,8 @@ static int ncp_fill_super(struct super_block *sb, void *raw_data, int silent)
 	server->ncp_sock = sock;
 	
 	if (data.info_fd != -1) {
-		struct socket *info_sock = sockfd_lookup(data.info_fd, &error);
+		struct socket *info_sock = sockfd_lookupr(data.info_fd, &error,
+							  CAP_WRITE, CAP_FSTAT);
 		if (!info_sock)
 			goto out_bdi;
 		server->info_sock = info_sock;
