@@ -829,7 +829,7 @@ static int gtp_encap_enable(struct net_device *dev, struct gtp_dev *gtp,
 
 	netdev_dbg(dev, "enable gtp on %d, %d\n", fd_gtp0, fd_gtp1);
 
-	sock0 = sockfd_lookup(fd_gtp0, &err);
+	sock0 = sockfd_lookupr(fd_gtp0, &err, CAP_GETSOCKOPT, CAP_SETSOCKOPT);
 	if (sock0 == NULL) {
 		netdev_dbg(dev, "socket fd=%d not found (gtp0)\n", fd_gtp0);
 		return -ENOENT;
@@ -841,7 +841,7 @@ static int gtp_encap_enable(struct net_device *dev, struct gtp_dev *gtp,
 		goto err1;
 	}
 
-	sock1u = sockfd_lookup(fd_gtp1, &err);
+	sock1u = sockfd_lookupr(fd_gtp1, &err, CAP_GETSOCKOPT, CAP_SETSOCKOPT);
 	if (sock1u == NULL) {
 		netdev_dbg(dev, "socket fd=%d not found (gtp1u)\n", fd_gtp1);
 		err = -ENOENT;

@@ -82,7 +82,7 @@ static ssize_t store_sockfd(struct device *dev, struct device_attribute *attr,
 			goto err;
 		}
 
-		socket = sockfd_lookup(sockfd, &err);
+		socket = sockfd_lookupr(sockfd, &err, CAP_LIST_END);
 		if (!socket)
 			goto err;
 

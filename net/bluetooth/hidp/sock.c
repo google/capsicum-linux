@@ -67,11 +67,11 @@ static int hidp_sock_ioctl(struct socket *sock, unsigned int cmd, unsigned long 
 		if (copy_from_user(&ca, argp, sizeof(ca)))
 			return -EFAULT;
 
-		csock = sockfd_lookup(ca.ctrl_sock, &err);
+		csock = sockfd_lookupr(ca.ctrl_sock, &err, CAP_READ, CAP_WRITE);
 		if (!csock)
 			return err;
 
-		isock = sockfd_lookup(ca.intr_sock, &err);
+		isock = sockfd_lookupr(ca.intr_sock, &err, CAP_READ, CAP_WRITE);
 		if (!isock) {
 			sockfd_put(csock);
 			return err;

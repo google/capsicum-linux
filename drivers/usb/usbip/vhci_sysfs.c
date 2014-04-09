@@ -296,7 +296,7 @@ static ssize_t store_attach(struct device *dev, struct device_attribute *attr,
 	vdev = &vhci->vdev[rhport];
 
 	/* Extract socket from fd. */
-	socket = sockfd_lookup(sockfd, &err);
+	socket = sockfd_lookupr(sockfd, &err, CAP_LIST_END);
 	if (!socket)
 		return -EINVAL;
 
