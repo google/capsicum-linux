@@ -417,6 +417,15 @@ config BSD_PROCESS_ACCT_V3
 	  for processing it. A preliminary version of these tools is available
 	  at <http://www.gnu.org/software/acct/>.
 
+config PROCDESC
+	bool "Process descriptors"
+	default y
+	help
+	  Process descriptors are file descriptors which represent a handle
+	  on another process. See Documentation/procdesc.txt.
+
+	  Say N if unsure.
+
 config TASKSTATS
 	bool "Export task/process statistics through netlink"
 	depends on NET
