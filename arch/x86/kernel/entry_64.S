@@ -530,6 +530,7 @@ END(\label)
 	FORK_LIKE  clone
 	FORK_LIKE  fork
 	FORK_LIKE  vfork
+	FORK_LIKE  pdfork
 	FIXED_FRAME stub_iopl, sys_iopl
 
 ENTRY(stub_execve)
