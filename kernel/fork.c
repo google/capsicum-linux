@@ -1622,12 +1622,17 @@ struct task_struct *fork_idle(int cpu)
  *
  * It copies the process, and if successful kick-starts
  * it and waits for it to finish using the VM if required.
+ *
+ * If @taskp is not NULL, returns a reference to the new
+ * task, and increments its reference count so that reference
+ * will remain valid.
  */
-long do_fork(unsigned long clone_flags,
-	      unsigned long stack_start,
-	      unsigned long stack_size,
-	      int __user *parent_tidptr,
-	      int __user *child_tidptr)
+long do_fork_task(unsigned long clone_flags,
+		unsigned long stack_start,
+		unsigned long stack_size,
+		struct task_struct **taskp,
+		int __user *parent_tidptr,
+		int __user *child_tidptr)
 {
 	struct task_struct *p;
 	int trace = 0;
@@ -1675,6 +1680,11 @@ long do_fork(unsigned long clone_flags,
 			get_task_struct(p);
 		}
 
+		if (taskp) {
+			*taskp = p;
+			get_task_struct(p);
+		}
+
 		wake_up_new_task(p);
 
 		/* forking complete and child started to run, tell ptracer */
@@ -1691,6 +1701,16 @@ long do_fork(unsigned long clone_flags,
 		nr = PTR_ERR(p);
 	}
 	return nr;
+}
+
+long do_fork(unsigned long clone_flags,
+		unsigned long stack_start,
+		unsigned long stack_size,
+		int __user *parent_tidptr,
+		int __user *child_tidptr)
+{
+	return do_fork_task(clone_flags, stack_start, stack_size, NULL,
+			    parent_tidptr, child_tidptr);
 }
 
 /*
