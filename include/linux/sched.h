@@ -1661,6 +1661,9 @@ struct task_struct {
 	unsigned int	sequential_io;
 	unsigned int	sequential_io_avg;
 #endif
+#ifdef CONFIG_PROCDESC
+	struct file *procdesc;
+#endif
 };
 
 /* Future-safe accessor for struct task_struct's cpus_allowed. */
@@ -1999,6 +2002,15 @@ TASK_PFA_CLEAR(SPREAD_PAGE, spread_page)
 TASK_PFA_TEST(SPREAD_SLAB, spread_slab)
 TASK_PFA_SET(SPREAD_SLAB, spread_slab)
 TASK_PFA_CLEAR(SPREAD_SLAB, spread_slab)
+
+static inline bool task_has_procdesc(const struct task_struct *p)
+{
+#ifdef CONFIG_PROCDESC
+	return (p->procdesc != NULL);
+#else
+	return false;
+#endif
+}
 
 /*
  * task->jobctl flags
