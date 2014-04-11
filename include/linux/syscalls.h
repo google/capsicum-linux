@@ -882,4 +882,10 @@ asmlinkage long sys_execveat(int dfd, const char __user *filename,
 			const char __user *const __user *argv,
 			const char __user *const __user *envp, int flags);
 
+asmlinkage long sys_pdfork(int __user *fdp, unsigned long flags);
+asmlinkage long sys_pdgetpid(int fd, pid_t __user *pidp);
+asmlinkage long sys_pdkill(int fd, int signum);
+asmlinkage long sys_pdwait4(int fd, int __user *status, int options,
+			struct rusage __user *rusage);
+
 #endif
