@@ -221,3 +221,8 @@ cond_syscall(sys_seccomp);
 
 /* execveat */
 cond_syscall(sys_execveat);
+
+cond_syscall(sys_pdfork);
+cond_syscall(sys_pdgetpid);
+cond_syscall(sys_pdkill);
+cond_syscall(sys_pdwait4);
