@@ -229,3 +229,7 @@ cond_syscall(sys_bpf);
 
 /* execveat */
 cond_syscall(sys_execveat);
+
+/* capsicum object capabilities */
+cond_syscall(sys_cap_rights_get);
+cond_syscall(sys_cap_rights_limit);
