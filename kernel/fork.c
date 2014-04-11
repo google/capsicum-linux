@@ -73,6 +73,7 @@
 #include <linux/signalfd.h>
 #include <linux/uprobes.h>
 #include <linux/aio.h>
+#include <linux/procdesc.h>
 #include <linux/compiler.h>
 
 #include <asm/pgtable.h>
@@ -1741,6 +1742,54 @@ SYSCALL_DEFINE0(vfork)
 			0, NULL, NULL);
 }
 #endif
+
+SYSCALL_DEFINE2(pdfork, int __user *, fdp, unsigned long,  flags)
+{
+#ifdef CONFIG_PROCDESC
+	long ret;
+	int fd;
+	struct task_struct *task = NULL;
+	struct file *procdesc;
+
+	if ((flags & ~(PD_DAEMON)) != 0)
+		return -EINVAL;
+
+	fd = get_unused_fd_flags(0);
+	if (fd < 0)
+		return fd;
+
+	procdesc  = procdesc_alloc();
+	if (IS_ERR(procdesc)) {
+		ret = PTR_ERR(procdesc);
+		goto out_putfd;
+	}
+
+	/*
+	 * Although we set an exit signal for the new task, it will only be
+	 * generated for tasks that have no open process descriptors left.
+	 */
+	ret = do_fork_task(SIGCHLD, 0, 0, &task, NULL, NULL);
+
+	if (ret < 0)
+		goto out_fput;
+
+	procdesc_init(procdesc, task, flags);
+	task->procdesc = procdesc;
+
+	fd_install(fd, procdesc);
+	put_user(fd, fdp);
+
+	return ret;
+
+out_fput:
+	fput(procdesc);
+out_putfd:
+	put_unused_fd(fd);
+	return ret;
+#else
+	return -ENOSYS;
+#endif
+}
 
 #ifdef __ARCH_WANT_SYS_CLONE
 #ifdef CONFIG_CLONE_BACKWARDS

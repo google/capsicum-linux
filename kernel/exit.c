@@ -53,6 +53,7 @@
 #include <linux/oom.h>
 #include <linux/writeback.h>
 #include <linux/shm.h>
+#include <linux/procdesc.h>
 
 #include <asm/uaccess.h>
 #include <asm/unistd.h>
@@ -604,8 +605,13 @@ static void exit_notify(struct task_struct *tsk, int group_dead)
 			tsk->exit_signal : SIGCHLD;
 		autoreap = do_notify_parent(tsk, sig);
 	} else if (thread_group_leader(tsk)) {
+		/*
+		 * If there's an extant process descriptor, child death
+		 * notification is delivered via that rather than by signal.
+		 */
+		int sig = task_has_procdesc(tsk) ? 0 : tsk->exit_signal;
 		autoreap = thread_group_empty(tsk) &&
-			do_notify_parent(tsk, tsk->exit_signal);
+			do_notify_parent(tsk, sig);
 	} else {
 		autoreap = true;
 	}
@@ -613,6 +619,9 @@ static void exit_notify(struct task_struct *tsk, int group_dead)
 	tsk->exit_state = autoreap ? EXIT_DEAD : EXIT_ZOMBIE;
 	if (tsk->exit_state == EXIT_DEAD)
 		list_add(&tsk->ptrace_entry, &dead);
+
+	/* Update any associated process descriptor */
+	procdesc_exit(tsk);
 
 	/* mt-exec, de_thread() is waiting for group leader */
 	if (unlikely(tsk->signal->notify_count < 0))
@@ -919,13 +928,21 @@ static int eligible_child(struct wait_opts *wo, struct task_struct *p)
 {
 	if (!eligible_pid(wo, p))
 		return 0;
-	/* Wait for all children (clone and not) if __WALL is set;
-	 * otherwise, wait for clone children *only* if __WCLONE is
+
+	/* Wait for all children (clone and not) if __WALL is set. */
+	if (wo->wo_flags & __WALL)
+		return 1;
+
+	/* If the child has an extant process descriptor then
+	 * it should not be visible to wildcard wait operations. */
+	if (task_has_procdesc(p) && wo->wo_type != PIDTYPE_PID)
+		return 0;
+
+	/* Wait for clone children *only* if __WCLONE is
 	 * set; otherwise, wait for non-clone children *only*.  (Note:
 	 * A "clone" child here is one that reports to its parent
 	 * using a signal other than SIGCHLD.) */
-	if (((p->exit_signal != SIGCHLD) ^ !!(wo->wo_flags & __WCLONE))
-	    && !(wo->wo_flags & __WALL))
+	if ((p->exit_signal != SIGCHLD) ^ !!(wo->wo_flags & __WCLONE))
 		return 0;
 
 	return 1;
