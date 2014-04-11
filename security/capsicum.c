@@ -125,6 +125,152 @@ out_err:
 	return ERR_PTR(err);
 }
 
+/* Takes ownership of rights->ioctls */
+static int capsicum_rights_limit(unsigned int fd,
+				 struct capsicum_rights *rights)
+{
+	int rc = -EBADF;
+	struct capsicum_capability *cap;
+	struct file *capf = NULL;
+	struct file *file;  /* current file for fd */
+	struct file *underlying; /* base file for capability */
+	struct files_struct *files = current->files;
+	struct fdtable *fdt;
+
+	/* Allocate capability before taking files->file_lock */
+	capf = capsicum_cap_alloc(rights, true);
+	rights->ioctls = NULL;  /* capsicum_cap_alloc took ownership */
+	if (IS_ERR(capf))
+		return PTR_ERR(capf);
+	cap = capf->private_data;
+
+	spin_lock(&files->file_lock);
+	fdt = files_fdtable(files);
+	if (fd >= fdt->max_fds)
+		goto out_err;
+	file = fdt->fd[fd];
+	if (!file)
+		goto out_err;
+
+	/* If we're limiting an existing Capsicum capability object, ensure
+	 * we wrap its underlying normal file. */
+	if (capsicum_is_cap(file)) {
+		struct capsicum_capability *old_cap = file->private_data;
+		/* Reject attempts to widen existing rights */
+		if (!cap_rights_contains(&old_cap->rights, &cap->rights)) {
+			rc = -ENOTCAPABLE;
+			goto out_err;
+		}
+		underlying = old_cap->underlying;
+	} else {
+		underlying = file;
+	}
+	if (!atomic_long_inc_not_zero(&underlying->f_count)) {
+		rc = -EBADF;
+		goto out_err;
+	}
+	cap->underlying = underlying;
+
+	fput(file);
+	rcu_assign_pointer(fdt->fd[fd], capf);
+	spin_unlock(&files->file_lock);
+	return 0;
+out_err:
+	spin_unlock(&files->file_lock);
+	fput(capf);
+	return rc;
+}
+
+SYSCALL_DEFINE5(cap_rights_limit,
+		unsigned int, fd,
+		const struct cap_rights __user *, new_rights,
+		unsigned int, new_fcntls,
+		int, nioctls,
+		unsigned int __user *, new_ioctls)
+{
+	struct capsicum_rights rights;
+
+	if (!new_rights)
+		return -EFAULT;
+	if (nioctls < 0 && nioctls != -1)
+		return -EINVAL;
+	if (copy_from_user(&rights.primary, new_rights,
+			   sizeof(struct cap_rights)))
+		return -EFAULT;
+	rights.fcntls = new_fcntls;
+	rights.nioctls = nioctls;
+	if (rights.nioctls > 0) {
+		size_t size;
+
+		if (!new_ioctls)
+			return -EINVAL;
+		size = rights.nioctls * sizeof(unsigned int);
+		rights.ioctls = kmalloc(size, GFP_KERNEL);
+		if (!rights.ioctls)
+			return -ENOMEM;
+		if (copy_from_user(rights.ioctls, new_ioctls, size)) {
+			kfree(rights.ioctls);
+			return -EFAULT;
+		}
+	} else {
+		rights.ioctls = NULL;
+	}
+	if (cap_rights_regularize(&rights))
+		return -ENOTCAPABLE;
+
+	return capsicum_rights_limit(fd, &rights);
+}
+
+SYSCALL_DEFINE5(cap_rights_get,
+		unsigned int, fd,
+		struct cap_rights __user *, rightsp,
+		unsigned int __user *, fcntls,
+		int __user *, nioctls,
+		unsigned int __user *, ioctls)
+{
+	int result = -EFAULT;
+	struct file *file;
+	struct capsicum_rights *rights = &all_rights;
+	int ioctls_to_copy = -1;
+
+	file = fget_raw(fd);
+	if (file == NULL)
+		return -EBADF;
+	if (capsicum_is_cap(file)) {
+		struct capsicum_capability *cap = file->private_data;
+
+		rights = &cap->rights;
+	}
+
+	if (rightsp) {
+		if (copy_to_user(rightsp, &rights->primary,
+				 sizeof(struct cap_rights)))
+			goto out;
+	}
+	if (fcntls) {
+		if (put_user(rights->fcntls, fcntls))
+			goto out;
+	}
+	if (nioctls) {
+		int n;
+
+		if (get_user(n, nioctls))
+			goto out;
+		if (put_user(rights->nioctls, nioctls))
+			goto out;
+		ioctls_to_copy = min(rights->nioctls, n);
+	}
+	if (ioctls && ioctls_to_copy > 0) {
+		if (copy_to_user(ioctls, rights->ioctls,
+				 ioctls_to_copy * sizeof(unsigned int)))
+			goto out;
+	}
+	result = 0;
+out:
+	fput(file);
+	return result;
+}
+
 /*
  * File operations functions.
  */
