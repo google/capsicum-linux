@@ -2121,6 +2121,7 @@ again:
 	 */
 	spin_lock(&current->files->file_lock);
 	f = fcheck(fd);
+	f = security_file_lookup(f, NULL, NULL);
 	spin_unlock(&current->files->file_lock);
 	if (!error && f != filp && flock.l_type != F_UNLCK) {
 		flock.l_type = F_UNLCK;
@@ -2255,6 +2256,7 @@ again:
 	 */
 	spin_lock(&current->files->file_lock);
 	f = fcheck(fd);
+	f = security_file_lookup(f, NULL, NULL);
 	spin_unlock(&current->files->file_lock);
 	if (!error && f != filp && flock.l_type != F_UNLCK) {
 		flock.l_type = F_UNLCK;

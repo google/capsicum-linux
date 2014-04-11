@@ -742,7 +742,7 @@ static struct file *unwrap_file(struct file *orig,
 		return ERR_PTR(-EBADF);
 	if (IS_ERR(orig))
 		return orig;
-	f = orig;  /* TODO: pass to an LSM hook here */
+	f = security_file_lookup(orig, required_rights, actual_rights);
 	if (f != orig && update_refcnt) {
 		/* We're not returning the original, and the calling code
 		 * has already incremented the refcount on it, we need to
