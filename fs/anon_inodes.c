@@ -51,6 +51,72 @@ static struct file_system_type anon_inode_fs_type = {
 	.kill_sb	= kill_anon_super,
 };
 
+static struct file *_anon_inode_getfile(bool new_inode, const char *name,
+					const struct file_operations *fops,
+					void *priv, int flags)
+{
+	struct qstr this;
+	struct path path;
+	struct file *file;
+	struct inode *inode;
+
+	if (!new_inode && IS_ERR(anon_inode_inode))
+		return ERR_PTR(-ENODEV);
+
+	if (fops->owner && !try_module_get(fops->owner))
+		return ERR_PTR(-ENOENT);
+
+	/*
+	 * Link the inode to a directory entry by creating a unique name
+	 * using the inode sequence number.
+	 */
+	file = ERR_PTR(-ENOMEM);
+	this.name = name;
+	this.len = strlen(name);
+	this.hash = 0;
+	path.dentry = d_alloc_pseudo(anon_inode_mnt->mnt_sb, &this);
+	if (!path.dentry)
+		goto err_module;
+
+	path.mnt = mntget(anon_inode_mnt);
+
+	if (new_inode) {
+		inode = alloc_anon_inode(anon_inode_mnt->mnt_sb);
+		if (IS_ERR(inode)) {
+			file = ERR_PTR(-ENODEV);
+			goto err_dput;
+		}
+	} else {
+		/*
+		 * We know the anon_inode inode count is always greater than
+		 * zero, so ihold() is safe.
+		 */
+		inode = anon_inode_inode;
+		ihold(inode);
+	}
+
+	d_instantiate(path.dentry, inode);
+
+	file = alloc_file(&path, OPEN_FMODE(flags), fops);
+	if (IS_ERR(file))
+		goto err_iput;
+	file->f_mapping = inode->i_mapping;
+
+	file->f_flags = flags & (O_ACCMODE | O_NONBLOCK);
+	file->private_data = priv;
+
+	return file;
+
+err_iput:
+	if (new_inode)
+		iput(inode);
+err_dput:
+	path_put(&path);
+err_module:
+	module_put(fops->owner);
+	return file;
+}
+
 /**
  * anon_inode_getfile - creates a new file instance by hooking it up to an
  *                      anonymous inode, and a dentry that describe the "class"
@@ -71,54 +137,32 @@ struct file *anon_inode_getfile(const char *name,
 				const struct file_operations *fops,
 				void *priv, int flags)
 {
-	struct qstr this;
-	struct path path;
-	struct file *file;
-
-	if (IS_ERR(anon_inode_inode))
-		return ERR_PTR(-ENODEV);
-
-	if (fops->owner && !try_module_get(fops->owner))
-		return ERR_PTR(-ENOENT);
-
-	/*
-	 * Link the inode to a directory entry by creating a unique name
-	 * using the inode sequence number.
-	 */
-	file = ERR_PTR(-ENOMEM);
-	this.name = name;
-	this.len = strlen(name);
-	this.hash = 0;
-	path.dentry = d_alloc_pseudo(anon_inode_mnt->mnt_sb, &this);
-	if (!path.dentry)
-		goto err_module;
-
-	path.mnt = mntget(anon_inode_mnt);
-	/*
-	 * We know the anon_inode inode count is always greater than zero,
-	 * so ihold() is safe.
-	 */
-	ihold(anon_inode_inode);
-
-	d_instantiate(path.dentry, anon_inode_inode);
-
-	file = alloc_file(&path, OPEN_FMODE(flags), fops);
-	if (IS_ERR(file))
-		goto err_dput;
-	file->f_mapping = anon_inode_inode->i_mapping;
-
-	file->f_flags = flags & (O_ACCMODE | O_NONBLOCK);
-	file->private_data = priv;
-
-	return file;
-
-err_dput:
-	path_put(&path);
-err_module:
-	module_put(fops->owner);
-	return file;
+	return _anon_inode_getfile(false, name, fops, priv, flags);
 }
 EXPORT_SYMBOL_GPL(anon_inode_getfile);
+
+/**
+ * anon_new_inode_getfile - creates a new file instance by hooking it up to a
+ *                          new anonymous inode, and a dentry that describe the
+ *                          "class" of the file
+ *
+ * @name:    [in]    name of the "class" of the new file
+ * @fops:    [in]    file operations for the new file
+ * @priv:    [in]    private data for the new file (will be file's private_data)
+ * @flags:   [in]    flags
+ *
+ * Creates a new file by hooking it on a new anonymous inode.
+ * Returns the newly created file* or an error pointer.
+ */
+struct file *anon_new_inode_getfile(const char *name,
+				const struct file_operations *fops,
+				void *priv, int flags)
+{
+	return _anon_inode_getfile(true, name, fops, priv, flags);
+}
+EXPORT_SYMBOL_GPL(anon_new_inode_getfile);
+
+
 
 /**
  * anon_inode_getfd - creates a new file instance by hooking it up to an
