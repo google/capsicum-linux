@@ -12,6 +12,7 @@
 
 #include <linux/security.h>
 #include <linux/capsicum.h>
+#include <linux/capsicum-capmode.h>
 
 static int cap_syslog(int type)
 {

@@ -18,12 +18,11 @@
 #include <linux/init.h>
 #include <linux/kernel.h>
 #include <linux/printk.h>
-#include <linux/procdesc.h>
 #include <linux/slab.h>
 #include <linux/security.h>
 #include <linux/syscalls.h>
 #include <linux/capsicum.h>
-#include <linux/fcntl.h>
+#include <linux/capsicum-capmode.h>
 
 #include "capsicum-rights.h"
 
@@ -72,12 +71,6 @@ static const struct file_operations capsicum_file_ops = {
 	.fallocate = panic_ptr,
 	.show_fdinfo = capsicum_show_fdinfo
 };
-
-static inline bool capsicum_in_cap_mode(void)
-{
-	return test_thread_flag(TIF_SECCOMP) &&
-	       current->seccomp.mode == SECCOMP_MODE_LSM;
-}
 
 static inline bool capsicum_is_cap(const struct file *file)
 {
@@ -132,9 +125,6 @@ out_err:
 	kfree(cap);
 	return ERR_PTR(err);
 }
-
-/* Include the per-syscall processing code */
-#include "capsicum_syscall_table.h"
 
 /* Takes ownership of rights->ioctls */
 static int capsicum_rights_limit(unsigned int fd,
@@ -343,16 +333,6 @@ static void capsicum_panic_not_unwrapped(void)
  */
 
 /*
- * Entrypoint to process an incoming syscall.
- * Returns 0 if the syscall should proceed, < 0 otherwise.
- */
-int capsicum_intercept_syscall(int arch, int callnr, unsigned long *args)
-{
-	return capsicum_run_syscall_table(arch, callnr, args);
-}
-EXPORT_SYMBOL(capsicum_intercept_syscall);
-
-/*
  * We are looking up a file by its file descriptor. If it is a Capsicum
  * capability, and has the required rights, we unwrap it and return the
  * underlying file.
@@ -428,12 +408,6 @@ EXPORT_SYMBOL(capsicum_path_lookup);
 
 
 #else
-
-/* If Capsicum is not enabled, all the fallback LSM hooks return OK */
-int capsicum_intercept_syscall(int arch, int callnr, unsigned long *args)
-{
-	return 0;
-}
 
 struct file *capsicum_file_lookup(struct file *file,
 				  const struct capsicum_rights *required_rights,

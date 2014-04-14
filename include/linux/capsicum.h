@@ -14,7 +14,6 @@ struct capsicum_rights {
 };
 
 /* LSM hook fallback functions */
-int capsicum_intercept_syscall(int arch, int callnr, unsigned long *args);
 struct file *capsicum_file_lookup(struct file *file,
 				  const struct capsicum_rights *required_rights,
 				  const struct capsicum_rights **actual_rights);

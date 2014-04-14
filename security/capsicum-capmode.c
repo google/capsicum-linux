@@ -2,6 +2,7 @@
  * System call permission table for Capsicum, a capability framework for UNIX.
  *
  * Copyright (C) 2012 The Chromium OS Authors <chromium-os-dev@chromium.org>
+ * Copyright (C) 2013-2014 Google, Inc.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2, as
@@ -17,6 +18,8 @@
 #include <net/sock.h>
 #include <asm/unistd.h>
 #include <asm/syscall.h>
+
+#ifdef CONFIG_SECURITY_CAPSICUM
 
 /* TODO(drysdale): use a more general method for arch-specific policing */
 #if defined(CONFIG_X86) || defined(CONFIG_UML_X86)
@@ -286,7 +289,11 @@ static int __init init_syscalls_result(void)
 }
 arch_initcall(init_syscalls_result);
 
-static int capsicum_run_syscall_table(int arch, int callnr, unsigned long *args)
+/*
+ * LSM hook fallback function: process an incoming syscall.
+ * Returns 0 if the syscall should proceed, < 0 otherwise.
+ */
+int capsicum_intercept_syscall(int arch, int callnr, unsigned long *args)
 {
 	enum capmode_result rc;
 
@@ -315,3 +322,14 @@ static int capsicum_run_syscall_table(int arch, int callnr, unsigned long *args)
 		return -ECAPMODE;
 	}
 }
+EXPORT_SYMBOL(capsicum_intercept_syscall);
+
+#else
+
+/* If Capsicum is not enabled, return OK */
+int capsicum_intercept_syscall(int arch, int callnr, unsigned long *args)
+{
+	return 0;
+}
+#endif
+
