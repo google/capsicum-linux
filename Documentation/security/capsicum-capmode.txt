@@ -1,0 +1,30 @@
+Capsicum Capability Mode
+========================
+
+Capsicum is a lightweight OS capability and sandbox framework, which allows
+security-aware userspace applications to sandbox parts of their own code in a
+highly granular way, reducing the attack surface in the event of subversion.
+
+Capsicum allows the generation of capability file descriptors with restricted
+rights, as described in Documentation/security/capsicum.txt.  However, these
+are of little use on their own, as subverted code can simply open new file
+descriptors with full access.
+
+To prevent this, Capsicum also provides capability mode, which disables a large
+number of system calls for the process (and which cannot be reversed).
+Specifically, any system calls which allow access to a global namespace are
+disabled; this includes arbitrary filesystem access, IP:port ranges and PID
+spaces.
+
+Capability mode is implemented using the existing secure computing framework
+from kernel/seccomp.c, and a new LSM hook.  In particular, a new seccomp mode
+SECCOMP_MODE_LSM is added which passes the details of each system call to a
+new LSM hook:
+ - intercept_syscall: Allow policing of system calls at system call entry, for
+   processes that have activated secure computing (seccomp) mode.
+
+Capsicum then provides the default implementation for this hook when the active
+LSM does not override.  (If the active LSM does choose to override the Capsicum
+implementation, it should ensure that the Capsicum functionality is unaffected,
+by combining the results of the Capsicum implementation with its own.)
+

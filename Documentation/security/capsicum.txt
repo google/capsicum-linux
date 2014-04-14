@@ -21,9 +21,9 @@ POSIX.1e capabilities that are already available in Linux:
 Overview
 --------
 
-Capability-based security is a security model where objects can only be accessed
-via capabilities, which are unforgeable tokens of authority that only give
-rights to perform certain operations.
+Capability-based security is a security model where objects can only be
+accessed via capabilities, which are unforgeable tokens of authority that only
+give rights to perform certain operations.
 
 Capsicum is a pragmatic blend of capability-based security with standard
 UNIX/POSIX system semantics.  A Capsicum capability is a file descriptor that
@@ -35,8 +35,8 @@ Capability Data Structure
 -------------------------
 
 Internally, a capability is a particular kind of struct file that wraps an
-underlying normal file.   The private data for the wrapper indicates the wrapped
-file, and holds the rights information for the capability.
+underlying normal file.   The private data for the wrapper indicates the
+wrapped file, and holds the rights information for the capability.
 
 
 FD to File Conversion
@@ -59,21 +59,6 @@ impact is minimal as the additional rights parameters to fgetr*() are macroed
 out.
 
 
-Capability Mode
----------------
-
-Capability FDs with restricted rights are of little use on their own, as
-subverted code can simply open new file descriptors with full access.  To
-prevent this, Capsicum also provides capability mode, which disables a large
-number of system calls for the process (and which cannot be reversed).
-Specifically, any system calls which allow access to a global namespace are
-disabled; this includes arbitrary filesystem access, IP:port ranges and PID
-spaces.
-
-Capability mode is implemented using the existing secure computing framework
-from kernel/seccomp.c, and a new LSM hook.
-
-
 Path Traversal
 --------------
 
@@ -83,32 +68,20 @@ using the openat(2) system call.  To prevent escape from the directory, path
 traversals are policed for "/" and ".." components.
 
 
-Process Descriptors
--------------------
-
-Capability mode locks down access to the PID namespace, but Capsicum-sandboxed
-applications often still need to manipulate sub-processes.  Capsicum adds
-process descriptors to allow this, which are file descriptors associated with
-processes, and which allow fork/kill/wait4-equivalent operations in a manner
-consistent with capability rights checking.
-
-
 LSM Interactions
 ----------------
 
-The following aspects of Capsicum are implemented as mainline kernel
-modifications:
- - Annotation of all fget() calls with intended file operations, expressed
-   as combinations of Capsicum rights values.
- - Process descriptor functionality (under CONFIG_PROCDESC)
+The annotation of all fget() calls with intended file operations, expressed
+as combinations of Capsicum rights values, is implemented as mainline kernel
+modifications.
 
 The remainder of the Capsicum functionality is via Linux Security Module (LSM)
-hooks, with Capsicum providing the default implementation (similarly to the
-existing POSIX.1e capability code) when the active LSM does not override.
+hooks, with Capsicum providing the default implementation when the active LSM
+does not override.  (If the active LSM does choose to override the Capsicum
+implementation, it should ensure that the Capsicum functionality is unaffected,
+by combining the results of the Capsicum implementation with its own.)
 
 The additional hooks added for (and implemented by) Capsicum are:
- - intercept_syscall: Allow policing of system calls at system call entry, for
-   processes that have activated secure computing (seccomp) mode.
  - file_lookup: Allow modification of the result of an fget() operation, so that
    a rights check can be performed and the normal file underlying a capability
    can be returned.
@@ -123,15 +96,8 @@ New System Calls
 ----------------
 
 Capsicum implements the following new system calls:
- - cap_rights_limit: restrict the rights associated with file descriptor, thus turning
-   it into a capability FD; internally this is implemented by wrapping the original
-   struct file with a capability file (security/capsicum.c)
+ - cap_rights_limit: restrict the rights associated with file descriptor, thus
+   turning it into a capability FD; internally this is implemented by wrapping
+   the original struct file with a capability file (security/capsicum.c)
  - cap_rights_get: return the rights associated with a capability FD
    (security/capsicum.c)
- - execveat: execve via a file descriptor/path pair (fs/exec.c)
- - pdfork: fork and generate a process descriptor (kernel/fork.c)
- - pdgetpid: get the pid associated with a process descriptor (fs/procdesc.c)
- - pdkill: send a signal to a process identified by a process descriptor
-   (fs/procdesc.c)
- - pdwait4: wait for a process identified by a process descriptor
-   (fs/procdesc.c)

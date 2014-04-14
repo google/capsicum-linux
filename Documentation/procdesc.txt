@@ -1,0 +1,25 @@
+Process Descriptors
+-------------------
+
+Process descriptors (enabled with the CONFIG_PROCDESC flag) are file
+descriptors associated with processes.  Process descriptors are designed
+to allow user library code to use sub-processes in their implementation
+in a manner that is invisible to the library user; this allow the
+implementation to use various process-level sandboxing techniques.
+
+To allow this, processes created as process descriptors do not generate
+SIGCHLD on termination, and are not visible to wildcard wait4(2) / waittid(2)
+operations (although operations that use the specific pid_t for a process
+created via a process descriptor do function as normal).
+
+
+New System Calls
+----------------
+
+Process descriptor functionality implements the following new system calls:
+ - pdfork: fork and generate a process descriptor (kernel/fork.c)
+ - pdgetpid: get the pid associated with a process descriptor (fs/procdesc.c)
+ - pdkill: send a signal to a process identified by a process descriptor
+   (fs/procdesc.c)
+ - pdwait4: wait for a process identified by a process descriptor
+   (fs/procdesc.c)
