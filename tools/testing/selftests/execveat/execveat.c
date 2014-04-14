@@ -26,10 +26,10 @@ static int execveat_(int fd, const char *path, char **argv, char **envp,
 		     int flags)
 {
 #ifdef __NR_execveat
-  return syscall(__NR_execveat, fd, path, argv, envp, flags);
+	return syscall(__NR_execveat, fd, path, argv, envp, flags);
 #else
-  errno = -ENOSYS;
-  return -1;
+	errno = -ENOSYS;
+	return -1;
 #endif
 }
 
@@ -56,12 +56,14 @@ static int _check_execveat_fail(int fd, const char *path, int flags,
 	return 0;
 }
 
-static int check_execveat_invoked_rc(int fd, const char *path, int flags, int expected_rc)
+static int check_execveat_invoked_rc(int fd, const char *path, int flags,
+				     int expected_rc)
 {
 	int status;
 	int rc;
 	pid_t child;
-	printf("Check success of execveat(%d, '%s', %d)... ", fd, path?:"(null)", flags);
+	printf("Check success of execveat(%d, '%s', %d)... ",
+		fd, path?:"(null)", flags);
 	child = fork();
 	if (child < 0) {
 		printf("[FAIL] (fork() failed)\n");
@@ -109,20 +111,23 @@ static char *concat(const char *left, const char *right)
 int main(int argc, char **argv)
 {
 	int failed = 0;
-	int dfd;
 	int fd;
-	int dfd_path;
+	int dfd;
+	int dot_dfd;
+	int dot_dfd_path;
 	int fd_path;
 	int fd_symlink;
 	int fd_sh;
 	int fd_ephemeral;
 	int fd_sh_ephemeral;
+	char *name_dotdot;
 	char *name_symlink;
 	char *name_sh;
 	char *name_ephemeral;
 	char *name_moved;
 	char *name_sh_ephemeral;
 	char *name_sh_moved;
+	char *name_sh_dotdot;
 	char *fullname;
 	char *fullname_symlink;
 	char *fullname_sh;
@@ -141,16 +146,20 @@ int main(int argc, char **argv)
 		return rc;
 	}
 
-	dfd = open(".", O_DIRECTORY|O_RDONLY);
-	dfd_path = open(".", O_DIRECTORY|O_RDONLY|O_PATH);
+	dfd = open("subdir", O_DIRECTORY|O_RDONLY);
+	dot_dfd = open(".", O_DIRECTORY|O_RDONLY);
+	dot_dfd_path = open(".", O_DIRECTORY|O_RDONLY|O_PATH);
 	fd = open(argv[0], O_RDONLY);
 	fd_path = open(argv[0], O_RDONLY|O_PATH);
+
+	name_dotdot = concat("../", argv[0]);
 	name_symlink = concat(argv[0], ".symlink");
 	name_sh = concat(argv[0], ".sh");
 	name_ephemeral = concat(argv[0], ".ephemeral");
 	name_moved = concat(argv[0], ".moved");
 	name_sh_ephemeral = concat(name_sh, ".ephemeral");
 	name_sh_moved = concat(name_sh, ".moved");
+	name_sh_dotdot = concat("../", name_sh);
 	fd_symlink = open(name_symlink, O_RDONLY);
 	fd_sh = open(name_sh, O_RDONLY);
 	fd_ephemeral = open(name_ephemeral, O_RDONLY);
@@ -158,10 +167,12 @@ int main(int argc, char **argv)
 	fullname = realpath(argv[0], NULL);
 	fullname_symlink = concat(fullname, ".symlink");
 	fullname_sh = concat(fullname, ".sh");
+
 	/* Normal executable file: */
 	/*   dfd + path */
-	failed |= check_execveat(dfd, argv[0], 0);
-	failed |= check_execveat(dfd_path, argv[0], 0);
+	failed |= check_execveat(dfd, name_dotdot, 0);
+	failed |= check_execveat(dot_dfd, argv[0], 0);
+	failed |= check_execveat(dot_dfd_path, argv[0], 0);
 	/*   absolute path */
 	failed |= check_execveat(AT_FDCWD, fullname, 0);
 	/*   absolute path with nonsense dfd */
@@ -172,15 +183,15 @@ int main(int argc, char **argv)
 	/* Mess with file that's already open */
 	/*   fd + no path to a file that's been renamed */
 	rename(name_ephemeral, name_moved);
-	// failed |= check_execveat(fd_ephemeral, NULL, 0);
+	failed |= check_execveat(fd_ephemeral, NULL, 0);
 	/*   fd + no path to a file that's been deleted */
 	unlink(name_moved); /* remove the file now fd open */
 	failed |= check_execveat(fd_ephemeral, NULL, 0);
 
 	/* Symlink to executable file: */
 	/*   dfd + path */
-	failed |= check_execveat(dfd, name_symlink, 0);
-	failed |= check_execveat(dfd_path, name_symlink, 0);
+	failed |= check_execveat(dot_dfd, name_symlink, 0);
+	failed |= check_execveat(dot_dfd_path, name_symlink, 0);
 	/*   absolute path */
 	failed |= check_execveat(AT_FDCWD, fullname_symlink, 0);
 	/*   fd + no path, even with AT_SYMLINK_NOFOLLOW (already followed) */
@@ -189,9 +200,9 @@ int main(int argc, char **argv)
 
 	/* Symlink fails when AT_SYMLINK_NOFOLLOW set: */
 	/*   dfd + path */
-	failed |= check_execveat_fail(dfd, name_symlink,
+	failed |= check_execveat_fail(dot_dfd, name_symlink,
 				      AT_SYMLINK_NOFOLLOW, ELOOP);
-	failed |= check_execveat_fail(dfd_path, name_symlink,
+	failed |= check_execveat_fail(dot_dfd_path, name_symlink,
 				      AT_SYMLINK_NOFOLLOW, ELOOP);
 	/*   absolute path */
 	failed |= check_execveat_fail(AT_FDCWD, fullname_symlink,
@@ -199,8 +210,9 @@ int main(int argc, char **argv)
 
 	/* Shell script wrapping executable file: */
 	/*   dfd + path */
-	failed |= check_execveat(dfd, name_sh, 0);
-	failed |= check_execveat(dfd_path, name_sh, 0);
+	failed |= check_execveat(dfd, name_sh_dotdot, 0);
+	failed |= check_execveat(dot_dfd, name_sh, 0);
+	failed |= check_execveat(dot_dfd_path, name_sh, 0);
 	/*   absolute path */
 	failed |= check_execveat(AT_FDCWD, fullname_sh, 0);
 	/*   fd + no path */
@@ -216,17 +228,17 @@ int main(int argc, char **argv)
 	failed |= check_execveat_invoked_rc(fd_sh_ephemeral, NULL, 0, 127);
 
 	/* Flag values other than AT_SYMLINK_NOFOLLOW => EINVAL */
-	failed |= check_execveat_fail(dfd, argv[0], 0xFFFF, EINVAL);
+	failed |= check_execveat_fail(dot_dfd, argv[0], 0xFFFF, EINVAL);
 	/* Invalid path => ENOENT */
-	failed |= check_execveat_fail(dfd, "no-such-file", 0, ENOENT);
-	failed |= check_execveat_fail(dfd_path, "no-such-file", 0, ENOENT);
+	failed |= check_execveat_fail(dot_dfd, "no-such-file", 0, ENOENT);
+	failed |= check_execveat_fail(dot_dfd_path, "no-such-file", 0, ENOENT);
 	failed |= check_execveat_fail(AT_FDCWD, "no-such-file", 0, ENOENT);
 	/* Attempt to execute directory => EACCES */
-	failed |= check_execveat_fail(dfd, NULL, 0, EACCES);
+	failed |= check_execveat_fail(dot_dfd, NULL, 0, EACCES);
 	/* Attempt to execute non-executable => EACCES */
-	failed |= check_execveat_fail(dfd, "Makefile", 0, EACCES);
+	failed |= check_execveat_fail(dot_dfd, "Makefile", 0, EACCES);
 	/* Attempt to execute file opened with O_PATH => EBADF */
-	failed |= check_execveat_fail(dfd_path, NULL, 0, EBADF);
+	failed |= check_execveat_fail(dot_dfd_path, NULL, 0, EBADF);
 	failed |= check_execveat_fail(fd_path, NULL, 0, EBADF);
 	/* Attempt to execute nonsense FD => EBADF */
 	failed |= check_execveat_fail(99, NULL, 0, EBADF);
@@ -234,5 +246,5 @@ int main(int argc, char **argv)
 	/* Attempt to execute relative to non-directory => ENOTDIR */
 	failed |= check_execveat_fail(fd, argv[0], 0, ENOTDIR);
 
-	return (failed ? -1 : 0);
+	return failed ? -1 : 0;
 }

@@ -1,5 +1,7 @@
-all: execveat.symlink execveat.sh execveat.ephemeral execveat.sh.ephemeral execveat
+all: execveat.symlink execveat.sh execveat.ephemeral execveat.sh.ephemeral execveat subdir
 
+subdir:
+	mkdir -p subdir
 execveat.sh:
 	echo '#!/bin/sh' > execveat.sh
 	echo './execveat $$*' >> execveat.sh

@@ -1735,9 +1735,9 @@ asmlinkage long compat_sys_execve(const char __user * filename,
 }
 
 asmlinkage long compat_sys_execveat(int fd,
-	const char __user * filename,
-	const compat_uptr_t __user * argv,
-	const compat_uptr_t __user * envp,
+	const char __user *filename,
+	const compat_uptr_t __user *argv,
+	const compat_uptr_t __user *envp,
 	int flags)
 {
 	struct filename *path = NULL;
