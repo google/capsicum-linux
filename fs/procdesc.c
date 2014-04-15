@@ -204,4 +204,3 @@ static int procdesc_show_fdinfo(struct seq_file *m, struct file *f)
 	seq_printf(m, "pid:\t%d\n", pid);
 	return 0;
 }
-

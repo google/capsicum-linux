@@ -216,6 +216,7 @@ cond_syscall(sys_execveat);
 /* capsicum object capabilities */
 cond_syscall(sys_cap_rights_get);
 cond_syscall(sys_cap_rights_limit);
+
 cond_syscall(sys_pdfork);
 cond_syscall(sys_pdgetpid);
 cond_syscall(sys_pdkill);
