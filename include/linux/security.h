@@ -1601,10 +1601,10 @@ struct security_operations {
 				    struct fown_struct *fown, int sig);
 	int (*file_receive) (struct file *file);
 	int (*file_open) (struct file *file, const struct cred *cred);
-	struct file *(*file_lookup) (struct file *orig,
+	struct file * (*file_lookup)(struct file *orig,
 				const struct capsicum_rights *required_rights,
 				const struct capsicum_rights **actual_rights);
-	struct file *(*file_install) (const struct capsicum_rights *base_rights,
+	struct file * (*file_install)(const struct capsicum_rights *base_rights,
 				      struct file *file);
 
 	int (*task_create) (unsigned long clone_flags);

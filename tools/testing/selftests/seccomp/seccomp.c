@@ -67,7 +67,7 @@ int check_bpf_need_nonewpriv(void)
 		return 0;
 	int rc = prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, &allow_bpf, 0, 0);
 	if (rc != -1 || errno != EACCES) {
-		printf("[FAIL] (got rc %d errno %d not -EACCESS)\n",  rc, errno);
+		printf("[FAIL] (got rc %d errno %d not -EACCESS)\n", rc, errno);
 		return 1;
 	}
 	return 0;
@@ -150,7 +150,7 @@ int check_strict_fail_close(void)
 	int rc = prctl(PR_SET_SECCOMP, SECCOMP_MODE_STRICT, 0, 0, 0);
 	if (rc < 0)
 		return 1;
-	rc = close(fd);  // Generate SIGKILL
+	rc = close(fd);  /* Generate SIGKILL */
 	return 99;
 }
 
@@ -160,7 +160,7 @@ int check_strict_fail_getppid(void)
 	int rc = prctl(PR_SET_SECCOMP, SECCOMP_MODE_STRICT, 0, 0, 0);
 	if (rc < 0)
 		return 1;
-	rc = getppid();  // Generate SIGKILL
+	rc = getppid();  /* Generate SIGKILL */
 	return 99;
 }
 
@@ -170,7 +170,7 @@ int check_strict_fail_prctl(void)
 	int rc = prctl(PR_SET_SECCOMP, SECCOMP_MODE_STRICT, 0, 0, 0);
 	if (rc < 0)
 		return 1;
-	rc = prctl(PR_GET_SECCOMP, 0, 0, 0, 0);  // Generate SIGKILL
+	rc = prctl(PR_GET_SECCOMP, 0, 0, 0, 0);  /* Generate SIGKILL */
 	return 99;
 }
 
@@ -193,7 +193,8 @@ int check_strict_ok(void)
 }
 
 #define RUN_FORKED(F, S, R)	run_forked(F, #F, S, R)
-int run_forked(int (*fn)(void), const char *fn_name, int expected_sig, int expected_rc)
+int run_forked(int (*fn)(void), const char *fn_name,
+	       int expected_sig, int expected_rc)
 {
 	int rc;
 	int status;
@@ -213,14 +214,14 @@ int run_forked(int (*fn)(void), const char *fn_name, int expected_sig, int expec
 	}
 	if (expected_sig != 0) {
 		if (!WIFSIGNALED(status) || WTERMSIG(status) != expected_sig) {
-			printf("[FAIL] (expected signal %d termination, not status 0x%04x)\n",
-				expected_sig, status);
+			printf("[FAIL] (expected signal %d termination, "
+				"not status 0x%04x)\n", expected_sig, status);
 			return 1;
 		}
 	} else {
 		if (!WIFEXITED(status) || WEXITSTATUS(status) != expected_rc) {
-			printf("[FAIL] (expected rc %d exit, not status 0x%04x)\n",
-				expected_rc, status);
+			printf("[FAIL] (expected rc %d exit, "
+				"not status 0x%04x)\n", expected_rc, status);
 			return 1;
 		}
 	}
@@ -244,5 +245,5 @@ int main(int argc, char *argv[])
 	failed |= RUN_FORKED(check_bpf_polices_syscalls, 0, 0);
 	failed |= RUN_FORKED(check_bpf_prevents_strict, 0, 0);
 
-	return (failed ? -1 : 0);
+	return failed ? -1 : 0;
 }
