@@ -1471,12 +1471,12 @@ static int exec_binprm(struct linux_binprm *bprm)
  * sys_execve() executes a new program.
  */
 static int do_execveat_common(int fd, struct filename *filename,
-			      struct file *file,
 			      struct user_arg_ptr argv,
 			      struct user_arg_ptr envp,
 			      int flags)
 {
 	char *pathbuf = NULL;
+	struct file *file;
 	struct linux_binprm *bprm;
 	struct files_struct *displaced;
 	int retval;
@@ -1516,29 +1516,15 @@ static int do_execveat_common(int fd, struct filename *filename,
 	check_unsafe_exec(bprm);
 	current->in_execve = 1;
 
-	if (!file) {
-		file = do_open_execat(fd, filename, flags);
-		retval = PTR_ERR(file);
-		if (IS_ERR(file))
-			goto out_unmark;
-	} else {
-		/* This is an fexecve(). */
-		retval = may_open(&file->f_path, MAY_OPEN | MAY_EXEC,
-				O_RDONLY | __FMODE_EXEC);
-		if (retval)
-			goto out_unmark;
-
-		retval = check_exec_and_deny_write(file);
-		if (retval)
-			goto out_unmark;
-
-		get_file(file);
-	}
+	file = do_open_execat(fd, filename, flags);
+	retval = PTR_ERR(file);
+	if (IS_ERR(file))
+		goto out_unmark;
 
 	sched_exec();
 
 	bprm->file = file;
-	if (filename) {
+	if (filename && fd == AT_FDCWD) {
 		bprm->filename = filename->name;
 	} else {
 		pathbuf = kmalloc(PATH_MAX, GFP_TEMPORARY);
@@ -1628,7 +1614,7 @@ int do_execve(struct filename *filename,
 {
 	struct user_arg_ptr argv = { .ptr.native = __argv };
 	struct user_arg_ptr envp = { .ptr.native = __envp };
-	return do_execveat_common(AT_FDCWD, filename, NULL, argv, envp, 0);
+	return do_execveat_common(AT_FDCWD, filename, argv, envp, 0);
 }
 
 int do_execveat(int fd, struct filename *filename,
@@ -1638,7 +1624,7 @@ int do_execveat(int fd, struct filename *filename,
 {
 	struct user_arg_ptr argv = { .ptr.native = __argv };
 	struct user_arg_ptr envp = { .ptr.native = __envp };
-	return do_execveat_common(fd, filename, NULL, argv, envp, flags);
+	return do_execveat_common(fd, filename, argv, envp, flags);
 }
 
 #ifdef CONFIG_COMPAT
@@ -1654,7 +1640,7 @@ static int compat_do_execve(struct filename *filename,
 		.is_compat = true,
 		.ptr.compat = __envp,
 	};
-	return do_execveat_common(AT_FDCWD, filename, NULL, argv, envp, 0);
+	return do_execveat_common(AT_FDCWD, filename, argv, envp, 0);
 }
 
 static int compat_do_execveat(int fd, struct filename *filename,
@@ -1670,7 +1656,7 @@ static int compat_do_execveat(int fd, struct filename *filename,
 		.is_compat = true,
 		.ptr.compat = __envp,
 	};
-	return do_execveat_common(fd, filename, NULL, argv, envp, flags);
+	return do_execveat_common(fd, filename, argv, envp, flags);
 }
 #endif
 
