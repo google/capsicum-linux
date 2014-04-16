@@ -113,6 +113,7 @@ int main(int argc, char **argv)
 	int failed = 0;
 	int fd;
 	int dfd;
+	int dfd_ephemeral;
 	int dot_dfd;
 	int dot_dfd_path;
 	int fd_path;
@@ -147,6 +148,7 @@ int main(int argc, char **argv)
 	}
 
 	dfd = open("subdir", O_DIRECTORY|O_RDONLY);
+	dfd_ephemeral = open("subdir.ephemeral", O_DIRECTORY|O_RDONLY);
 	dot_dfd = open(".", O_DIRECTORY|O_RDONLY);
 	dot_dfd_path = open(".", O_DIRECTORY|O_RDONLY|O_PATH);
 	fd = open(argv[0], O_RDONLY);
@@ -223,9 +225,20 @@ int main(int argc, char **argv)
 	rename(name_sh_ephemeral, name_sh_moved);
 	failed |= check_execveat(fd_sh_ephemeral, NULL, 0);
 	/*   fd + no path to a file that's been deleted */
-	unlink(name_sh_moved); /* remove the file now fd open */
+	unlink(name_sh_moved); /* remove the file while fd open */
 	/* Shell attempts to load the deleted file but fails => rc=127 */
 	failed |= check_execveat_invoked_rc(fd_sh_ephemeral, NULL, 0, 127);
+
+	/* Rename a subdirectory in the path */
+	rename("subdir.ephemeral", "subdir.moved");
+	failed |= check_execveat(dfd_ephemeral, name_sh_dotdot, 0);
+	failed |= check_execveat(dfd_ephemeral, "script", 0);
+	/* Remove the subdir and its contents */
+	unlink("subdir.moved/script");
+	unlink("subdir.moved");
+	/* Shell loads via deleted subdir OK because name starts with .. */
+	failed |= check_execveat(dfd_ephemeral, name_sh_dotdot, 0);
+	failed |= check_execveat_fail(dfd_ephemeral, "script", 0, ENOENT);
 
 	/* Flag values other than AT_SYMLINK_NOFOLLOW => EINVAL */
 	failed |= check_execveat_fail(dot_dfd, argv[0], 0xFFFF, EINVAL);

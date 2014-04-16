@@ -1,6 +1,8 @@
 subddir
 execveat
 execveat.symlink
-execveat.sh
+execveat.sh*
 execveat.moved
 execveat.ephemeral
+subdir.ephemeral
+subdir.moved

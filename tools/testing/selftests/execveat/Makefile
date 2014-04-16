@@ -1,22 +1,29 @@
-all: execveat.symlink execveat.sh execveat.ephemeral execveat.sh.ephemeral execveat subdir
+DEPS=execveat.symlink execveat.sh execveat.ephemeral execveat.sh.ephemeral execveat subdir subdir.ephemeral subdir.ephemeral/script
+all: $(DEPS)
 
 subdir:
-	mkdir -p subdir
+	mkdir -p $@
+subdir.ephemeral:
+	mkdir -p $@
+subdir.ephemeral/script: | subdir.ephemeral
+	echo '#!/bin/sh' > $@
+	echo 'exit $$*' >> $@
+	chmod +x $@
 execveat.sh:
-	echo '#!/bin/sh' > execveat.sh
-	echo './execveat $$*' >> execveat.sh
-	chmod +x execveat.sh
+	echo '#!/bin/sh' > $@
+	echo './execveat $$*' >> $@
+	chmod +x $@
 execveat.symlink: execveat
-	ln -s -f execveat execveat.symlink
+	ln -s -f $< $@
 execveat.ephemeral: execveat
-	cp execveat execveat.ephemeral
+	cp $< $@
 execveat.sh.ephemeral: execveat.sh
-	cp execveat.sh execveat.sh.ephemeral
+	cp $< $@
 execveat: execveat.c
-	gcc execveat.c -o execveat
+	gcc $< -o $@
 
-run_tests: all
+run_tests: execveat $(DEPS)
 	./execveat
 
 clean:
-	rm -f ./execveat ./execveat.symlink ./execveat.sh
+	rm -rf execveat $(DEPS) subdir.moved execveat.moved
