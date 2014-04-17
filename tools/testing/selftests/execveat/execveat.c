@@ -108,31 +108,129 @@ static char *concat(const char *left, const char *right)
 	strcat(result, right);
 }
 
+static int open_or_die(const char *filename, int flags)
+{
+	int fd = open(filename, flags);
+	if (fd < 0) {
+		printf("Failed to open '%s'; "
+			"check prerequisites are available\n", filename);
+		exit(1);
+	}
+}
+
+static int run_tests(void)
+{
+	int fail = 0;
+	char *fullname = realpath("execveat", NULL);
+	char *fullname_script = realpath("script", NULL);
+	char *fullname_symlink = concat(fullname, ".symlink");
+	int subdir_dfd = open_or_die("subdir", O_DIRECTORY|O_RDONLY);
+	int subdir_dfd_ephemeral = open_or_die("subdir.ephemeral",
+					       O_DIRECTORY|O_RDONLY);
+	int dot_dfd = open_or_die(".", O_DIRECTORY|O_RDONLY);
+	int dot_dfd_path = open_or_die(".", O_DIRECTORY|O_RDONLY|O_PATH);
+	int fd = open_or_die("execveat", O_RDONLY);
+	int fd_path = open_or_die("execveat", O_RDONLY|O_PATH);
+	int fd_symlink = open_or_die("execveat.symlink", O_RDONLY);
+	int fd_script = open_or_die("script", O_RDONLY);
+	int fd_ephemeral = open_or_die("execveat.ephemeral", O_RDONLY);
+	int fd_script_ephemeral = open_or_die("script.ephemeral", O_RDONLY);
+
+	/* Normal executable file: */
+	/*   dfd + path */
+	fail |= check_execveat(subdir_dfd, "../execveat", 0);
+	fail |= check_execveat(dot_dfd, "execveat", 0);
+	fail |= check_execveat(dot_dfd_path, "execveat", 0);
+	/*   absolute path */
+	fail |= check_execveat(AT_FDCWD, fullname, 0);
+	/*   absolute path with nonsense dfd */
+	fail |= check_execveat(99, fullname, 0);
+	/*   fd + no path */
+	fail |= check_execveat(fd, NULL, 0);
+
+	/* Mess with executable file that's already open: */
+	/*   fd + no path to a file that's been renamed */
+	rename("execveat.ephemeral", "execveat.moved");
+	fail |= check_execveat(fd_ephemeral, NULL, 0);
+	/*   fd + no path to a file that's been deleted */
+	unlink("execveat.moved"); /* remove the file now fd open */
+	fail |= check_execveat(fd_ephemeral, NULL, 0);
+
+	/* Symlink to executable file: */
+	/*   dfd + path */
+	fail |= check_execveat(dot_dfd, "execveat.symlink", 0);
+	fail |= check_execveat(dot_dfd_path, "execveat.symlink", 0);
+	/*   absolute path */
+	fail |= check_execveat(AT_FDCWD, fullname_symlink, 0);
+	/*   fd + no path, even with AT_SYMLINK_NOFOLLOW (already followed) */
+	fail |= check_execveat(fd_symlink, NULL, 0);
+	fail |= check_execveat(fd_symlink, NULL, AT_SYMLINK_NOFOLLOW);
+
+	/* Symlink fails when AT_SYMLINK_NOFOLLOW set: */
+	/*   dfd + path */
+	fail |= check_execveat_fail(dot_dfd, "execveat.symlink",
+				    AT_SYMLINK_NOFOLLOW, ELOOP);
+	fail |= check_execveat_fail(dot_dfd_path, "execveat.symlink",
+				    AT_SYMLINK_NOFOLLOW, ELOOP);
+	/*   absolute path */
+	fail |= check_execveat_fail(AT_FDCWD, fullname_symlink,
+				    AT_SYMLINK_NOFOLLOW, ELOOP);
+
+	/* Shell script wrapping executable file: */
+	/*   dfd + path */
+	fail |= check_execveat(subdir_dfd, "../script", 0);
+	fail |= check_execveat(dot_dfd, "script", 0);
+	fail |= check_execveat(dot_dfd_path, "script", 0);
+	/*   absolute path */
+	fail |= check_execveat(AT_FDCWD, fullname_script, 0);
+	/*   fd + no path */
+	fail |= check_execveat(fd_script, NULL, 0);
+	fail |= check_execveat(fd_script, NULL, AT_SYMLINK_NOFOLLOW);
+
+	/* Mess with script file that's already open: */
+	/*   fd + no path to a file that's been renamed */
+	rename("script.ephemeral", "script.moved");
+	fail |= check_execveat(fd_script_ephemeral, NULL, 0);
+	/*   fd + no path to a file that's been deleted */
+	unlink("script.moved"); /* remove the file while fd open */
+	/* Shell attempts to load the deleted file but fails => rc=127 */
+	fail |= check_execveat_invoked_rc(fd_script_ephemeral, NULL, 0, 127);
+
+	/* Rename a subdirectory in the path: */
+	rename("subdir.ephemeral", "subdir.moved");
+	fail |= check_execveat(subdir_dfd_ephemeral, "../script", 0);
+	fail |= check_execveat(subdir_dfd_ephemeral, "script", 0);
+	/* Remove the subdir and its contents */
+	unlink("subdir.moved/script");
+	unlink("subdir.moved");
+	/* Shell loads via deleted subdir OK because name starts with .. */
+	fail |= check_execveat(subdir_dfd_ephemeral, "../script", 0);
+	fail |= check_execveat_fail(subdir_dfd_ephemeral, "script", 0, ENOENT);
+
+	/* Flag values other than AT_SYMLINK_NOFOLLOW => EINVAL */
+	fail |= check_execveat_fail(dot_dfd, "execveat", 0xFFFF, EINVAL);
+	/* Invalid path => ENOENT */
+	fail |= check_execveat_fail(dot_dfd, "no-such-file", 0, ENOENT);
+	fail |= check_execveat_fail(dot_dfd_path, "no-such-file", 0, ENOENT);
+	fail |= check_execveat_fail(AT_FDCWD, "no-such-file", 0, ENOENT);
+	/* Attempt to execute directory => EACCES */
+	fail |= check_execveat_fail(dot_dfd, NULL, 0, EACCES);
+	/* Attempt to execute non-executable => EACCES */
+	fail |= check_execveat_fail(dot_dfd, "Makefile", 0, EACCES);
+	/* Attempt to execute file opened with O_PATH => EBADF */
+	fail |= check_execveat_fail(dot_dfd_path, NULL, 0, EBADF);
+	fail |= check_execveat_fail(fd_path, NULL, 0, EBADF);
+	/* Attempt to execute nonsense FD => EBADF */
+	fail |= check_execveat_fail(99, NULL, 0, EBADF);
+	fail |= check_execveat_fail(99, "execveat", 0, EBADF);
+	/* Attempt to execute relative to non-directory => ENOTDIR */
+	fail |= check_execveat_fail(fd, "execveat", 0, ENOTDIR);
+
+	return fail ? -1 : 0;
+}
+
 int main(int argc, char **argv)
 {
-	int failed = 0;
-	int fd;
-	int dfd;
-	int dfd_ephemeral;
-	int dot_dfd;
-	int dot_dfd_path;
-	int fd_path;
-	int fd_symlink;
-	int fd_sh;
-	int fd_ephemeral;
-	int fd_sh_ephemeral;
-	char *name_dotdot;
-	char *name_symlink;
-	char *name_sh;
-	char *name_ephemeral;
-	char *name_moved;
-	char *name_sh_ephemeral;
-	char *name_sh_moved;
-	char *name_sh_dotdot;
-	char *fullname;
-	char *fullname_symlink;
-	char *fullname_sh;
-
 	if (argc >= 2) {
 		/* If we are invoked with an argument, exit immediately. */
 		/* Check expected environment transferred. */
@@ -145,119 +243,7 @@ int main(int argc, char **argv)
 		int rc = atoi(argv[1]);
 		fflush(stdout);
 		return rc;
+	} else {
+		return run_tests();
 	}
-
-	dfd = open("subdir", O_DIRECTORY|O_RDONLY);
-	dfd_ephemeral = open("subdir.ephemeral", O_DIRECTORY|O_RDONLY);
-	dot_dfd = open(".", O_DIRECTORY|O_RDONLY);
-	dot_dfd_path = open(".", O_DIRECTORY|O_RDONLY|O_PATH);
-	fd = open(argv[0], O_RDONLY);
-	fd_path = open(argv[0], O_RDONLY|O_PATH);
-
-	name_dotdot = concat("../", argv[0]);
-	name_symlink = concat(argv[0], ".symlink");
-	name_sh = concat(argv[0], ".sh");
-	name_ephemeral = concat(argv[0], ".ephemeral");
-	name_moved = concat(argv[0], ".moved");
-	name_sh_ephemeral = concat(name_sh, ".ephemeral");
-	name_sh_moved = concat(name_sh, ".moved");
-	name_sh_dotdot = concat("../", name_sh);
-	fd_symlink = open(name_symlink, O_RDONLY);
-	fd_sh = open(name_sh, O_RDONLY);
-	fd_ephemeral = open(name_ephemeral, O_RDONLY);
-	fd_sh_ephemeral = open(name_sh_ephemeral, O_RDONLY);
-	fullname = realpath(argv[0], NULL);
-	fullname_symlink = concat(fullname, ".symlink");
-	fullname_sh = concat(fullname, ".sh");
-
-	/* Normal executable file: */
-	/*   dfd + path */
-	failed |= check_execveat(dfd, name_dotdot, 0);
-	failed |= check_execveat(dot_dfd, argv[0], 0);
-	failed |= check_execveat(dot_dfd_path, argv[0], 0);
-	/*   absolute path */
-	failed |= check_execveat(AT_FDCWD, fullname, 0);
-	/*   absolute path with nonsense dfd */
-	failed |= check_execveat(99, fullname, 0);
-	/*   fd + no path */
-	failed |= check_execveat(fd, NULL, 0);
-
-	/* Mess with file that's already open */
-	/*   fd + no path to a file that's been renamed */
-	rename(name_ephemeral, name_moved);
-	failed |= check_execveat(fd_ephemeral, NULL, 0);
-	/*   fd + no path to a file that's been deleted */
-	unlink(name_moved); /* remove the file now fd open */
-	failed |= check_execveat(fd_ephemeral, NULL, 0);
-
-	/* Symlink to executable file: */
-	/*   dfd + path */
-	failed |= check_execveat(dot_dfd, name_symlink, 0);
-	failed |= check_execveat(dot_dfd_path, name_symlink, 0);
-	/*   absolute path */
-	failed |= check_execveat(AT_FDCWD, fullname_symlink, 0);
-	/*   fd + no path, even with AT_SYMLINK_NOFOLLOW (already followed) */
-	failed |= check_execveat(fd_symlink, NULL, 0);
-	failed |= check_execveat(fd_symlink, NULL, AT_SYMLINK_NOFOLLOW);
-
-	/* Symlink fails when AT_SYMLINK_NOFOLLOW set: */
-	/*   dfd + path */
-	failed |= check_execveat_fail(dot_dfd, name_symlink,
-				      AT_SYMLINK_NOFOLLOW, ELOOP);
-	failed |= check_execveat_fail(dot_dfd_path, name_symlink,
-				      AT_SYMLINK_NOFOLLOW, ELOOP);
-	/*   absolute path */
-	failed |= check_execveat_fail(AT_FDCWD, fullname_symlink,
-				      AT_SYMLINK_NOFOLLOW, ELOOP);
-
-	/* Shell script wrapping executable file: */
-	/*   dfd + path */
-	failed |= check_execveat(dfd, name_sh_dotdot, 0);
-	failed |= check_execveat(dot_dfd, name_sh, 0);
-	failed |= check_execveat(dot_dfd_path, name_sh, 0);
-	/*   absolute path */
-	failed |= check_execveat(AT_FDCWD, fullname_sh, 0);
-	/*   fd + no path */
-	failed |= check_execveat(fd_sh, NULL, 0);
-	failed |= check_execveat(fd_sh, NULL, AT_SYMLINK_NOFOLLOW);
-
-	/* Mess with script file that's already open */
-	rename(name_sh_ephemeral, name_sh_moved);
-	failed |= check_execveat(fd_sh_ephemeral, NULL, 0);
-	/*   fd + no path to a file that's been deleted */
-	unlink(name_sh_moved); /* remove the file while fd open */
-	/* Shell attempts to load the deleted file but fails => rc=127 */
-	failed |= check_execveat_invoked_rc(fd_sh_ephemeral, NULL, 0, 127);
-
-	/* Rename a subdirectory in the path */
-	rename("subdir.ephemeral", "subdir.moved");
-	failed |= check_execveat(dfd_ephemeral, name_sh_dotdot, 0);
-	failed |= check_execveat(dfd_ephemeral, "script", 0);
-	/* Remove the subdir and its contents */
-	unlink("subdir.moved/script");
-	unlink("subdir.moved");
-	/* Shell loads via deleted subdir OK because name starts with .. */
-	failed |= check_execveat(dfd_ephemeral, name_sh_dotdot, 0);
-	failed |= check_execveat_fail(dfd_ephemeral, "script", 0, ENOENT);
-
-	/* Flag values other than AT_SYMLINK_NOFOLLOW => EINVAL */
-	failed |= check_execveat_fail(dot_dfd, argv[0], 0xFFFF, EINVAL);
-	/* Invalid path => ENOENT */
-	failed |= check_execveat_fail(dot_dfd, "no-such-file", 0, ENOENT);
-	failed |= check_execveat_fail(dot_dfd_path, "no-such-file", 0, ENOENT);
-	failed |= check_execveat_fail(AT_FDCWD, "no-such-file", 0, ENOENT);
-	/* Attempt to execute directory => EACCES */
-	failed |= check_execveat_fail(dot_dfd, NULL, 0, EACCES);
-	/* Attempt to execute non-executable => EACCES */
-	failed |= check_execveat_fail(dot_dfd, "Makefile", 0, EACCES);
-	/* Attempt to execute file opened with O_PATH => EBADF */
-	failed |= check_execveat_fail(dot_dfd_path, NULL, 0, EBADF);
-	failed |= check_execveat_fail(fd_path, NULL, 0, EBADF);
-	/* Attempt to execute nonsense FD => EBADF */
-	failed |= check_execveat_fail(99, NULL, 0, EBADF);
-	failed |= check_execveat_fail(99, argv[0], 0, EBADF);
-	/* Attempt to execute relative to non-directory => ENOTDIR */
-	failed |= check_execveat_fail(fd, argv[0], 0, ENOTDIR);
-
-	return failed ? -1 : 0;
 }

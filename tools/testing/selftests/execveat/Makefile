@@ -1,4 +1,4 @@
-DEPS=execveat.symlink execveat.sh execveat.ephemeral execveat.sh.ephemeral execveat subdir subdir.ephemeral subdir.ephemeral/script
+DEPS=execveat.symlink script execveat.ephemeral script.ephemeral execveat subdir subdir.ephemeral subdir.ephemeral/script
 all: $(DEPS)
 
 subdir:
@@ -9,15 +9,15 @@ subdir.ephemeral/script: | subdir.ephemeral
 	echo '#!/bin/sh' > $@
 	echo 'exit $$*' >> $@
 	chmod +x $@
-execveat.sh:
+script:
 	echo '#!/bin/sh' > $@
-	echo './execveat $$*' >> $@
+	echo 'exit $$*' >> $@
 	chmod +x $@
+script.ephemeral: script
+	cp $< $@
 execveat.symlink: execveat
 	ln -s -f $< $@
 execveat.ephemeral: execveat
-	cp $< $@
-execveat.sh.ephemeral: execveat.sh
 	cp $< $@
 execveat: execveat.c
 	gcc $< -o $@
