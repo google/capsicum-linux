@@ -156,6 +156,49 @@ int check_bpf_polices_syscall_kill(void)
 	return 1;
 }
 
+int check_bpf_with_strict(void)
+{
+	int rc;
+	char buffer[4];
+	int fd = open(filename, O_RDONLY);
+	struct sock_filter filter[] = { VALIDATE_ARCHITECTURE,
+					EXAMINE_SYSCALL,
+					FAIL_SYSCALL(read, ENOMEM),
+					ALLOW_SYSCALL(close),
+					BPF_ALLOW };
+	struct sock_fprog bpf = {.len = (sizeof(filter) / sizeof(filter[0])),
+				       .filter = filter};
+	/* Set up seccomp-bpf first */
+	prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0);
+	prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, &bpf, 0, 0);
+
+	rc = read(fd, buffer, sizeof(buffer));
+	if (rc >= 0) {
+		printf("[FAIL] open() succeeded, expected -ENOMEM\n");
+		return 1;
+	}
+	if (errno != ENOMEM) {
+		printf("[FAIL] open() failed with errno=%d not ENOMEM\n", errno);
+		return 1;
+	}
+
+	/* Now turn on seccomp-strict */
+	rc = prctl(PR_SET_SECCOMP, SECCOMP_MODE_STRICT, 0, 0, 0);
+	if (rc < 0)
+		return 2;
+
+	/* read() is allowed by seccomp-strict, but seccomp-bpf gives -ENOMEM */
+	rc = read(fd, buffer, sizeof(buffer));
+	if (rc >= 0)
+		return 3;
+	if (errno != ENOMEM)
+		return 4;
+
+	/* close() is allowed by seccomp-bpf, but seccomp-strict generates SIGKILL */
+	close(fd);
+	syscall(__NR_exit, 99);
+}
+
 int check_bpf_prevents_strict(void)
 {
 	int rc;
@@ -215,13 +258,16 @@ int check_strict_ok(void)
 	syscall(__NR_exit, 0);
 }
 
-#define RUN_FORKED(F, S, R)	run_forked(F, #F, S, R)
+#define RUN_FORKED(F, S, R)	run_forked(F, #F, S, #S, R)
 int run_forked(int (*fn)(void), const char *fn_name,
-	       int expected_sig, int expected_rc)
+	       int expected_sig, const char *sig_name, int expected_rc)
 {
 	int rc;
 	int status;
-	printf("Run %s()... ", fn_name);
+	printf("Run %s()", fn_name);
+	if (expected_sig)
+		printf(" induces %s", sig_name);
+	printf("... ");
 	fflush(stdout);
 	pid_t child = fork();
 	if (child == 0) {
@@ -267,7 +313,7 @@ int main(int argc, char *argv[])
 	failed |= RUN_FORKED(check_bpf_get_seccomp, 0, 0);
 	failed |= RUN_FORKED(check_bpf_polices_syscalls, 0, 0);
 	failed |= RUN_FORKED(check_bpf_polices_syscall_kill, SIGSYS, 0);
-	failed |= RUN_FORKED(check_bpf_prevents_strict, 0, 0);
+	failed |= RUN_FORKED(check_bpf_with_strict, SIGKILL, 0);
 
 	return failed ? -1 : 0;
 }
