@@ -24,6 +24,7 @@
 
 #include <linux/key.h>
 #include <linux/capability.h>
+#include <linux/seccomp.h>
 #include <linux/slab.h>
 #include <linux/err.h>
 #include <linux/string.h>
@@ -253,7 +254,7 @@ static inline void security_free_mnt_opts(struct security_mnt_opts *opts)
  *	system call convention in use.
  *	@callnr is the system call number.
  *	@args is an array of system call arguments.
- *	Return 0 if the syscall should proceed, < 0 error otherwise.
+ *	Return a seccomp BPF response code.
  *
  * Security hooks for filesystem operations.
  *
@@ -1498,7 +1499,7 @@ struct security_operations {
 	void (*bprm_committing_creds) (struct linux_binprm *bprm);
 	void (*bprm_committed_creds) (struct linux_binprm *bprm);
 
-	int (*intercept_syscall)(int arch, int callnr, unsigned long *args);
+	u32 (*intercept_syscall)(int arch, int callnr, unsigned long *args);
 
 	int (*sb_alloc_security) (struct super_block *sb);
 	void (*sb_free_security) (struct super_block *sb);
@@ -1804,7 +1805,7 @@ int security_bprm_check(struct linux_binprm *bprm);
 void security_bprm_committing_creds(struct linux_binprm *bprm);
 void security_bprm_committed_creds(struct linux_binprm *bprm);
 int security_bprm_secureexec(struct linux_binprm *bprm);
-int security_intercept_syscall(int arch, int callnr, unsigned long *args);
+u32 security_intercept_syscall(int arch, int callnr, unsigned long *args);
 int security_sb_alloc(struct super_block *sb);
 void security_sb_free(struct super_block *sb);
 int security_sb_copy_data(char *orig, char *copy);
@@ -2061,10 +2062,10 @@ static inline int security_bprm_secureexec(struct linux_binprm *bprm)
 	return cap_bprm_secureexec(bprm);
 }
 
-static inline int security_intercept_syscall(int arch, int callnr,
+static inline u32 security_intercept_syscall(int arch, int callnr,
 					     unsigned long *args)
 {
-	return 0;
+	return SECCOMP_RET_ALLOW;
 }
 
 static inline int security_sb_alloc(struct super_block *sb)

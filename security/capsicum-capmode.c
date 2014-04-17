@@ -13,6 +13,7 @@
 #include <linux/poll.h>
 #include <linux/prctl.h>
 #include <linux/socket.h>
+#include <linux/seccomp.h>
 #include <net/compat.h>
 #include <net/scm.h>
 #include <net/sock.h>
@@ -27,19 +28,20 @@
 static int check_arch_prctl(unsigned long *args)
 {
 	return (args[0] & ~(ARCH_SET_FS|ARCH_GET_FS|ARCH_SET_GS|ARCH_GET_GS))
-	       ? -ECAPMODE : 0;
+	       ? SECCOMP_RET_ERRNO|ECAPMODE : SECCOMP_RET_ALLOW;
 }
 #else
 static int check_arch_prctl(unsigned long *args)
 {
-	return -ECAPMODE;
+	return SECCOMP_RET_ERRNO|ECAPMODE;
 }
 #endif
 
 static int check_kill(unsigned long *args)
 {
 	pid_t pid = args[0];
-	return (pid == task_tgid_vnr(current)) ? 0 : -ECAPMODE;
+	return (pid == task_tgid_vnr(current))
+	       ? SECCOMP_RET_ALLOW : SECCOMP_RET_ERRNO|ECAPMODE;
 }
 
 static int check_mmap(unsigned long *args)
@@ -47,13 +49,13 @@ static int check_mmap(unsigned long *args)
 	int flags = args[3];
 
 	if (flags & MAP_ANONYMOUS)
-		return 0;
+		return SECCOMP_RET_ALLOW;
 
 	if (flags & ~(MAP_SHARED|MAP_PRIVATE|MAP_32BIT|MAP_FIXED|MAP_HUGETLB
 			|MAP_NONBLOCK|MAP_NORESERVE|MAP_POPULATE|MAP_STACK))
-		return -ECAPMODE;
+		return SECCOMP_RET_ERRNO|ECAPMODE;
 
-	return 0;
+	return SECCOMP_RET_ALLOW;
 }
 
 static int check_openat(unsigned long *args)
@@ -62,11 +64,11 @@ static int check_openat(unsigned long *args)
 	int flags = args[2];
 
 	if (fd == AT_FDCWD)
-		return -ECAPMODE;
+		return SECCOMP_RET_ERRNO|ECAPMODE;
 	return (flags & ~(O_WRONLY|O_RDWR|O_CREAT|O_EXCL|O_TRUNC|O_APPEND|
 			  FASYNC|O_CLOEXEC|O_DIRECT|O_DIRECTORY|O_LARGEFILE|
 			  O_NOATIME|O_NOCTTY|O_NOFOLLOW|O_NONBLOCK|O_SYNC))
-		? -ECAPMODE : 0;
+		? SECCOMP_RET_ERRNO|ECAPMODE : SECCOMP_RET_ALLOW;
 }
 
 static int check_prctl(unsigned long *args)
@@ -89,9 +91,9 @@ static int check_prctl(unsigned long *args)
 	case PR_GET_TSC:
 	case PR_GET_UNALIGN:
 	case PR_MCE_KILL_GET:
-		return 0;
+		return SECCOMP_RET_ALLOW;
 	default:
-		return -ECAPMODE;
+		return SECCOMP_RET_ERRNO|ECAPMODE;
 	}
 }
 
@@ -291,20 +293,20 @@ arch_initcall(init_syscalls_result);
 
 /*
  * LSM hook fallback function: process an incoming syscall.
- * Returns 0 if the syscall should proceed, < 0 otherwise.
+ * Returns a seccomp BPF response code.
  */
-int capsicum_intercept_syscall(int arch, int callnr, unsigned long *args)
+u32 capsicum_intercept_syscall(int arch, int callnr, unsigned long *args)
 {
 	enum capmode_result rc;
 
 	if (!syscalls_result || callnr >= NR_syscalls || callnr < 0)
-		return -ECAPMODE;
+		return SECCOMP_RET_ERRNO|ECAPMODE;
 
 	rc = syscalls_result[callnr];
 	if (rc == CAPMODE_ALLOW)
-		return 0;
+		return SECCOMP_RET_ALLOW;
 	if (rc == CAPMODE_DENY)
-		return -ECAPMODE;
+		return SECCOMP_RET_ERRNO|ECAPMODE;
 
 	/* Special cases that depend on syscall arguments */
 	switch (callnr) {
@@ -319,7 +321,7 @@ int capsicum_intercept_syscall(int arch, int callnr, unsigned long *args)
 	case (__NR_prctl):
 		return check_prctl(args);
 	default:
-		return -ECAPMODE;
+		return SECCOMP_RET_ERRNO|ECAPMODE;
 	}
 }
 EXPORT_SYMBOL(capsicum_intercept_syscall);
@@ -329,7 +331,7 @@ EXPORT_SYMBOL(capsicum_intercept_syscall);
 /* If Capsicum is not enabled, return OK */
 int capsicum_intercept_syscall(int arch, int callnr, unsigned long *args)
 {
-	return 0;
+	return SECCOMP_RET_ALLOW;
 }
 #endif
 

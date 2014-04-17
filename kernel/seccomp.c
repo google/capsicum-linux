@@ -8,10 +8,12 @@
  *
  * This defines a simple but solid secure-computing facility.
  *
- * Mode 1 uses a fixed list of allowed system calls.
- * Mode 2 allows user-defined system call filters in the form
+ * Mode 0x01 uses a fixed list of allowed system calls.
+ * Mode 0x02 allows user-defined system call filters in the form
  *        of Berkeley Packet Filters/Linux Socket Filters.
- * Mode 3 allows the LSM to filter system calls.
+ * Mode 0x04 allows the LSM to filter system calls.
+ * If multiple modes are enabled, the most restrictive result is
+ * used.
  */
 
 #include <linux/atomic.h>
@@ -361,7 +363,7 @@ static void seccomp_send_sigsys(int syscall, int reason)
 #endif	/* CONFIG_SECCOMP_FILTER */
 
 /*
- * Secure computing mode 1 allows only read/write/exit/sigreturn.
+ * Secure computing mode 0x01 allows only read/write/exit/sigreturn.
  * To be fully secure this must be combined with rlimit
  * to limit the stack allocations too.
  */
@@ -377,107 +379,112 @@ static int mode1_syscalls_32[] = {
 };
 #endif
 
+static u32 secure_computing_mode1(int this_syscall)
+{
+	int *syscall = mode1_syscalls;
+#ifdef CONFIG_COMPAT
+	if (is_compat_task())
+		syscall = mode1_syscalls_32;
+#endif
+	do {
+		if (*syscall == this_syscall)
+			return SECCOMP_RET_ALLOW;
+	} while (*++syscall);
+	return SECCOMP_RET_KILL;
+}
+
+static u32 secure_computing_lsm(int this_syscall)
+{
+	unsigned long args[6];
+	struct pt_regs *regs = task_pt_regs(current);
+	int arch = syscall_get_arch(current, regs);
+	syscall_get_arguments(current, regs, 0, 6, args);
+	return security_intercept_syscall(arch, this_syscall, args);
+}
+
 int __secure_computing(int this_syscall)
 {
-	int mode = current->seccomp.mode;
+	int modeset = current->seccomp.mode;
+	int mode;
 	int exit_sig = 0;
-	int *syscall;
-	u32 ret;
+	u32 ret = SECCOMP_RET_ALLOW;
+	u32 ret_mode;
+	int data;
+	struct pt_regs *regs = task_pt_regs(current);
 
-	switch (mode) {
-	case SECCOMP_MODE_STRICT:
-		syscall = mode1_syscalls;
-#ifdef CONFIG_COMPAT
-		if (is_compat_task())
-			syscall = mode1_syscalls_32;
-#endif
-		do {
-			if (*syscall == this_syscall)
-				return 0;
-		} while (*++syscall);
-		exit_sig = SIGKILL;
-		ret = SECCOMP_RET_KILL;
-		break;
-#ifdef CONFIG_SECCOMP_FILTER
-	case SECCOMP_MODE_FILTER: {
-		int data;
-		struct pt_regs *regs = task_pt_regs(current);
-		ret = seccomp_run_filters(this_syscall);
-		data = ret & SECCOMP_RET_DATA;
-		ret &= SECCOMP_RET_ACTION;
-		switch (ret) {
-		case SECCOMP_RET_ERRNO:
-			/* Set the low-order 16-bits as a errno. */
-			syscall_set_return_value(current, regs,
-						 -data, 0);
-			goto skip;
-		case SECCOMP_RET_TRAP:
-			/* Show the handler the original registers. */
-			syscall_rollback(current, regs);
-			/* Let the filter pass back 16 bits of data. */
-			seccomp_send_sigsys(this_syscall, data);
-			goto skip;
-		case SECCOMP_RET_TRACE:
-			/* Skip these calls if there is no tracer. */
-			if (!ptrace_event_enabled(current, PTRACE_EVENT_SECCOMP)) {
-				syscall_set_return_value(current, regs,
-							 -ENOSYS, 0);
-				goto skip;
-			}
-			/* Allow the BPF to provide the event message */
-			ptrace_event(PTRACE_EVENT_SECCOMP, data);
-			/*
-			 * The delivery of a fatal signal during event
-			 * notification may silently skip tracer notification.
-			 * Terminating the task now avoids executing a system
-			 * call that may not be intended.
-			 */
-			if (fatal_signal_pending(current))
-				break;
-			if (syscall_get_nr(current, regs) < 0)
-				goto skip;  /* Explicit request to skip. */
-
-			return 0;
-		case SECCOMP_RET_ALLOW:
-			return 0;
-		case SECCOMP_RET_KILL:
-		default:
+	for (mode = 0x01; mode <= SECCOMP_MODE_LSM; mode <<= 1) {
+		if (!(modeset & mode))
+			continue;
+		switch (mode) {
+		case SECCOMP_MODE_STRICT:
+			ret_mode = secure_computing_mode1(this_syscall);
+			exit_sig = SIGKILL;
 			break;
-		}
-		exit_sig = SIGSYS;
-		break;
-	}
+#ifdef CONFIG_SECCOMP_FILTER
+		case SECCOMP_MODE_FILTER:
+			ret_mode = seccomp_run_filters(this_syscall);
+			break;
 #endif
 #ifdef CONFIG_SECCOMP_LSM
-	case SECCOMP_MODE_LSM: {
-		unsigned long args[6];
-		int arch, ret;
-		struct pt_regs *regs = task_pt_regs(current);
-
-		arch = syscall_get_arch(current, regs);
-		syscall_get_arguments(current, regs, 0, 6, args);
-		ret = security_intercept_syscall(arch, this_syscall, args);
-		if (ret) {
-			syscall_set_return_value(current, regs, ret, 0);
-			return -1;
-		} else {
-			return 0;
-		}
-	}
+		case SECCOMP_MODE_LSM:
+			ret_mode = secure_computing_lsm(this_syscall);
+			break;
 #endif
-	default:
-		BUG();
+		default:
+			BUG();
+		}
+		if (ret_mode < ret)
+			ret = ret_mode;
 	}
+
+	data = ret & SECCOMP_RET_DATA;
+	ret &= SECCOMP_RET_ACTION;
+	switch (ret) {
+	case SECCOMP_RET_ERRNO:
+		/* Set the low-order 16-bits as a errno. */
+		syscall_set_return_value(current, regs, -data, 0);
+		goto skip;
+	case SECCOMP_RET_TRAP:
+		/* Show the handler the original registers. */
+		syscall_rollback(current, regs);
+		/* Let the filter pass back 16 bits of data. */
+		seccomp_send_sigsys(this_syscall, data);
+		goto skip;
+	case SECCOMP_RET_TRACE:
+		/* Skip these calls if there is no tracer. */
+		if (!ptrace_event_enabled(current, PTRACE_EVENT_SECCOMP)) {
+			syscall_set_return_value(current, regs, -ENOSYS, 0);
+			goto skip;
+		}
+		/* Allow the BPF to provide the event message */
+		ptrace_event(PTRACE_EVENT_SECCOMP, data);
+		/*
+		 * The delivery of a fatal signal during event
+		 * notification may silently skip tracer notification.
+		 * Terminating the task now avoids executing a system
+		 * call that may not be intended.
+		 */
+		if (fatal_signal_pending(current))
+			break;
+		if (syscall_get_nr(current, regs) < 0)
+			goto skip;  /* Explicit request to skip. */
+		return 0;
+	case SECCOMP_RET_ALLOW:
+		return 0;
+	case SECCOMP_RET_KILL:
+	default:
+		break;
+	}
+	if (!exit_sig)
+		exit_sig = SIGSYS;
 
 #ifdef SECCOMP_DEBUG
 	dump_stack();
 #endif
 	audit_seccomp(this_syscall, exit_sig, ret);
 	do_exit(exit_sig);
-#ifdef CONFIG_SECCOMP_FILTER
 skip:
 	audit_seccomp(this_syscall, exit_sig, ret);
-#endif
 	return -1;
 }
 
@@ -488,7 +495,7 @@ long prctl_get_seccomp(void)
 
 /**
  * prctl_set_seccomp: configures current->seccomp.mode
- * @seccomp_mode: requested mode to use
+ * @seccomp_mode: requested mode to use; only a single bit should be set
  * @filter: optional struct sock_fprog for use with SECCOMP_MODE_FILTER
  *
  * This function may be called repeatedly with a @seccomp_mode of
@@ -496,17 +503,13 @@ long prctl_get_seccomp(void)
  * successfully installed will be evaluated (in reverse order) for each system
  * call the task makes.
  *
- * Once current->seccomp.mode is non-zero, it may not be changed.
+ * Once bits are set in current->seccomp.mode, they may not be cleared.
  *
  * Returns 0 on success or -EINVAL on failure.
  */
 long prctl_set_seccomp(unsigned long seccomp_mode, char __user *filter)
 {
 	long ret = -EINVAL;
-
-	if (current->seccomp.mode &&
-	    current->seccomp.mode != seccomp_mode)
-		goto out;
 
 	switch (seccomp_mode) {
 	case SECCOMP_MODE_STRICT:
@@ -572,12 +575,12 @@ long prctl_set_seccomp(unsigned long seccomp_mode, char __user *filter)
 		t = current;
 		do {
 			struct thread_info *ti = task_thread_info(t);
-			t->seccomp.mode = seccomp_mode;
+			t->seccomp.mode |= seccomp_mode;
 			set_ti_thread_flag(ti, TIF_SECCOMP);
 		} while_each_thread(current, t);
 		rcu_read_unlock();
 	} else {
-		current->seccomp.mode = seccomp_mode;
+		current->seccomp.mode |= seccomp_mode;
 		set_thread_flag(TIF_SECCOMP);
 	}
 out:

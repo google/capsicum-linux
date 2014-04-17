@@ -15,6 +15,6 @@ static inline bool capsicum_in_cap_mode(void)
 #endif
 
 /* LSM hook fallback functions */
-int capsicum_intercept_syscall(int arch, int callnr, unsigned long *args);
+u32 capsicum_intercept_syscall(int arch, int callnr, unsigned long *args);
 
 #endif /* _LINUX_CAPSICUM_CAPMODE_H */

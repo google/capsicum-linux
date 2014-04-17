@@ -5,11 +5,11 @@
 #include <linux/types.h>
 
 
-/* Valid values for seccomp.mode and prctl(PR_SET_SECCOMP, <mode>) */
-#define SECCOMP_MODE_DISABLED	0 /* seccomp is not in use. */
-#define SECCOMP_MODE_STRICT	1 /* uses hard-coded filter. */
-#define SECCOMP_MODE_FILTER	2 /* uses user-supplied filter. */
-#define SECCOMP_MODE_LSM	3 /* uses LSM hook to filter. */
+/* Valid bitmask values for seccomp.mode and prctl(PR_SET_SECCOMP, <mode>) */
+#define SECCOMP_MODE_DISABLED	0x00 /* seccomp is not in use. */
+#define SECCOMP_MODE_STRICT	0x01 /* uses hard-coded filter. */
+#define SECCOMP_MODE_FILTER	0x02 /* uses user-supplied filter. */
+#define SECCOMP_MODE_LSM	0x04 /* uses LSM hook to filter. */
 
 /*
  * All BPF programs must return a 32-bit value.
