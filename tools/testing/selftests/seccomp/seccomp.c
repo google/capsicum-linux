@@ -43,11 +43,14 @@ static char *filename = "testfile";
 	BPF_STMT(BPF_RET+BPF_K, SECCOMP_RET_KILL)
 #define BPF_ALLOW	\
 	BPF_STMT(BPF_RET+BPF_K, SECCOMP_RET_ALLOW)
-#define EXAMINE_SYSCALL					\
+#define EXAMINE_SYSCALL	\
 	BPF_STMT(BPF_LD+BPF_W+BPF_ABS, offsetof(struct seccomp_data, nr))
 #define ALLOW_SYSCALL(name)	\
 	BPF_JUMP(BPF_JMP+BPF_JEQ+BPF_K, __NR_##name, 0, 1),	\
 	BPF_ALLOW
+#define KILL_SYSCALL(name)	\
+	BPF_JUMP(BPF_JMP+BPF_JEQ+BPF_K, __NR_##name, 0, 1),	\
+	BPF_KILL_PROCESS
 #define FAIL_SYSCALL(name, err)	\
 	BPF_JUMP(BPF_JMP+BPF_JEQ+BPF_K, __NR_##name, 0, 1),	\
 	BPF_RETURN_ERRNO(err)
@@ -131,6 +134,26 @@ int check_bpf_polices_syscalls(void)
 		return 1;
 	}
 	return 0;
+}
+
+int check_bpf_polices_syscall_kill(void)
+{
+	int rc;
+	char buffer[4];
+	int fd = open(filename, O_RDONLY);
+	struct sock_filter filter[] = { VALIDATE_ARCHITECTURE,
+					EXAMINE_SYSCALL,
+					KILL_SYSCALL(read),
+					ALLOW_SYSCALL(close),
+					FAIL_SYSCALL(open, EBADF),
+					BPF_ALLOW };
+	struct sock_fprog bpf = {.len = (sizeof(filter) / sizeof(filter[0])),
+				       .filter = filter};
+	prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0);
+	prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, &bpf, 0, 0);
+	rc = read(fd, buffer, sizeof(buffer));  /* Generate SIGSYS */
+	printf("[FAIL] expected SIGSYS from read(), got %d\n", rc);
+	return 1;
 }
 
 int check_bpf_prevents_strict(void)
@@ -243,6 +266,7 @@ int main(int argc, char *argv[])
 	failed |= RUN_FORKED(check_bpf_need_nonewpriv, 0, 0);
 	failed |= RUN_FORKED(check_bpf_get_seccomp, 0, 0);
 	failed |= RUN_FORKED(check_bpf_polices_syscalls, 0, 0);
+	failed |= RUN_FORKED(check_bpf_polices_syscall_kill, SIGSYS, 0);
 	failed |= RUN_FORKED(check_bpf_prevents_strict, 0, 0);
 
 	return failed ? -1 : 0;
