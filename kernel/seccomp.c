@@ -421,7 +421,7 @@ int __secure_computing(int this_syscall)
 	int data;
 	struct pt_regs *regs = task_pt_regs(current);
 
-	for (mode = 0x01; mode <= SECCOMP_MODE_LSM; mode <<= 1) {
+	for (mode = 0x01; (mode & SECCOMP_MODE_VALID); mode <<= 1) {
 		if (!(modeset & mode))
 			continue;
 		switch (mode) {

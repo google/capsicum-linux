@@ -11,6 +11,8 @@
 #define SECCOMP_MODE_FILTER	0x02 /* uses user-supplied filter. */
 #define SECCOMP_MODE_LSM	0x04 /* uses LSM hook to filter. */
 
+#define SECCOMP_MODE_VALID	0x07 /* mask of valid mode values. */
+
 /*
  * All BPF programs must return a 32-bit value.
  * The bottom 16-bits are for optional return data.
