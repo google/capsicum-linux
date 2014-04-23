@@ -284,7 +284,7 @@ static void seccomp_sync_thread_filter(struct task_struct *caller,
 }
 
 /**
- * seccomp_act_sync_threads: sets all threads to use current's filter
+ * seccomp_act_sync_threads_filter: sets all threads to use current's filter
  *
  * Returns 0 on success, -ve on error, or the pid of a thread which was
  * either not in the correct seccomp mode or it did not have an ancestral
@@ -687,45 +687,8 @@ static long _seccomp_set_mode(unsigned long seccomp_mode, char * __user filter)
 		goto out;
 	}
 
-	/*
-	 * TODO(drysdale): find a better way of doing this, possibly leveraging
-	 * Will Drewry's PR_SECCOMP_EXT approach (initial patchset Jan 2014).
-	 */
-	if (seccomp_mode == SECCOMP_MODE_LSM) {
-		/*
-		 * SECCOMP_LSM mode has slightly different semantics: it affects
-		 * all threads associated with the process, not just the current
-		 * thread.
-		 */
-		struct task_struct *t;
-
-		/* TODO(drysdale): fix locking */
-		rcu_read_lock();
-		/*
-		 * Check none of the threads are already in a different seccomp
-		 * mode
-		 */
-		t = current;
-		do {
-			if (t->seccomp.mode &&
-			    t->seccomp.mode != seccomp_mode) {
-				rcu_read_unlock();
-				goto out;
-			}
-		} while_each_thread(current, t);
-
-		/* Now move them all to this mode */
-		t = current;
-		do {
-			struct thread_info *ti = task_thread_info(t);
-			t->seccomp.mode |= seccomp_mode;
-			set_ti_thread_flag(ti, TIF_SECCOMP);
-		} while_each_thread(current, t);
-		rcu_read_unlock();
-	} else {
-		current->seccomp.mode |= seccomp_mode;
-		set_thread_flag(TIF_SECCOMP);
-	}
+	current->seccomp.mode |= seccomp_mode;
+	set_thread_flag(TIF_SECCOMP);
 out:
 	return ret;
 }
