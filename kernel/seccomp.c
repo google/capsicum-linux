@@ -225,6 +225,17 @@ static u32 seccomp_run_filters(int syscall)
 	return ret;
 }
 
+/*
+ * Check whether the task has CAP_SYS_ADMIN in its namespace or is running with
+ * no_new_privs.
+ */
+static inline bool seccomp_has_no_new_privs(void)
+{
+	return current->no_new_privs ||
+	       (security_capable_noaudit(current_cred(), current_user_ns(),
+					CAP_SYS_ADMIN) == 0);
+}
+
 /**
  * seccomp_attach_filter: Attaches a seccomp filter to current.
  * @fprog: BPF program to install
@@ -252,9 +263,7 @@ static long seccomp_attach_filter(struct sock_fprog *fprog)
 	 * This avoids scenarios where unprivileged tasks can affect the
 	 * behavior of privileged children.
 	 */
-	if (!current->no_new_privs &&
-	    security_capable_noaudit(current_cred(), current_user_ns(),
-				     CAP_SYS_ADMIN) != 0)
+	if (!seccomp_has_no_new_privs())
 		return -EACCES;
 
 	/* Allocate a new seccomp_filter */
@@ -527,15 +536,7 @@ long prctl_set_seccomp(unsigned long seccomp_mode, char __user *filter)
 #endif
 #ifdef CONFIG_SECCOMP_LSM
 	case SECCOMP_MODE_LSM:
-		/*
-		 * Enabling LSM syscall filtering requires that the task have
-		 * CAP_SYS_ADMIN in its namespace or be running with
-		 * no_new_privs.  This avoids scenarios where unprivileged tasks
-		 * can affect the behavior of privileged children.
-		 */
-		if (!current->no_new_privs &&
-		    security_capable_noaudit(current_cred(), current_user_ns(),
-					     CAP_SYS_ADMIN) != 0)
+		if (!seccomp_has_no_new_privs())
 			return -EACCES;
 		ret = 0;
 		break;
