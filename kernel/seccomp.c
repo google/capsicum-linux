@@ -252,8 +252,8 @@ static int is_ancestor(struct seccomp_filter *candidate,
 }
 
 /* Expects locking and sync suitability to have been done already. */
-static void seccomp_sync_thread(struct task_struct *caller,
-				struct task_struct *thread)
+static void seccomp_sync_thread_filter(struct task_struct *caller,
+				       struct task_struct *thread)
 {
 	/* Get a task reference for the new leaf node. */
 	get_seccomp_filter(caller);
@@ -269,8 +269,8 @@ static void seccomp_sync_thread(struct task_struct *caller,
 	 * equivalent (see ptrace_may_access), it is safe to
 	 * allow one thread to transition the other.
 	 */
-	if (thread->seccomp.mode == SECCOMP_MODE_DISABLED) {
-		thread->seccomp.mode = SECCOMP_MODE_FILTER;
+	if (!(thread->seccomp.mode & SECCOMP_MODE_FILTER)) {
+		thread->seccomp.mode |= SECCOMP_MODE_FILTER;
 		/*
 		 * Don't let an unprivileged task work around
 		 * the no_new_privs restriction by creating
@@ -290,12 +290,12 @@ static void seccomp_sync_thread(struct task_struct *caller,
  * either not in the correct seccomp mode or it did not have an ancestral
  * seccomp filter.
  */
-static pid_t seccomp_act_sync_threads(void)
+static pid_t seccomp_act_sync_threads_filter(void)
 {
 	struct task_struct *thread, *caller;
 	pid_t failed = 0;
 
-	if (current->seccomp.mode != SECCOMP_MODE_FILTER)
+	if (!(current->seccomp.mode & SECCOMP_MODE_FILTER))
 		return -EACCES;
 
 	write_lock(&tasklist_lock);
@@ -306,10 +306,10 @@ static pid_t seccomp_act_sync_threads(void)
 		 * Validate thread being eligible for synchronization.
 		 */
 		if (thread->seccomp.mode == SECCOMP_MODE_DISABLED ||
-		    (thread->seccomp.mode == SECCOMP_MODE_FILTER &&
+		    ((thread->seccomp.mode & SECCOMP_MODE_FILTER) &&
 		     is_ancestor(thread->seccomp.filter,
 				 caller->seccomp.filter))) {
-			seccomp_sync_thread(caller, thread);
+			seccomp_sync_thread_filter(caller, thread);
 		} else {
 			/* Keep the last sibling that failed to return. */
 			failed = task_pid_vnr(thread);
@@ -437,7 +437,7 @@ static long seccomp_act_filter(unsigned long flags, char * __user filter)
 		return ret;
 
 	if (flags & SECCOMP_FILTER_TSYNC)
-		return seccomp_act_sync_threads();
+		return seccomp_act_sync_threads_filter();
 
 	return 0;
 }
@@ -459,7 +459,7 @@ static long seccomp_extended_action(int action, unsigned long arg1,
 		/* arg1 and arg2 are currently unused. */
 		if (arg1 || arg2)
 			return -EINVAL;
-		return seccomp_act_sync_threads();
+		return seccomp_act_sync_threads_filter();
 	default:
 		break;
 	}
