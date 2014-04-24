@@ -13,7 +13,27 @@ This functionality is based on:
    [Linux kernel implementation](http://git.chromium.org/gitweb/?p=chromiumos/third_party/kernel-capsicum.git;a=shortlog;h=refs/heads/capsicum)
    written by Meredydd Luff in 2012.
 
-The current functionality is based on the 3.13 upstream kernel.
+The current functionality is based on the 3.14 upstream kernel.
+
+Branch Status
+-------------
+
+The `capsicum` branch is the main Capsicum development branch, which is under active
+development and so may contain in-progress, untested code.  This branch is generally
+kept synchronized with the [capsicum-test](https://github.com/google/capsicum-test)
+repository.
+
+Other branches **should be avoided** as they may be rebased.  In particular, the
+following branches are used to divide the Capsicum code into distinct patchsets,
+and so are frequently rebased to synchronize with the tip of the `capsicum` branch.
+
+ - `seccomp-uml`: Enable seccomp in user-mode Linux.
+ - `execveat`: execveat(2) syscall.
+ - `capsicum-hooks`: Capability file descriptors via LSM hooks.
+ - `capsicum-capmode`: Capability mode via seccomp and an LSM hook.
+ - `procdesc`: Process descriptors.
+ - `no-upstream`: Local changes for development convenience.
+
 
 Functionality Overview
 ----------------------
