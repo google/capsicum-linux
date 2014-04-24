@@ -1245,8 +1245,10 @@ struct task_struct {
 				 * execve */
 	unsigned in_iowait:1;
 
+#ifndef CONFIG_SECCOMP
 	/* task may not gain privileges */
 	unsigned no_new_privs:1;
+#endif
 
 	/* Revert to default priority/policy when forking */
 	unsigned sched_reset_on_fork:1;
@@ -2436,6 +2438,44 @@ static inline void task_unlock(struct task_struct *p)
 {
 	spin_unlock(&p->alloc_lock);
 }
+
+#ifdef CONFIG_SECCOMP
+/*
+ * Protects changes to ->seccomp
+ */
+static inline void seccomp_lock(struct task_struct *p)
+{
+	spin_lock(&p->seccomp.lock);
+}
+
+static inline void seccomp_unlock(struct task_struct *p)
+{
+	spin_unlock(&p->seccomp.lock);
+}
+
+static inline bool task_no_new_privs(struct task_struct *p)
+{
+	return test_bit(SECCOMP_FLAG_NO_NEW_PRIVS, &p->seccomp.flags);
+}
+
+static inline int task_set_no_new_privs(struct task_struct *p)
+{
+	set_bit(SECCOMP_FLAG_NO_NEW_PRIVS, &p->seccomp.flags);
+	return 0;
+}
+#else
+static inline void seccomp_lock(struct task_struct *p) { }
+static inline void seccomp_unlock(struct task_struct *p) { }
+static inline bool task_no_new_privs(struct task_struct *p)
+{
+	return p->no_new_privs;
+}
+static inline int task_set_no_new_privs(struct task_struct *p)
+{
+	p->no_new_privs = 1;
+	return 0;
+}
+#endif
 
 extern struct sighand_struct *__lock_task_sighand(struct task_struct *tsk,
 							unsigned long *flags);

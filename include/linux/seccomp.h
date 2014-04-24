@@ -14,16 +14,22 @@ struct seccomp_filter;
  *
  * @mode:  indicates one of the valid values above for controlled
  *         system calls available to a process.
- * @filter: The metadata and ruleset for determining what system calls
- *          are allowed for a task.
+ * @lock:  held when making changes to avoid thread races.
+ * @filter: must always point to a valid seccomp-filter or NULL as it is
+ *          accessed without locking during system call entry.
+ * @flags: flags under write lock
  *
  *          @filter must only be accessed from the context of current as there
  *          is no locking.
  */
 struct seccomp {
 	int mode;
+	spinlock_t lock;
 	struct seccomp_filter *filter;
+	unsigned long flags;
 };
+
+#define SECCOMP_FLAG_NO_NEW_PRIVS	0
 
 extern int __secure_computing(int);
 static inline int secure_computing(int this_syscall)
@@ -76,6 +82,8 @@ static inline int seccomp_mode(struct seccomp *s)
 #ifdef CONFIG_SECCOMP_FILTER
 extern void put_seccomp_filter(struct task_struct *tsk);
 extern void get_seccomp_filter(struct task_struct *tsk);
+extern long prctl_seccomp_ext(unsigned long, unsigned long,
+			      unsigned long, unsigned long);
 extern u32 seccomp_bpf_load(int off);
 #else  /* CONFIG_SECCOMP_FILTER */
 static inline void put_seccomp_filter(struct task_struct *tsk)
@@ -85,6 +93,11 @@ static inline void put_seccomp_filter(struct task_struct *tsk)
 static inline void get_seccomp_filter(struct task_struct *tsk)
 {
 	return;
+}
+static inline long prctl_seccomp_ext(unsigned long arg2, unsigned long arg3,
+				     unsigned long arg4, unsigned long arg5)
+{
+	return -EINVAL;
 }
 #endif /* CONFIG_SECCOMP_FILTER */
 #endif /* _LINUX_SECCOMP_H */

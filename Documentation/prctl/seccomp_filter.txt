@@ -223,3 +223,33 @@ Note that modern systems are unlikely to use vsyscalls at all -- they
 are a legacy feature and they are considerably slower than standard
 syscalls.  New code will use the vDSO, and vDSO-issued system calls
 are indistinguishable from normal system calls.
+
+
+
+Extensions
+----------
+Additional seccomp extensions are available through prctl using
+PR_SECCOMP_EXT, with the extension as the following argument.
+
+prctl(PR_SECCOMP_EXT, SECCOMP_EXT_ACT, SECCOMP_EXT_ACT_FILTER, flags, prog):
+	Attach filter, with flags.
+
+	This is the same as prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, prog)
+	except with the addition of optional "flags" argument:
+
+	SECCOMP_FILTER_TSYNC:
+		After installing filter, perform threadgroup sync, as
+		described below for SECCOMP_EXT_ACT_TSYNC.
+
+prctl(PR_SECCOMP_EXT, SECCOMP_EXT_ACT, SECCOMP_EXT_ACT_TSYNC, 0, 0):
+	Thread synchronization.
+
+	The current thread requests to synchronize all threads in current's
+	threadgroup to its seccomp filter program. This is possible iff all
+	threads are using a filter that is an ancestor to the filter current
+	is attempting to synchronize to, or the thread has not yet entered
+	seccomp.
+
+	On success, 0 is returned. On failure, all synchronizable threads
+	will have been synchronized, and the pid of any of the failing
+	threads will be returned.

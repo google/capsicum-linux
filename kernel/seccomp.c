@@ -28,12 +28,14 @@
 #ifdef CONFIG_SECCOMP_FILTER
 #include <asm/syscall.h>
 #include <linux/filter.h>
+#include <linux/pid.h>
 #include <linux/ptrace.h>
 #include <linux/slab.h>
 #include <linux/tracehook.h>
 #include <linux/uaccess.h>
 #include <linux/ftrace.h>
 
+static long _seccomp_set_mode(unsigned long mode, char * __user filter);
 
 /**
  * struct seccomp_filter - container for seccomp BPF programs
@@ -206,18 +208,18 @@ static int seccomp_check_filter(struct sock_filter *filter, unsigned int flen)
  */
 static u32 seccomp_run_filters(int syscall)
 {
-	struct seccomp_filter *f;
+	struct seccomp_filter *f = ACCESS_ONCE(current->seccomp.filter);
 	u32 ret = SECCOMP_RET_ALLOW;
 
 	/* Ensure unexpected behavior doesn't result in failing open. */
-	if (WARN_ON(current->seccomp.filter == NULL))
+	if (WARN_ON(f == NULL))
 		return SECCOMP_RET_KILL;
 
 	/*
 	 * All filters in the list are evaluated and the lowest BPF return
 	 * value always takes priority (ignoring the DATA).
 	 */
-	for (f = current->seccomp.filter; f; f = f->prev) {
+	for (; f; f = ACCESS_ONCE(f->prev)) {
 		u32 cur_ret = sk_run_filter(NULL, f->insns);
 		if ((cur_ret & SECCOMP_RET_ACTION) < (ret & SECCOMP_RET_ACTION))
 			ret = cur_ret;
@@ -231,9 +233,94 @@ static u32 seccomp_run_filters(int syscall)
  */
 static inline bool seccomp_has_no_new_privs(void)
 {
-	return current->no_new_privs ||
+	return task_no_new_privs(current) ||
 	       (security_capable_noaudit(current_cred(), current_user_ns(),
 					CAP_SYS_ADMIN) == 0);
+}
+
+/* Returns 1 if the candidate is an ancestor. */
+static int is_ancestor(struct seccomp_filter *candidate,
+		       struct seccomp_filter *child)
+{
+	/* NULL is the root ancestor. */
+	if (candidate == NULL)
+		return 1;
+	for (; child; child = child->prev)
+		if (child == candidate)
+			return 1;
+	return 0;
+}
+
+/* Expects locking and sync suitability to have been done already. */
+static void seccomp_sync_thread(struct task_struct *caller,
+				struct task_struct *thread)
+{
+	/* Get a task reference for the new leaf node. */
+	get_seccomp_filter(caller);
+	/*
+	 * Drop the task reference to the shared ancestor since
+	 * current's path will hold a reference.  (This also
+	 * allows a put before the assignment.)
+	 */
+	put_seccomp_filter(thread);
+	thread->seccomp.filter = caller->seccomp.filter;
+	/* Opt the other thread into seccomp if needed.
+	 * As threads are considered to be trust-realm
+	 * equivalent (see ptrace_may_access), it is safe to
+	 * allow one thread to transition the other.
+	 */
+	if (thread->seccomp.mode == SECCOMP_MODE_DISABLED) {
+		thread->seccomp.mode = SECCOMP_MODE_FILTER;
+		/*
+		 * Don't let an unprivileged task work around
+		 * the no_new_privs restriction by creating
+		 * a thread that sets it up, enters seccomp,
+		 * then dies.
+		 */
+		if (task_no_new_privs(caller))
+			task_set_no_new_privs(thread);
+		set_tsk_thread_flag(thread, TIF_SECCOMP);
+	}
+}
+
+/**
+ * seccomp_act_sync_threads: sets all threads to use current's filter
+ *
+ * Returns 0 on success, -ve on error, or the pid of a thread which was
+ * either not in the correct seccomp mode or it did not have an ancestral
+ * seccomp filter.
+ */
+static pid_t seccomp_act_sync_threads(void)
+{
+	struct task_struct *thread, *caller;
+	pid_t failed = 0;
+
+	if (current->seccomp.mode != SECCOMP_MODE_FILTER)
+		return -EACCES;
+
+	write_lock(&tasklist_lock);
+	thread = caller = current;
+	while_each_thread(caller, thread) {
+		seccomp_lock(thread);
+		/*
+		 * Validate thread being eligible for synchronization.
+		 */
+		if (thread->seccomp.mode == SECCOMP_MODE_DISABLED ||
+		    (thread->seccomp.mode == SECCOMP_MODE_FILTER &&
+		     is_ancestor(thread->seccomp.filter,
+				 caller->seccomp.filter))) {
+			seccomp_sync_thread(caller, thread);
+		} else {
+			/* Keep the last sibling that failed to return. */
+			failed = task_pid_vnr(thread);
+			/* If the pid cannot be resolved, then return -ESRCH */
+			if (failed == 0)
+				failed = -ESRCH;
+		}
+		seccomp_unlock(thread);
+	}
+	write_unlock(&tasklist_lock);
+	return failed;
 }
 
 /**
@@ -328,10 +415,61 @@ out:
 	return ret;
 }
 
+/**
+ * seccomp_act_filter: attach filter with additional flags
+ * @flags:  flags from SECCOMP_FILTER_* to change behavior
+ * @filter: struct sock_fprog for use with SECCOMP_MODE_FILTER
+ *
+ * Return 0 on success, -ve on error, or thread pid that caused failures.
+ */
+static long seccomp_act_filter(unsigned long flags, char * __user filter)
+{
+	long ret;
+
+	/* Only SECCOMP_FILTER_TSYNC is recognized. */
+	if ((flags & ~(SECCOMP_FILTER_TSYNC)) != 0)
+		return -EINVAL;
+
+	seccomp_lock(current);
+	ret = _seccomp_set_mode(SECCOMP_MODE_FILTER, filter);
+	seccomp_unlock(current);
+	if (ret)
+		return ret;
+
+	if (flags & SECCOMP_FILTER_TSYNC)
+		return seccomp_act_sync_threads();
+
+	return 0;
+}
+
+/**
+ * seccomp_extended_action: performs the specific action
+ * @action: the enum of the action to perform.
+ *
+ * Returns 0 on success. On failure, it returns != 0, or EINVAL on an
+ * invalid action.
+ */
+static long seccomp_extended_action(int action, unsigned long arg1,
+				    unsigned long arg2)
+{
+	switch (action) {
+	case SECCOMP_EXT_ACT_FILTER:
+		return seccomp_act_filter(arg1, (char * __user)arg2);
+	case SECCOMP_EXT_ACT_TSYNC:
+		/* arg1 and arg2 are currently unused. */
+		if (arg1 || arg2)
+			return -EINVAL;
+		return seccomp_act_sync_threads();
+	default:
+		break;
+	}
+	return -EINVAL;
+}
+
 /* get_seccomp_filter - increments the reference count of the filter on @tsk */
 void get_seccomp_filter(struct task_struct *tsk)
 {
-	struct seccomp_filter *orig = tsk->seccomp.filter;
+	struct seccomp_filter *orig = ACCESS_ONCE(tsk->seccomp.filter);
 	if (!orig)
 		return;
 	/* Reference count is bounded by the number of total processes. */
@@ -345,7 +483,7 @@ void put_seccomp_filter(struct task_struct *tsk)
 	/* Clean up single-reference branches iteratively. */
 	while (orig && atomic_dec_and_test(&orig->usage)) {
 		struct seccomp_filter *freeme = orig;
-		orig = orig->prev;
+		orig = ACCESS_ONCE(orig->prev);
 		kfree(freeme);
 	}
 }
@@ -368,6 +506,23 @@ static void seccomp_send_sigsys(int syscall, int reason)
 	info.si_arch = syscall_get_arch(current, task_pt_regs(current));
 	info.si_syscall = syscall;
 	force_sig_info(SIGSYS, &info, current);
+}
+
+/**
+ * prctl_seccomp_ext: exposed extension behaviors for seccomp
+ * @cmd: the type of extension being called
+ * @arg[123]: the arguments for the extension
+ *
+ * Returns == 0 on success and != 0 on failure.
+ * Invalid arguments return -EINVAL.
+ */
+long prctl_seccomp_ext(unsigned long type, unsigned long arg1,
+		       unsigned long arg2, unsigned long arg3)
+{
+	if (type != SECCOMP_EXT_ACT)
+		return -EINVAL;
+	/* For action extensions, arg1 is the identifier. */
+	return seccomp_extended_action(arg1, arg2, arg3);
 }
 #endif	/* CONFIG_SECCOMP_FILTER */
 
@@ -502,21 +657,8 @@ long prctl_get_seccomp(void)
 	return current->seccomp.mode;
 }
 
-/**
- * prctl_set_seccomp: configures current->seccomp.mode
- * @seccomp_mode: requested mode to use; only a single bit should be set
- * @filter: optional struct sock_fprog for use with SECCOMP_MODE_FILTER
- *
- * This function may be called repeatedly with a @seccomp_mode of
- * SECCOMP_MODE_FILTER to install additional filters.  Every filter
- * successfully installed will be evaluated (in reverse order) for each system
- * call the task makes.
- *
- * Once bits are set in current->seccomp.mode, they may not be cleared.
- *
- * Returns 0 on success or -EINVAL on failure.
- */
-long prctl_set_seccomp(unsigned long seccomp_mode, char __user *filter)
+/* Expects to be called under seccomp lock. */
+static long _seccomp_set_mode(unsigned long seccomp_mode, char * __user filter)
 {
 	long ret = -EINVAL;
 
@@ -585,5 +727,29 @@ long prctl_set_seccomp(unsigned long seccomp_mode, char __user *filter)
 		set_thread_flag(TIF_SECCOMP);
 	}
 out:
+	return ret;
+}
+
+/**
+ * prctl_set_seccomp: configures current->seccomp.mode
+ * @seccomp_mode: requested mode to use; only a single bit should be set
+ * @filter: optional struct sock_fprog for use with SECCOMP_MODE_FILTER
+ *
+ * This function may be called repeatedly with a @seccomp_mode of
+ * SECCOMP_MODE_FILTER to install additional filters.  Every filter
+ * successfully installed will be evaluated (in reverse order) for each system
+ * call the task makes.
+ *
+ * Once bits are set in current->seccomp.mode, they may not be cleared.
+ *
+ * Returns 0 on success or -EINVAL on failure.
+ */
+long prctl_set_seccomp(unsigned long seccomp_mode, char __user *filter)
+{
+	long ret;
+
+	seccomp_lock(current);
+	ret = _seccomp_set_mode(seccomp_mode, filter);
+	seccomp_unlock(current);
 	return ret;
 }

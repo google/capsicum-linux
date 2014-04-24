@@ -149,4 +149,10 @@
 
 #define PR_GET_TID_ADDRESS	40
 
+/*
+ * Access seccomp extensions
+ * See Documentation/prctl/seccomp_filter.txt for more details.
+ */
+#define PR_SECCOMP_EXT		43
+
 #endif /* _LINUX_PRCTL_H */

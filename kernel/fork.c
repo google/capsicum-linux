@@ -312,6 +312,15 @@ static struct task_struct *dup_task_struct(struct task_struct *orig)
 		goto free_ti;
 
 	tsk->stack = ti;
+#ifdef CONFIG_SECCOMP
+	/*
+	 * We must handle setting up seccomp filters once we're under
+	 * the tasklist_lock in case orig has changed between now and
+	 * then. Until then, filter must be NULL to avoid messing up
+	 * the usage counts on the error path calling free_task.
+	 */
+	tsk->seccomp.filter = NULL;
+#endif
 
 	setup_thread_stack(tsk, orig);
 	clear_user_return_notifier(tsk);
@@ -1079,6 +1088,23 @@ static void copy_flags(unsigned long clone_flags, struct task_struct *p)
 	p->flags = new_flags;
 }
 
+static void copy_seccomp(struct task_struct *p)
+{
+#ifdef CONFIG_SECCOMP
+	/* Child lock not needed since it is not yet in tasklist. */
+	seccomp_lock(current);
+
+	get_seccomp_filter(current);
+	p->seccomp = current->seccomp;
+	spin_lock_init(&p->seccomp.lock);
+
+	if (p->seccomp.mode != SECCOMP_MODE_DISABLED)
+		set_tsk_thread_flag(p, TIF_SECCOMP);
+
+	seccomp_unlock(current);
+#endif
+}
+
 SYSCALL_DEFINE1(set_tid_address, int __user *, tidptr)
 {
 	current->clear_child_tid = tidptr;
@@ -1194,7 +1220,6 @@ static struct task_struct *copy_process(unsigned long clone_flags,
 		goto fork_out;
 
 	ftrace_graph_init_task(p);
-	get_seccomp_filter(p);
 
 	rt_mutex_init_task(p);
 
@@ -1424,6 +1449,12 @@ static struct task_struct *copy_process(unsigned long clone_flags,
 	 * Need tasklist lock for parent etc handling!
 	 */
 	write_lock_irq(&tasklist_lock);
+
+	/*
+	 * Copy seccomp details explicitly here, in case they were changed
+	 * before holding tasklist_lock.
+	 */
+	copy_seccomp(p);
 
 	/* CLONE_PARENT re-uses the old parent */
 	if (clone_flags & (CLONE_PARENT|CLONE_THREAD)) {

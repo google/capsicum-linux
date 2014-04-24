@@ -154,6 +154,13 @@ extern struct task_group root_task_group;
 # define INIT_VTIME(tsk)
 #endif
 
+#ifdef CONFIG_SECCOMP
+# define INIT_SECCOMP(tsk)						\
+	.seccomp.lock	= __SPIN_LOCK_UNLOCKED(tsk.seccomp.lock),
+#else
+# define INIT_SECCOMP(tsk)
+#endif
+
 #define INIT_TASK_COMM "swapper"
 
 #ifdef CONFIG_RT_MUTEXES
@@ -235,6 +242,7 @@ extern struct task_group root_task_group;
 	INIT_CPUSET_SEQ(tsk)						\
 	INIT_RT_MUTEXES(tsk)						\
 	INIT_VTIME(tsk)							\
+	INIT_SECCOMP(tsk)						\
 }
 
 
