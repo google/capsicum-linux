@@ -17,11 +17,16 @@
 #define SECCOMP_EXT_ACT		1
 
 /* Valid extension actions as arg3 to prctl(PR_SECCOMP_EXT, SECCOMP_EXT_ACT) */
-#define SECCOMP_EXT_ACT_FILTER	1 /* apply seccomp-bpf filter with flags */
-#define SECCOMP_EXT_ACT_TSYNC	2 /* synchronize threadgroup filters */
+#define SECCOMP_EXT_ACT_FILTER		1 /* apply seccomp-bpf filter with flags */
+#define SECCOMP_EXT_ACT_TSYNC		2 /* synchronize threadgroup filters */
+#define SECCOMP_EXT_ACT_LSM		3 /* apply LSM hook filter with flags */
+#define SECCOMP_EXT_ACT_TSYNC_LSM	4 /* synchronize LSM hook status */
 
 /* Flags for prctl arg4 when calling SECCOMP_EXT_ACT_FILTER */
 #define SECCOMP_FILTER_TSYNC	1 /* synchronize threadgroup to filter */
+
+/* Flags for prctl arg4 when calling SECCOMP_EXT_ACT_LSM */
+#define SECCOMP_LSM_TSYNC	1 /* synchronize threadgroup seccomp status */
 
 /*
  * All BPF programs must return a 32-bit value.
