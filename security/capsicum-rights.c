@@ -196,5 +196,6 @@ bool cap_rights_is_all(const struct capsicum_rights *rights)
 	       rights->fcntls == CAP_FCNTL_ALL &&
 	       rights->nioctls == -1;
 }
+EXPORT_SYMBOL(cap_rights_is_all);
 
 #endif  /* CONFIG_SECURITY_CAPSICUM */

@@ -35,6 +35,7 @@ struct capsicum_rights *cap_rights_vinit(struct capsicum_rights *rights,
 struct capsicum_rights *cap_rights_vset(struct capsicum_rights *rights,
 					va_list ap);
 struct capsicum_rights *cap_rights_set_all(struct capsicum_rights *rights);
+bool cap_rights_is_all(const struct capsicum_rights *rights);
 
 #else
 
@@ -45,6 +46,10 @@ static inline struct capsicum_rights *
 _cap_rights_noop(struct capsicum_rights *rights)
 {
 	return rights;
+}
+static inline bool cap_rights_is_all(const struct capsicum_rights *rights)
+{
+	return true;
 }
 
 #endif
