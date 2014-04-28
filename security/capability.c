@@ -1006,7 +1006,6 @@ void __init security_fixup_ops(struct security_operations *ops)
 	set_to_cap_if_null(ops, path_chmod);
 	set_to_cap_if_null(ops, path_chown);
 	set_to_cap_if_null(ops, path_chroot);
-	set_to_capsicum_if_null(ops, path_lookup);
 #endif
 	set_to_cap_if_null(ops, file_permission);
 	set_to_cap_if_null(ops, file_alloc_security);

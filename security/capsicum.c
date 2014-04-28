@@ -382,31 +382,6 @@ struct file *capsicum_file_install(const struct capsicum_rights *base_rights,
 }
 EXPORT_SYMBOL(capsicum_file_install);
 
-#ifdef CONFIG_SECURITY_PATH
-/*
- * Prevent absolute lookups and upward traversal (../) when in capability
- * mode or when the lookup is relative to a capability file descriptor.
- */
-int capsicum_path_lookup(const struct capsicum_rights *base_rights,
-			 struct dentry *dentry, const char *name)
-{
-	if (!capsicum_in_cap_mode() &&
-	    (base_rights == NULL || cap_rights_is_all(base_rights)))
-		return 0;
-
-	if (name[0] == '.' && name[1] == '.' &&
-			(name[2] == '\0' || name[2] == '/'))
-		return -ENOTCAPABLE;
-
-	if (name[0] == '/')
-		return -ENOTCAPABLE;
-
-	return 0;
-}
-EXPORT_SYMBOL(capsicum_path_lookup);
-#endif
-
-
 #else
 
 struct file *capsicum_file_lookup(struct file *file,
@@ -422,13 +397,5 @@ capsicum_file_install(const const struct capsicum_rights *base_rights,
 {
 	return file;
 }
-
-#ifdef CONFIG_SECURITY_PATH
-int capsicum_path_lookup(const struct capsicum_rights *base_rights,
-			 struct dentry *dentry, const char *name)
-{
-	return 0;
-}
-#endif
 
 #endif

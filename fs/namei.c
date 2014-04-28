@@ -1754,9 +1754,6 @@ static int link_path_walk(const char *name, struct nameidata *nd,
 			err = -EACCES;
 			goto exit;
 		}
-		err = security_path_lookup(dfd_rights, NULL, name);
-		if (err)
-			goto exit;
 		name++;
 	}
 	if (!*name)
@@ -1770,10 +1767,6 @@ static int link_path_walk(const char *name, struct nameidata *nd,
 
 		err = may_lookup(nd);
  		if (err)
-			break;
-
-		err = security_path_lookup(dfd_rights, nd->path.dentry, name);
-		if (err)
 			break;
 
 		len = hash_name(name, &this.hash);
@@ -1881,9 +1874,6 @@ static int path_init(int dfd, const char *name, unsigned int flags,
 			return -EACCES;
 		if (dfd_rights)
 			*dfd_rights = NULL;
-		retval = security_path_lookup(NULL, NULL, name);
-		if (retval)
-			return retval;
 
 		if (flags & LOOKUP_RCU) {
 			rcu_read_lock();

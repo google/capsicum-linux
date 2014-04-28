@@ -473,13 +473,6 @@ int security_path_chroot(struct path *path)
 {
 	return security_ops->path_chroot(path);
 }
-
-int security_path_lookup(const struct capsicum_rights *base_rights,
-			 struct dentry *dentry,
-			 const char *name)
-{
-	return security_ops->path_lookup(base_rights, dentry, name);
-}
 #endif
 
 int security_inode_create(struct inode *dir, struct dentry *dentry, umode_t mode)

@@ -89,7 +89,6 @@ The additional hooks added for (and implemented by) Capsicum are:
    into the file descriptor table, in cases where the new file is derived
    from another file (that may be a Capsicum capability and so have rights
    associated with it).
- - path_lookup: Check whether a path segment lookup is allowed.
 
 
 New System Calls

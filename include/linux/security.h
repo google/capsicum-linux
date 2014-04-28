@@ -408,14 +408,6 @@ static inline void security_free_mnt_opts(struct security_mnt_opts *opts)
  *	@dentry contains the dentry structure of the symbolic link.
  *	@old_name contains the pathname of file.
  *	Return 0 if permission is granted.
- * @path_lookup:
- *	Check permission before looking up a path segment.
- *	@base_rights are the rights associated with the directory the lookup
- *	is relative to, or NULL if no directory is associated.
- *	@dentry is the context of the lookup, or NULL for the first stage of
- *	an absolute lookup.
- *	@name is the rest of the path.
- *	Return 0 if permission is granted.
  * @inode_mkdir:
  *	Check permissions to create a new directory in the existing directory
  *	associated with inode structure @dir.
@@ -1541,8 +1533,6 @@ struct security_operations {
 	int (*path_chmod) (struct path *path, umode_t mode);
 	int (*path_chown) (struct path *path, kuid_t uid, kgid_t gid);
 	int (*path_chroot) (struct path *path);
-	int (*path_lookup) (const struct capsicum_rights *base_rights,
-			    struct dentry *dentry, const char *name);
 #endif
 
 	int (*inode_alloc_security) (struct inode *inode);
@@ -3038,8 +3028,6 @@ int security_path_rename(struct path *old_dir, struct dentry *old_dentry,
 int security_path_chmod(struct path *path, umode_t mode);
 int security_path_chown(struct path *path, kuid_t uid, kgid_t gid);
 int security_path_chroot(struct path *path);
-int security_path_lookup(const struct capsicum_rights *base_rights,
-			 struct dentry *dentry, const char *name);
 #else	/* CONFIG_SECURITY_PATH */
 static inline int security_path_unlink(struct path *dir, struct dentry *dentry)
 {
@@ -3100,13 +3088,6 @@ static inline int security_path_chown(struct path *path, kuid_t uid, kgid_t gid)
 }
 
 static inline int security_path_chroot(struct path *path)
-{
-	return 0;
-}
-
-static inline int
-security_path_lookup(const struct capsicum_rights *base_rights,
-		     struct dentry *dentry, const char *name)
 {
 	return 0;
 }

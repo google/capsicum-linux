@@ -19,11 +19,6 @@ struct file *capsicum_file_lookup(struct file *file,
 				  const struct capsicum_rights **actual_rights);
 struct file *capsicum_file_install(const struct capsicum_rights *base_rights,
 				   struct file *file);
-#ifdef CONFIG_SECURITY_PATH
-struct dentry;
-int capsicum_path_lookup(const struct capsicum_rights *base_rights,
-			 struct dentry *dentry, const char *name);
-#endif
 
 #define CAP_LIST_END	0ULL
 
