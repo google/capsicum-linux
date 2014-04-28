@@ -657,8 +657,8 @@ static int __init init_lookup_rights(void)
 }
 fs_initcall(init_lookup_rights);
 
-static int link_path_walk(const char *, struct nameidata *,
-			  const struct capsicum_rights *dfd_rights);
+static int link_path_walk(const char *, struct nameidata *, unsigned int,
+			  const struct capsicum_rights *);
 
 static __always_inline void set_root_rcu(struct nameidata *nd)
 {
@@ -831,8 +831,8 @@ static int may_linkat(struct path *link)
 }
 
 static __always_inline int
-follow_link(struct path *link, struct nameidata *nd, void **p,
-	    const struct capsicum_rights *dfd_rights)
+follow_link(struct path *link, struct nameidata *nd, unsigned int flags,
+	    void **p, const struct capsicum_rights *dfd_rights)
 {
 	struct dentry *dentry = link->dentry;
 	int error;
@@ -879,7 +879,7 @@ follow_link(struct path *link, struct nameidata *nd, void **p,
 			nd->flags |= LOOKUP_JUMPED;
 		}
 		nd->inode = nd->path.dentry->d_inode;
-		error = link_path_walk(s, nd, dfd_rights);
+		error = link_path_walk(s, nd, flags, dfd_rights);
 		if (unlikely(error))
 			put_link(nd, link, *p);
 	}
@@ -1584,6 +1584,7 @@ out_err:
  * symlinks can cause almost arbitrarily long lookups.
  */
 static inline int nested_symlink(struct path *path, struct nameidata *nd,
+				 unsigned int flags,
 				 const struct capsicum_rights *dfd_rights)
 {
 	int res;
@@ -1602,7 +1603,7 @@ static inline int nested_symlink(struct path *path, struct nameidata *nd,
 		struct path link = *path;
 		void *cookie;
 
-		res = follow_link(&link, nd, &cookie, dfd_rights);
+		res = follow_link(&link, nd, flags, &cookie, dfd_rights);
 		if (res)
 			break;
 		res = walk_component(nd, path, LOOKUP_FOLLOW);
@@ -1742,12 +1743,17 @@ static inline unsigned long hash_name(const char *name, unsigned int *hashp)
  * Returns error and drops reference to input namei data on failure.
  */
 static int link_path_walk(const char *name, struct nameidata *nd,
+			  unsigned int flags,
 			  const struct capsicum_rights *dfd_rights)
 {
 	struct path next;
 	int err;
 
 	while (*name == '/') {
+		if (flags & LOOKUP_BENEATH_ONLY) {
+			err = -EACCES;
+			goto exit;
+		}
 		err = security_path_lookup(dfd_rights, NULL, name);
 		if (err)
 			goto exit;
@@ -1778,6 +1784,10 @@ static int link_path_walk(const char *name, struct nameidata *nd,
 		if (name[0] == '.') switch (len) {
 			case 2:
 				if (name[1] == '.') {
+					if (flags & LOOKUP_BENEATH_ONLY) {
+						err = -EACCES;
+						goto exit;
+					}
 					type = LAST_DOTDOT;
 					nd->flags |= LOOKUP_JUMPED;
 				}
@@ -1817,7 +1827,7 @@ static int link_path_walk(const char *name, struct nameidata *nd,
 			return err;
 
 		if (err) {
-			err = nested_symlink(&next, nd, dfd_rights);
+			err = nested_symlink(&next, nd, flags, dfd_rights);
 			if (err)
 				return err;
 		}
@@ -1867,6 +1877,8 @@ static int path_init(int dfd, const char *name, unsigned int flags,
 
 	nd->m_seq = read_seqbegin(&mount_lock);
 	if (*name=='/') {
+		if (flags & LOOKUP_BENEATH_ONLY)
+			return -EACCES;
 		if (dfd_rights)
 			*dfd_rights = NULL;
 		retval = security_path_lookup(NULL, NULL, name);
@@ -1972,7 +1984,7 @@ static int path_lookupat(int dfd,
 		return err;
 
 	current->total_link_count = 0;
-	err = link_path_walk(name, nd, dfd_rights);
+	err = link_path_walk(name, nd, flags, dfd_rights);
 
 	if (!err && !(flags & LOOKUP_PARENT)) {
 		err = lookup_last(nd, &path);
@@ -1983,7 +1995,7 @@ static int path_lookupat(int dfd,
 			if (unlikely(err))
 				break;
 			nd->flags |= LOOKUP_PARENT;
-			err = follow_link(&link, nd, &cookie, dfd_rights);
+			err = follow_link(&link, nd, flags, &cookie, dfd_rights);
 			if (err)
 				break;
 			err = lookup_last(nd, &path);
@@ -2356,7 +2368,7 @@ path_mountpoint(int dfd, const char *name, struct path *path, unsigned int flags
 		return err;
 
 	current->total_link_count = 0;
-	err = link_path_walk(name, &nd, dfd_rights);
+	err = link_path_walk(name, &nd, flags, dfd_rights);
 	if (err)
 		goto out;
 
@@ -2368,7 +2380,7 @@ path_mountpoint(int dfd, const char *name, struct path *path, unsigned int flags
 		if (unlikely(err))
 			break;
 		nd.flags |= LOOKUP_PARENT;
-		err = follow_link(&link, &nd, &cookie, dfd_rights);
+		err = follow_link(&link, &nd, flags, &cookie, dfd_rights);
 		if (err)
 			break;
 		err = mountpoint_last(&nd, path);
@@ -3282,7 +3294,7 @@ static struct file *path_openat(int dfd, struct filename *pathname,
 		goto out;
 
 	current->total_link_count = 0;
-	error = link_path_walk(pathname->name, nd, dfd_rights);
+	error = link_path_walk(pathname->name, nd, flags, dfd_rights);
 	if (unlikely(error))
 		goto out;
 
@@ -3301,7 +3313,7 @@ static struct file *path_openat(int dfd, struct filename *pathname,
 			break;
 		nd->flags |= LOOKUP_PARENT;
 		nd->flags &= ~(LOOKUP_OPEN|LOOKUP_CREATE|LOOKUP_EXCL);
-		error = follow_link(&link, nd, &cookie, dfd_rights);
+		error = follow_link(&link, nd, flags, &cookie, dfd_rights);
 		if (unlikely(error))
 			break;
 		error = do_last(nd, &path, file, op, &opened, pathname);

@@ -21,6 +21,7 @@
 
 #define O_PATH		020000000
 #define __O_TMPFILE	040000000
+#define O_BENEATH_ONLY	080000000	/* no / or .. in openat path */
 
 #define F_GETLK64	8
 #define F_SETLK64	9
