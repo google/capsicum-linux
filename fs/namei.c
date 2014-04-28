@@ -657,8 +657,7 @@ static int __init init_lookup_rights(void)
 }
 fs_initcall(init_lookup_rights);
 
-static int link_path_walk(const char *, struct nameidata *, unsigned int,
-			  const struct capsicum_rights *);
+static int link_path_walk(const char *, struct nameidata *, unsigned int);
 
 static __always_inline void set_root_rcu(struct nameidata *nd)
 {
@@ -831,8 +830,7 @@ static int may_linkat(struct path *link)
 }
 
 static __always_inline int
-follow_link(struct path *link, struct nameidata *nd, unsigned int flags,
-	    void **p, const struct capsicum_rights *dfd_rights)
+follow_link(struct path *link, struct nameidata *nd, unsigned int flags, void **p)
 {
 	struct dentry *dentry = link->dentry;
 	int error;
@@ -879,7 +877,7 @@ follow_link(struct path *link, struct nameidata *nd, unsigned int flags,
 			nd->flags |= LOOKUP_JUMPED;
 		}
 		nd->inode = nd->path.dentry->d_inode;
-		error = link_path_walk(s, nd, flags, dfd_rights);
+		error = link_path_walk(s, nd, flags);
 		if (unlikely(error))
 			put_link(nd, link, *p);
 	}
@@ -1584,8 +1582,7 @@ out_err:
  * symlinks can cause almost arbitrarily long lookups.
  */
 static inline int nested_symlink(struct path *path, struct nameidata *nd,
-				 unsigned int flags,
-				 const struct capsicum_rights *dfd_rights)
+				 unsigned int flags)
 {
 	int res;
 
@@ -1603,7 +1600,7 @@ static inline int nested_symlink(struct path *path, struct nameidata *nd,
 		struct path link = *path;
 		void *cookie;
 
-		res = follow_link(&link, nd, flags, &cookie, dfd_rights);
+		res = follow_link(&link, nd, flags, &cookie);
 		if (res)
 			break;
 		res = walk_component(nd, path, LOOKUP_FOLLOW);
@@ -1743,8 +1740,7 @@ static inline unsigned long hash_name(const char *name, unsigned int *hashp)
  * Returns error and drops reference to input namei data on failure.
  */
 static int link_path_walk(const char *name, struct nameidata *nd,
-			  unsigned int flags,
-			  const struct capsicum_rights *dfd_rights)
+			  unsigned int flags)
 {
 	struct path next;
 	int err;
@@ -1820,7 +1816,7 @@ static int link_path_walk(const char *name, struct nameidata *nd,
 			return err;
 
 		if (err) {
-			err = nested_symlink(&next, nd, flags, dfd_rights);
+			err = nested_symlink(&next, nd, flags);
 			if (err)
 				return err;
 		}
@@ -1974,7 +1970,7 @@ static int path_lookupat(int dfd,
 		return err;
 
 	current->total_link_count = 0;
-	err = link_path_walk(name, nd, flags, dfd_rights);
+	err = link_path_walk(name, nd, flags);
 
 	if (!err && !(flags & LOOKUP_PARENT)) {
 		err = lookup_last(nd, &path);
@@ -1985,7 +1981,7 @@ static int path_lookupat(int dfd,
 			if (unlikely(err))
 				break;
 			nd->flags |= LOOKUP_PARENT;
-			err = follow_link(&link, nd, flags, &cookie, dfd_rights);
+			err = follow_link(&link, nd, flags, &cookie);
 			if (err)
 				break;
 			err = lookup_last(nd, &path);
@@ -2358,7 +2354,7 @@ path_mountpoint(int dfd, const char *name, struct path *path, unsigned int flags
 		return err;
 
 	current->total_link_count = 0;
-	err = link_path_walk(name, &nd, flags, dfd_rights);
+	err = link_path_walk(name, &nd, flags);
 	if (err)
 		goto out;
 
@@ -2370,7 +2366,7 @@ path_mountpoint(int dfd, const char *name, struct path *path, unsigned int flags
 		if (unlikely(err))
 			break;
 		nd.flags |= LOOKUP_PARENT;
-		err = follow_link(&link, &nd, flags, &cookie, dfd_rights);
+		err = follow_link(&link, &nd, flags, &cookie);
 		if (err)
 			break;
 		err = mountpoint_last(&nd, path);
@@ -3284,7 +3280,7 @@ static struct file *path_openat(int dfd, struct filename *pathname,
 		goto out;
 
 	current->total_link_count = 0;
-	error = link_path_walk(pathname->name, nd, flags, dfd_rights);
+	error = link_path_walk(pathname->name, nd, flags);
 	if (unlikely(error))
 		goto out;
 
@@ -3303,7 +3299,7 @@ static struct file *path_openat(int dfd, struct filename *pathname,
 			break;
 		nd->flags |= LOOKUP_PARENT;
 		nd->flags &= ~(LOOKUP_OPEN|LOOKUP_CREATE|LOOKUP_EXCL);
-		error = follow_link(&link, nd, flags, &cookie, dfd_rights);
+		error = follow_link(&link, nd, flags, &cookie);
 		if (unlikely(error))
 			break;
 		error = do_last(nd, &path, file, op, &opened, pathname);
