@@ -1750,7 +1750,7 @@ static int link_path_walk(const char *name, struct nameidata *nd,
 	while (*name == '/') {
 		err = security_path_lookup(dfd_rights, NULL, name);
 		if (err)
-			return err;
+			goto exit;
 		name++;
 	}
 	if (!*name)
@@ -1826,6 +1826,7 @@ static int link_path_walk(const char *name, struct nameidata *nd,
 			break;
 		}
 	}
+exit:
 	terminate_walk(nd);
 	return err;
 }
