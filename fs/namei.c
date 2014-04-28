@@ -34,6 +34,8 @@
 #include <linux/device_cgroup.h>
 #include <linux/fs_struct.h>
 #include <linux/posix_acl.h>
+#include <linux/capsicum.h>
+#include <linux/capsicum-capmode.h>
 #include <asm/uaccess.h>
 
 #include "internal.h"
@@ -1830,7 +1832,7 @@ exit:
 	return err;
 }
 
-static int path_init(int dfd, const char *name, unsigned int flags,
+static int path_init(int dfd, const char *name, unsigned int *flags,
 		struct nameidata *nd, struct file **fp,
 		const struct capsicum_rights **dfd_rights,
 		const struct capsicum_rights *rights)
@@ -1838,9 +1840,13 @@ static int path_init(int dfd, const char *name, unsigned int flags,
 	int retval = 0;
 
 	nd->last_type = LAST_ROOT; /* if there are only slashes... */
-	nd->flags = flags | LOOKUP_JUMPED;
+	nd->flags = (*flags) | LOOKUP_PARENT | LOOKUP_JUMPED;
 	nd->depth = 0;
-	if (flags & LOOKUP_ROOT) {
+
+	if (capsicum_in_cap_mode())
+		*flags |= LOOKUP_BENEATH_ONLY;
+
+	if ((*flags) & LOOKUP_ROOT) {
 		struct dentry *root = nd->root.dentry;
 		struct inode *inode = root->d_inode;
 		if (*name) {
@@ -1852,7 +1858,7 @@ static int path_init(int dfd, const char *name, unsigned int flags,
 		}
 		nd->path = nd->root;
 		nd->inode = inode;
-		if (flags & LOOKUP_RCU) {
+		if ((*flags) & LOOKUP_RCU) {
 			rcu_read_lock();
 			nd->seq = __read_seqcount_begin(&nd->path.dentry->d_seq);
 			nd->m_seq = read_seqbegin(&mount_lock);
@@ -1866,12 +1872,11 @@ static int path_init(int dfd, const char *name, unsigned int flags,
 
 	nd->m_seq = read_seqbegin(&mount_lock);
 	if (*name=='/') {
-		if (flags & LOOKUP_BENEATH_ONLY)
+		if ((*flags) & LOOKUP_BENEATH_ONLY)
 			return -EACCES;
 		if (dfd_rights)
 			*dfd_rights = NULL;
-
-		if (flags & LOOKUP_RCU) {
+		if ((*flags) & LOOKUP_RCU) {
 			rcu_read_lock();
 			set_root_rcu(nd);
 		} else {
@@ -1882,7 +1887,7 @@ static int path_init(int dfd, const char *name, unsigned int flags,
 	} else if (dfd == AT_FDCWD) {
 		if (dfd_rights)
 			*dfd_rights = NULL;
-		if (flags & LOOKUP_RCU) {
+		if ((*flags) & LOOKUP_RCU) {
 			struct fs_struct *fs = current->fs;
 			unsigned seq;
 
@@ -1903,6 +1908,8 @@ static int path_init(int dfd, const char *name, unsigned int flags,
 
 		if (IS_ERR(f.file))
 			return PTR_ERR(f.file);
+		if (!cap_rights_is_all(*dfd_rights))
+			*flags |= LOOKUP_BENEATH_ONLY;
 
 		dentry = f.file->f_path.dentry;
 
@@ -1914,7 +1921,7 @@ static int path_init(int dfd, const char *name, unsigned int flags,
 		}
 
 		nd->path = f.file->f_path;
-		if (flags & LOOKUP_RCU) {
+		if ((*flags) & LOOKUP_RCU) {
 			if (f.flags & FDPUT_FPUT)
 				*fp = f.file;
 			nd->seq = __read_seqcount_begin(&nd->path.dentry->d_seq);
@@ -1963,8 +1970,7 @@ static int path_lookupat(int dfd,
 	 * be handled by restarting a traditional ref-walk (which will always
 	 * be able to complete).
 	 */
-	err = path_init(dfd, name, flags | LOOKUP_PARENT, nd, &base,
-			&dfd_rights, rights);
+	err = path_init(dfd, name, &flags, nd, &base, &dfd_rights, rights);
 
 	if (unlikely(err))
 		return err;
@@ -2348,7 +2354,7 @@ path_mountpoint(int dfd, const char *name, struct path *path, unsigned int flags
 	const struct capsicum_rights *dfd_rights;
 	int err;
 
-	err = path_init(dfd, name, flags | LOOKUP_PARENT, &nd, &base,
+	err = path_init(dfd, name, &flags, &nd, &base,
 			&dfd_rights, &lookup_rights);
 	if (unlikely(err))
 		return err;
@@ -3274,7 +3280,7 @@ static struct file *path_openat(int dfd, struct filename *pathname,
 	}
 
 	openat_primary_rights(&rights, file->f_flags);
-	error = path_init(dfd, pathname->name, flags | LOOKUP_PARENT, nd, &base,
+	error = path_init(dfd, pathname->name, &flags, nd, &base,
 			  &dfd_rights, &rights);
 	if (unlikely(error))
 		goto out;
