@@ -1679,6 +1679,7 @@ SYSCALL_DEFINE4(accept4, int, fd, struct sockaddr __user *, upeer_sockaddr,
 {
 	struct socket *sock, *newsock;
 	struct file *newfile;
+	struct file *installfile;
 	int err, len, newfd, fput_needed;
 	struct sockaddr_storage address;
 	struct capsicum_rights rights;
@@ -1746,7 +1747,12 @@ SYSCALL_DEFINE4(accept4, int, fd, struct sockaddr __user *, upeer_sockaddr,
 
 	/* File flags are not inherited via accept() unlike another OSes. */
 
-	fd_install(newfd, newfile);
+	installfile = capsicum_file_install(listen_rights, newfile);
+	if (IS_ERR(installfile)) {
+		err = PTR_ERR(installfile);
+		goto out_fd;
+	}
+	fd_install(newfd, installfile);
 	err = newfd;
 
 out_put:
@@ -2128,7 +2134,7 @@ static int ___sys_sendmsg(struct socket *sock_noaddr, struct socket *sock_addr,
 	}
 	sock = (msg_sys->msg_name ? sock_addr : sock_noaddr);
 	if (!sock)
-		return -EBADF;
+		return -ENOTCAPABLE;
 
 	if (msg_sys->msg_iovlen > UIO_FASTIOV) {
 		err = -EMSGSIZE;
