@@ -57,6 +57,7 @@
 #include <linux/oom.h>
 #include <linux/compat.h>
 #include <linux/vmalloc.h>
+#include <linux/capsicum.h>
 
 #include <asm/uaccess.h>
 #include <asm/mmu_context.h>
@@ -800,6 +801,7 @@ EXPORT_SYMBOL(transfer_args_to_stack);
 static struct file *do_open_execat(int fd, struct filename *name, int flags)
 {
 	struct file *file;
+	struct file *underlying;
 	int err;
 	struct open_flags open_exec_flags = {
 		.open_flag = O_LARGEFILE | O_RDONLY | __FMODE_EXEC,
@@ -818,6 +820,16 @@ static struct file *do_open_execat(int fd, struct filename *name, int flags)
 	file = do_filp_open(fd, name, &open_exec_flags);
 	if (IS_ERR(file))
 		goto out;
+
+	/*
+	 * This may be a newly-generated Capsicum wrapper file; if so, discard
+	 * the wrapper as we are not installing the file in any fdtable.
+	 */
+	underlying = capsicum_file_lookup(file, NULL, NULL);
+	if (underlying != file) {
+		fput(file);
+		file = underlying;
+	}
 
 	err = -EACCES;
 	if (!S_ISREG(file_inode(file)->i_mode))
