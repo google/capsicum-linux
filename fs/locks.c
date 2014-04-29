@@ -121,6 +121,7 @@
 #include <linux/init.h>
 #include <linux/module.h>
 #include <linux/security.h>
+#include <linux/capsicum.h>
 #include <linux/slab.h>
 #include <linux/syscalls.h>
 #include <linux/time.h>
@@ -2233,6 +2234,7 @@ again:
 	 */
 	spin_lock(&current->files->file_lock);
 	f = fcheck(fd);
+	f = capsicum_file_lookup(f, NULL, NULL);
 	spin_unlock(&current->files->file_lock);
 	if (!error && f != filp && flock.l_type != F_UNLCK) {
 		flock.l_type = F_UNLCK;
@@ -2368,6 +2370,7 @@ again:
 	 */
 	spin_lock(&current->files->file_lock);
 	f = fcheck(fd);
+	f = capsicum_file_lookup(f, NULL, NULL);
 	spin_unlock(&current->files->file_lock);
 	if (!error && f != filp && flock.l_type != F_UNLCK) {
 		flock.l_type = F_UNLCK;

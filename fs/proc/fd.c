@@ -6,6 +6,7 @@
 #include <linux/namei.h>
 #include <linux/pid.h>
 #include <linux/security.h>
+#include <linux/capsicum.h>
 #include <linux/file.h>
 #include <linux/seq_file.h>
 #include <linux/fs.h>
@@ -21,6 +22,7 @@ static int seq_show(struct seq_file *m, void *v)
 	struct files_struct *files = NULL;
 	int f_flags = 0, ret = -ENOENT;
 	struct file *file = NULL;
+	struct file *underlying = NULL;
 	struct task_struct *task;
 
 	task = get_proc_task(m->private);
@@ -38,11 +40,13 @@ static int seq_show(struct seq_file *m, void *v)
 		if (file) {
 			struct fdtable *fdt = files_fdtable(files);
 
-			f_flags = file->f_flags;
+			underlying = capsicum_file_lookup(file, NULL, NULL);
+			f_flags = underlying->f_flags;
 			if (close_on_exec(fd, fdt))
 				f_flags |= O_CLOEXEC;
 
 			get_file(file);
+			get_file(underlying);
 			ret = 0;
 		}
 		spin_unlock(&files->file_lock);
@@ -53,10 +57,10 @@ static int seq_show(struct seq_file *m, void *v)
 		return ret;
 
 	seq_printf(m, "pos:\t%lli\nflags:\t0%o\nmnt_id:\t%i\n",
-		   (long long)file->f_pos, f_flags,
-		   real_mount(file->f_path.mnt)->mnt_id);
+		   (long long)underlying->f_pos, f_flags,
+		   real_mount(underlying->f_path.mnt)->mnt_id);
 
-	show_fd_locks(m, file, files);
+	show_fd_locks(m, underlying, files);
 	if (seq_has_overflowed(m))
 		goto out;
 
@@ -64,6 +68,7 @@ static int seq_show(struct seq_file *m, void *v)
 		file->f_op->show_fdinfo(m, file);
 
 out:
+	fput(underlying);
 	fput(file);
 	return 0;
 }
@@ -103,7 +108,10 @@ static int tid_fd_revalidate(struct dentry *dentry, unsigned int flags)
 			rcu_read_lock();
 			file = fcheck_files(files, fd);
 			if (file) {
-				unsigned f_mode = file->f_mode;
+				unsigned f_mode;
+
+				file = capsicum_file_lookup(file, NULL, NULL);
+				f_mode = file->f_mode;
 
 				rcu_read_unlock();
 				put_files_struct(files);
@@ -164,6 +172,7 @@ static int proc_fd_link(struct dentry *dentry, struct path *path)
 		spin_lock(&files->file_lock);
 		fd_file = fcheck_files(files, fd);
 		if (fd_file) {
+			fd_file = capsicum_file_lookup(fd_file, NULL, NULL);
 			*path = fd_file->f_path;
 			path_get(&fd_file->f_path);
 			ret = 0;
