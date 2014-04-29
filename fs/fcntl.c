@@ -437,7 +437,7 @@ static inline struct fd fcntl_fdget_raw(unsigned int fd, unsigned int cmd,
 		if (f.file == NULL)
 			f.file = ERR_PTR(-EBADF);
 	} else {
-		f = fdget_raw_rights(fd, NULL, rights);
+		f = fdget_raw_rights(fd, rights, NULL);
 	}
 	return f;
 }
