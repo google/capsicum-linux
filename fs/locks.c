@@ -120,6 +120,7 @@
 #include <linux/fs.h>
 #include <linux/init.h>
 #include <linux/security.h>
+#include <linux/capsicum.h>
 #include <linux/slab.h>
 #include <linux/syscalls.h>
 #include <linux/time.h>
@@ -2261,6 +2262,7 @@ int fcntl_setlk(unsigned int fd, struct file *filp, unsigned int cmd,
 		 */
 		spin_lock(&current->files->file_lock);
 		f = fcheck(fd);
+		f = capsicum_file_lookup(f, NULL, NULL);
 		spin_unlock(&current->files->file_lock);
 		if (f != filp) {
 			file_lock->fl_type = F_UNLCK;
@@ -2406,6 +2408,7 @@ int fcntl_setlk64(unsigned int fd, struct file *filp, unsigned int cmd,
 		 */
 		spin_lock(&current->files->file_lock);
 		f = fcheck(fd);
+		f = capsicum_file_lookup(f, NULL, NULL);
 		spin_unlock(&current->files->file_lock);
 		if (f != filp) {
 			file_lock->fl_type = F_UNLCK;
