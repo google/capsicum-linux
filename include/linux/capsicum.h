@@ -13,6 +13,13 @@ struct capsicum_rights {
 	unsigned int *ioctls;
 };
 
+/* LSM hook fallback functions */
+struct file *capsicum_file_lookup(struct file *file,
+				  const struct capsicum_rights *required_rights,
+				  const struct capsicum_rights **actual_rights);
+struct file *capsicum_file_install(const struct capsicum_rights *base_rights,
+				   struct file *file);
+
 #define CAP_LIST_END	0ULL
 
 #ifdef CONFIG_SECURITY_CAPSICUM

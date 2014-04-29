@@ -11,6 +11,7 @@
  */
 
 #include <linux/security.h>
+#include <linux/capsicum.h>
 
 static int cap_syslog(int type)
 {
@@ -917,9 +918,19 @@ static void cap_audit_rule_free(void *lsmrule)
 #define set_to_cap_if_null(ops, function)				\
 	do {								\
 		if (!ops->function) {					\
-			ops->function = cap_##function;			\
+			ops->function = cap_##function;		\
 			pr_debug("Had to override the " #function	\
-				 " security operation with the default.\n");\
+				 " security operation with the default "\
+				 "cap_" #function ".\n");		\
+			}						\
+	} while (0)
+#define set_to_capsicum_if_null(ops, function)				\
+	do {								\
+		if (!ops->function) {					\
+			ops->function = capsicum_##function;		\
+			pr_debug("Had to override the " #function	\
+				 " security operation with the default "\
+				 "capsicum_" #function ".\n");		\
 			}						\
 	} while (0)
 
@@ -1007,6 +1018,8 @@ void __init security_fixup_ops(struct security_operations *ops)
 	set_to_cap_if_null(ops, file_send_sigiotask);
 	set_to_cap_if_null(ops, file_receive);
 	set_to_cap_if_null(ops, file_open);
+	set_to_capsicum_if_null(ops, file_lookup);
+	set_to_capsicum_if_null(ops, file_install);
 	set_to_cap_if_null(ops, task_create);
 	set_to_cap_if_null(ops, task_free);
 	set_to_cap_if_null(ops, cred_alloc_blank);
