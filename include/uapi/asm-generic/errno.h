@@ -121,4 +121,7 @@
 
 #define ENOTBENEATH	134	/* Not beneath specified directory */
 
+#define ECAPMODE	135	/* Not permitted in capability mode */
+#define ENOTCAPABLE	136	/* Capability FD rights insufficient */
+
 #endif
