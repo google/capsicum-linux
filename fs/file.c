@@ -14,6 +14,7 @@
 #include <linux/time.h>
 #include <linux/sched.h>
 #include <linux/security.h>
+#include <linux/capsicum.h>
 #include <linux/slab.h>
 #include <linux/vmalloc.h>
 #include <linux/file.h>
@@ -793,36 +794,40 @@ unsigned long __fdget_pos(unsigned int fd)
 
 #ifdef CONFIG_SECURITY_CAPSICUM
 /*
- * We might want to change the return value of fget() and friends.  This
- * function is called with the intended return value, and fget() will /actually/
- * return whatever is returned from here. We adjust the reference counter if
- * necessary.
+ * Capsicum might want to change the return value of fget() and friends.  This
+ * function is called with the intended return value, and returns what should
+ * be used instead.  The update_refcnt parameter indicates whether the caller
+ * holds a refcount to orig.
+ *  - If the provided file is returned, the refcounts are left as-is and the
+ *    caller continues to hold a refcount to orig.
+ *  - If an inner file is returned instead of orig, and update_refcnt is true,
+ *    then the caller's refcount to orig will be dropped, and the caller gets
+ *    an incremented refcount to the inner file instead.
  */
 struct file *file_unwrap(struct file *orig,
 			 const struct capsicum_rights *required_rights,
 			 const struct capsicum_rights **actual_rights,
 			 bool update_refcnt)
 {
-	struct file *f;
+	struct file *underlying;
 
 	if (orig == NULL)
 		return ERR_PTR(-EBADF);
 	if (IS_ERR(orig))
 		return orig;
-	f = orig;  /* TODO: change the value of f here */
-	if (f != orig && update_refcnt) {
+	underlying = capsicum_file_lookup(orig, required_rights, actual_rights);
+	if (underlying != orig && update_refcnt) {
 		/*
-		 * We're not returning the original, and the calling code
-		 * has already incremented the refcount on it, we need to
-		 * release that reference and obtain a reference to the new
-		 * return value, if any.
+		 * We're not returning the original, and the calling code holds
+		 * a refcount to it.  We need to grab a refcount for the inner
+		 * file (if found), and drop the refcount on the outer file.
 		 */
-		if (!IS_ERR(f) && !atomic_long_inc_not_zero(&f->f_count))
-			f = ERR_PTR(-EBADF);
-		atomic_long_dec(&orig->f_count);
+		if (!IS_ERR(underlying))
+			get_file(underlying);
+		fput(orig);
 	}
 
-	return f;
+	return underlying;
 }
 
 struct file *fget_rights(unsigned int fd, const struct capsicum_rights *rights)
