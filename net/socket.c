@@ -1503,11 +1503,15 @@ SYSCALL_DEFINE2(listen, int, fd, int, backlog)
 SYSCALL_DEFINE4(accept4, int, fd, struct sockaddr __user *, upeer_sockaddr,
 		int __user *, upeer_addrlen, int, flags)
 {
+	struct fd f;
 	struct socket *sock, *newsock;
 	struct file *newfile;
-	int err, len, newfd, fput_needed;
+	struct file *installfile;
+	int err, len, newfd;
 	struct sockaddr_storage address;
 	struct capsicum_rights rights;
+	const struct capsicum_rights *listen_rights = NULL;
+	struct file *underlying;
 
 	if (flags & ~(SOCK_CLOEXEC | SOCK_NONBLOCK))
 		return -EINVAL;
@@ -1515,10 +1519,19 @@ SYSCALL_DEFINE4(accept4, int, fd, struct sockaddr __user *, upeer_sockaddr,
 	if (SOCK_NONBLOCK != O_NONBLOCK && (flags & SOCK_NONBLOCK))
 		flags = (flags & ~SOCK_NONBLOCK) | O_NONBLOCK;
 
-	sock = sockfd_lookup_light_rights(fd, &err, &fput_needed,
-					  cap_rights_init(&rights, CAP_ACCEPT));
+	f = fdget_raw(fd);
+	if (!f.file)
+		return -EBADF;
+	underlying = file_unwrap(f.file,
+				 cap_rights_init(&rights, CAP_ACCEPT),
+				 &listen_rights, false);
+	if (IS_ERR(underlying)) {
+		err = PTR_ERR(underlying);
+		goto out_put;
+	}
+	sock = sock_from_file(underlying, &err);
 	if (!sock)
-		goto out;
+		goto out_put;
 
 	err = -ENFILE;
 	newsock = sock_alloc();
@@ -1570,12 +1583,17 @@ SYSCALL_DEFINE4(accept4, int, fd, struct sockaddr __user *, upeer_sockaddr,
 
 	/* File flags are not inherited via accept() unlike another OSes. */
 
-	fd_install(newfd, newfile);
+	/* However, any Capsicum capability rights are inherited. */
+	installfile = capsicum_file_install(listen_rights, newfile);
+	if (IS_ERR(installfile)) {
+		err = PTR_ERR(installfile);
+		goto out_fd;
+	}
+	fd_install(newfd, installfile);
 	err = newfd;
 
 out_put:
-	fput_light(sock->file, fput_needed);
-out:
+	fdput(f);
 	return err;
 out_fd:
 	fput(newfile);
@@ -1985,7 +2003,7 @@ static int ___sys_sendmsg(struct socket *sock_noaddr, struct socket *sock_addr,
 
 	sock = (msg_sys->msg_namelen ? sock_addr : sock_noaddr);
 	if (!sock) {
-		err = -EBADF;
+		err = -ENOTCAPABLE;
 		goto out_freeiov;
 	}
 
