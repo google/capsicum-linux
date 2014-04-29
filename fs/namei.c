@@ -832,7 +832,8 @@ static int may_linkat(struct path *link)
 }
 
 static __always_inline int
-follow_link(struct path *link, struct nameidata *nd, unsigned int flags, void **p)
+follow_link(struct path *link, struct nameidata *nd, unsigned int flags,
+	    void **p)
 {
 	struct dentry *dentry = link->dentry;
 	int error;

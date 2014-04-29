@@ -178,7 +178,8 @@ int check_bpf_with_strict(void)
 		return 1;
 	}
 	if (errno != ENOMEM) {
-		printf("[FAIL] open() failed with errno=%d not ENOMEM\n", errno);
+		printf("[FAIL] open() failed with errno=%d not ENOMEM\n",
+		       errno);
 		return 1;
 	}
 
@@ -194,7 +195,7 @@ int check_bpf_with_strict(void)
 	if (errno != ENOMEM)
 		return 4;
 
-	/* close() is allowed by seccomp-bpf, but seccomp-strict generates SIGKILL */
+	/* close() allowed by seccomp-bpf, but seccomp-strict gives SIGKILL */
 	close(fd);
 	syscall(__NR_exit, 99);
 }
