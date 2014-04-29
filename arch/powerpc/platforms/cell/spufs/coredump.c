@@ -29,6 +29,7 @@
 #include <linux/syscalls.h>
 #include <linux/coredump.h>
 #include <linux/binfmts.h>
+#include <linux/capsicum.h>
 
 #include <asm/uaccess.h>
 
@@ -101,6 +102,7 @@ static struct spu_context *coredump_next_context(int *fd)
 		return NULL;
 	*fd = n - 1;
 	file = fcheck(*fd);
+	file = capsicum_file_lookup(file, NULL, NULL);
 	return SPUFS_I(file_inode(file))->i_ctx;
 }
 

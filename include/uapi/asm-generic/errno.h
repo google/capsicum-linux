@@ -110,4 +110,7 @@
 
 #define EHWPOISON	133	/* Memory page has hardware error */
 
+#define ECAPMODE        134     /* Not permitted in capability mode */
+#define ENOTCAPABLE     135     /* Capability FD rights insufficient */
+
 #endif
