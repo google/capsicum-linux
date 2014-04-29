@@ -18,6 +18,12 @@ void handle_syscall(struct uml_pt_regs *r)
 	long result;
 	int syscall;
 
+	/* Do the secure computing check first. */
+	if (secure_computing()) {
+		/* seccomp failures shouldn't expose any additional code. */
+		return;
+	}
+
 	syscall_trace_enter(regs);
 
 	/*
