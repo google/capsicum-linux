@@ -117,8 +117,8 @@ extern struct file *fget_raw_rights(unsigned int fd,
 extern struct fd fdget_rights(unsigned int fd,
 			      const struct capsicum_rights *rights);
 extern struct fd fdget_raw_rights(unsigned int fd,
-				  const struct capsicum_rights **actual_rights,
-				  const struct capsicum_rights *rights);
+				  const struct capsicum_rights *rights,
+				  const struct capsicum_rights **actual_rights);
 
 /*
  * The simple unwrapping variant functions are:
