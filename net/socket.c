@@ -437,10 +437,10 @@ EXPORT_SYMBOL(sockfd_lookup_rights);
 
 static struct socket *
 sockfd_lookup_light_rights(int fd, int *err, int *fput_needed,
-			   const struct capsicum_rights **actual_rights,
-			   const struct capsicum_rights *required_rights)
+			   const struct capsicum_rights *required_rights,
+			   const struct capsicum_rights **actual_rights)
 {
-	struct fd f = fdget_raw_rights(fd, actual_rights, required_rights);
+	struct fd f = fdget_raw_rights(fd, required_rights, actual_rights);
 	struct socket *sock;
 
 	*err = -EBADF;
@@ -478,7 +478,7 @@ struct socket *_sockfd_lookupr_light(int fd, int *err, int *fput_needed, ...)
 
 	va_start(ap, fput_needed);
 	sock = sockfd_lookup_light_rights(fd, err, fput_needed,
-					  NULL, cap_rights_vinit(&rights, ap));
+					cap_rights_vinit(&rights, ap), NULL);
 	va_end(ap);
 	return sock;
 }
@@ -506,8 +506,8 @@ static struct socket *sockfd_lookup_light(int fd, int *err, int *fput_needed)
 
 static inline struct socket *
 sockfd_lookup_light_rights(int fd, int *err, int *fput_needed,
-			   const struct capsicum_rights **actual_rights,
-			   const struct capsicum_rights *required_rights)
+			   const struct capsicum_rights *required_rights,
+			   const struct capsicum_rights **actual_rights)
 {
 	return sockfd_lookup_light(fd, err, fput_needed);
 }
@@ -1522,6 +1522,7 @@ SYSCALL_DEFINE4(accept4, int, fd, struct sockaddr __user *, upeer_sockaddr,
 {
 	struct socket *sock, *newsock;
 	struct file *newfile;
+	struct file *installfile;
 	int err, len, newfd, fput_needed;
 	struct sockaddr_storage address;
 	struct capsicum_rights rights;
@@ -1534,8 +1535,8 @@ SYSCALL_DEFINE4(accept4, int, fd, struct sockaddr __user *, upeer_sockaddr,
 		flags = (flags & ~SOCK_NONBLOCK) | O_NONBLOCK;
 
 	sock = sockfd_lookup_light_rights(fd, &err, &fput_needed,
-					  &listen_rights,
-					  cap_rights_init(&rights, CAP_ACCEPT));
+					  cap_rights_init(&rights, CAP_ACCEPT),
+					  &listen_rights);
 	if (!sock)
 		goto out;
 
@@ -1589,7 +1590,12 @@ SYSCALL_DEFINE4(accept4, int, fd, struct sockaddr __user *, upeer_sockaddr,
 
 	/* File flags are not inherited via accept() unlike another OSes. */
 
-	fd_install(newfd, newfile);
+	installfile = capsicum_file_install(listen_rights, newfile);
+	if (IS_ERR(installfile)) {
+		err = PTR_ERR(installfile);
+		goto out_fd;
+	}
+	fd_install(newfd, installfile);
 	err = newfd;
 
 out_put:
@@ -2002,7 +2008,7 @@ static int ___sys_sendmsg(struct socket *sock_noaddr, struct socket *sock_addr,
 
 	sock = (msg_sys->msg_namelen ? sock_addr : sock_noaddr);
 	if (!sock) {
-		err = -EBADF;
+		err = -ENOTCAPABLE;
 		goto out_freeiov;
 	}
 
