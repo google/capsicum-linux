@@ -200,17 +200,6 @@ int check_bpf_with_strict(void)
 	syscall(__NR_exit, 99);
 }
 
-int check_bpf_prevents_strict(void)
-{
-	int rc;
-	prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0);
-	prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, &allow_bpf, 0, 0);
-	rc = prctl(PR_SET_SECCOMP, SECCOMP_MODE_STRICT, 0, 0, 0);
-	if (rc != -1 || errno != EINVAL)
-		return errno;
-	return 0;
-}
-
 int check_strict_fail_close(void)
 {
 	int fd = open(filename, O_RDONLY);
