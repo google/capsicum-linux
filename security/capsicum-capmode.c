@@ -27,8 +27,11 @@
 #include <asm/prctl.h>
 static int check_arch_prctl(unsigned long *args)
 {
-	return (args[0] & ~(ARCH_SET_FS|ARCH_GET_FS|ARCH_SET_GS|ARCH_GET_GS))
-	       ? SECCOMP_RET_ERRNO|ECAPMODE : SECCOMP_RET_ALLOW;
+	int code = args[0];
+	if (code == ARCH_GET_FS || code == ARCH_GET_GS)
+		return SECCOMP_RET_ALLOW;
+	else
+		return SECCOMP_RET_ERRNO|ECAPMODE;
 }
 #else
 static int check_arch_prctl(unsigned long *args)
