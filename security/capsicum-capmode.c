@@ -100,6 +100,13 @@ static int check_prctl(unsigned long *args)
 	}
 }
 
+static int check_tgkill(unsigned long *args)
+{
+	pid_t tgid = args[0];
+	return (tgid == task_tgid_vnr(current))
+	       ? SECCOMP_RET_ALLOW : SECCOMP_RET_ERRNO|ECAPMODE;
+}
+
 enum capmode_result {
 	CAPMODE_DENY = 0,
 	CAPMODE_ALLOW,
@@ -125,6 +132,7 @@ static int __init init_syscalls_result(void)
 	syscalls_result[__NR_mmap] = CAPMODE_SPECIAL;
 	syscalls_result[__NR_openat] = CAPMODE_SPECIAL;
 	syscalls_result[__NR_prctl] = CAPMODE_SPECIAL;
+	syscalls_result[__NR_tgkill] = CAPMODE_SPECIAL;
 
 	/* Allowed syscalls */
 	syscalls_result[__NR_accept] = CAPMODE_ALLOW;
@@ -323,6 +331,8 @@ u32 capsicum_intercept_syscall(int arch, int callnr, unsigned long *args)
 		return check_openat(args);
 	case (__NR_prctl):
 		return check_prctl(args);
+	case (__NR_tgkill):
+		return check_tgkill(args);
 	default:
 		return SECCOMP_RET_ERRNO|ECAPMODE;
 	}
