@@ -28,7 +28,8 @@
 static int check_arch_prctl(unsigned long *args)
 {
 	int code = args[0];
-	if (code == ARCH_GET_FS || code == ARCH_GET_GS)
+	if (code == ARCH_GET_FS || code == ARCH_GET_GS ||
+	    code == ARCH_SET_FS || code == ARCH_SET_GS)
 		return SECCOMP_RET_ALLOW;
 	else
 		return SECCOMP_RET_ERRNO|ECAPMODE;
