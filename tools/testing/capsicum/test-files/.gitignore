@@ -1,6 +1,8 @@
-kt
 *.test
 *.test.*
 mini-me*
 smoketest
 capsicum-test
+execveat
+openat
+seccomp
