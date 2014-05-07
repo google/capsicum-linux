@@ -654,7 +654,7 @@ int __secure_computing(int this_syscall)
 	int mode;
 	int exit_sig = 0;
 	u32 ret = SECCOMP_RET_ALLOW;
-	u32 ret_mode;
+	u32 cur_ret;
 	int data;
 	struct pt_regs *regs = task_pt_regs(current);
 
@@ -663,24 +663,24 @@ int __secure_computing(int this_syscall)
 			continue;
 		switch (mode) {
 		case SECCOMP_MODE_STRICT:
-			ret_mode = secure_computing_mode1(this_syscall);
+			cur_ret = secure_computing_mode1(this_syscall);
 			exit_sig = SIGKILL;
 			break;
 #ifdef CONFIG_SECCOMP_FILTER
 		case SECCOMP_MODE_FILTER:
-			ret_mode = seccomp_run_filters(this_syscall);
+			cur_ret = seccomp_run_filters(this_syscall);
 			break;
 #endif
 #ifdef CONFIG_SECCOMP_LSM
 		case SECCOMP_MODE_LSM:
-			ret_mode = secure_computing_lsm(this_syscall);
+			cur_ret = secure_computing_lsm(this_syscall);
 			break;
 #endif
 		default:
 			BUG();
 		}
-		if (ret_mode < ret)
-			ret = ret_mode;
+		if ((cur_ret & SECCOMP_RET_ACTION) < (ret & SECCOMP_RET_ACTION))
+			ret = cur_ret;
 	}
 
 	data = ret & SECCOMP_RET_DATA;
