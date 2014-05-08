@@ -23,6 +23,7 @@ static int openat_or_die(int dfd, const char *path, int flags)
 			"check prerequisites are available\n", dfd, path);
 		exit(1);
 	}
+	return fd;
 }
 
 static int check_openat(int dfd, const char *path, int flags)
