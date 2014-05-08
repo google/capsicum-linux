@@ -1,5 +1,8 @@
-DEPS=openat subdir topfile subdir/bottomfile subdir/symlinkup subdir/symlinkout
-all: $(DEPS)
+CC = $(CROSS_COMPILE)gcc
+CFLAGS = -Wall
+BINARIES = openat
+DEPS = subdir topfile subdir/bottomfile subdir/symlinkup subdir/symlinkout
+all: $(BINARIES) $(DEPS)
 
 subdir:
 	mkdir -p subdir
@@ -11,11 +14,11 @@ subdir/symlinkup:
 	ln -s ../topfile $@
 subdir/symlinkout:
 	ln -s /etc/passwd $@
-openat: openat.c
-	gcc $< -o $@
+%: %.c
+	$(CC) $(CFLAGS) -o $@ $^
 
-run_tests: $(DEPS)
+run_tests: all
 	./openat
 
 clean:
-	rm -rf $(DEPS)
+	rm -rf $(BINARIES) $(DEPS)
