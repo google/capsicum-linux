@@ -1,5 +1,8 @@
-DEPS=execveat.symlink script execveat.ephemeral script.ephemeral execveat subdir subdir.ephemeral subdir.ephemeral/script
-all: $(DEPS)
+CC = $(CROSS_COMPILE)gcc
+CFLAGS = -Wall
+BINARIES = execveat
+DEPS = execveat.symlink script execveat.ephemeral script.ephemeral subdir subdir.ephemeral subdir.ephemeral/script
+all: $(BINARIES) $(DEPS)
 
 subdir:
 	mkdir -p $@
@@ -19,11 +22,11 @@ execveat.symlink: execveat
 	ln -s -f $< $@
 execveat.ephemeral: execveat
 	cp $< $@
-execveat: execveat.c
-	gcc $< -o $@
+%: %.c
+	$(CC) $(CFLAGS) -o $@ $^
 
-run_tests: execveat $(DEPS)
+run_tests: all
 	./execveat
 
 clean:
-	rm -rf execveat $(DEPS) subdir.moved execveat.moved
+	rm -rf $(BINARIES) $(DEPS) subdir.moved execveat.moved
