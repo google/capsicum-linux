@@ -3,6 +3,6 @@
 mini-me*
 smoketest
 capsicum-test
-execveat
+exec
 openat
 seccomp
