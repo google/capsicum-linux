@@ -10,7 +10,7 @@ TARGETS += timers
 TARGETS += vm
 TARGETS += powerpc
 TARGETS += user
-TARGETS += execveat
+TARGETS += exec
 TARGETS += seccomp
 
 all:
