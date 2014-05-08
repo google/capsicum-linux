@@ -7,6 +7,7 @@
  */
 #include <sys/types.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <stddef.h>
@@ -198,6 +199,7 @@ int check_bpf_with_strict(void)
 	/* close() allowed by seccomp-bpf, but seccomp-strict gives SIGKILL */
 	close(fd);
 	syscall(__NR_exit, 99);
+	return 0;  // prevent compiler warning
 }
 
 int check_strict_fail_close(void)
@@ -212,7 +214,6 @@ int check_strict_fail_close(void)
 
 int check_strict_fail_getppid(void)
 {
-	int fd = open(filename, O_RDONLY);
 	int rc = prctl(PR_SET_SECCOMP, SECCOMP_MODE_STRICT, 0, 0, 0);
 	if (rc < 0)
 		return 1;
@@ -222,7 +223,6 @@ int check_strict_fail_getppid(void)
 
 int check_strict_fail_prctl(void)
 {
-	int fd = open(filename, O_RDONLY);
 	int rc = prctl(PR_SET_SECCOMP, SECCOMP_MODE_STRICT, 0, 0, 0);
 	if (rc < 0)
 		return 1;
@@ -246,6 +246,7 @@ int check_strict_ok(void)
 	 * syscalls occurring
 	 */
 	syscall(__NR_exit, 0);
+	return 0;  // prevent compiler warning
 }
 
 #define RUN_FORKED(F, S, R)	run_forked(F, #F, S, #S, R)
