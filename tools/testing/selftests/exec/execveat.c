@@ -106,6 +106,7 @@ static char *concat(const char *left, const char *right)
 	char *result = malloc(strlen(left) + strlen(right) + 1);
 	strcpy(result, left);
 	strcat(result, right);
+	return result;
 }
 
 static int open_or_die(const char *filename, int flags)
@@ -116,6 +117,7 @@ static int open_or_die(const char *filename, int flags)
 			"check prerequisites are available\n", filename);
 		exit(1);
 	}
+	return fd;
 }
 
 static int run_tests(void)
