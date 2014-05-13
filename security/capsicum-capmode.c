@@ -50,13 +50,18 @@ static int check_kill(unsigned long *args)
 
 static int check_mmap(unsigned long *args)
 {
+	static const int allowed_flags = (MAP_NORESERVE|MAP_POPULATE|
+					  MAP_NONBLOCK|MAP_HUGETLB|MAP_STACK|
+#ifdef MAP_32BIT
+					  MAP_32BIT|
+#endif
+					  MAP_SHARED|MAP_PRIVATE|MAP_FIXED);
 	int flags = args[3];
 
 	if (flags & MAP_ANONYMOUS)
 		return SECCOMP_RET_ALLOW;
 
-	if (flags & ~(MAP_SHARED|MAP_PRIVATE|MAP_32BIT|MAP_FIXED|MAP_HUGETLB
-			|MAP_NONBLOCK|MAP_NORESERVE|MAP_POPULATE|MAP_STACK))
+	if (flags & ~allowed_flags)
 		return SECCOMP_RET_ERRNO|ECAPMODE;
 
 	return SECCOMP_RET_ALLOW;
