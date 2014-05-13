@@ -639,6 +639,7 @@ static u32 secure_computing_mode1(int this_syscall)
 	return SECCOMP_RET_KILL;
 }
 
+#ifdef CONFIG_SECCOMP_LSM
 static u32 secure_computing_lsm(int this_syscall)
 {
 	unsigned long args[6];
@@ -647,6 +648,7 @@ static u32 secure_computing_lsm(int this_syscall)
 	syscall_get_arguments(current, regs, 0, 6, args);
 	return security_intercept_syscall(arch, this_syscall, args);
 }
+#endif
 
 int __secure_computing(int this_syscall)
 {
@@ -686,6 +688,7 @@ int __secure_computing(int this_syscall)
 	data = ret & SECCOMP_RET_DATA;
 	ret &= SECCOMP_RET_ACTION;
 	switch (ret) {
+#if defined(CONFIG_SECCOMP_FILTER) || defined(CONFIG_SECCOMP_LSM)
 	case SECCOMP_RET_ERRNO:
 		/* Set the low-order 16-bits as a errno. */
 		syscall_set_return_value(current, regs, -data, 0);
@@ -715,6 +718,7 @@ int __secure_computing(int this_syscall)
 		if (syscall_get_nr(current, regs) < 0)
 			goto skip;  /* Explicit request to skip. */
 		return 0;
+#endif
 	case SECCOMP_RET_ALLOW:
 		return 0;
 	case SECCOMP_RET_KILL:
