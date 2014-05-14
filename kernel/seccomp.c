@@ -370,12 +370,13 @@ static long seccomp_act_sync_threads_lsm(void)
 }
 
 /**
- * seccomp_attach_filter: Attaches a seccomp filter to current.
- * @fprog: BPF program to install
+ * seccomp_convert_filter: Build a seccomp filter in kernel memory
+ * @fprog: BPF program to convert (in kernel mem, but fprog->filter in user mem)
  *
- * Returns 0 on success or an errno on failure.
+ * Returns a newly allocated struct sock_filter (with usage==1) on success,
+ * ERR_PTR on failure.
  */
-static long seccomp_attach_filter(struct sock_fprog *fprog)
+static struct seccomp_filter *seccomp_convert_filter(struct sock_fprog *fprog)
 {
 	struct seccomp_filter *filter;
 	unsigned long fp_size = fprog->len * sizeof(struct sock_filter);
@@ -383,27 +384,18 @@ static long seccomp_attach_filter(struct sock_fprog *fprog)
 	long ret;
 
 	if (fprog->len == 0 || fprog->len > BPF_MAXINSNS)
-		return -EINVAL;
+		return ERR_PTR(-EINVAL);
 
 	for (filter = current->seccomp.filter; filter; filter = filter->prev)
 		total_insns += filter->len + 4;  /* include a 4 instr penalty */
 	if (total_insns > MAX_INSNS_PER_PATH)
-		return -ENOMEM;
-
-	/*
-	 * Installing a seccomp filter requires that the task have
-	 * CAP_SYS_ADMIN in its namespace or be running with no_new_privs.
-	 * This avoids scenarios where unprivileged tasks can affect the
-	 * behavior of privileged children.
-	 */
-	if (!seccomp_has_no_new_privs())
-		return -EACCES;
+		return ERR_PTR(-ENOMEM);
 
 	/* Allocate a new seccomp_filter */
 	filter = kzalloc(sizeof(struct seccomp_filter) + fp_size,
 			 GFP_KERNEL|__GFP_NOWARN);
 	if (!filter)
-		return -ENOMEM;
+		return ERR_PTR(-ENOMEM);
 	atomic_set(&filter->usage, 1);
 	filter->len = fprog->len;
 
@@ -422,16 +414,46 @@ static long seccomp_attach_filter(struct sock_fprog *fprog)
 	if (ret)
 		goto fail;
 
+	return filter;
+
+fail:
+	kfree(filter);
+	return ERR_PTR(ret);
+}
+
+/**
+ * seccomp_attach_filter: Attaches a seccomp filter to current.
+ * @fprog: BPF program to install
+ *
+ * Returns 0 on success or an errno on failure.
+ */
+static long seccomp_attach_filter(struct sock_fprog *fprog)
+{
+	struct seccomp_filter *filter;
+
+	/*
+	 * Installing a seccomp filter requires that the task have
+	 * CAP_SYS_ADMIN in its namespace or be running with no_new_privs.
+	 * This avoids scenarios where unprivileged tasks can affect the
+	 * behavior of privileged children.
+	 */
+	if (!seccomp_has_no_new_privs())
+		return -EACCES;
+
+	/* Get the filter into kernel memory */
+	filter = seccomp_convert_filter(fprog);
+	if (IS_ERR(filter))
+		return PTR_ERR(filter);
+
 	/*
 	 * If there is an existing filter, make it the prev and don't drop its
 	 * task reference.
 	 */
+	seccomp_lock(current);
 	filter->prev = current->seccomp.filter;
 	current->seccomp.filter = filter;
+	seccomp_unlock(current);
 	return 0;
-fail:
-	kfree(filter);
-	return ret;
 }
 
 /**
@@ -476,9 +498,7 @@ static long seccomp_act_filter(unsigned long flags, char * __user filter)
 	if ((flags & ~(SECCOMP_FILTER_TSYNC)) != 0)
 		return -EINVAL;
 
-	seccomp_lock(current);
 	ret = _seccomp_set_mode(SECCOMP_MODE_FILTER, filter);
-	seccomp_unlock(current);
 	if (ret)
 		return ret;
 
@@ -743,7 +763,6 @@ long prctl_get_seccomp(void)
 	return current->seccomp.mode;
 }
 
-/* Expects to be called under seccomp lock. */
 static long _seccomp_set_mode(unsigned long seccomp_mode, char * __user filter)
 {
 	long ret = -EINVAL;
@@ -797,8 +816,6 @@ long prctl_set_seccomp(unsigned long seccomp_mode, char __user *filter)
 {
 	long ret;
 
-	seccomp_lock(current);
 	ret = _seccomp_set_mode(seccomp_mode, filter);
-	seccomp_unlock(current);
 	return ret;
 }
