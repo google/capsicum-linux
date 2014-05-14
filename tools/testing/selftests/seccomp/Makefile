@@ -7,7 +7,7 @@ all: $(BINARIES) $(DEPS)
 testfile:
 	echo 0123456789 > testfile
 %: %.c
-	$(CC) $(CFLAGS) -o $@ $^
+	$(CC) $(CFLAGS) -o $@ $^ -lpthread -lrt
 
 run_tests: all
 	./seccomp testfile

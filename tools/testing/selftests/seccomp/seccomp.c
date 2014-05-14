@@ -15,18 +15,20 @@
 #include <stdio.h>
 #include <signal.h>
 #include <errno.h>
+#include <pthread.h>
 #include <sys/prctl.h>
 #include <linux/seccomp.h>
 #include <linux/audit.h>
 #include <linux/filter.h>
 #include <linux/unistd.h>
 
-static char *filename = "testfile";
+char *filename = "testfile";
 
 /* Way to enter seccomp-bpf mode */
 enum BPFEntryMode {
 	MODE_FILTER,
 	MODE_EXT_ACT,
+	MODE_EXT_ACT_TSYNC,
 };
 
 /* Determine expected syscall architecture */
@@ -72,11 +74,17 @@ struct sock_fprog allow_bpf = {.len = (sizeof(allow_filter) /
 
 int prctl_seccomp_bpf(enum BPFEntryMode mode, const struct sock_fprog *fprog)
 {
-	if (mode == MODE_FILTER)
+	switch (mode) {
+	case MODE_FILTER:
 		return prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, fprog, 0, 0);
-	else if (mode == MODE_EXT_ACT)
+	case MODE_EXT_ACT:
 		return prctl(PR_SECCOMP_EXT, SECCOMP_EXT_ACT,
 			     SECCOMP_EXT_ACT_FILTER, 0, fprog);
+	case MODE_EXT_ACT_TSYNC:
+		return prctl(PR_SECCOMP_EXT, SECCOMP_EXT_ACT,
+			     SECCOMP_EXT_ACT_FILTER, SECCOMP_FILTER_TSYNC,
+			     fprog);
+	}
 	return -1;
 }
 
@@ -116,11 +124,8 @@ int check_bpf_get_seccomp(int mode)
 	return 0;
 }
 
-int check_bpf_polices_syscalls(int mode)
+void setup_police_syscall(int mode)
 {
-	int rc;
-	char buffer[4];
-	int fd = open(filename, O_RDONLY);
 	struct sock_filter filter[] = { VALIDATE_ARCHITECTURE,
 					EXAMINE_SYSCALL,
 					ALLOW_SYSCALL(read),
@@ -131,14 +136,43 @@ int check_bpf_polices_syscalls(int mode)
 				       .filter = filter};
 	prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0);
 	prctl_seccomp_bpf(mode, &bpf);
+}
+
+int ready = 0;
+pthread_mutex_t ready_mu = PTHREAD_MUTEX_INITIALIZER;
+pthread_cond_t ready_cv = PTHREAD_COND_INITIALIZER;
+
+pthread_t spawn_other(void *(*fn)(void *), void *param)
+{
+	pthread_attr_t attr;
+	pthread_t other;
+	pthread_attr_init(&attr);
+	pthread_create(&other, &attr, fn, param);
+	return other;
+}
+
+void notify_other(void)
+{
+	pthread_mutex_lock(&ready_mu);
+	ready = 1;
+	pthread_cond_signal(&ready_cv);
+	pthread_mutex_unlock(&ready_mu);
+}
+
+int check_policed(int fd)
+{
+	int rc;
+	char buffer[4];
 	rc = read(fd, buffer, sizeof(buffer));
 	if (rc != 4) {
-		printf("[FAIL] expected rc=4 from read(), got %d\n", rc);
+		printf("[FAIL] expected rc=4 from read(%d), got %d, errno=%d\n",
+		       fd, rc, errno);
 		return 1;
 	}
 	rc = close(fd);
 	if (rc != 0) {
-		printf("[FAIL] close() failed, rc=%d errno=%d\n", rc, errno);
+		printf("[FAIL] close(%d) failed, rc=%d errno=%d\n",
+		       fd, rc, errno);
 		return 1;
 	}
 	rc = open(filename, O_RDONLY);
@@ -148,6 +182,141 @@ int check_bpf_polices_syscalls(int mode)
 	}
 	if (errno != EBADF) {
 		printf("[FAIL] open() failed with errno=%d not EBADF\n", errno);
+		return 1;
+	}
+	return 0;
+}
+
+int check_unpoliced(void)
+{
+	int rc;
+	char buffer[4];
+	int fd = open(filename, O_RDONLY);
+	if (fd < 0) {
+		printf("[FAIL] open() failed, rc=%d errno=%d\n", fd, errno);
+		return 1;
+	}
+	rc = read(fd, buffer, sizeof(buffer));
+	if (rc != 4) {
+		printf("[FAIL] expected rc=4 from read(), got %d\n", rc);
+		return 2;
+	}
+	rc = close(fd);
+	if (rc != 0) {
+		printf("[FAIL] close() failed, rc=%d errno=%d\n", rc, errno);
+		return 3;
+	}
+	return 0;
+}
+
+void *affected_thread(void *arg)
+{
+	intptr_t fd = (intptr_t)arg;
+	intptr_t rc;
+	/* Wait for the parent thread to be ready */
+	pthread_mutex_lock(&ready_mu);
+	while (!ready)
+		pthread_cond_wait(&ready_cv, &ready_mu);
+	pthread_mutex_unlock(&ready_mu);
+
+	/* Check that syscalls are policed in this thread */
+	rc = check_policed(fd);
+	return (void *)rc;
+}
+
+void *unaffected_thread(void *arg)
+{
+	intptr_t rc;
+	/* Wait for the parent thread to be ready */
+	pthread_mutex_lock(&ready_mu);
+	while (!ready)
+		pthread_cond_wait(&ready_cv, &ready_mu);
+	pthread_mutex_unlock(&ready_mu);
+
+	/* Check that syscalls are not policed in this thread */
+	rc = check_unpoliced();
+	return (void *)rc;
+}
+
+int check_bpf_polices_syscalls(int mode)
+{
+	int rc;
+	int fd = open(filename, O_RDONLY);
+	void *other_rc;
+	/* Another pre-existing thread is unaffected */
+	pthread_t other = spawn_other(unaffected_thread, NULL);
+	setup_police_syscall(mode);
+
+	/* Check that syscalls are policed in this thread */
+	rc = check_policed(fd);
+	if (rc != 0) {
+		printf("[FAIL] this thread not affected by seccomp-bpf\n");
+		return rc;
+	}
+
+	/* Check the results of the unaffected other thread */
+	notify_other();  /* Allow the other thread to run */
+	pthread_join(other, &other_rc);
+	if (other_rc != NULL) {
+		printf("[FAIL] other thread affected by seccomp-bpf\n");
+		return 1;
+	}
+
+	return 0;
+}
+
+int check_bpf_polices_syscalls_sync(int mode)
+{
+	int rc;
+	intptr_t fd = open(filename, O_RDONLY);
+	intptr_t fd2 = dup(fd);
+	void *other_rc;
+	/* Another pre-existing thread is also affected */
+	pthread_t other = spawn_other(affected_thread, (void *)fd);
+	setup_police_syscall(mode);
+	notify_other();  /* Allow the other thread to run */
+
+	/* Check that syscalls are policed in this thread */
+	rc = check_policed(fd2);
+	if (rc != 0) {
+		printf("[FAIL] this thread not affected by seccomp-bpf\n");
+		return rc;
+	}
+
+	/* Check that syscalls are policed in the other thread */
+	pthread_join(other, &other_rc);
+	if (other_rc != NULL) {
+		printf("[FAIL] other thread not affected by seccomp-bpf\n");
+		return 1;
+	}
+	return 0;
+}
+
+int check_bpf_later_tsync(int mode)
+{
+	int rc;
+	intptr_t fd = open(filename, O_RDONLY);
+	intptr_t fd2 = dup(fd);
+	void *other_rc;
+	/* Another pre-existing thread is also affected after EXT_ACT_TSYNC */
+	pthread_t other = spawn_other(affected_thread, (void *)fd);
+	setup_police_syscall(mode);
+
+	/* Check that syscalls are policed in this thread */
+	rc = check_policed(fd2);
+	if (rc != 0) {
+		printf("[FAIL] this thread not affected by seccomp-bpf\n");
+		return rc;
+	}
+
+	/* Now explicitly synchronize the seccomp filter state */
+	prctl(PR_SECCOMP_EXT, SECCOMP_EXT_ACT, SECCOMP_EXT_ACT_TSYNC, 0, 0);
+
+	/* Check that syscalls are now policed in the other thread */
+	notify_other();  /* Allow the other thread to run */
+	pthread_join(other, &other_rc);
+	if (other_rc != NULL) {
+		printf("[FAIL] other thread not affected by seccomp-bpf\n");
 		return 1;
 	}
 	return 0;
@@ -332,6 +501,11 @@ int main(int argc, char *argv[])
 	failed |= RUN_FORKED(check_bpf_polices_syscall_kill, MODE_EXT_ACT,
 			     SIGSYS, 0);
 	failed |= RUN_FORKED(check_bpf_with_strict, MODE_EXT_ACT, 0, 0);
+	/* Check TSYNC operations affect other threads too */
+	failed |= RUN_FORKED(check_bpf_polices_syscalls_sync,
+			     MODE_EXT_ACT_TSYNC, 0, 0);
+	failed |= RUN_FORKED(check_bpf_later_tsync, MODE_FILTER, 0, 0);
+	failed |= RUN_FORKED(check_bpf_later_tsync, MODE_EXT_ACT, 0, 0);
 
 	return failed ? -1 : 0;
 }
