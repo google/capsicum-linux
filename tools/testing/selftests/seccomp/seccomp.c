@@ -461,14 +461,14 @@ int run_forked(int (*fn)(int), const char *fn_name,
 	}
 	if (expected_sig != 0) {
 		if (!WIFSIGNALED(status) || WTERMSIG(status) != expected_sig) {
-			printf("[FAIL] (expected signal %d termination, "
-				"not status 0x%04x)\n", expected_sig, status);
+			printf("[FAIL] (expected signal %d termination;"
+				" not status 0x%04x)\n", expected_sig, status);
 			return 1;
 		}
 	} else {
 		if (!WIFEXITED(status) || WEXITSTATUS(status) != expected_rc) {
-			printf("[FAIL] (expected rc %d exit, "
-				"not status 0x%04x)\n", expected_rc, status);
+			printf("[FAIL] (expected rc %d exit;"
+				" not status 0x%04x)\n", expected_rc, status);
 			return 1;
 		}
 	}
