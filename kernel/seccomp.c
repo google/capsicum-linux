@@ -292,16 +292,18 @@ static void seccomp_sync_thread_filter(struct task_struct *caller,
  */
 static pid_t seccomp_act_sync_threads_filter(void)
 {
+	unsigned long tflags;
 	struct task_struct *thread, *caller;
 	pid_t failed = 0;
 
 	if (!(current->seccomp.mode & SECCOMP_MODE_FILTER))
 		return -EACCES;
 
-	write_lock(&tasklist_lock);
+	write_lock_irqsave(&tasklist_lock, tflags);
 	thread = caller = current;
 	while_each_thread(caller, thread) {
-		seccomp_lock(thread);
+		unsigned long flags;
+		seccomp_lock(thread, &flags);
 		/*
 		 * Validate thread being eligible for synchronization.
 		 */
@@ -317,9 +319,9 @@ static pid_t seccomp_act_sync_threads_filter(void)
 			if (failed == 0)
 				failed = -ESRCH;
 		}
-		seccomp_unlock(thread);
+		seccomp_unlock(thread, flags);
 	}
-	write_unlock(&tasklist_lock);
+	write_unlock_irqrestore(&tasklist_lock, tflags);
 	return failed;
 }
 
@@ -353,19 +355,21 @@ static void seccomp_sync_thread_lsm(struct task_struct *caller,
  */
 static long seccomp_act_sync_threads_lsm(void)
 {
+	unsigned long tflags;
 	struct task_struct *thread, *caller;
 
 	if (!(current->seccomp.mode & SECCOMP_MODE_LSM))
 		return -EACCES;
 
-	write_lock(&tasklist_lock);
+	write_lock_irqsave(&tasklist_lock, tflags);
 	thread = caller = current;
 	while_each_thread(caller, thread) {
-		seccomp_lock(thread);
+		unsigned long flags;
+		seccomp_lock(thread, &flags);
 		seccomp_sync_thread_lsm(caller, thread);
-		seccomp_unlock(thread);
+		seccomp_unlock(thread, flags);
 	}
-	write_unlock(&tasklist_lock);
+	write_unlock_irqrestore(&tasklist_lock, tflags);
 	return 0;
 }
 
@@ -429,6 +433,7 @@ fail:
  */
 static long seccomp_attach_filter(struct sock_fprog *fprog)
 {
+	unsigned long flags;
 	struct seccomp_filter *filter;
 
 	/*
@@ -449,10 +454,10 @@ static long seccomp_attach_filter(struct sock_fprog *fprog)
 	 * If there is an existing filter, make it the prev and don't drop its
 	 * task reference.
 	 */
-	seccomp_lock(current);
+	seccomp_lock(current, &flags);
 	filter->prev = current->seccomp.filter;
 	current->seccomp.filter = filter;
-	seccomp_unlock(current);
+	seccomp_unlock(current, flags);
 	return 0;
 }
 
@@ -516,15 +521,16 @@ static long seccomp_act_filter(unsigned long flags, char * __user filter)
  */
 static long seccomp_act_lsm(unsigned long flags)
 {
+	unsigned long irqflags;
 	long ret;
 
 	/* Only SECCOMP_LSM_TSYNC is recognized. */
 	if ((flags & ~(SECCOMP_LSM_TSYNC)) != 0)
 		return -EINVAL;
 
-	seccomp_lock(current);
+	seccomp_lock(current, &irqflags);
 	ret = _seccomp_set_mode(SECCOMP_MODE_LSM, NULL);
-	seccomp_unlock(current);
+	seccomp_unlock(current, irqflags);
 	if (ret)
 		return ret;
 

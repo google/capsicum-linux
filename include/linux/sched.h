@@ -2443,14 +2443,14 @@ static inline void task_unlock(struct task_struct *p)
 /*
  * Protects changes to ->seccomp
  */
-static inline void seccomp_lock(struct task_struct *p)
+static inline void seccomp_lock(struct task_struct *p, unsigned long *flags)
 {
-	spin_lock(&p->seccomp.lock);
+	spin_lock_irqsave(&p->seccomp.lock, (*flags));
 }
 
-static inline void seccomp_unlock(struct task_struct *p)
+static inline void seccomp_unlock(struct task_struct *p, unsigned long flags)
 {
-	spin_unlock(&p->seccomp.lock);
+	spin_unlock_irqrestore(&p->seccomp.lock, flags);
 }
 
 static inline bool task_no_new_privs(struct task_struct *p)
