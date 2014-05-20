@@ -233,7 +233,7 @@ SYSCALL_DEFINE5(cap_rights_get,
 	struct capsicum_rights *rights = &all_rights;
 	int ioctls_to_copy = -1;
 
-	file = fget(fd);
+	file = fget_raw(fd);
 	if (file == NULL)
 		return -EBADF;
 	if (capsicum_is_cap(file)) {
