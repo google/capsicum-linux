@@ -325,6 +325,7 @@ static pid_t seccomp_act_sync_threads_filter(void)
 	return failed;
 }
 
+#ifdef CONFIG_SECCOMP_LSM
 /* Expects locking to have been done already. */
 static void seccomp_sync_thread_lsm(struct task_struct *caller,
 				    struct task_struct *thread)
@@ -372,6 +373,7 @@ static long seccomp_act_sync_threads_lsm(void)
 	write_unlock_irqrestore(&tasklist_lock, tflags);
 	return 0;
 }
+#endif
 
 /**
  * seccomp_convert_filter: Build a seccomp filter in kernel memory
@@ -513,6 +515,7 @@ static long seccomp_act_filter(unsigned long flags, char * __user filter)
 	return 0;
 }
 
+#ifdef CONFIG_SECCOMP_LSM
 /**
  * seccomp_act_lsm: enable LSM mode with additional flags
  * @flags:  flags from SECCOMP_LSM_* to change behavior
@@ -539,6 +542,7 @@ static long seccomp_act_lsm(unsigned long flags)
 
 	return 0;
 }
+#endif
 
 /**
  * seccomp_extended_action: performs the specific action
@@ -558,6 +562,7 @@ static long seccomp_extended_action(int action, unsigned long arg1,
 		if (arg1 || arg2)
 			return -EINVAL;
 		return seccomp_act_sync_threads_filter();
+#ifdef CONFIG_SECCOMP_LSM
 	case SECCOMP_EXT_ACT_LSM:
 		/* arg2 is currently unused. */
 		if (arg2)
@@ -568,6 +573,7 @@ static long seccomp_extended_action(int action, unsigned long arg1,
 		if (arg1 || arg2)
 			return -EINVAL;
 		return seccomp_act_sync_threads_lsm();
+#endif
 	default:
 		break;
 	}
