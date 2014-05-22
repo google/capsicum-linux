@@ -2464,8 +2464,10 @@ static inline int task_set_no_new_privs(struct task_struct *p)
 	return 0;
 }
 #else
-static inline void seccomp_lock(struct task_struct *p) { }
-static inline void seccomp_unlock(struct task_struct *p) { }
+static inline void seccomp_lock(struct task_struct *p)
+{ }
+static inline void seccomp_unlock(struct task_struct *p)
+{ }
 static inline bool task_no_new_privs(struct task_struct *p)
 {
 	return p->no_new_privs;

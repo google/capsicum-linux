@@ -1092,8 +1092,8 @@ static void copy_seccomp(struct task_struct *p)
 {
 #ifdef CONFIG_SECCOMP
 	/* Child lock not needed since it is not yet in tasklist. */
-	unsigned long flags;
-	seccomp_lock(current, &flags);
+	unsigned long irqflags;
+	seccomp_lock(current, &irqflags);
 
 	get_seccomp_filter(current);
 	p->seccomp = current->seccomp;
@@ -1102,7 +1102,7 @@ static void copy_seccomp(struct task_struct *p)
 	if (p->seccomp.mode != SECCOMP_MODE_DISABLED)
 		set_tsk_thread_flag(p, TIF_SECCOMP);
 
-	seccomp_unlock(current, flags);
+	seccomp_unlock(current, irqflags);
 #endif
 }
 

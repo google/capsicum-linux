@@ -5,8 +5,8 @@
 
 #ifdef CONFIG_SECCOMP
 
-#include <linux/thread_info.h>
 #include <linux/errno.h>
+#include <linux/thread_info.h>
 #include <asm/seccomp.h>
 
 struct seccomp_filter;
@@ -55,8 +55,6 @@ static inline int seccomp_mode(struct seccomp *s)
 }
 
 #else /* CONFIG_SECCOMP */
-
-#include <linux/errno.h>
 
 struct seccomp { };
 struct seccomp_filter { };

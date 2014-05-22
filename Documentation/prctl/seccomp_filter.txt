@@ -248,8 +248,10 @@ prctl(PR_SECCOMP_EXT, SECCOMP_EXT_ACT, SECCOMP_EXT_ACT_TSYNC, 0, 0):
 	threadgroup to its seccomp filter program. This is possible iff all
 	threads are using a filter that is an ancestor to the filter current
 	is attempting to synchronize to, or the thread has not yet entered
-	seccomp.
+	seccomp. If prctrl(PR_SET_NO_NEW_PRIVS, ...) has been set on the
+	calling thread, no_new_privs will be set for all synchronized threads
+	too.
 
 	On success, 0 is returned. On failure, all synchronizable threads
-	will have been synchronized, and the pid of any of the failing
+	will have been synchronized, and the pid of one of the failing
 	threads will be returned.

@@ -22,6 +22,7 @@
 #include <linux/sched.h>
 #include <linux/seccomp.h>
 #include <linux/security.h>
+#include <linux/slab.h>
 
 /* #define SECCOMP_DEBUG 1 */
 
@@ -30,12 +31,11 @@
 #include <linux/filter.h>
 #include <linux/pid.h>
 #include <linux/ptrace.h>
-#include <linux/slab.h>
 #include <linux/tracehook.h>
 #include <linux/uaccess.h>
 #include <linux/ftrace.h>
 
-static long _seccomp_set_mode(unsigned long mode, char * __user filter);
+static long seccomp_set_mode(unsigned long mode, char * __user filter);
 
 /**
  * struct seccomp_filter - container for seccomp BPF programs
@@ -292,8 +292,8 @@ static void seccomp_sync_thread_filter(struct task_struct *caller,
  */
 static pid_t seccomp_act_sync_threads_filter(void)
 {
-	unsigned long tflags;
 	struct task_struct *thread, *caller;
+	unsigned long tflags;
 	pid_t failed = 0;
 
 	if (!(current->seccomp.mode & SECCOMP_MODE_FILTER))
@@ -302,8 +302,8 @@ static pid_t seccomp_act_sync_threads_filter(void)
 	write_lock_irqsave(&tasklist_lock, tflags);
 	thread = caller = current;
 	while_each_thread(caller, thread) {
-		unsigned long flags;
-		seccomp_lock(thread, &flags);
+		unsigned long irqflags;
+		seccomp_lock(thread, &irqflags);
 		/*
 		 * Validate thread being eligible for synchronization.
 		 */
@@ -319,7 +319,7 @@ static pid_t seccomp_act_sync_threads_filter(void)
 			if (failed == 0)
 				failed = -ESRCH;
 		}
-		seccomp_unlock(thread, flags);
+		seccomp_unlock(thread, irqflags);
 	}
 	write_unlock_irqrestore(&tasklist_lock, tflags);
 	return failed;
@@ -365,10 +365,10 @@ static long seccomp_act_sync_threads_lsm(void)
 	write_lock_irqsave(&tasklist_lock, tflags);
 	thread = caller = current;
 	while_each_thread(caller, thread) {
-		unsigned long flags;
-		seccomp_lock(thread, &flags);
+		unsigned long irqflags;
+		seccomp_lock(thread, &irqflags);
 		seccomp_sync_thread_lsm(caller, thread);
-		seccomp_unlock(thread, flags);
+		seccomp_unlock(thread, irqflags);
 	}
 	write_unlock_irqrestore(&tasklist_lock, tflags);
 	return 0;
@@ -376,26 +376,28 @@ static long seccomp_act_sync_threads_lsm(void)
 #endif
 
 /**
- * seccomp_convert_filter: Build a seccomp filter in kernel memory
- * @fprog: BPF program to convert (in kernel mem, but fprog->filter in user mem)
+ * seccomp_prepare_filter: Prepares a seccomp filter for use.
+ * @fprog: BPF program to install
  *
- * Returns a newly allocated struct sock_filter (with usage==1) on success,
- * ERR_PTR on failure.
+ * Returns filter on success or an ERR_PTR on failure.
  */
-static struct seccomp_filter *seccomp_convert_filter(struct sock_fprog *fprog)
+static struct seccomp_filter *seccomp_prepare_filter(struct sock_fprog *fprog)
 {
 	struct seccomp_filter *filter;
 	unsigned long fp_size = fprog->len * sizeof(struct sock_filter);
-	unsigned long total_insns = fprog->len;
 	long ret;
 
 	if (fprog->len == 0 || fprog->len > BPF_MAXINSNS)
 		return ERR_PTR(-EINVAL);
 
-	for (filter = current->seccomp.filter; filter; filter = filter->prev)
-		total_insns += filter->len + 4;  /* include a 4 instr penalty */
-	if (total_insns > MAX_INSNS_PER_PATH)
-		return ERR_PTR(-ENOMEM);
+	/*
+	 * Installing a seccomp filter requires that the task have
+	 * CAP_SYS_ADMIN in its namespace or be running with no_new_privs.
+	 * This avoids scenarios where unprivileged tasks can affect the
+	 * behavior of privileged children.
+	 */
+	if (!seccomp_has_no_new_privs())
+		return ERR_PTR(-EACCES);
 
 	/* Allocate a new seccomp_filter */
 	filter = kzalloc(sizeof(struct seccomp_filter) + fp_size,
@@ -427,52 +429,18 @@ fail:
 	return ERR_PTR(ret);
 }
 
-/**
- * seccomp_attach_filter: Attaches a seccomp filter to current.
- * @fprog: BPF program to install
- *
- * Returns 0 on success or an errno on failure.
- */
-static long seccomp_attach_filter(struct sock_fprog *fprog)
-{
-	unsigned long flags;
-	struct seccomp_filter *filter;
-
-	/*
-	 * Installing a seccomp filter requires that the task have
-	 * CAP_SYS_ADMIN in its namespace or be running with no_new_privs.
-	 * This avoids scenarios where unprivileged tasks can affect the
-	 * behavior of privileged children.
-	 */
-	if (!seccomp_has_no_new_privs())
-		return -EACCES;
-
-	/* Get the filter into kernel memory */
-	filter = seccomp_convert_filter(fprog);
-	if (IS_ERR(filter))
-		return PTR_ERR(filter);
-
-	/*
-	 * If there is an existing filter, make it the prev and don't drop its
-	 * task reference.
-	 */
-	seccomp_lock(current, &flags);
-	filter->prev = current->seccomp.filter;
-	current->seccomp.filter = filter;
-	seccomp_unlock(current, flags);
-	return 0;
-}
 
 /**
- * seccomp_attach_user_filter - attaches a user-supplied sock_fprog
+ * seccomp_prepare_user_filter - prepares a user-supplied sock_fprog
  * @user_filter: pointer to the user data containing a sock_fprog.
  *
- * Returns 0 on success and non-zero otherwise.
- */
-long seccomp_attach_user_filter(char __user *user_filter)
++ * Returns filter on success and ERR_PTR otherwise.
+*/
+static
+struct seccomp_filter *seccomp_prepare_user_filter(char __user *user_filter)
 {
 	struct sock_fprog fprog;
-	long ret = -EFAULT;
+	struct seccomp_filter *filter = ERR_PTR(-EFAULT);
 
 #ifdef CONFIG_COMPAT
 	if (is_compat_task()) {
@@ -485,9 +453,41 @@ long seccomp_attach_user_filter(char __user *user_filter)
 #endif
 	if (copy_from_user(&fprog, user_filter, sizeof(fprog)))
 		goto out;
-	ret = seccomp_attach_filter(&fprog);
+	filter = seccomp_prepare_filter(&fprog);
 out:
-	return ret;
+	return filter;
+}
+
+/**
+ * _seccomp_attach_filter: validated and attach filter
+ * @filter: seccomp filter to add to the current process
+ *
+ * Caller must be holding the seccomp lock.
+ *
+ * Returns 0 on success, -ve on error.
+ */
+static long _seccomp_attach_filter(struct seccomp_filter *filter)
+{
+	unsigned long total_insns;
+	struct seccomp_filter *walker;
+
+	BUG_ON(!spin_is_locked(&current->seccomp.lock));
+
+	/* Validate resulting filter length. */
+	total_insns = filter->len;
+	for (walker = current->seccomp.filter; walker; walker = filter->prev)
+		total_insns += walker->len + 4;  /* include a 4 instr penalty */
+	if (total_insns > MAX_INSNS_PER_PATH)
+		return -ENOMEM;
+
+	/*
+	 * If there is an existing filter, make it the prev and don't drop its
+	 * task reference.
+	 */
+	filter->prev = current->seccomp.filter;
+	current->seccomp.filter = filter;
+
+	return 0;
 }
 
 /**
@@ -505,7 +505,7 @@ static long seccomp_act_filter(unsigned long flags, char * __user filter)
 	if ((flags & ~(SECCOMP_FILTER_TSYNC)) != 0)
 		return -EINVAL;
 
-	ret = _seccomp_set_mode(SECCOMP_MODE_FILTER, filter);
+	ret = seccomp_set_mode(SECCOMP_MODE_FILTER, filter);
 	if (ret)
 		return ret;
 
@@ -524,16 +524,13 @@ static long seccomp_act_filter(unsigned long flags, char * __user filter)
  */
 static long seccomp_act_lsm(unsigned long flags)
 {
-	unsigned long irqflags;
 	long ret;
 
 	/* Only SECCOMP_LSM_TSYNC is recognized. */
 	if ((flags & ~(SECCOMP_LSM_TSYNC)) != 0)
 		return -EINVAL;
 
-	seccomp_lock(current, &irqflags);
-	ret = _seccomp_set_mode(SECCOMP_MODE_LSM, NULL);
-	seccomp_unlock(current, irqflags);
+	ret = seccomp_set_mode(SECCOMP_MODE_LSM, NULL);
 	if (ret)
 		return ret;
 
@@ -775,9 +772,46 @@ long prctl_get_seccomp(void)
 	return current->seccomp.mode;
 }
 
-static long _seccomp_set_mode(unsigned long seccomp_mode, char * __user filter)
+/**
+ * seccomp_set_mode: internal function for setting seccomp mode
+ * @seccomp_mode: requested mode to use
+ * @filter: optional struct sock_fprog for use with SECCOMP_MODE_FILTER
+ *
+ * This function may be called repeatedly with a @seccomp_mode of
+ * SECCOMP_MODE_FILTER to install additional filters.  Every filter
+ * successfully installed will be evaluated (in reverse order) for each system
+ * call the task makes.
+ *
+ * Once current->seccomp.mode is non-zero, it may not be changed.
+ *
+ * Returns 0 on success or -EINVAL on failure.
+ */
+static long seccomp_set_mode(unsigned long seccomp_mode, char __user *filter)
 {
+	struct seccomp_filter *prepared = NULL;
+	unsigned long irqflags;
 	long ret = -EINVAL;
+
+#ifdef CONFIG_SECCOMP_FILTER
+	/* Prepare the new filter outside of the seccomp lock. */
+	if (seccomp_mode & SECCOMP_MODE_FILTER) {
+		prepared = seccomp_prepare_user_filter(filter);
+		if (IS_ERR(prepared))
+			return PTR_ERR(prepared);
+	}
+#endif
+#ifdef CONFIG_SECCOMP_LSM
+	/*
+	 * Check for no-new-privs outside of the seccomp lock (as
+	 * it may alloc credentials under the covers).
+	 */
+	if (seccomp_mode & SECCOMP_MODE_LSM) {
+		if (!seccomp_has_no_new_privs())
+			return -EACCES;
+	}
+#endif
+
+	seccomp_lock(current, &irqflags);
 
 	switch (seccomp_mode) {
 	case SECCOMP_MODE_STRICT:
@@ -788,15 +822,15 @@ static long _seccomp_set_mode(unsigned long seccomp_mode, char * __user filter)
 		break;
 #ifdef CONFIG_SECCOMP_FILTER
 	case SECCOMP_MODE_FILTER:
-		ret = seccomp_attach_user_filter(filter);
+		ret = _seccomp_attach_filter(prepared);
 		if (ret)
 			goto out;
+		/* Do not free the successfully attached filter. */
+		prepared = NULL;
 		break;
 #endif
 #ifdef CONFIG_SECCOMP_LSM
 	case SECCOMP_MODE_LSM:
-		if (!seccomp_has_no_new_privs())
-			return -EACCES;
 		ret = 0;
 		break;
 #endif
@@ -807,6 +841,8 @@ static long _seccomp_set_mode(unsigned long seccomp_mode, char * __user filter)
 	current->seccomp.mode |= seccomp_mode;
 	set_thread_flag(TIF_SECCOMP);
 out:
+	seccomp_unlock(current, irqflags);
+	kfree(prepared);
 	return ret;
 }
 
@@ -815,19 +851,12 @@ out:
  * @seccomp_mode: requested mode to use; only a single bit should be set
  * @filter: optional struct sock_fprog for use with SECCOMP_MODE_FILTER
  *
- * This function may be called repeatedly with a @seccomp_mode of
- * SECCOMP_MODE_FILTER to install additional filters.  Every filter
- * successfully installed will be evaluated (in reverse order) for each system
- * call the task makes.
- *
- * Once bits are set in current->seccomp.mode, they may not be cleared.
- *
  * Returns 0 on success or -EINVAL on failure.
  */
 long prctl_set_seccomp(unsigned long seccomp_mode, char __user *filter)
 {
 	long ret;
 
-	ret = _seccomp_set_mode(seccomp_mode, filter);
+	ret = seccomp_set_mode(seccomp_mode, filter);
 	return ret;
 }
