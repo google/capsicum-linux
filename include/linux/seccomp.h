@@ -83,7 +83,6 @@ extern void put_seccomp_filter(struct task_struct *tsk);
 extern void get_seccomp_filter(struct task_struct *tsk);
 extern long prctl_seccomp_ext(unsigned long, unsigned long,
 			      unsigned long, unsigned long);
-extern u32 seccomp_bpf_load(int off);
 #else  /* CONFIG_SECCOMP_FILTER */
 static inline void put_seccomp_filter(struct task_struct *tsk)
 {

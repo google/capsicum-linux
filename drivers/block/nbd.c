@@ -630,43 +630,30 @@ static int __nbd_ioctl(struct block_device *bdev, struct nbd_device *nbd,
 	}
  
 	case NBD_CLEAR_SOCK: {
-		struct file *file;
-
+		struct socket *sock = nbd->sock;
 		nbd->sock = NULL;
-		file = nbd->file;
-		nbd->file = NULL;
 		nbd_clear_que(nbd);
 		BUG_ON(!list_empty(&nbd->queue_head));
 		BUG_ON(!list_empty(&nbd->waiting_queue));
 		kill_bdev(bdev);
-		if (file)
-			fput(file);
+		if (sock)
+			sockfd_put(sock);
 		return 0;
 	}
 
 	case NBD_SET_SOCK: {
-		struct file *file;
+		struct socket *sock;
 		int err;
-		if (nbd->file)
+		if (nbd->sock)
 			return -EBUSY;
-		file = fgetr(arg, CAP_READ, CAP_WRITE, CAP_SHUTDOWN);
-		if (!IS_ERR(file)) {
-			struct inode *inode = file_inode(file);
-			if (S_ISSOCK(inode->i_mode)) {
-				nbd->file = file;
-				nbd->sock = SOCKET_I(inode);
-				if (max_part > 0)
-					bdev->bd_invalidated = 1;
-				nbd->disconnect = 0; /* we're connected now */
-				return 0;
-			} else {
-				fput(file);
-				err = -EINVAL;
-			}
-		} else {
-			err = PTR_ERR(file);
-			if (err == -EBADF)
-				err = -EINVAL;
+		sock = sockfd_lookupr(arg, &err,
+				      CAP_READ, CAP_WRITE, CAP_SHUTDOWN);
+		if (sock) {
+			nbd->sock = sock;
+			if (max_part > 0)
+				bdev->bd_invalidated = 1;
+			nbd->disconnect = 0; /* we're connected now */
+			return 0;
 		}
 		return err;
 	}
@@ -703,12 +690,12 @@ static int __nbd_ioctl(struct block_device *bdev, struct nbd_device *nbd,
 
 	case NBD_DO_IT: {
 		struct task_struct *thread;
-		struct file *file;
+		struct socket *sock;
 		int error;
 
 		if (nbd->pid)
 			return -EBUSY;
-		if (!nbd->file)
+		if (!nbd->sock)
 			return -EINVAL;
 
 		mutex_unlock(&nbd->tx_lock);
@@ -737,15 +724,15 @@ static int __nbd_ioctl(struct block_device *bdev, struct nbd_device *nbd,
 		if (error)
 			return error;
 		sock_shutdown(nbd, 0);
-		file = nbd->file;
-		nbd->file = NULL;
+		sock = nbd->sock;
+		nbd->sock = NULL;
 		nbd_clear_que(nbd);
 		dev_warn(disk_to_dev(nbd->disk), "queue cleared\n");
 		kill_bdev(bdev);
 		queue_flag_clear_unlocked(QUEUE_FLAG_DISCARD, nbd->disk->queue);
 		set_device_ro(bdev, false);
-		if (file)
-			fput(file);
+		if (sock)
+			sockfd_put(sock);
 		nbd->flags = 0;
 		nbd->bytesize = 0;
 		bdev->bd_inode->i_size = 0;
@@ -881,9 +868,7 @@ static int __init nbd_init(void)
 
 	for (i = 0; i < nbds_max; i++) {
 		struct gendisk *disk = nbd_dev[i].disk;
-		nbd_dev[i].file = NULL;
 		nbd_dev[i].magic = NBD_MAGIC;
-		nbd_dev[i].flags = 0;
 		INIT_LIST_HEAD(&nbd_dev[i].waiting_queue);
 		spin_lock_init(&nbd_dev[i].queue_lock);
 		INIT_LIST_HEAD(&nbd_dev[i].queue_head);
