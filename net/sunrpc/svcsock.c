@@ -1400,7 +1400,7 @@ static struct svc_sock *svc_setup_socket(struct svc_serv *serv,
 bool svc_alien_sock(struct net *net, int fd)
 {
 	int err;
-	struct socket *sock = sockfd_lookup(fd, &err);
+	struct socket *sock = sockfd_lookupr(fd, &err, CAP_LIST_END);
 	bool ret = false;
 
 	if (!sock)
