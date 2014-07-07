@@ -25,7 +25,7 @@
 #include <linux/slab.h>
 #include <linux/fdtable.h>
 #include <linux/fsnotify_backend.h>
-#include <linux/security.h>
+#include <linux/capsicum.h>
 
 int dir_notify_enable __read_mostly = 1;
 
@@ -328,7 +328,7 @@ int fcntl_dirnotify(int fd, struct file *filp, unsigned long arg)
 
 	rcu_read_lock();
 	f = fcheck(fd);
-	f = security_file_lookup(f, NULL, NULL);
+	f = capsicum_file_lookup(f, NULL, NULL);
 	rcu_read_unlock();
 
 	/* if (f != filp) means that we lost a race and another task/thread

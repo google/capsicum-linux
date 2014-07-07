@@ -13,16 +13,16 @@ struct capsicum_rights {
 	unsigned int *ioctls;
 };
 
-/* LSM hook fallback functions */
+#define CAP_LIST_END	0ULL
+
+#ifdef CONFIG_SECURITY_CAPSICUM
+/* FD->struct file interception functions */
 struct file *capsicum_file_lookup(struct file *file,
 				  const struct capsicum_rights *required_rights,
 				  const struct capsicum_rights **actual_rights);
 struct file *capsicum_file_install(const struct capsicum_rights *base_rights,
 				   struct file *file);
 
-#define CAP_LIST_END	0ULL
-
-#ifdef CONFIG_SECURITY_CAPSICUM
 /* Rights manipulation functions */
 #define cap_rights_init(rights, ...) \
 	_cap_rights_init((rights), __VA_ARGS__, CAP_LIST_END)
@@ -38,6 +38,21 @@ struct capsicum_rights *cap_rights_set_all(struct capsicum_rights *rights);
 bool cap_rights_is_all(const struct capsicum_rights *rights);
 
 #else
+
+static inline struct file *
+capsicum_file_lookup(struct file *file,
+		     const struct capsicum_rights *required_rights,
+		     const struct capsicum_rights **actual_rights)
+{
+	return file;
+}
+
+static inline struct file *
+capsicum_file_install(const const struct capsicum_rights *base_rights,
+		      struct file *file)
+{
+	return file;
+}
 
 #define cap_rights_init(rights, ...) _cap_rights_noop(rights)
 #define cap_rights_set(rights, ...) _cap_rights_noop(rights)

@@ -329,10 +329,6 @@ static void capsicum_panic_not_unwrapped(void)
 }
 
 /*
- * LSM hook fallback functions.
- */
-
-/*
  * We are looking up a file by its file descriptor. If it is a Capsicum
  * capability, and has the required rights, we unwrap it and return the
  * underlying file.
@@ -381,21 +377,5 @@ struct file *capsicum_file_install(const struct capsicum_rights *base_rights,
 	return capf;
 }
 EXPORT_SYMBOL(capsicum_file_install);
-
-#else
-
-struct file *capsicum_file_lookup(struct file *file,
-				  const struct capsicum_rights *required_rights,
-				  const struct capsicum_rights **actual_rights)
-{
-	return file;
-}
-
-struct file *
-capsicum_file_install(const const struct capsicum_rights *base_rights,
-		      struct file *file)
-{
-	return file;
-}
 
 #endif

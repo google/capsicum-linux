@@ -14,6 +14,7 @@
 #include <linux/time.h>
 #include <linux/sched.h>
 #include <linux/security.h>
+#include <linux/capsicum.h>
 #include <linux/slab.h>
 #include <linux/vmalloc.h>
 #include <linux/file.h>
@@ -725,11 +726,10 @@ unsigned long __fdget_pos(unsigned int fd)
 
 #ifdef CONFIG_SECURITY_CAPSICUM
 /*
- * The LSM might want to change the return value of fget() and friends.
- * This function is called with the intended return value, and fget()
- * will /actually/ return whatever is returned from here. We call an
- * LSM hook, and return what it returns. We adjust the reference counter
- * if necessary.
+ * Capsicum might want to change the return value of fget() and friends.  This
+ * function is called with the intended return value, and fget() will actually
+ * return whatever is returned from here. We adjust the reference counter if
+ * necessary.
  */
 static struct file *unwrap_file(struct file *orig,
 				const struct capsicum_rights *required_rights,
@@ -742,7 +742,7 @@ static struct file *unwrap_file(struct file *orig,
 		return ERR_PTR(-EBADF);
 	if (IS_ERR(orig))
 		return orig;
-	f = security_file_lookup(orig, required_rights, actual_rights);
+	f = capsicum_file_lookup(orig, required_rights, actual_rights);
 	if (f != orig && update_refcnt) {
 		/* We're not returning the original, and the calling code
 		 * has already incremented the refcount on it, we need to

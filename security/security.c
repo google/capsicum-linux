@@ -807,19 +807,6 @@ int security_file_open(struct file *file, const struct cred *cred)
 	return fsnotify_perm(file, MAY_OPEN);
 }
 
-struct file *security_file_lookup(struct file *file,
-				  const struct capsicum_rights *required_rights,
-				  const struct capsicum_rights **actual_rights)
-{
-	return security_ops->file_lookup(file, required_rights, actual_rights);
-}
-
-struct file *security_file_install(const struct capsicum_rights *base_rights,
-				   struct file *file)
-{
-	return security_ops->file_install(base_rights, file);
-}
-
 int security_task_create(unsigned long clone_flags)
 {
 	return security_ops->task_create(clone_flags);

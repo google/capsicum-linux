@@ -6,6 +6,7 @@
 #include <linux/namei.h>
 #include <linux/pid.h>
 #include <linux/security.h>
+#include <linux/capsicum.h>
 #include <linux/file.h>
 #include <linux/seq_file.h>
 
@@ -37,7 +38,7 @@ static int seq_show(struct seq_file *m, void *v)
 		file = fcheck_files(files, fd);
 		if (file) {
 			struct fdtable *fdt = files_fdtable(files);
-			underlying = security_file_lookup(file, NULL, NULL);
+			underlying = capsicum_file_lookup(file, NULL, NULL);
 			f_flags = underlying->f_flags;
 			if (close_on_exec(fd, fdt))
 				f_flags |= O_CLOEXEC;
@@ -99,7 +100,7 @@ static int tid_fd_revalidate(struct dentry *dentry, unsigned int flags)
 			file = fcheck_files(files, fd);
 			if (file) {
 				unsigned f_mode;
-				file = security_file_lookup(file, NULL, NULL);
+				file = capsicum_file_lookup(file, NULL, NULL);
 				f_mode = file->f_mode;
 
 				rcu_read_unlock();
@@ -163,7 +164,7 @@ static int proc_fd_link(struct dentry *dentry, struct path *path)
 		spin_lock(&files->file_lock);
 		fd_file = fcheck_files(files, fd);
 		if (fd_file) {
-			fd_file = security_file_lookup(fd_file, NULL, NULL);
+			fd_file = capsicum_file_lookup(fd_file, NULL, NULL);
 			*path = fd_file->f_path;
 			path_get(&fd_file->f_path);
 			ret = 0;

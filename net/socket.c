@@ -1737,7 +1737,7 @@ SYSCALL_DEFINE4(accept4, int, fd, struct sockaddr __user *, upeer_sockaddr,
 
 	/* File flags are not inherited via accept() unlike another OSes. */
 
-	installfile = security_file_install(listen_rights, newfile);
+	installfile = capsicum_file_install(listen_rights, newfile);
 	if (IS_ERR(installfile)) {
 		err = PTR_ERR(installfile);
 		goto out_fd;

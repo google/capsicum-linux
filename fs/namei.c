@@ -3325,7 +3325,7 @@ static struct file *path_openat(int dfd, struct filename *pathname,
 	}
 	if (!error) {
 		struct file *install_file;
-		install_file = security_file_install(dfd_rights, file);
+		install_file = capsicum_file_install(dfd_rights, file);
 		if (IS_ERR(install_file)) {
 			error = PTR_ERR(install_file);
 			goto out;

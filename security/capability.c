@@ -11,7 +11,6 @@
  */
 
 #include <linux/security.h>
-#include <linux/capsicum.h>
 #include <linux/capsicum-capmode.h>
 
 static int cap_syslog(int type)
@@ -1020,8 +1019,6 @@ void __init security_fixup_ops(struct security_operations *ops)
 	set_to_cap_if_null(ops, file_send_sigiotask);
 	set_to_cap_if_null(ops, file_receive);
 	set_to_cap_if_null(ops, file_open);
-	set_to_capsicum_if_null(ops, file_lookup);
-	set_to_capsicum_if_null(ops, file_install);
 	set_to_cap_if_null(ops, task_create);
 	set_to_cap_if_null(ops, task_free);
 	set_to_cap_if_null(ops, cred_alloc_blank);
