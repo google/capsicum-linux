@@ -54,12 +54,22 @@
  * @instruction_pointer: at the time of the system call.
  * @args: up to 6 system call arguments always stored as 64-bit values
  *        regardless of the architecture.
+ * @tgid: thread group ID of the thread executing the BPF program.
+ * @tid: thread ID of the thread executing the BPF program.
+ * The SECCOMP_DATA_TID_PRESENT macro indicates the presence of the
+ * tgid and tid fields; user programs may use this macro to conditionally
+ * compile code against older versions of the kernel.  Note also that
+ * BPF programs should cope with the absence of these fields by testing
+ * the length of data available.
  */
 struct seccomp_data {
 	int nr;
 	__u32 arch;
 	__u64 instruction_pointer;
 	__u64 args[6];
+	__u32 tgid;
+	__u32 tid;
 };
+#define SECCOMP_DATA_TID_PRESENT	1
 
 #endif /* _UAPI_LINUX_SECCOMP_H */
