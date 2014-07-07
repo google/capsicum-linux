@@ -101,6 +101,8 @@ static long syscall_trace_enter(struct pt_regs *regs)
 		sd.arch = arch;
 		sd.nr = regs->orig_ax;
 		sd.instruction_pointer = regs->ip;
+		sd.tgid = task_tgid_vnr(current);
+		sd.tid = task_pid_vnr(current);
 #ifdef CONFIG_X86_64
 		if (arch == AUDIT_ARCH_X86_64) {
 			sd.args[0] = regs->di;
