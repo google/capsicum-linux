@@ -23,6 +23,7 @@
 #ifdef CONFIG_SECURITY_CAPSICUM
 
 /* TODO(drysdale): use a more general method for arch-specific policing */
+#ifdef __NR_arch_prctl
 #if defined(CONFIG_X86) || defined(CONFIG_UML_X86)
 #include <asm/prctl.h>
 static int check_arch_prctl(unsigned long *args)
@@ -39,6 +40,7 @@ static int check_arch_prctl(unsigned long *args)
 {
 	return SECCOMP_RET_ERRNO|ECAPMODE;
 }
+#endif
 #endif
 
 static int check_kill(unsigned long *args)

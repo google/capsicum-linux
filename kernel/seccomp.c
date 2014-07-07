@@ -683,7 +683,9 @@ int __secure_computing(int this_syscall)
 	u32 ret = SECCOMP_RET_ALLOW;
 	u32 cur_ret;
 	int data;
+#if defined(CONFIG_SECCOMP_FILTER) || defined(CONFIG_SECCOMP_LSM)
 	struct pt_regs *regs = task_pt_regs(current);
+#endif
 
 	for (mode = 0x01; (mode & SECCOMP_MODE_VALID); mode <<= 1) {
 		if (!(modeset & mode))
@@ -758,7 +760,9 @@ int __secure_computing(int this_syscall)
 #endif
 	audit_seccomp(this_syscall, exit_sig, ret);
 	do_exit(exit_sig);
+#if defined(CONFIG_SECCOMP_FILTER) || defined(CONFIG_SECCOMP_LSM)
 skip:
+#endif
 	audit_seccomp(this_syscall, exit_sig, ret);
 	return -1;
 }
