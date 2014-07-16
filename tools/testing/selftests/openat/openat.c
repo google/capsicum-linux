@@ -107,39 +107,39 @@ int main(int argc, char *argv[])
 	fail |= check_openat_fail(999, "bogus", O_RDONLY, EBADF);
 	fail |= check_openat_fail(file_fd, "bogus", O_RDONLY, ENOTDIR);
 
-#ifdef O_BENEATH_ONLY
-	/* Test out O_BENEATH_ONLY */
-	fail |= check_openat(AT_FDCWD, "topfile", O_RDONLY|O_BENEATH_ONLY);
+#ifdef O_BENEATH
+	/* Test out O_BENEATH */
+	fail |= check_openat(AT_FDCWD, "topfile", O_RDONLY|O_BENEATH);
 	fail |= check_openat(AT_FDCWD, "subdir/bottomfile",
-			     O_RDONLY|O_BENEATH_ONLY);
+			     O_RDONLY|O_BENEATH);
 
-	fail |= check_openat(dot_dfd, "topfile", O_RDONLY|O_BENEATH_ONLY);
+	fail |= check_openat(dot_dfd, "topfile", O_RDONLY|O_BENEATH);
 	fail |= check_openat(dot_dfd, "subdir/bottomfile",
-			     O_RDONLY|O_BENEATH_ONLY);
-	fail |= check_openat(subdir_dfd, "bottomfile", O_RDONLY|O_BENEATH_ONLY);
+			     O_RDONLY|O_BENEATH);
+	fail |= check_openat(subdir_dfd, "bottomfile", O_RDONLY|O_BENEATH);
 
 	/* Can't open paths with ".." in them */
 	fail |= check_openat_fail(dot_dfd, "subdir/../topfile",
-				O_RDONLY|O_BENEATH_ONLY, EACCES);
+				O_RDONLY|O_BENEATH, EACCES);
 	fail |= check_openat_fail(subdir_dfd, "../topfile",
-				  O_RDONLY|O_BENEATH_ONLY, EACCES);
+				  O_RDONLY|O_BENEATH, EACCES);
 	fail |= check_openat_fail(subdir_dfd, "../subdir/bottomfile",
-				O_RDONLY|O_BENEATH_ONLY, EACCES);
+				O_RDONLY|O_BENEATH, EACCES);
 
 	/* Can't open paths starting with "/" */
 	fail |= check_openat_fail(AT_FDCWD, "/etc/passwd",
-				  O_RDONLY|O_BENEATH_ONLY, EACCES);
+				  O_RDONLY|O_BENEATH, EACCES);
 	fail |= check_openat_fail(dot_dfd, "/etc/passwd",
-				  O_RDONLY|O_BENEATH_ONLY, EACCES);
+				  O_RDONLY|O_BENEATH, EACCES);
 	fail |= check_openat_fail(subdir_dfd, "/etc/passwd",
-				  O_RDONLY|O_BENEATH_ONLY, EACCES);
+				  O_RDONLY|O_BENEATH, EACCES);
 	/* Can't sneak around constraints with symlinks */
 	fail |= check_openat_fail(subdir_dfd, "symlinkup",
-				  O_RDONLY|O_BENEATH_ONLY, EACCES);
+				  O_RDONLY|O_BENEATH, EACCES);
 	fail |= check_openat_fail(subdir_dfd, "symlinkout",
-				  O_RDONLY|O_BENEATH_ONLY, EACCES);
+				  O_RDONLY|O_BENEATH, EACCES);
 #else
-	printf("Skipping O_BENEATH_ONLY tests due to missing #define\n");
+	printf("Skipping O_BENEATH tests due to missing #define\n");
 #endif
 
 	return fail ? -1 : 0;
