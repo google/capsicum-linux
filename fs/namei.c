@@ -1754,7 +1754,7 @@ static int link_path_walk(const char *name, struct nameidata *nd,
 	int err;
 
 	while (*name == '/') {
-		if (flags & LOOKUP_BENEATH_ONLY) {
+		if (flags & LOOKUP_BENEATH) {
 			err = -EACCES;
 			goto exit;
 		}
@@ -1781,7 +1781,7 @@ static int link_path_walk(const char *name, struct nameidata *nd,
 		if (name[0] == '.') switch (len) {
 			case 2:
 				if (name[1] == '.') {
-					if (flags & LOOKUP_BENEATH_ONLY) {
+					if (flags & LOOKUP_BENEATH) {
 						err = -EACCES;
 						goto exit;
 					}
@@ -1850,7 +1850,7 @@ static int path_init(int dfd, const char *name, unsigned int *flags,
 	nd->depth = 0;
 
 	if (capsicum_in_cap_mode())
-		*flags |= LOOKUP_BENEATH_ONLY;
+		*flags |= LOOKUP_BENEATH;
 
 	if ((*flags) & LOOKUP_ROOT) {
 		struct dentry *root = nd->root.dentry;
@@ -1878,7 +1878,7 @@ static int path_init(int dfd, const char *name, unsigned int *flags,
 
 	nd->m_seq = read_seqbegin(&mount_lock);
 	if (*name=='/') {
-		if ((*flags) & LOOKUP_BENEATH_ONLY)
+		if ((*flags) & LOOKUP_BENEATH)
 			return -EACCES;
 		if (dfd_rights)
 			*dfd_rights = NULL;
@@ -1915,7 +1915,7 @@ static int path_init(int dfd, const char *name, unsigned int *flags,
 		if (IS_ERR(f.file))
 			return PTR_ERR(f.file);
 		if (!cap_rights_is_all(*dfd_rights))
-			*flags |= LOOKUP_BENEATH_ONLY;
+			*flags |= LOOKUP_BENEATH;
 
 		dentry = f.file->f_path.dentry;
 

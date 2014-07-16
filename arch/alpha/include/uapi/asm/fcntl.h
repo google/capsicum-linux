@@ -33,7 +33,7 @@
 
 #define O_PATH		040000000
 #define __O_TMPFILE	0100000000
-#define O_BENEATH_ONLY	0200000000	/* no / or .. in openat path */
+#define O_BENEATH	0200000000	/* no / or .. in openat path */
 
 #define F_GETLK		7
 #define F_SETLK		8
