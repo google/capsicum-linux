@@ -24,6 +24,8 @@
 
 char *filename = "testfile";
 
+pid_t gettid_(void) { return syscall(__NR_gettid); }
+
 /* Way to enter seccomp-bpf mode */
 enum BPFEntryMode {
 	MODE_FILTER,
@@ -63,6 +65,14 @@ enum BPFEntryMode {
 #define FAIL_SYSCALL(name, err)	\
 	BPF_JUMP(BPF_JMP+BPF_JEQ+BPF_K, __NR_##name, 0, 1),	\
 	BPF_RETURN_ERRNO(err)
+
+#ifdef SECCOMP_DATA_TID_PRESENT
+/* Build environment includes .tgid and .tid fields in seccomp_data */
+#define EXAMINE_TGID	\
+	BPF_STMT(BPF_LD+BPF_W+BPF_ABS, offsetof(struct seccomp_data, tgid))
+#define EXAMINE_TID	\
+	BPF_STMT(BPF_LD+BPF_W+BPF_ABS, offsetof(struct seccomp_data, tid))
+#endif
 
 /* Some generally useful filters */
 struct sock_filter allow_filter[] = { VALIDATE_ARCHITECTURE,
@@ -387,6 +397,92 @@ int check_bpf_with_strict(int mode)
 	return 0;  /* prevent compiler warning */
 }
 
+int check_bpf_with_tids(int mode)
+{
+#ifdef SECCOMP_DATA_TID_PRESENT
+	int rc;
+	int fd2;
+	char buffer[4];
+	int fd = open(filename, O_RDONLY);
+	int actual_tid = gettid_();
+	int actual_tgid = getpid();
+	struct sock_filter filter[] = {
+		VALIDATE_ARCHITECTURE,
+		/* If tgid/tid info not present, fail with EINVAL */
+		BPF_STMT(BPF_LD+BPF_W+BPF_LEN, 0),  /* A <- data len */
+		BPF_JUMP(BPF_JMP+BPF_JGE+BPF_K,
+			offsetof(struct seccomp_data, tgid) + sizeof(pid_t),
+			0, 1),
+		BPF_JUMP(BPF_JMP+BPF_JGE+BPF_K,
+			offsetof(struct seccomp_data, tid) + sizeof(pid_t),
+			1, 0),
+		BPF_RETURN_ERRNO(EINVAL),
+		EXAMINE_SYSCALL,
+		/* Only allow read(2) if seccomp_data.tid == tid */
+		BPF_JUMP(BPF_JMP+BPF_JEQ+BPF_K, __NR_read, 0, 4),
+		EXAMINE_TID,  /* A <- tid */
+		BPF_JUMP(BPF_JMP+BPF_JEQ+BPF_K, actual_tid, 0, 1),
+		BPF_ALLOW,
+		BPF_RETURN_ERRNO(ENOTEMPTY),
+		/* If seccomp_data.tid != 1, fail close(2) with EMFILE */
+		BPF_JUMP(BPF_JMP+BPF_JEQ+BPF_K, __NR_close, 0, 4),
+		EXAMINE_TID,  /* A <- tid */
+		BPF_JUMP(BPF_JMP+BPF_JEQ+BPF_K, 1, 0, 1),
+		BPF_ALLOW,
+		BPF_RETURN_ERRNO(EMFILE),
+		/* Only allow open(2) if seccomp_data.tgid == tgid */
+		BPF_JUMP(BPF_JMP+BPF_JEQ+BPF_K, __NR_open, 0, 4),
+		EXAMINE_TGID,  /* A <- tgid */
+		BPF_JUMP(BPF_JMP+BPF_JEQ+BPF_K, actual_tgid, 0, 1),
+		BPF_ALLOW,
+		BPF_RETURN_ERRNO(ENFILE),
+		/* If seccomp_data.tgid != 1, fail dup(2) with ELOOP */
+		BPF_JUMP(BPF_JMP+BPF_JEQ+BPF_K, __NR_dup, 0, 4),
+		EXAMINE_TGID,  /* A <- tid */
+		BPF_JUMP(BPF_JMP+BPF_JEQ+BPF_K, 1, 0, 1),
+		BPF_ALLOW,
+		BPF_RETURN_ERRNO(ELOOP),
+		BPF_ALLOW
+	};
+	struct sock_fprog bpf = {
+		.len = (sizeof(filter) / sizeof(filter[0])),
+		.filter = filter
+	};
+	/* Set up seccomp-bpf. */
+	prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0);
+	prctl_seccomp_bpf(mode, &bpf);
+
+	/* read(2) has matching tid, so OK */
+	rc = read(fd, buffer, sizeof(buffer));
+	if (rc < 0)
+		return 1;
+
+	/* We're not tid 1, so close(2) fails */
+	rc = close(fd);
+	if (rc >= 0)
+		return 2;
+	if (errno != EMFILE)
+		return 3;
+
+	/* open(2) has matching tgid, so OK */
+	fd2 = open(filename, O_RDONLY);
+	if (fd2 < 0)
+		return 4;
+	close(fd2);
+
+	/* We're not tgid 1, so dup(2) fails */
+	rc = dup(fd);
+	if (rc >= 0)
+		return 5;
+	if (errno != ELOOP)
+		return 6;
+
+#else
+	printf("Skipping seccomp_data thread info tests due to missing #define\n");
+#endif
+	return 0;
+}
+
 int check_strict_fail_close(int param)
 {
 	int fd = open(filename, O_RDONLY);
@@ -494,6 +590,8 @@ int main(int argc, char *argv[])
 	failed |= RUN_FORKED(check_bpf_polices_syscall_kill, MODE_FILTER,
 			     SIGSYS, 0);
 	failed |= RUN_FORKED(check_bpf_with_strict, MODE_FILTER, SIGKILL, 0);
+	failed |= RUN_FORKED(check_bpf_with_tids, MODE_FILTER, 0, 0);
+
 	/* Same tests but use SECCOMP_EXT_ACT to enter seccomp-bpf mode */
 	failed |= RUN_FORKED(check_bpf_need_nonewpriv, MODE_EXT_ACT, 0, 0);
 	failed |= RUN_FORKED(check_bpf_get_seccomp, MODE_EXT_ACT, 0, 0);
