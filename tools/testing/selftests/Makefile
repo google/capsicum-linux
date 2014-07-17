@@ -11,9 +11,9 @@ TARGETS += vm
 TARGETS += powerpc
 TARGETS += user
 TARGETS += sysctl
-TARGETS += exec
-TARGETS += seccomp
 TARGETS += openat
+TARGETS += seccomp
+TARGETS += exec
 
 all:
 	for TARGET in $(TARGETS); do \

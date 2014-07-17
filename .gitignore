@@ -32,9 +32,9 @@
 *.lzo
 *.patch
 *.gcno
-build*
 modules.builtin
 Module.symvers
+build*
 
 #
 # Top-level generic files
