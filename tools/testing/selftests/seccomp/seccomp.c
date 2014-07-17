@@ -24,14 +24,14 @@
 
 char *filename = "testfile";
 
-pid_t gettid_(void) { return syscall(__NR_gettid); }
-
 /* Way to enter seccomp-bpf mode */
 enum BPFEntryMode {
 	MODE_FILTER,
 	MODE_EXT_ACT,
 	MODE_EXT_ACT_TSYNC,
 };
+
+pid_t gettid_(void) { return syscall(__NR_gettid); }
 
 /* Determine expected syscall architecture */
 #if defined(__i386__)
@@ -591,7 +591,6 @@ int main(int argc, char *argv[])
 			     SIGSYS, 0);
 	failed |= RUN_FORKED(check_bpf_with_strict, MODE_FILTER, SIGKILL, 0);
 	failed |= RUN_FORKED(check_bpf_with_tids, MODE_FILTER, 0, 0);
-
 	/* Same tests but use SECCOMP_EXT_ACT to enter seccomp-bpf mode */
 	failed |= RUN_FORKED(check_bpf_need_nonewpriv, MODE_EXT_ACT, 0, 0);
 	failed |= RUN_FORKED(check_bpf_get_seccomp, MODE_EXT_ACT, 0, 0);
@@ -599,6 +598,7 @@ int main(int argc, char *argv[])
 	failed |= RUN_FORKED(check_bpf_polices_syscall_kill, MODE_EXT_ACT,
 			     SIGSYS, 0);
 	failed |= RUN_FORKED(check_bpf_with_strict, MODE_EXT_ACT, SIGKILL, 0);
+	failed |= RUN_FORKED(check_bpf_with_tids, MODE_EXT_ACT, 0, 0);
 	/* Check TSYNC operations affect other threads too */
 	failed |= RUN_FORKED(check_bpf_polices_syscalls_sync,
 			     MODE_EXT_ACT_TSYNC, 0, 0);
