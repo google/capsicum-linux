@@ -13,6 +13,7 @@ TARGETS += user
 TARGETS += sysctl
 TARGETS += exec
 TARGETS += seccomp
+TARGETS += openat
 
 all:
 	for TARGET in $(TARGETS); do \
