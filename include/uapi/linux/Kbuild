@@ -319,6 +319,7 @@ header-y += ppp_defs.h
 header-y += pps.h
 header-y += prctl.h
 header-y += procdesc.h
+header-y += psci.h
 header-y += ptp_clock.h
 header-y += ptrace.h
 header-y += qnx4_fs.h
