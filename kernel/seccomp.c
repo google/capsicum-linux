@@ -479,9 +479,9 @@ static long _seccomp_attach_filter(struct seccomp_filter *filter)
 	BUG_ON(!spin_is_locked(&current->seccomp.lock));
 
 	/* Validate resulting filter length. */
-	total_insns = filter->len;
+	total_insns = filter->prog->len;
 	for (walker = current->seccomp.filter; walker; walker = filter->prev)
-		total_insns += walker->len + 4;  /* include a 4 instr penalty */
+		total_insns += walker->prog->len + 4;  /* include a 4 instr penalty */
 	if (total_insns > MAX_INSNS_PER_PATH)
 		return -ENOMEM;
 
