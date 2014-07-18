@@ -185,4 +185,18 @@ struct prctl_mm_map {
 #define PR_MPX_ENABLE_MANAGEMENT  43
 #define PR_MPX_DISABLE_MANAGEMENT 44
 
+/*
+ * If openat_beneath is set for a task, then all openat(2) operations will
+ * implicitly have the O_BENEATH flag set for them.  Once set, this flag cannot
+ * be cleared.
+ */
+#define PR_SET_OPENAT_BENEATH	45
+#define PR_GET_OPENAT_BENEATH	46
+
+/*
+  Indicate that the openat_beneath flag should be synchronized across all
+ * threads in the process.
+ */
+#define PR_SET_OPENAT_BENEATH_TSYNC	0x01
+
 #endif /* _LINUX_PRCTL_H */

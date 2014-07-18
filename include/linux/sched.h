@@ -2017,6 +2017,7 @@ static inline void memalloc_noio_restore(unsigned int flags)
 #define PFA_NO_NEW_PRIVS 0	/* May not gain new privileges. */
 #define PFA_SPREAD_PAGE  1      /* Spread page cache over cpuset */
 #define PFA_SPREAD_SLAB  2      /* Spread some slab caches over cpuset */
+#define PFA_OPENAT_BENEATH 3	/* openat(2) implicitly O_EBENEATH */
 
 
 #define TASK_PFA_TEST(name, func)					\
@@ -2039,6 +2040,10 @@ TASK_PFA_CLEAR(SPREAD_PAGE, spread_page)
 TASK_PFA_TEST(SPREAD_SLAB, spread_slab)
 TASK_PFA_SET(SPREAD_SLAB, spread_slab)
 TASK_PFA_CLEAR(SPREAD_SLAB, spread_slab)
+
+TASK_PFA_TEST(OPENAT_BENEATH, openat_beneath)
+TASK_PFA_SET(OPENAT_BENEATH, openat_beneath)
+TASK_PFA_CLEAR(OPENAT_BENEATH, openat_beneath)
 
 /*
  * task->jobctl flags

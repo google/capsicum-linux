@@ -2019,6 +2019,45 @@ out:
 	return error;
 }
 
+static int prctl_set_openat_beneath(struct task_struct *me, int value,
+				    unsigned long flags)
+{
+	/*
+	 * Setting the openat_beneath flag requires that the task has
+	 * CAP_SYS_ADMIN in its namespace or be running with no_new_privs.
+	 * This avoids scenarios where unprivileged tasks can affect the
+	 * behavior of privileged children.
+	 */
+	if (!task_no_new_privs(me) &&
+	    security_capable_noaudit(current_cred(), current_user_ns(),
+				     CAP_SYS_ADMIN) != 0)
+		return -EACCES;
+
+	spin_lock_irq(&me->sighand->siglock);
+
+	if (value)
+		task_set_openat_beneath(me);
+	else
+		task_clear_openat_beneath(me);
+
+	if (flags & PR_SET_OPENAT_BENEATH_TSYNC) {
+		struct task_struct *thread, *caller;
+
+		caller = me;
+		for_each_thread(caller, thread) {
+			/* Skip current, since it needs no changes. */
+			if (thread == me)
+				continue;
+			if (value)
+				task_set_openat_beneath(thread);
+			else
+				task_clear_openat_beneath(thread);
+		}
+	}
+	spin_unlock_irq(&me->sighand->siglock);
+	return 0;
+}
+
 #ifdef CONFIG_CHECKPOINT_RESTORE
 static int prctl_get_tid_address(struct task_struct *me, int __user **tid_addr)
 {
@@ -2194,6 +2233,17 @@ SYSCALL_DEFINE5(prctl, int, option, unsigned long, arg2, unsigned long, arg3,
 		if (arg2 || arg3 || arg4 || arg5)
 			return -EINVAL;
 		return task_no_new_privs(current) ? 1 : 0;
+	case PR_SET_OPENAT_BENEATH:
+		if (arg4 || arg5)
+			return -EINVAL;
+		if ((arg3 & ~(PR_SET_OPENAT_BENEATH_TSYNC)) != 0)
+			return -EINVAL;
+		error = prctl_set_openat_beneath(me, !!arg2, arg3);
+		break;
+	case PR_GET_OPENAT_BENEATH:
+		if (arg2 || arg3 || arg4 || arg5)
+			return -EINVAL;
+		return task_openat_beneath(me);
 	case PR_GET_THP_DISABLE:
 		if (arg2 || arg3 || arg4 || arg5)
 			return -EINVAL;
