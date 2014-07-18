@@ -2290,6 +2290,7 @@ static inline void memalloc_noio_restore(unsigned int flags)
 #define PFA_SPREAD_PAGE  1      /* Spread page cache over cpuset */
 #define PFA_SPREAD_SLAB  2      /* Spread some slab caches over cpuset */
 #define PFA_LMK_WAITING  3      /* Lowmemorykiller is waiting */
+#define PFA_OPENAT_BENEATH 4	/* openat(2) implicitly O_EBENEATH */
 
 
 #define TASK_PFA_TEST(name, func)					\
@@ -2315,6 +2316,10 @@ TASK_PFA_CLEAR(SPREAD_SLAB, spread_slab)
 
 TASK_PFA_TEST(LMK_WAITING, lmk_waiting)
 TASK_PFA_SET(LMK_WAITING, lmk_waiting)
+
+TASK_PFA_TEST(OPENAT_BENEATH, openat_beneath)
+TASK_PFA_SET(OPENAT_BENEATH, openat_beneath)
+TASK_PFA_CLEAR(OPENAT_BENEATH, openat_beneath)
 
 /*
  * task->jobctl flags
