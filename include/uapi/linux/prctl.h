@@ -190,4 +190,18 @@ struct prctl_mm_map {
 # define PR_FP_MODE_FR		(1 << 0)	/* 64b FP registers */
 # define PR_FP_MODE_FRE		(1 << 1)	/* 32b compatibility */
 
+/*
+ * If openat_beneath is set for a task, then all openat(2) operations will
+ * implicitly have the O_BENEATH flag set for them.  Once set, this flag cannot
+ * be cleared.
+ */
+#define PR_SET_OPENAT_BENEATH	47
+#define PR_GET_OPENAT_BENEATH	48
+
+/*
+  Indicate that the openat_beneath flag should be synchronized across all
+ * threads in the process.
+ */
+#define PR_SET_OPENAT_BENEATH_TSYNC	0x01
+
 #endif /* _LINUX_PRCTL_H */
