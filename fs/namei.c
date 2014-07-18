@@ -1899,6 +1899,9 @@ static int path_init(int dfd, const struct filename *name, unsigned int flags,
 	nd->base = NULL;
 	nd->base_rights = NULL;
 
+	if (task_openat_beneath(current))
+		nd->flags |= LOOKUP_BENEATH;
+
 	if (flags & LOOKUP_ROOT) {
 		struct dentry *root = nd->root.dentry;
 		struct inode *inode = root->d_inode;
@@ -1925,7 +1928,7 @@ static int path_init(int dfd, const struct filename *name, unsigned int flags,
 
 	nd->m_seq = read_seqbegin(&mount_lock);
 	if (*s == '/') {
-		if (flags & LOOKUP_BENEATH)
+		if (nd->flags & LOOKUP_BENEATH)
 			return -EPERM;
 		if (flags & LOOKUP_RCU) {
 			rcu_read_lock();
