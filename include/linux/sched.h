@@ -1304,6 +1304,9 @@ struct task_struct {
 	/* Used for emulating ABI behavior of previous Linux versions */
 	unsigned int personality;
 
+	/* Indicate that openat(2) operations implictly have O_BENEATH */
+	unsigned openat_beneath:1;
+
 	unsigned in_execve:1;	/* Tell the LSMs that the process is doing an
 				 * execve */
 	unsigned in_iowait:1;

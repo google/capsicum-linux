@@ -1852,6 +1852,8 @@ static int path_init(int dfd, const char *name, unsigned int *flags,
 
 	if (capsicum_in_cap_mode())
 		*flags |= LOOKUP_BENEATH;
+	if (current->openat_beneath)
+		*flags |= LOOKUP_BENEATH;
 
 	if ((*flags) & LOOKUP_ROOT) {
 		struct dentry *root = nd->root.dentry;
