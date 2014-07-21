@@ -12,7 +12,6 @@ TARGETS += powerpc
 TARGETS += user
 TARGETS += sysctl
 TARGETS += openat
-TARGETS += seccomp
 TARGETS += exec
 
 all:
