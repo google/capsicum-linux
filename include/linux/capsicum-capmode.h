@@ -8,7 +8,7 @@
 static inline bool capsicum_in_cap_mode(void)
 {
 	return test_thread_flag(TIF_SECCOMP) &&
-	       current->seccomp.mode == SECCOMP_MODE_LSM;
+	       current->seccomp.mode == SECCOMP_MODE_CAPSICUM;
 }
 #else
 #define capsicum_in_cap_mode()	false

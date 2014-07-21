@@ -607,7 +607,7 @@ static int __init init_syscalls_result(void)
 arch_initcall(init_syscalls_result);
 
 /*
- * LSM hook fallback function: process an incoming syscall.
+ * Process an incoming syscall for Capsicum capability mode.
  * Returns a seccomp BPF response code.
  */
 u32 capsicum_intercept_syscall(int arch, int callnr, unsigned long *args)

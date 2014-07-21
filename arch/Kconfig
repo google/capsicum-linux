@@ -332,11 +332,11 @@ config SECCOMP_FILTER
 
 	  See Documentation/prctl/seccomp_filter.txt for details.
 
-config SECCOMP_LSM
+config SECCOMP_CAPSICUM
 	def_bool y
 	depends on HAVE_ARCH_SECCOMP_FILTER && SECCOMP
 	help
-	  Enable LSMs to intercept system calls in secure computing
+	  Enable Capsicum to intercept system calls in secure computing
 	  environments.
 
 config HAVE_CC_STACKPROTECTOR

@@ -241,11 +241,6 @@ int security_bprm_secureexec(struct linux_binprm *bprm)
 	return security_ops->bprm_secureexec(bprm);
 }
 
-u32 security_intercept_syscall(int arch, int callnr, unsigned long *args)
-{
-	return security_ops->intercept_syscall(arch, callnr, args);
-}
-
 int security_sb_alloc(struct super_block *sb)
 {
 	return security_ops->sb_alloc_security(sb);

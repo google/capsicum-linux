@@ -9,7 +9,7 @@
 #define SECCOMP_MODE_DISABLED	0x00 /* seccomp is not in use. */
 #define SECCOMP_MODE_STRICT	0x01 /* uses hard-coded filter. */
 #define SECCOMP_MODE_FILTER	0x02 /* uses user-supplied filter. */
-#define SECCOMP_MODE_LSM	0x04 /* uses LSM hook to filter. */
+#define SECCOMP_MODE_CAPSICUM	0x04 /* uses Capsicum to filter. */
 
 #define SECCOMP_MODE_VALID	0x07 /* mask of valid mode values. */
 
@@ -19,14 +19,14 @@
 /* Valid extension actions as arg3 to prctl(PR_SECCOMP_EXT, SECCOMP_EXT_ACT) */
 #define SECCOMP_EXT_ACT_FILTER		1 /* apply seccomp-bpf filter with flags */
 #define SECCOMP_EXT_ACT_TSYNC		2 /* synchronize threadgroup filters */
-#define SECCOMP_EXT_ACT_LSM		3 /* apply LSM hook filter with flags */
-#define SECCOMP_EXT_ACT_TSYNC_LSM	4 /* synchronize LSM hook status */
+#define SECCOMP_EXT_ACT_CAPSICUM	3 /* apply Capsicum mode with flags */
+#define SECCOMP_EXT_ACT_TSYNC_CAPSICUM	4 /* synchronize Capsicum status */
 
 /* Flags for prctl arg4 when calling SECCOMP_EXT_ACT_FILTER */
 #define SECCOMP_FILTER_TSYNC	1 /* synchronize threadgroup to filter */
 
-/* Flags for prctl arg4 when calling SECCOMP_EXT_ACT_LSM */
-#define SECCOMP_LSM_TSYNC	1 /* synchronize threadgroup seccomp status */
+/* Flags for prctl arg4 when calling SECCOMP_EXT_ACT_CAPSICUM */
+#define SECCOMP_CAPSICUM_TSYNC	1 /* synchronize threadgroup seccomp status */
 
 /*
  * All BPF programs must return a 32-bit value.

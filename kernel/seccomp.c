@@ -23,6 +23,7 @@
 #include <linux/seccomp.h>
 #include <linux/security.h>
 #include <linux/slab.h>
+#include <linux/capsicum-capmode.h>
 
 /* #define SECCOMP_DEBUG 1 */
 
@@ -302,18 +303,18 @@ static pid_t seccomp_act_sync_threads_filter(void)
 	return failed;
 }
 
-#ifdef CONFIG_SECCOMP_LSM
+#ifdef CONFIG_SECCOMP_CAPSICUM
 /* Expects locking to have been done already. */
-static void seccomp_sync_thread_lsm(struct task_struct *caller,
-				    struct task_struct *thread)
+static void seccomp_sync_thread_capsicum(struct task_struct *caller,
+					 struct task_struct *thread)
 {
 	/* Opt the other thread into seccomp if needed.
 	 * As threads are considered to be trust-realm
 	 * equivalent (see ptrace_may_access), it is safe to
 	 * allow one thread to transition the other.
 	 */
-	if (!(thread->seccomp.mode & SECCOMP_MODE_LSM)) {
-		thread->seccomp.mode |= SECCOMP_MODE_LSM;
+	if (!(thread->seccomp.mode & SECCOMP_MODE_CAPSICUM)) {
+		thread->seccomp.mode |= SECCOMP_MODE_CAPSICUM;
 		/*
 		 * Don't let an unprivileged task work around
 		 * the no_new_privs restriction by creating
@@ -327,16 +328,16 @@ static void seccomp_sync_thread_lsm(struct task_struct *caller,
 }
 
 /**
- * seccomp_act_sync_threads_lsm: sets all threads to use current's LSM mode
+ * seccomp_act_sync_threads_capsicum: sets all threads to use current's LSM mode
  *
  * Returns 0 on success, -ve on error.
  */
-static long seccomp_act_sync_threads_lsm(void)
+static long seccomp_act_sync_threads_capsicum(void)
 {
 	unsigned long tflags;
 	struct task_struct *thread, *caller;
 
-	if (!(current->seccomp.mode & SECCOMP_MODE_LSM))
+	if (!(current->seccomp.mode & SECCOMP_MODE_CAPSICUM))
 		return -EACCES;
 
 	write_lock_irqsave(&tasklist_lock, tflags);
@@ -344,7 +345,7 @@ static long seccomp_act_sync_threads_lsm(void)
 	while_each_thread(caller, thread) {
 		unsigned long irqflags;
 		seccomp_lock(thread, &irqflags);
-		seccomp_sync_thread_lsm(caller, thread);
+		seccomp_sync_thread_capsicum(caller, thread);
 		seccomp_unlock(thread, irqflags);
 	}
 	write_unlock_irqrestore(&tasklist_lock, tflags);
@@ -520,27 +521,27 @@ static long seccomp_act_filter(unsigned long flags, char * __user filter)
 	return 0;
 }
 
-#ifdef CONFIG_SECCOMP_LSM
+#ifdef CONFIG_SECCOMP_CAPSICUM
 /**
- * seccomp_act_lsm: enable LSM mode with additional flags
- * @flags:  flags from SECCOMP_LSM_* to change behavior
+ * seccomp_act_capsicum: enable LSM mode with additional flags
+ * @flags:  flags from SECCOMP_CAPSICUM_* to change behavior
  *
  * Return 0 on success, -ve on error.
  */
-static long seccomp_act_lsm(unsigned long flags)
+static long seccomp_act_capsicum(unsigned long flags)
 {
 	long ret;
 
-	/* Only SECCOMP_LSM_TSYNC is recognized. */
-	if ((flags & ~(SECCOMP_LSM_TSYNC)) != 0)
+	/* Only SECCOMP_CAPSICUM_TSYNC is recognized. */
+	if ((flags & ~(SECCOMP_CAPSICUM_TSYNC)) != 0)
 		return -EINVAL;
 
-	ret = seccomp_set_mode(SECCOMP_MODE_LSM, NULL);
+	ret = seccomp_set_mode(SECCOMP_MODE_CAPSICUM, NULL);
 	if (ret)
 		return ret;
 
-	if (flags & SECCOMP_LSM_TSYNC)
-		return seccomp_act_sync_threads_lsm();
+	if (flags & SECCOMP_CAPSICUM_TSYNC)
+		return seccomp_act_sync_threads_capsicum();
 
 	return 0;
 }
@@ -564,17 +565,17 @@ static long seccomp_extended_action(int action, unsigned long arg1,
 		if (arg1 || arg2)
 			return -EINVAL;
 		return seccomp_act_sync_threads_filter();
-#ifdef CONFIG_SECCOMP_LSM
-	case SECCOMP_EXT_ACT_LSM:
+#ifdef CONFIG_SECCOMP_CAPSICUM
+	case SECCOMP_EXT_ACT_CAPSICUM:
 		/* arg2 is currently unused. */
 		if (arg2)
 			return -EINVAL;
-		return seccomp_act_lsm(arg1);
-	case SECCOMP_EXT_ACT_TSYNC_LSM:
+		return seccomp_act_capsicum(arg1);
+	case SECCOMP_EXT_ACT_TSYNC_CAPSICUM:
 		/* arg1 and arg2 are currently unused. */
 		if (arg1 || arg2)
 			return -EINVAL;
-		return seccomp_act_sync_threads_lsm();
+		return seccomp_act_sync_threads_capsicum();
 #endif
 	default:
 		break;
@@ -674,14 +675,14 @@ static u32 secure_computing_mode1(int this_syscall)
 	return SECCOMP_RET_KILL;
 }
 
-#ifdef CONFIG_SECCOMP_LSM
-static u32 secure_computing_lsm(int this_syscall)
+#ifdef CONFIG_SECCOMP_CAPSICUM
+static u32 secure_computing_capsicum(int this_syscall)
 {
 	unsigned long args[6];
 	struct pt_regs *regs = task_pt_regs(current);
 	int arch = syscall_get_arch();
 	syscall_get_arguments(current, regs, 0, 6, args);
-	return security_intercept_syscall(arch, this_syscall, args);
+	return capsicum_intercept_syscall(arch, this_syscall, args);
 }
 #endif
 
@@ -693,7 +694,7 @@ int __secure_computing(int this_syscall)
 	u32 ret = SECCOMP_RET_ALLOW;
 	u32 cur_ret;
 	int data;
-#if defined(CONFIG_SECCOMP_FILTER) || defined(CONFIG_SECCOMP_LSM)
+#if defined(CONFIG_SECCOMP_FILTER) || defined(CONFIG_SECCOMP_CAPSICUM)
 	struct pt_regs *regs = task_pt_regs(current);
 #endif
 
@@ -710,9 +711,9 @@ int __secure_computing(int this_syscall)
 			cur_ret = seccomp_run_filters(this_syscall);
 			break;
 #endif
-#ifdef CONFIG_SECCOMP_LSM
-		case SECCOMP_MODE_LSM:
-			cur_ret = secure_computing_lsm(this_syscall);
+#ifdef CONFIG_SECCOMP_CAPSICUM
+		case SECCOMP_MODE_CAPSICUM:
+			cur_ret = secure_computing_capsicum(this_syscall);
 			break;
 #endif
 		default:
@@ -725,7 +726,7 @@ int __secure_computing(int this_syscall)
 	data = ret & SECCOMP_RET_DATA;
 	ret &= SECCOMP_RET_ACTION;
 	switch (ret) {
-#if defined(CONFIG_SECCOMP_FILTER) || defined(CONFIG_SECCOMP_LSM)
+#if defined(CONFIG_SECCOMP_FILTER) || defined(CONFIG_SECCOMP_CAPSICUM)
 	case SECCOMP_RET_ERRNO:
 		/* Set the low-order 16-bits as a errno. */
 		syscall_set_return_value(current, regs, -data, 0);
@@ -770,7 +771,7 @@ int __secure_computing(int this_syscall)
 #endif
 	audit_seccomp(this_syscall, exit_sig, ret);
 	do_exit(exit_sig);
-#if defined(CONFIG_SECCOMP_FILTER) || defined(CONFIG_SECCOMP_LSM)
+#if defined(CONFIG_SECCOMP_FILTER) || defined(CONFIG_SECCOMP_CAPSICUM)
 skip:
 #endif
 	audit_seccomp(this_syscall, exit_sig, ret);
@@ -810,12 +811,12 @@ static long seccomp_set_mode(unsigned long seccomp_mode, char __user *filter)
 			return PTR_ERR(prepared);
 	}
 #endif
-#ifdef CONFIG_SECCOMP_LSM
+#ifdef CONFIG_SECCOMP_CAPSICUM
 	/*
 	 * Check for no-new-privs outside of the seccomp lock (as
 	 * it may alloc credentials under the covers).
 	 */
-	if (seccomp_mode & SECCOMP_MODE_LSM) {
+	if (seccomp_mode & SECCOMP_MODE_CAPSICUM) {
 		if (!seccomp_has_no_new_privs())
 			return -EACCES;
 	}
@@ -839,8 +840,8 @@ static long seccomp_set_mode(unsigned long seccomp_mode, char __user *filter)
 		prepared = NULL;
 		break;
 #endif
-#ifdef CONFIG_SECCOMP_LSM
-	case SECCOMP_MODE_LSM:
+#ifdef CONFIG_SECCOMP_CAPSICUM
+	case SECCOMP_MODE_CAPSICUM:
 		ret = 0;
 		break;
 #endif
