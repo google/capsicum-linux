@@ -35,7 +35,6 @@
 #include <linux/fs_struct.h>
 #include <linux/posix_acl.h>
 #include <linux/capsicum.h>
-#include <linux/capsicum-capmode.h>
 #include <asm/uaccess.h>
 
 #include "internal.h"
@@ -1850,8 +1849,6 @@ static int path_init(int dfd, const char *name, unsigned int *flags,
 	nd->flags = (*flags) | LOOKUP_PARENT | LOOKUP_JUMPED;
 	nd->depth = 0;
 
-	if (capsicum_in_cap_mode())
-		*flags |= LOOKUP_BENEATH;
 	if (current->openat_beneath)
 		*flags |= LOOKUP_BENEATH;
 

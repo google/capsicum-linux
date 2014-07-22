@@ -332,13 +332,6 @@ config SECCOMP_FILTER
 
 	  See Documentation/prctl/seccomp_filter.txt for details.
 
-config SECCOMP_CAPSICUM
-	def_bool y
-	depends on HAVE_ARCH_SECCOMP_FILTER && SECCOMP
-	help
-	  Enable Capsicum to intercept system calls in secure computing
-	  environments.
-
 config HAVE_CC_STACKPROTECTOR
 	bool
 	help

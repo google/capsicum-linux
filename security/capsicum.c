@@ -22,7 +22,6 @@
 #include <linux/security.h>
 #include <linux/syscalls.h>
 #include <linux/capsicum.h>
-#include <linux/capsicum-capmode.h>
 
 #include "capsicum-rights.h"
 

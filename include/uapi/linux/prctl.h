@@ -153,12 +153,6 @@
 #define PR_GET_THP_DISABLE	42
 
 /*
- * Access seccomp extensions
- * See Documentation/prctl/seccomp_filter.txt for more details.
- */
-#define PR_SECCOMP_EXT		43
-
-/*
  * If openat_beneath is set for a task, then all openat(2) operations will
  * implicitly have the O_BENEATH flag set for them.  Once set, this flag cannot
  * be cleared.
