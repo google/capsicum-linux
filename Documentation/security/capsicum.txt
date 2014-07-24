@@ -65,30 +65,8 @@ Path Traversal
 Capsicum does allow new files to be accessed beneath a directory for which the
 application has a suitable capability FD (one including the CAP_LOOKUP right),
 using the openat(2) system call.  To prevent escape from the directory, path
-traversals are policed for "/" and ".." components.
-
-
-LSM Interactions
-----------------
-
-The annotation of all fget() calls with intended file operations, expressed
-as combinations of Capsicum rights values, is implemented as mainline kernel
-modifications.
-
-The remainder of the Capsicum functionality is via Linux Security Module (LSM)
-hooks, with Capsicum providing the default implementation when the active LSM
-does not override.  (If the active LSM does choose to override the Capsicum
-implementation, it should ensure that the Capsicum functionality is unaffected,
-by combining the results of the Capsicum implementation with its own.)
-
-The additional hooks added for (and implemented by) Capsicum are:
- - file_lookup: Allow modification of the result of an fget() operation, so that
-   a rights check can be performed and the normal file underlying a capability
-   can be returned.
- - file_install: Allow modification of a file that is about to be installed
-   into the file descriptor table, in cases where the new file is derived
-   from another file (that may be a Capsicum capability and so have rights
-   associated with it).
+traversals are policed for "/" and ".." components by implicitly setting the
+O_BENEATH flag for file-open operations.
 
 
 New System Calls
