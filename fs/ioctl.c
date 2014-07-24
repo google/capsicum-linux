@@ -606,6 +606,7 @@ SYSCALL_DEFINE3(ioctl, unsigned int, fd, unsigned int, cmd, unsigned long, arg)
 	int error;
 	struct capsicum_rights rights;
 	struct fd f;
+
 	cap_rights_init(&rights, CAP_IOCTL);
 	rights.nioctls = 1;
 	rights.ioctls = &cmd;

@@ -3043,6 +3043,7 @@ static long btrfs_ioctl_file_extent_same(struct file *file,
 	for (i = 0, info = same->info; i < count; i++, info++) {
 		struct inode *dst;
 		struct fd dst_file = fdgetr(info->fd, CAP_FSTAT);
+
 		if (IS_ERR(dst_file.file)) {
 			info->status = PTR_ERR(dst_file.file);
 			continue;

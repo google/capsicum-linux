@@ -96,6 +96,7 @@ int fd_statfs(int fd, struct kstatfs *st)
 {
 	struct fd f = fdgetr_raw(fd, CAP_FSTATFS);
 	int error;
+
 	if (!IS_ERR(f.file)) {
 		error = vfs_statfs(&f.file->f_path, st);
 		fdput(f);

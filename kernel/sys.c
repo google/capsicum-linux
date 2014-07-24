@@ -1827,6 +1827,7 @@ static int prctl_set_openat_beneath(struct task_struct *me, unsigned long flags)
 	if (flags & PR_SET_OPENAT_BENEATH_TSYNC) {
 		struct task_struct *thread, *caller;
 		unsigned long tflags;
+
 		write_lock_irqsave(&tasklist_lock, tflags);
 		thread = caller = me;
 		while_each_thread(caller, thread) {

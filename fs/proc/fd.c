@@ -100,6 +100,7 @@ static int tid_fd_revalidate(struct dentry *dentry, unsigned int flags)
 			file = fcheck_files(files, fd);
 			if (file) {
 				unsigned f_mode;
+
 				file = capsicum_file_lookup(file, NULL, NULL);
 				f_mode = file->f_mode;
 

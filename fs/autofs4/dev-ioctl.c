@@ -666,6 +666,7 @@ static int _autofs_dev_ioctl(unsigned int command, struct autofs_dev_ioctl __use
 	if (cmd != AUTOFS_DEV_IOCTL_OPENMOUNT_CMD &&
 	    cmd != AUTOFS_DEV_IOCTL_CLOSEMOUNT_CMD) {
 		struct capsicum_rights rights;
+
 		cap_rights_init(&rights, CAP_IOCTL, CAP_FSTAT);
 		rights.nioctls = 1;
 		rights.ioctls = &cmd;

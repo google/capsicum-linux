@@ -56,6 +56,7 @@ static inline int right_to_index(__u64 right)
 static inline bool has_right(const struct capsicum_rights *rights, u64 right)
 {
 	int idx = right_to_index(right);
+
 	return (rights->primary.cr_rights[idx] & right) == right;
 }
 
@@ -98,6 +99,7 @@ EXPORT_SYMBOL(cap_rights_vinit);
 bool cap_rights_regularize(struct capsicum_rights *rights)
 {
 	bool changed = false;
+
 	if (!has_right(rights, CAP_FCNTL) && rights->fcntls != 0x00) {
 		changed = true;
 		rights->fcntls = 0x00;
@@ -114,6 +116,7 @@ bool cap_rights_regularize(struct capsicum_rights *rights)
 struct capsicum_rights *_cap_rights_init(struct capsicum_rights *rights, ...)
 {
 	va_list ap;
+
 	va_start(ap, rights);
 	cap_rights_vinit(rights, ap);
 	va_end(ap);
@@ -124,6 +127,7 @@ EXPORT_SYMBOL(_cap_rights_init);
 struct capsicum_rights *_cap_rights_set(struct capsicum_rights *rights, ...)
 {
 	va_list ap;
+
 	va_start(ap, rights);
 	cap_rights_vset(rights, ap);
 	va_end(ap);

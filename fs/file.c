@@ -768,6 +768,7 @@ EXPORT_SYMBOL(fget_raw_rights);
 struct fd fdget_rights(unsigned int fd, const struct capsicum_rights *rights)
 {
 	struct fd f = fdget(fd);
+
 	f.file = unwrap_file(f.file, rights, NULL, (f.flags & FDPUT_FPUT));
 	return f;
 }
@@ -778,6 +779,7 @@ struct fd fdget_raw_rights(unsigned int fd,
 			   const struct capsicum_rights *rights)
 {
 	struct fd f = fdget_raw(fd);
+
 	f.file = unwrap_file(f.file, rights, actual_rights,
 			     (f.flags & FDPUT_FPUT));
 	return f;
@@ -789,6 +791,7 @@ struct file *_fgetr(unsigned int fd, ...)
 	struct capsicum_rights rights;
 	struct file *f;
 	va_list ap;
+
 	va_start(ap, fd);
 	f = fget_rights(fd, cap_rights_vinit(&rights, ap));
 	va_end(ap);
@@ -801,6 +804,7 @@ struct file *_fgetr_raw(unsigned int fd, ...)
 	struct capsicum_rights rights;
 	struct file *f;
 	va_list ap;
+
 	va_start(ap, fd);
 	f = fget_raw_rights(fd, cap_rights_vinit(&rights, ap));
 	va_end(ap);
@@ -813,6 +817,7 @@ struct fd _fdgetr(unsigned int fd, ...)
 	struct fd f;
 	struct capsicum_rights rights;
 	va_list ap;
+
 	va_start(ap, fd);
 	f = fdget_rights(fd, cap_rights_vinit(&rights, ap));
 	va_end(ap);
@@ -825,6 +830,7 @@ struct fd _fdgetr_raw(unsigned int fd, ...)
 	struct fd f;
 	struct capsicum_rights rights;
 	va_list ap;
+
 	va_start(ap, fd);
 	f = fdget_raw_rights(fd, NULL, cap_rights_vinit(&rights, ap));
 	va_end(ap);
@@ -837,6 +843,7 @@ struct fd _fdgetr_pos(unsigned int fd, ...)
 	struct fd f;
 	struct capsicum_rights rights;
 	va_list ap;
+
 	f = __to_fd(__fdget_pos(fd));
 	va_start(ap, fd);
 	f.file = unwrap_file(f.file, cap_rights_vinit(&rights, ap), NULL,

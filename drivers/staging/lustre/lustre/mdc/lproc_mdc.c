@@ -131,6 +131,7 @@ static ssize_t mdc_kuc_write(struct file *file, const char *buffer,
 		rc = libcfs_kkuc_group_put(KUC_GRP_HSM, lh);
 	} else {
 		struct file *fp = fgetr(fd, CAP_WRITE);
+
 		if (IS_ERR(fp))
 			rc = PTR_ERR(fp);
 		else

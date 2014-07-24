@@ -201,6 +201,7 @@ SYSCALL_DEFINE5(cap_rights_limit,
 	rights.nioctls = nioctls;
 	if (rights.nioctls > 0) {
 		size_t size;
+
 		if (!new_ioctls)
 			return -EINVAL;
 		size = rights.nioctls * sizeof(unsigned int);
@@ -237,6 +238,7 @@ SYSCALL_DEFINE5(cap_rights_get,
 		return -EBADF;
 	if (capsicum_is_cap(file)) {
 		struct capsicum_capability *cap = file->private_data;
+
 		rights = &cap->rights;
 	}
 
@@ -251,6 +253,7 @@ SYSCALL_DEFINE5(cap_rights_get,
 	}
 	if (nioctls) {
 		int n;
+
 		if (get_user(n, nioctls))
 			goto out;
 		if (put_user(rights->nioctls, nioctls))
@@ -360,6 +363,7 @@ struct file *capsicum_file_install(const struct capsicum_rights *base_rights,
 {
 	struct file *capf;
 	struct capsicum_capability *cap;
+
 	if (!base_rights || cap_rights_is_all(base_rights))
 		return file;
 

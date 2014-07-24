@@ -639,6 +639,7 @@ reset_info_exit:
 		for (i = 0; i < hdr.count; i++) {
 			struct vfio_group *group;
 			struct fd f = fdgetr(group_fds[i], CAP_FSTAT);
+
 			if (IS_ERR(f.file)) {
 				ret = PTR_ERR(f.file);
 				break;

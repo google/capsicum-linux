@@ -2033,6 +2033,7 @@ SYSCALL_DEFINE4(tee, int, fdin, int, fdout, size_t, len, unsigned int, flags)
 	if (!IS_ERR(in.file)) {
 		if (in.file->f_mode & FMODE_READ) {
 			struct fd out = fdgetr(fdout, CAP_WRITE);
+
 			if (!IS_ERR(out.file)) {
 				if (out.file->f_mode & FMODE_WRITE)
 					error = do_tee(in.file, out.file,

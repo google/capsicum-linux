@@ -18,6 +18,7 @@ static int openat_(int dirfd, const char *pathname, int flags)
 static int openat_or_die(int dfd, const char *path, int flags)
 {
 	int fd = openat_(dfd, path, flags);
+
 	if (fd < 0) {
 		printf("Failed to openat(%d, '%s'); "
 			"check prerequisites are available\n", dfd, path);
@@ -58,10 +59,12 @@ static int check_openat(int dfd, const char *path, int flags)
 static int _check_openat_fail(int dfd, const char *path, int flags,
 			      int expected_errno, const char *errno_str)
 {
+	int rc;
+
 	errno = 0;
 	printf("Check failure of openat(%d, '%s', %x) with %s... ",
 		dfd, path?:"(null)", flags, errno_str);
-	int rc = openat_(dfd, path, flags);
+	rc = openat_(dfd, path, flags);
 	if (rc > 0) {
 		printf("[FAIL] (unexpected success from openat(2))\n");
 		close(rc);

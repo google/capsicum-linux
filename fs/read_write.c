@@ -276,6 +276,7 @@ SYSCALL_DEFINE3(lseek, unsigned int, fd, off_t, offset, unsigned int, whence)
 {
 	off_t retval;
 	struct fd f = fdgetr_pos(fd, CAP_SEEK);
+
 	if (IS_ERR(f.file))
 		return PTR_ERR(f.file);
 

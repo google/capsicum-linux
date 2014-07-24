@@ -3637,6 +3637,7 @@ static const struct file_operations perf_fops;
 static inline int perf_fget_light(int fd, struct fd *p)
 {
 	struct fd f = fdgetr(fd, CAP_WRITE);
+
 	if (IS_ERR(f.file))
 		return PTR_ERR(f.file);
 

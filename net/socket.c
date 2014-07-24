@@ -466,6 +466,7 @@ struct socket *_sockfd_lookupr(int fd, int *err, ...)
 	struct capsicum_rights rights;
 	struct socket *sock;
 	va_list ap;
+
 	va_start(ap, err);
 	sock = sockfd_lookup_rights(fd, err, cap_rights_vinit(&rights, ap));
 	va_end(ap);
@@ -478,6 +479,7 @@ struct socket *_sockfd_lookupr_light(int fd, int *err, int *fput_needed, ...)
 	struct capsicum_rights rights;
 	struct socket *sock;
 	va_list ap;
+
 	va_start(ap, fput_needed);
 	sock = sockfd_lookup_light_rights(fd, err, fput_needed,
 					  NULL, cap_rights_vinit(&rights, ap));
@@ -2027,9 +2029,9 @@ SYSCALL_DEFINE5(getsockopt, int, fd, int, level, int, optname,
 	struct socket *sock;
 
 	sock = sockfd_lookupr_light(fd, &err, &fput_needed, CAP_GETSOCKOPT,
-				(level == SOL_SCTP &&
-				 optname == SCTP_SOCKOPT_PEELOFF)
-				? CAP_PEELOFF : 0ULL);
+				    (level == SOL_SCTP &&
+				     optname == SCTP_SOCKOPT_PEELOFF)
+				    ? CAP_PEELOFF : 0ULL);
 	if (sock != NULL) {
 		err = security_socket_getsockopt(sock, level, optname);
 		if (err)
@@ -2095,9 +2097,9 @@ static int copy_msghdr_from_user(struct msghdr *kmsg,
 }
 
 static int ___sys_sendmsg(struct socket *sock_noaddr, struct socket *sock_addr,
-			 struct msghdr __user *msg,
-			 struct msghdr *msg_sys, unsigned int flags,
-			 struct used_address *used_address)
+			  struct msghdr __user *msg,
+			  struct msghdr *msg_sys, unsigned int flags,
+			  struct used_address *used_address)
 {
 	struct socket *sock;
 	struct compat_msghdr __user *msg_compat =

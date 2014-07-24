@@ -168,6 +168,7 @@ static inline struct fd fdget_rights(unsigned int fd,
 				     const struct capsicum_rights *rights)
 {
 	struct fd f = fdget(fd);
+
 	if (f.file == NULL)
 		f.file = ERR_PTR(-EBADF);
 	return f;
@@ -178,6 +179,7 @@ fdget_raw_rights(unsigned int fd,
 		 const struct capsicum_rights *rights)
 {
 	struct fd f = fdget_raw(fd);
+
 	if (f.file == NULL)
 		f.file = ERR_PTR(-EBADF);
 	return f;
@@ -190,6 +192,7 @@ fdget_raw_rights(unsigned int fd,
 static inline struct fd fdgetr_pos(int fd, ...)
 {
 	struct fd f = fdget_pos(fd);
+
 	if (f.file == NULL)
 		f.file = ERR_PTR(-EBADF);
 	return f;

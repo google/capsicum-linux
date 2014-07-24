@@ -38,10 +38,13 @@ static int execveat_(int fd, const char *path, char **argv, char **envp,
 static int _check_execveat_fail(int fd, const char *path, int flags,
 				int expected_errno, const char *errno_str)
 {
+	int rc;
+
 	errno = 0;
 	printf("Check failure of execveat(%d, '%s', %d) with %s... ",
 		fd, path?:"(null)", flags, errno_str);
-	int rc = execveat_(fd, path, argv, envp, flags);
+	rc = execveat_(fd, path, argv, envp, flags);
+
 	if (rc > 0) {
 		printf("[FAIL] (unexpected success from execveat(2))\n");
 		return 1;
@@ -62,6 +65,7 @@ static int check_execveat_invoked_rc(int fd, const char *path, int flags,
 	int status;
 	int rc;
 	pid_t child;
+
 	printf("Check success of execveat(%d, '%s', %d)... ",
 		fd, path?:"(null)", flags);
 	child = fork();
@@ -104,6 +108,7 @@ static int check_execveat(int fd, const char *path, int flags)
 static char *concat(const char *left, const char *right)
 {
 	char *result = malloc(strlen(left) + strlen(right) + 1);
+
 	strcpy(result, left);
 	strcat(result, right);
 	return result;
@@ -112,6 +117,7 @@ static char *concat(const char *left, const char *right)
 static int open_or_die(const char *filename, int flags)
 {
 	int fd = open(filename, flags);
+
 	if (fd < 0) {
 		printf("Failed to open '%s'; "
 			"check prerequisites are available\n", filename);
@@ -234,6 +240,7 @@ static int run_tests(void)
 int main(int argc, char **argv)
 {
 	if (argc >= 2) {
+		int rc;
 		/* If we are invoked with an argument, exit immediately. */
 		/* Check expected environment transferred. */
 		if (strcmp(getenv("IN_TEST"), "yes") != 0) {
@@ -242,7 +249,7 @@ int main(int argc, char **argv)
 		}
 
 		/* Use the argument as an exit code. */
-		int rc = atoi(argv[1]);
+		rc = atoi(argv[1]);
 		fflush(stdout);
 		return rc;
 	} else {

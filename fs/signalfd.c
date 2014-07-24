@@ -289,6 +289,7 @@ SYSCALL_DEFINE4(signalfd4, int, ufd, sigset_t __user *, user_mask,
 			kfree(ctx);
 	} else {
 		struct fd f = fdgetr(ufd, CAP_FSIGNAL);
+
 		if (IS_ERR(f.file))
 			return PTR_ERR(f.file);
 		ctx = f.file->private_data;

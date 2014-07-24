@@ -2055,6 +2055,7 @@ struct dentry *kern_path_locked(const char *name, struct path *path)
 	struct nameidata nd;
 	struct dentry *d;
 	int err;
+
 	err = do_path_lookup(AT_FDCWD, name, LOOKUP_PARENT, &nd, NULL);
 	if (err)
 		return ERR_PTR(err);
@@ -2077,6 +2078,7 @@ int kern_path(const char *name, unsigned int flags, struct path *path)
 {
 	struct nameidata nd;
 	int res;
+
 	res = do_path_lookup(AT_FDCWD, name, flags, &nd, NULL);
 	if (!res)
 		*path = nd.path;
@@ -2218,6 +2220,7 @@ int _user_path_atr(int dfd,
 	struct capsicum_rights rights;
 	int rc;
 	va_list ap;
+
 	va_start(ap, path);
 	rc = user_path_at_empty_rights(dfd, name, flags, path, NULL,
 				       cap_rights_vinit(&rights, ap));
@@ -3191,6 +3194,7 @@ static int do_tmpfile(int dfd, struct filename *pathname,
 	struct dentry *dentry, *child;
 	struct inode *dir;
 	int error;
+
 	error = path_lookupat(dfd, pathname->name, flags | LOOKUP_DIRECTORY, nd,
 			      &lookup_rights);
 	if (unlikely(error))
@@ -3325,6 +3329,7 @@ static struct file *path_openat(int dfd, struct filename *pathname,
 	}
 	if (!error) {
 		struct file *install_file;
+
 		install_file = capsicum_file_install(dfd_rights, file);
 		if (IS_ERR(install_file)) {
 			error = PTR_ERR(install_file);
@@ -3645,6 +3650,7 @@ SYSCALL_DEFINE3(mkdirat, int, dfd, const char __user *, pathname, umode_t, mode)
 	int error;
 	unsigned int lookup_flags = LOOKUP_DIRECTORY;
 	struct capsicum_rights rights;
+
 	cap_rights_init(&rights, CAP_LOOKUP, CAP_MKDIRAT);
 
 retry:
@@ -3870,6 +3876,7 @@ static long do_unlinkat(int dfd, const char __user *pathname)
 	struct inode *delegated_inode = NULL;
 	unsigned int lookup_flags = 0;
 	struct capsicum_rights rights;
+
 	cap_rights_init(&rights, CAP_UNLINKAT);
 retry:
 	name = user_path_parent(dfd, pathname, &nd, lookup_flags, &rights);

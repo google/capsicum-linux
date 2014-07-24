@@ -74,6 +74,7 @@ struct file *procdesc_alloc(void)
 void procdesc_init(struct file *f, struct task_struct *task, bool daemon)
 {
 	struct procdesc *pd = procdesc_get(f);
+
 	BUG_ON(!pd);
 	pd->task = task;
 	pd->daemon = daemon;
@@ -168,6 +169,7 @@ SYSCALL_DEFINE4(pdwait4, int, fd, int __user *, status, int, options,
 static int procdesc_release(struct inode *inode, struct file *f)
 {
 	struct procdesc *pd = procdesc_get(f);
+
 	BUG_ON(!pd);
 	if (pd->task) {
 		if (!pd->daemon && (pd->task->exit_state == 0))
@@ -184,6 +186,7 @@ static unsigned int procdesc_poll(struct file *f,
 				  struct poll_table_struct *wait)
 {
 	struct procdesc *pd = procdesc_get(f);
+
 	BUG_ON(!pd);
 	poll_wait(f, &pd->task->wait_exit, wait);
 
@@ -197,6 +200,7 @@ static int procdesc_show_fdinfo(struct seq_file *m, struct file *f)
 {
 	struct procdesc *pd = procdesc_get(f);
 	pid_t pid;
+
 	if (!pd)
 		return -EINVAL;
 
