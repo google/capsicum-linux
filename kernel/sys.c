@@ -1821,9 +1821,10 @@ out:
 	return error;
 }
 
-static int prctl_set_openat_beneath(struct task_struct *me, unsigned long flags)
+static int prctl_set_openat_beneath(struct task_struct *me, int value,
+				    unsigned long flags)
 {
-	me->openat_beneath = 1;
+	me->openat_beneath = value;
 	if (flags & PR_SET_OPENAT_BENEATH_TSYNC) {
 		struct task_struct *thread, *caller;
 		unsigned long tflags;
@@ -1831,7 +1832,7 @@ static int prctl_set_openat_beneath(struct task_struct *me, unsigned long flags)
 		write_lock_irqsave(&tasklist_lock, tflags);
 		thread = caller = me;
 		while_each_thread(caller, thread) {
-			thread->openat_beneath = 1;
+			thread->openat_beneath = value;
 		}
 		write_unlock_irqrestore(&tasklist_lock, tflags);
 	}
@@ -2014,11 +2015,11 @@ SYSCALL_DEFINE5(prctl, int, option, unsigned long, arg2, unsigned long, arg3,
 			return -EINVAL;
 		return task_no_new_privs(current) ? 1 : 0;
 	case PR_SET_OPENAT_BENEATH:
-		if (arg2 != 1 || arg4 || arg5)
+		if (arg4 || arg5)
 			return -EINVAL;
 		if ((arg3 & ~(PR_SET_OPENAT_BENEATH_TSYNC)) != 0)
 			return -EINVAL;
-		error = prctl_set_openat_beneath(me, arg3);
+		error = prctl_set_openat_beneath(me, !!arg2, arg3);
 		break;
 	case PR_GET_OPENAT_BENEATH:
 		if (arg2 || arg3 || arg4 || arg5)
