@@ -1830,23 +1830,33 @@ static int prctl_set_openat_beneath(struct task_struct *me, int value,
 	 * This avoids scenarios where unprivileged tasks can affect the
 	 * behavior of privileged children.
 	 */
-	if (!task_no_new_privs(current) &&
+	if (!task_no_new_privs(me) &&
 	    security_capable_noaudit(current_cred(), current_user_ns(),
 				     CAP_SYS_ADMIN) != 0)
 		return -EACCES;
 
-	me->openat_beneath = value;
+	spin_lock_irq(&me->sighand->siglock);
+
+	if (value)
+		task_set_openat_beneath(me);
+	else
+		task_clear_openat_beneath(me);
+
 	if (flags & PR_SET_OPENAT_BENEATH_TSYNC) {
 		struct task_struct *thread, *caller;
-		unsigned long tflags;
 
-		write_lock_irqsave(&tasklist_lock, tflags);
-		thread = caller = me;
-		while_each_thread(caller, thread) {
-			thread->openat_beneath = value;
+		caller = me;
+		for_each_thread(caller, thread) {
+			/* Skip current, since it needs no changes. */
+			if (thread == me)
+				continue;
+			if (value)
+				task_set_openat_beneath(thread);
+			else
+				task_clear_openat_beneath(thread);
 		}
-		write_unlock_irqrestore(&tasklist_lock, tflags);
 	}
+	spin_unlock_irq(&me->sighand->siglock);
 	return 0;
 }
 
@@ -2035,7 +2045,7 @@ SYSCALL_DEFINE5(prctl, int, option, unsigned long, arg2, unsigned long, arg3,
 	case PR_GET_OPENAT_BENEATH:
 		if (arg2 || arg3 || arg4 || arg5)
 			return -EINVAL;
-		return me->openat_beneath;
+		return task_openat_beneath(me);
 	case PR_GET_THP_DISABLE:
 		if (arg2 || arg3 || arg4 || arg5)
 			return -EINVAL;

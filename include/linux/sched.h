@@ -1304,9 +1304,6 @@ struct task_struct {
 	/* Used for emulating ABI behavior of previous Linux versions */
 	unsigned int personality;
 
-	/* Indicate that openat(2) operations implictly have O_BENEATH */
-	unsigned openat_beneath:1;
-
 	unsigned in_execve:1;	/* Tell the LSMs that the process is doing an
 				 * execve */
 	unsigned in_iowait:1;
@@ -1978,6 +1975,7 @@ static inline void memalloc_noio_restore(unsigned int flags)
 
 /* Per-process atomic flags. */
 #define PFA_NO_NEW_PRIVS 0x00000001	/* May not gain new privileges. */
+#define PFA_OPENAT_BENEATH 0x00000002	/* openat(2) implicitly O_EBENEATH */
 
 static inline bool task_no_new_privs(struct task_struct *p)
 {
@@ -1987,6 +1985,21 @@ static inline bool task_no_new_privs(struct task_struct *p)
 static inline void task_set_no_new_privs(struct task_struct *p)
 {
 	set_bit(PFA_NO_NEW_PRIVS, &p->atomic_flags);
+}
+
+static inline bool task_openat_beneath(struct task_struct *p)
+{
+	return test_bit(PFA_OPENAT_BENEATH, &p->atomic_flags);
+}
+
+static inline void task_set_openat_beneath(struct task_struct *p)
+{
+	set_bit(PFA_OPENAT_BENEATH, &p->atomic_flags);
+}
+
+static inline void task_clear_openat_beneath(struct task_struct *p)
+{
+	clear_bit(PFA_OPENAT_BENEATH, &p->atomic_flags);
 }
 
 /*
