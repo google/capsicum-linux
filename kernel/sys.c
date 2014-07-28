@@ -1824,6 +1824,17 @@ out:
 static int prctl_set_openat_beneath(struct task_struct *me, int value,
 				    unsigned long flags)
 {
+	/*
+	 * Setting the openat_beneath flag requires that the task has
+	 * CAP_SYS_ADMIN in its namespace or be running with no_new_privs.
+	 * This avoids scenarios where unprivileged tasks can affect the
+	 * behavior of privileged children.
+	 */
+	if (!task_no_new_privs(current) &&
+	    security_capable_noaudit(current_cred(), current_user_ns(),
+				     CAP_SYS_ADMIN) != 0)
+		return -EACCES;
+
 	me->openat_beneath = value;
 	if (flags & PR_SET_OPENAT_BENEATH_TSYNC) {
 		struct task_struct *thread, *caller;
