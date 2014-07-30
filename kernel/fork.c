@@ -1751,6 +1751,9 @@ SYSCALL_DEFINE2(pdfork, int __user *, fdp, int,  flags)
 	struct task_struct *task = NULL;
 	struct file *pd;
 
+	if ((flags & ~(PD_DAEMON)) != 0)
+		return -EINVAL;
+
 	fd = get_unused_fd();
 	if (fd < 0)
 		return fd;
