@@ -1770,6 +1770,7 @@ SYSCALL_DEFINE2(pdfork, int __user *, fdp, int,  flags)
 		goto out_fput;
 
 	procdesc_init(pd, task, flags & PD_DAEMON);
+	task->pd = pd;
 	fd_install(fd, pd);
 	put_user(fd, fdp);
 

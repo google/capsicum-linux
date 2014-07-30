@@ -53,6 +53,7 @@
 #include <linux/oom.h>
 #include <linux/writeback.h>
 #include <linux/shm.h>
+#include <linux/procdesc.h>
 
 #include <asm/uaccess.h>
 #include <asm/unistd.h>
@@ -625,6 +626,7 @@ static void exit_notify(struct task_struct *tsk, int group_dead)
 	tsk->exit_state = autoreap ? EXIT_DEAD : EXIT_ZOMBIE;
 
 	/* Notify anyone who's waiting for us to finish. */
+	procdesc_exit(tsk);
 	wake_up(&tsk->wait_exit);
 
 	/* mt-exec, de_thread() is waiting for group leader */

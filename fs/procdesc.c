@@ -63,10 +63,10 @@ struct file *procdesc_alloc(void)
 	if (!pd)
 		return ERR_PTR(-ENOMEM);
 
-	f = anon_inode_getfile("[procdesc]", &procdesc_file_ops, pd, 0);
+	f = anon_new_inode_getfile("[procdesc]", &procdesc_file_ops, pd, 0);
 	if (IS_ERR(f))
 		kfree(pd);
-
+	f->f_inode->i_mode = S_IRWXU;
 	return f;
 }
 
@@ -78,6 +78,13 @@ void procdesc_init(struct file *f, struct task_struct *task, bool daemon)
 	BUG_ON(!pd);
 	pd->task = task;
 	pd->daemon = daemon;
+}
+
+void procdesc_exit(struct task_struct *task)
+{
+	struct file *f = task->pd;
+	if (f)
+		f->f_inode->i_mode = 0;
 }
 
 SYSCALL_DEFINE2(pdgetpid, int, fd, pid_t __user *, pidp)
@@ -172,6 +179,7 @@ static int procdesc_release(struct inode *inode, struct file *f)
 
 	BUG_ON(!pd);
 	if (pd->task) {
+		pd->task->pd = NULL;
 		if (!pd->daemon && (pd->task->exit_state == 0))
 			do_pdkill(pd->task, SIGKILL);
 

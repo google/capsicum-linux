@@ -14,5 +14,12 @@
 
 struct file *procdesc_alloc(void);
 void procdesc_init(struct file *pd, struct task_struct *task, bool daemon);
+#ifdef CONFIG_PROCDESC
+void procdesc_exit(struct task_struct *task);
+#else
+static inline void procdesc_exit(struct task_struct *)
+{
+}
+#endif
 
 #endif /* _LINUX_PROCDESC_H */
