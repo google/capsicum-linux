@@ -324,13 +324,16 @@
 315	common	sched_getattr		sys_sched_getattr
 316	common	renameat2		sys_renameat2
 317	common	seccomp			sys_seccomp
-318	common	cap_rights_limit	sys_cap_rights_limit
-319	common	cap_rights_get		sys_cap_rights_get
-320	64	execveat		stub_execveat
-321	common	pdfork			stub_pdfork
-322	common	pdgetpid		sys_pdgetpid
-323	common	pdkill			sys_pdkill
-324	common	pdwait4		sys_pdwait4
+318	common	getrandom		sys_getrandom
+319	common	memfd_create		sys_memfd_create
+320	common	kexec_file_load		sys_kexec_file_load
+321	common	cap_rights_limit	sys_cap_rights_limit
+322	common	cap_rights_get		sys_cap_rights_get
+323	64	execveat		stub_execveat
+324	common	pdfork			stub_pdfork
+325	common	pdgetpid		sys_pdgetpid
+326	common	pdkill			sys_pdkill
+327	common	pdwait4		sys_pdwait4
 
 #
 # x32-specific system call numbers start at 512 to avoid cache impact
