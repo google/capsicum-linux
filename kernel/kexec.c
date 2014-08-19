@@ -343,14 +343,14 @@ out_free_image:
 
 static int copy_file_from_fd(int fd, void **buf, unsigned long *buf_len)
 {
-	struct fd f = fdget(fd);
+	struct fd f = fdgetr(fd, CAP_PREAD);
 	int ret;
 	struct kstat stat;
 	loff_t pos;
 	ssize_t bytes = 0;
 
-	if (!f.file)
-		return -EBADF;
+	if (IS_ERR(f.file))
+		return PTR_ERR(f.file);
 
 	ret = vfs_getattr(&f.file->f_path, &stat);
 	if (ret)
