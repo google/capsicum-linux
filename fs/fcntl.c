@@ -421,6 +421,12 @@ static bool fcntl_rights(unsigned int cmd, struct capsicum_rights *rights)
 	case F_GETPIPE_SZ:
 		cap_rights_init(rights, CAP_GETSOCKOPT);
 		return false;
+	case F_ADD_SEALS:
+		cap_rights_init(rights, CAP_FCHMOD);
+		return false;
+	case F_GET_SEALS:
+		cap_rights_init(rights, CAP_FSTAT);
+		return false;
 	default:
 		cap_rights_set_all(rights);
 		return false;
