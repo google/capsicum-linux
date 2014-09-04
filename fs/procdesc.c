@@ -103,6 +103,10 @@ SYSCALL_DEFINE2(pdgetpid, int, fd, pid_t __user *, pidp)
 		fput(f);
 		return -EINVAL;
 	}
+	if (!pd->task) {
+		fput(f);
+		return -ESRCH;
+	}
 
 	pid = task_tgid_vnr(pd->task);
 	fput(f);
@@ -144,6 +148,10 @@ SYSCALL_DEFINE2(pdkill, int, fd, int, signum)
 		fput(f);
 		return -EINVAL;
 	}
+	if (!pd->task) {
+		fput(f);
+		return -ESRCH;
+	}
 	ret = do_pdkill(pd->task, signum);
 	fput(f);
 	return ret;
@@ -165,6 +173,10 @@ SYSCALL_DEFINE4(pdwait4, int, fd, int __user *, status, int, options,
 	if (!pd) {
 		fput(f);
 		return -EINVAL;
+	}
+	if (!pd->task) {
+		fput(f);
+		return -ECHILD;
 	}
 	pid = task_tgid_vnr(pd->task);
 	fput(f);
@@ -197,7 +209,8 @@ static unsigned int procdesc_poll(struct file *f,
 	struct procdesc *pd = procdesc_get(f);
 
 	BUG_ON(!pd);
-	poll_wait(f, &pd->task->wait_exit, wait);
+	if (pd->task)
+		poll_wait(f, &pd->task->wait_exit, wait);
 
 	if (pd->task->exit_state != 0)
 		return POLLHUP;
@@ -208,12 +221,14 @@ static unsigned int procdesc_poll(struct file *f,
 static int procdesc_show_fdinfo(struct seq_file *m, struct file *f)
 {
 	struct procdesc *pd = procdesc_get(f);
-	pid_t pid;
 
 	if (!pd)
 		return -EINVAL;
-
-	pid = task_tgid_vnr(pd->task);
-	seq_printf(m, "pid:\t%d\n", pid);
+	if (pd->task) {
+		pid_t pid = task_tgid_vnr(pd->task);
+		seq_printf(m, "pid:\t%d\n", pid);
+	} else {
+		seq_printf(m, "pid:\t-1\n");
+	}
 	return 0;
 }
