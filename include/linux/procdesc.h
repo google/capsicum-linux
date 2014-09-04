@@ -12,9 +12,13 @@
 
 #include <uapi/linux/procdesc.h>
 
+/* Allocate a process descriptor structure */
 struct file *procdesc_alloc(void);
-void procdesc_init(struct file *pd, struct task_struct *task, bool daemon);
+/* Initialize a process descriptor structure */
+void procdesc_init(struct file *pd, struct task_struct *task,
+		   unsigned long flags);
 #ifdef CONFIG_PROCDESC
+/* Notify associated process descriptor of task exit */
 void procdesc_exit(struct task_struct *task);
 #else
 static inline void procdesc_exit(struct task_struct *)

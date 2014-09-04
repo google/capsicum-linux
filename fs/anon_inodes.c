@@ -141,6 +141,19 @@ struct file *anon_inode_getfile(const char *name,
 }
 EXPORT_SYMBOL_GPL(anon_inode_getfile);
 
+/**
+ * anon_inode_getfile - creates a new file instance by hooking it up to a new
+ *                      anonymous inode, and a dentry that describe the "class"
+ *                      of the file
+ *
+ * @name:    [in]    name of the "class" of the new file
+ * @fops:    [in]    file operations for the new file
+ * @priv:    [in]    private data for the new file (will be file's private_data)
+ * @flags:   [in]    flags
+ *
+ * Creates a new file by hooking it on a new anonymous inode.
+ * Returns the newly created file* or an error pointer.
+ */
 struct file *anon_new_inode_getfile(const char *name,
 				const struct file_operations *fops,
 				void *priv, int flags)
