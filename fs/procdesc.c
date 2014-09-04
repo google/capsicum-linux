@@ -23,7 +23,7 @@
 
 struct procdesc {
 	struct task_struct *task;
-	bool daemon;
+	unsigned long flags;
 };
 
 static unsigned int procdesc_poll(struct file *f,
@@ -71,13 +71,14 @@ struct file *procdesc_alloc(void)
 }
 
 /* Initialize the contents of a previously-allocated procdesc structure. */
-void procdesc_init(struct file *f, struct task_struct *task, bool daemon)
+void procdesc_init(struct file *f, struct task_struct *task,
+		   unsigned long flags)
 {
 	struct procdesc *pd = procdesc_get(f);
 
 	BUG_ON(!pd);
 	pd->task = task;
-	pd->daemon = daemon;
+	pd->flags = flags;
 }
 
 void procdesc_exit(struct task_struct *task)
@@ -180,7 +181,7 @@ static int procdesc_release(struct inode *inode, struct file *f)
 	BUG_ON(!pd);
 	if (pd->task) {
 		pd->task->pd = NULL;
-		if (!pd->daemon && (pd->task->exit_state == 0))
+		if (!(pd->flags & PD_DAEMON) && (pd->task->exit_state == 0))
 			do_pdkill(pd->task, SIGKILL);
 
 		BUG_ON(atomic_read(&pd->task->usage) < 1);

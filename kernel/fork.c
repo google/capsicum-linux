@@ -1737,7 +1737,7 @@ SYSCALL_DEFINE0(vfork)
 }
 #endif
 
-SYSCALL_DEFINE2(pdfork, int __user *, fdp, int,  flags)
+SYSCALL_DEFINE2(pdfork, int __user *, fdp, unsigned long,  flags)
 {
 #ifdef CONFIG_PROCDESC
 	long ret;
@@ -1763,7 +1763,7 @@ SYSCALL_DEFINE2(pdfork, int __user *, fdp, int,  flags)
 	if (ret < 0)
 		goto out_fput;
 
-	procdesc_init(pd, task, flags & PD_DAEMON);
+	procdesc_init(pd, task, flags);
 	task->pd = pd;
 	fd_install(fd, pd);
 	put_user(fd, fdp);
