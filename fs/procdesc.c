@@ -83,7 +83,7 @@ void procdesc_init(struct file *f, struct task_struct *task,
 
 void procdesc_exit(struct task_struct *task)
 {
-	struct file *f = task->pd;
+	struct file *f = task->procdesc;
 	if (f)
 		f->f_inode->i_mode = 0;
 }
@@ -180,7 +180,7 @@ static int procdesc_release(struct inode *inode, struct file *f)
 
 	BUG_ON(!pd);
 	if (pd->task) {
-		pd->task->pd = NULL;
+		pd->task->procdesc = NULL;
 		if (!(pd->flags & PD_DAEMON) && (pd->task->exit_state == 0))
 			do_pdkill(pd->task, SIGKILL);
 

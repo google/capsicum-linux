@@ -1652,7 +1652,7 @@ struct task_struct {
 	unsigned int	sequential_io_avg;
 #endif
 #ifdef CONFIG_PROCDESC
-	struct file *pd;
+	struct file *procdesc;
 #endif
 };
 

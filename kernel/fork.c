@@ -1743,7 +1743,7 @@ SYSCALL_DEFINE2(pdfork, int __user *, fdp, unsigned long,  flags)
 	long ret;
 	int fd;
 	struct task_struct *task = NULL;
-	struct file *pd;
+	struct file *procdesc;
 
 	if ((flags & ~(PD_DAEMON)) != 0)
 		return -EINVAL;
@@ -1752,9 +1752,9 @@ SYSCALL_DEFINE2(pdfork, int __user *, fdp, unsigned long,  flags)
 	if (fd < 0)
 		return fd;
 
-	pd  = procdesc_alloc();
-	if (IS_ERR(pd)) {
-		ret = PTR_ERR(pd);
+	procdesc  = procdesc_alloc();
+	if (IS_ERR(procdesc)) {
+		ret = PTR_ERR(procdesc);
 		goto out_putfd;
 	}
 
@@ -1763,15 +1763,15 @@ SYSCALL_DEFINE2(pdfork, int __user *, fdp, unsigned long,  flags)
 	if (ret < 0)
 		goto out_fput;
 
-	procdesc_init(pd, task, flags);
-	task->pd = pd;
-	fd_install(fd, pd);
+	procdesc_init(procdesc, task, flags);
+	task->procdesc = procdesc;
+	fd_install(fd, procdesc);
 	put_user(fd, fdp);
 
 	return ret;
 
 out_fput:
-	fput(pd);
+	fput(procdesc);
 out_putfd:
 	put_unused_fd(fd);
 	return ret;
