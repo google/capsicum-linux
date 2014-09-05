@@ -1309,12 +1309,6 @@ struct task_struct {
 	unsigned sched_reset_on_fork:1;
 	unsigned sched_contributes_to_load:1;
 
-	/*
-	 * Indicates that even though exit_signal is zero, this is still a
-	 * forked process not a cloned thread.
-	 */
-	unsigned quiet_forked:1;
-
 	unsigned long atomic_flags; /* Flags needing atomic access. */
 
 	pid_t pid;
@@ -1993,6 +1987,15 @@ static inline void task_set_openat_beneath(struct task_struct *p)
 static inline void task_clear_openat_beneath(struct task_struct *p)
 {
 	clear_bit(PFA_OPENAT_BENEATH, &p->atomic_flags);
+}
+
+static inline bool task_has_procdesc(const struct task_struct *p)
+{
+#ifdef CONFIG_PROCDESC
+	return (p->procdesc != NULL);
+#else
+	return false;
+#endif
 }
 
 /*

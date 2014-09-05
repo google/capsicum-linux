@@ -622,8 +622,13 @@ static void exit_notify(struct task_struct *tsk, int group_dead)
 			tsk->exit_signal : SIGCHLD;
 		autoreap = do_notify_parent(tsk, sig);
 	} else if (thread_group_leader(tsk)) {
+		/*
+		 * If there's an extant process descriptor, child death
+		 * notification is delivered via that rather than by signal.
+		 */
+		int sig = task_has_procdesc(tsk) ? 0 : tsk->exit_signal;
 		autoreap = thread_group_empty(tsk) &&
-			do_notify_parent(tsk, tsk->exit_signal);
+			do_notify_parent(tsk, sig);
 	} else {
 		autoreap = true;
 	}
@@ -939,9 +944,9 @@ static int eligible_child(struct wait_opts *wo, struct task_struct *p)
 	 * otherwise, wait for clone children *only* if __WCLONE is
 	 * set; otherwise, wait for non-clone children *only*.  (Note:
 	 * A "clone" child here is one that reports to its parent
-	 * using a signal other than SIGCHLD and is not pdforked.) */
-	if (((p->exit_signal != SIGCHLD && !p->quiet_forked) ^
-	      !!(wo->wo_flags & __WCLONE)) && !(wo->wo_flags & __WALL))
+	 * using a signal other than SIGCHLD.) */
+	if (((p->exit_signal != SIGCHLD) ^ !!(wo->wo_flags & __WCLONE))
+	    && !(wo->wo_flags & __WALL))
 		return 0;
 
 	return 1;
