@@ -1295,7 +1295,6 @@ struct task_struct {
 	int exit_state;
 	int exit_code, exit_signal;
 	int pdeath_signal;  /*  The signal sent when the parent dies  */
-	wait_queue_head_t wait_exit;  /* Waiting for this process to exit. */
 	unsigned int jobctl;	/* JOBCTL_*, siglock protected */
 
 	/* Used for emulating ABI behavior of previous Linux versions */

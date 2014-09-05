@@ -183,7 +183,6 @@ extern struct task_group root_task_group;
 		.time_slice	= RR_TIMESLICE,				\
 	},								\
 	.tasks		= LIST_HEAD_INIT(tsk.tasks),			\
-	.wait_exit	= __WAIT_QUEUE_HEAD_INITIALIZER(tsk.wait_exit), \
 	INIT_PUSHABLE_TASKS(tsk)					\
 	INIT_CGROUP_SCHED(tsk)						\
 	.ptraced	= LIST_HEAD_INIT(tsk.ptraced),			\

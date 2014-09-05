@@ -210,7 +210,7 @@ static unsigned int procdesc_poll(struct file *f,
 
 	BUG_ON(!pd);
 	if (pd->task)
-		poll_wait(f, &pd->task->wait_exit, wait);
+		poll_wait(f, &pd->task->signal->wait_chldexit, wait);
 
 	if (pd->task->exit_state != 0)
 		return POLLHUP;
