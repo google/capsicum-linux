@@ -1765,6 +1765,7 @@ SYSCALL_DEFINE2(pdfork, int __user *, fdp, unsigned long,  flags)
 
 	procdesc_init(procdesc, task, flags);
 	task->procdesc = procdesc;
+
 	fd_install(fd, procdesc);
 	put_user(fd, fdp);
 

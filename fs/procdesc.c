@@ -103,13 +103,11 @@ SYSCALL_DEFINE2(pdgetpid, int, fd, pid_t __user *, pidp)
 		fput(f);
 		return -EINVAL;
 	}
-	if (!pd->task) {
-		fput(f);
-		return -ESRCH;
-	}
 
 	pid = task_tgid_vnr(pd->task);
 	fput(f);
+	if (pid == 0)
+		return -ESRCH;
 	put_user(pid, pidp);
 	return 0;
 }
@@ -145,14 +143,11 @@ SYSCALL_DEFINE2(pdkill, int, fd, int, signum)
 
 	pd = procdesc_get(f);
 	if (!pd) {
-		fput(f);
-		return -EINVAL;
-	}
-	if (!pd->task) {
-		fput(f);
-		return -ESRCH;
+		ret = -EINVAL;
+		goto exit;
 	}
 	ret = do_pdkill(pd->task, signum);
+exit:
 	fput(f);
 	return ret;
 }
@@ -174,12 +169,10 @@ SYSCALL_DEFINE4(pdwait4, int, fd, int __user *, status, int, options,
 		fput(f);
 		return -EINVAL;
 	}
-	if (!pd->task) {
-		fput(f);
-		return -ECHILD;
-	}
 	pid = task_tgid_vnr(pd->task);
 	fput(f);
+	if (pid == 0)
+		return -ECHILD;
 	return sys_wait4(pid, status, options, rusage);
 }
 
@@ -191,14 +184,13 @@ static int procdesc_release(struct inode *inode, struct file *f)
 	struct procdesc *pd = procdesc_get(f);
 
 	BUG_ON(!pd);
-	if (pd->task) {
-		pd->task->procdesc = NULL;
-		if (!(pd->flags & PD_DAEMON) && (pd->task->exit_state == 0))
-			do_pdkill(pd->task, SIGKILL);
+	BUG_ON(!pd->task);
+	pd->task->procdesc = NULL;
+	if (!(pd->flags & PD_DAEMON) && (pd->task->exit_state == 0))
+		do_pdkill(pd->task, SIGKILL);
 
-		BUG_ON(atomic_read(&pd->task->usage) < 1);
-		put_task_struct(pd->task);
-	}
+	BUG_ON(atomic_read(&pd->task->usage) < 1);
+	put_task_struct(pd->task);
 	kfree(pd);
 	return 0;
 }
@@ -209,26 +201,19 @@ static unsigned int procdesc_poll(struct file *f,
 	struct procdesc *pd = procdesc_get(f);
 
 	BUG_ON(!pd);
-	if (pd->task)
-		poll_wait(f, &pd->task->signal->wait_chldexit, wait);
+	poll_wait(f, &pd->task->signal->wait_chldexit, wait);
 
-	if (pd->task->exit_state != 0)
-		return POLLHUP;
-	else
-		return 0;
+	return (pd->task->exit_state != 0) ? POLLHUP : 0;
 }
 
 static int procdesc_show_fdinfo(struct seq_file *m, struct file *f)
 {
 	struct procdesc *pd = procdesc_get(f);
+	pid_t pid;
 
 	if (!pd)
 		return -EINVAL;
-	if (pd->task) {
-		pid_t pid = task_tgid_vnr(pd->task);
-		seq_printf(m, "pid:\t%d\n", pid);
-	} else {
-		seq_printf(m, "pid:\t-1\n");
-	}
+	pid = task_tgid_vnr(pd->task);
+	seq_printf(m, "pid:\t%d\n", pid);
 	return 0;
 }
