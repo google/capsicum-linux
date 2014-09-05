@@ -940,6 +940,12 @@ static int eligible_child(struct wait_opts *wo, struct task_struct *p)
 {
 	if (!eligible_pid(wo, p))
 		return 0;
+
+	/* If the child has an extant process descriptor then
+	 * it should not be visible to wildcard wait  operations. */
+	if (task_has_procdesc(p) && wo->wo_type != PIDTYPE_PID)
+		return 0;
+
 	/* Wait for all children (clone and not) if __WALL is set;
 	 * otherwise, wait for clone children *only* if __WCLONE is
 	 * set; otherwise, wait for non-clone children *only*.  (Note:
