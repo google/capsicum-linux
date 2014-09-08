@@ -9,6 +9,7 @@
  *
  */
 #include <linux/anon_inodes.h>
+#include <linux/audit.h>
 #include <linux/fs.h>
 #include <linux/fdtable.h>
 #include <linux/file.h>
@@ -18,6 +19,8 @@
 #include <linux/printk.h>
 #include <linux/procdesc.h>
 #include <linux/resource.h>
+#include <linux/security.h>
+#include <linux/signal.h>
 #include <linux/slab.h>
 #include <linux/syscalls.h>
 
@@ -112,14 +115,23 @@ SYSCALL_DEFINE2(pdgetpid, int, fd, pid_t __user *, pidp)
 	return 0;
 }
 
+#ifdef CONFIG_AUDITSYSCALL
+extern int audit_pid;
+extern int __audit_signal_info(int sig, struct task_struct *t);
+static inline int audit_signal_info(int sig, struct task_struct *t)
+{
+	if (unlikely((audit_pid && t->tgid == audit_pid) ||
+		     (audit_signals && !audit_dummy_context())))
+		return __audit_signal_info(sig, t);
+	return 0;
+}
+#else
+#define audit_signal_info(s,t) 0
+#endif
+
 static long do_pdkill(struct task_struct *task, int signum)
 {
-	/*
-	 * This is essentially the sys_kill call path, but with the permission
-	 * checking removed. I've also removed the tasklist read lock, which
-	 * I believe is only necessary for finding the process associated with
-	 * a pid.
-	 */
+	int error;
 	struct siginfo info;
 
 	info.si_signo = signum;
@@ -128,7 +140,25 @@ static long do_pdkill(struct task_struct *task, int signum)
 	info.si_pid = task_tgid_vnr(current);
 	info.si_uid = from_kuid_munged(current_user_ns(), current_uid());
 
+	/* Let audit and LSM see the signal. */
+	rcu_read_lock();
+	error = audit_signal_info(signum, task);
+	if (error)
+		goto out_unlock;
+	error = security_task_kill(task, &info, signum, 0);
+	if (error)
+		goto out_unlock;
+	rcu_read_unlock();
+
+	/*
+	 * The task to be signalled is directly identified, so jump straight
+	 * to the signaling part of normal kill(2) processing.
+	 */
 	return do_send_sig_info(signum, &info, task, true);
+
+out_unlock:
+	rcu_read_unlock();
+	return error;
 }
 
 SYSCALL_DEFINE2(pdkill, int, fd, int, signum)
@@ -136,6 +166,9 @@ SYSCALL_DEFINE2(pdkill, int, fd, int, signum)
 	struct file *f;
 	struct procdesc *pd;
 	int ret;
+
+	if (!valid_signal(signum))
+		return -EINVAL;
 
 	f = fgetr(fd, CAP_PDKILL);
 	if (IS_ERR(f))
