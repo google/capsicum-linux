@@ -142,9 +142,9 @@ struct file *anon_inode_getfile(const char *name,
 EXPORT_SYMBOL_GPL(anon_inode_getfile);
 
 /**
- * anon_inode_getfile - creates a new file instance by hooking it up to a new
- *                      anonymous inode, and a dentry that describe the "class"
- *                      of the file
+ * anon_new_inode_getfile - creates a new file instance by hooking it up to a
+ *                          new anonymous inode, and a dentry that describe the
+ *                          "class" of the file
  *
  * @name:    [in]    name of the "class" of the new file
  * @fops:    [in]    file operations for the new file
