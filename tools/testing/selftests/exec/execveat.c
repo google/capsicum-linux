@@ -7,17 +7,18 @@
  */
 
 #define _GNU_SOURCE  /* to get O_PATH */
+#include <sys/sendfile.h>
+#include <sys/stat.h>
+#include <sys/syscall.h>
 #include <sys/types.h>
 #include <sys/wait.h>
-#include <sys/syscall.h>
-#include <sys/stat.h>
-#include <stdio.h>
 #include <errno.h>
-#include <string.h>
 #include <fcntl.h>
-#include <unistd.h>
 #include <limits.h>
+#include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
 
 static char *envp[] = { "IN_TEST=yes", NULL };
 static char *argv[] = { "execveat", "99", NULL };
@@ -237,6 +238,30 @@ static int run_tests(void)
 	return fail ? -1 : 0;
 }
 
+void exe_cp(const char *src, const char *dest)
+{
+	int in_fd = open_or_die(src, O_RDONLY);
+	int out_fd = open(dest, O_RDWR|O_CREAT|O_TRUNC, 0755);
+	struct stat info;
+	fstat(in_fd, &info);
+	sendfile(out_fd, in_fd, NULL, info.st_size);
+	close(in_fd);
+	close(out_fd);
+}
+
+void prerequisites(void)
+{
+	const char *script = "#!/bin/sh\nexit $*\n";
+	/* Create ephemeral copies of files */
+	exe_cp("execveat", "execveat.ephemeral");
+	exe_cp("script", "script.ephemeral");
+	mkdir("subdir.ephemeral", 0755);
+
+	int fd = open("subdir.ephemeral/script", O_RDWR|O_CREAT|O_TRUNC, 0755);
+	write(fd, script, strlen(script));
+	close(fd);
+}
+
 int main(int argc, char **argv)
 {
 	if (argc >= 2) {
@@ -253,6 +278,7 @@ int main(int argc, char **argv)
 		fflush(stdout);
 		return rc;
 	} else {
+		prerequisites();
 		return run_tests();
 	}
 }
