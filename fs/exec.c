@@ -1719,9 +1719,7 @@ COMPAT_SYSCALL_DEFINE5(execveat, int, fd,
 	int empty = 0;
 	struct filename *path = NULL;
 
-	if ((flags & ~(AT_SYMLINK_NOFOLLOW | AT_EMPTY_PATH)) != 0)
-		return -EINVAL;
-	path = getname_flags(filename, flags, &empty);
+	path = getname_flags(filename, (flags & AT_EMPTY_PATH) ? LOOKUP_EMPTY : 0, &empty);
 	if (IS_ERR(path))
 		return PTR_ERR(path);
 	if (empty) {
