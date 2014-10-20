@@ -779,7 +779,7 @@ static struct file *do_open_execat(int fd, struct filename *name, int flags)
 		.lookup_flags = 0,
 	};
 
-	if (flags & ~AT_SYMLINK_NOFOLLOW)
+	if ((flags & ~(AT_SYMLINK_NOFOLLOW | AT_EMPTY_PATH)) != 0)
 		return ERR_PTR(-EINVAL);
 
 	if (name) {
@@ -1689,12 +1689,15 @@ SYSCALL_DEFINE5(execveat,
 		const char __user *const __user *, envp,
 		int, flags)
 {
+	int empty = 0;
 	struct filename *path = NULL;
 
-	if (filename) {
-		path = getname(filename);
-		if (IS_ERR(path))
-			return PTR_ERR(path);
+	path = getname_flags(filename, (flags & AT_EMPTY_PATH) ? LOOKUP_EMPTY : 0, &empty);
+	if (IS_ERR(path))
+		return PTR_ERR(path);
+	if (empty) {
+		putname(path);
+		path = NULL;
 	}
 	return do_execveat(fd, path, argv, envp, flags);
 }
@@ -1707,18 +1710,23 @@ COMPAT_SYSCALL_DEFINE3(execve, const char __user *, filename,
 	return compat_do_execve(getname(filename), argv, envp);
 }
 
-asmlinkage long compat_sys_execveat(int fd,
-	const char __user *filename,
-	const compat_uptr_t __user *argv,
-	const compat_uptr_t __user *envp,
-	int flags)
+COMPAT_SYSCALL_DEFINE5(execveat, int, fd,
+		       const char __user *, filename,
+		       const compat_uptr_t __user *, argv,
+		       const compat_uptr_t __user *, envp,
+		       int,  flags)
 {
+	int empty = 0;
 	struct filename *path = NULL;
 
-	if (filename) {
-		path = getname(filename);
-		if (IS_ERR(path))
-			return PTR_ERR(path);
+	if ((flags & ~(AT_SYMLINK_NOFOLLOW | AT_EMPTY_PATH)) != 0)
+		return -EINVAL;
+	path = getname_flags(filename, flags, &empty);
+	if (IS_ERR(path))
+		return PTR_ERR(path);
+	if (empty) {
+		putname(path);
+		path = NULL;
 	}
 	return compat_do_execveat(fd, path, argv, envp, flags);
 }
