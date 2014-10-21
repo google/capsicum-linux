@@ -747,21 +747,6 @@ EXPORT_SYMBOL(setup_arg_pages);
 
 #endif /* CONFIG_MMU */
 
-/*
- * Perform the extra checks that open_exec() needs over and above a normal
- * open.
- */
-static int check_exec_and_deny_write(struct file *file)
-{
-	if (!S_ISREG(file_inode(file)->i_mode))
-		return -EACCES;
-
-	if (file->f_path.mnt->mnt_flags & MNT_NOEXEC)
-		return -EACCES;
-
-	return deny_write_access(file);
-}
-
 static struct file *do_open_execat(int fd, struct filename *name, int flags)
 {
 	struct file *file;
@@ -782,7 +767,7 @@ static struct file *do_open_execat(int fd, struct filename *name, int flags)
 	if ((flags & ~(AT_SYMLINK_NOFOLLOW | AT_EMPTY_PATH)) != 0)
 		return ERR_PTR(-EINVAL);
 
-	if (name) {
+	if (name->name[0] != '\0') {
 		const struct open_flags *oflags = ((flags & AT_SYMLINK_NOFOLLOW)
 						   ? &open_exec_nofollow_flags
 						   : &open_exec_flags);
@@ -801,11 +786,18 @@ static struct file *do_open_execat(int fd, struct filename *name, int flags)
 			goto exit;
 	}
 
-	err = check_exec_and_deny_write(file);
+	err = -EACCES;
+	if (!S_ISREG(file_inode(file)->i_mode))
+		goto exit;
+
+	if (file->f_path.mnt->mnt_flags & MNT_NOEXEC)
+		goto exit;
+
+	err = deny_write_access(file);
 	if (err)
 		goto exit;
 
-	if (name)
+	if (name->name[0] != '\0')
 		fsnotify_open(file);
 
 out:
@@ -1509,7 +1501,7 @@ static int do_execveat_common(int fd, struct filename *filename,
 	sched_exec();
 
 	bprm->file = file;
-	if (filename && fd == AT_FDCWD) {
+	if (fd == AT_FDCWD || filename->name[0] == '/') {
 		bprm->filename = filename->name;
 	} else {
 		pathbuf = kmalloc(PATH_MAX, GFP_TEMPORARY);
@@ -1564,8 +1556,7 @@ static int do_execveat_common(int fd, struct filename *filename,
 	acct_update_integrals(current);
 	task_numa_free(current);
 	free_bprm(bprm);
-	if (filename)
-		putname(filename);
+	putname(filename);
 	if (displaced)
 		put_files_struct(displaced);
 	return retval;
@@ -1588,8 +1579,7 @@ out_files:
 	if (displaced)
 		reset_files_struct(displaced);
 out_ret:
-	if (filename)
-		putname(filename);
+	putname(filename);
 	return retval;
 }
 
@@ -1689,17 +1679,10 @@ SYSCALL_DEFINE5(execveat,
 		const char __user *const __user *, envp,
 		int, flags)
 {
-	int empty = 0;
-	struct filename *path = NULL;
-
-	path = getname_flags(filename, (flags & AT_EMPTY_PATH) ? LOOKUP_EMPTY : 0, &empty);
-	if (IS_ERR(path))
-		return PTR_ERR(path);
-	if (empty) {
-		putname(path);
-		path = NULL;
-	}
-	return do_execveat(fd, path, argv, envp, flags);
+	int lookup_flags = (flags & AT_EMPTY_PATH) ? LOOKUP_EMPTY : 0;
+	return do_execveat(fd,
+			   getname_flags(filename, lookup_flags, NULL),
+			   argv, envp, flags);
 }
 
 #ifdef CONFIG_COMPAT
@@ -1716,16 +1699,9 @@ COMPAT_SYSCALL_DEFINE5(execveat, int, fd,
 		       const compat_uptr_t __user *, envp,
 		       int,  flags)
 {
-	int empty = 0;
-	struct filename *path = NULL;
-
-	path = getname_flags(filename, (flags & AT_EMPTY_PATH) ? LOOKUP_EMPTY : 0, &empty);
-	if (IS_ERR(path))
-		return PTR_ERR(path);
-	if (empty) {
-		putname(path);
-		path = NULL;
-	}
-	return compat_do_execveat(fd, path, argv, envp, flags);
+	int lookup_flags = (flags & AT_EMPTY_PATH) ? LOOKUP_EMPTY : 0;
+	return compat_do_execveat(fd,
+				  getname_flags(filename, lookup_flags, NULL),
+				  argv, envp, flags);
 }
 #endif
