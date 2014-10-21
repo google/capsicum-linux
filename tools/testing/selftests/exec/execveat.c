@@ -168,7 +168,6 @@ static int run_tests(void)
 	/* Invalid argument failures */
 	fail |= check_execveat_fail(fd, "", 0, ENOENT);
 	fail |= check_execveat_fail(fd, NULL, AT_EMPTY_PATH, EFAULT);
-	fail |= check_execveat_fail(dot_dfd, "execveat", 0x7FFF, EINVAL);
 
 	/* Symlink to executable file: */
 	/*   dfd + path */
@@ -276,13 +275,14 @@ int main(int argc, char **argv)
 		int rc;
 		/* If we are invoked with an argument, exit immediately. */
 		/* Check expected environment transferred. */
-		if (strcmp(getenv("IN_TEST"), "yes") != 0) {
+		const char *in_test = getenv("IN_TEST");
+		if (!in_test || strcmp(in_test, "yes") != 0) {
 			printf("[FAIL] (no IN_TEST=yes in env)\n");
 			return 1;
 		}
 
-		/* Use the argument as an exit code. */
-		rc = atoi(argv[1]);
+		/* Use the final argument as an exit code. */
+		rc = atoi(argv[argc - 1]);
 		fflush(stdout);
 		return rc;
 	} else {
