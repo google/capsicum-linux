@@ -208,9 +208,7 @@ static int run_tests(void)
 	fail |= check_execveat(fd_script_ephemeral, "", AT_EMPTY_PATH);
 	/*   fd + no path to a file that's been deleted */
 	unlink("script.moved"); /* remove the file while fd open */
-	/* Shell attempts to load the deleted file but fails => rc=127 */
-	fail |= check_execveat_invoked_rc(fd_script_ephemeral, "",
-					  AT_EMPTY_PATH, 127);
+	fail |= check_execveat(fd_script_ephemeral, "", AT_EMPTY_PATH);
 
 	/* Rename a subdirectory in the path: */
 	rename("subdir.ephemeral", "subdir.moved");
@@ -250,6 +248,7 @@ void exe_cp(const char *src, const char *dest)
 	int in_fd = open_or_die(src, O_RDONLY);
 	int out_fd = open(dest, O_RDWR|O_CREAT|O_TRUNC, 0755);
 	struct stat info;
+
 	fstat(in_fd, &info);
 	sendfile(out_fd, in_fd, NULL, info.st_size);
 	close(in_fd);
@@ -258,24 +257,28 @@ void exe_cp(const char *src, const char *dest)
 
 void prerequisites(void)
 {
+	int fd;
 	const char *script = "#!/bin/sh\nexit $*\n";
+
 	/* Create ephemeral copies of files */
 	exe_cp("execveat", "execveat.ephemeral");
 	exe_cp("script", "script.ephemeral");
 	mkdir("subdir.ephemeral", 0755);
 
-	int fd = open("subdir.ephemeral/script", O_RDWR|O_CREAT|O_TRUNC, 0755);
+	fd = open("subdir.ephemeral/script", O_RDWR|O_CREAT|O_TRUNC, 0755);
 	write(fd, script, strlen(script));
 	close(fd);
 }
 
 int main(int argc, char **argv)
 {
+	int rc;
+
 	if (argc >= 2) {
-		int rc;
 		/* If we are invoked with an argument, exit immediately. */
 		/* Check expected environment transferred. */
 		const char *in_test = getenv("IN_TEST");
+
 		if (!in_test || strcmp(in_test, "yes") != 0) {
 			printf("[FAIL] (no IN_TEST=yes in env)\n");
 			return 1;
@@ -284,9 +287,9 @@ int main(int argc, char **argv)
 		/* Use the final argument as an exit code. */
 		rc = atoi(argv[argc - 1]);
 		fflush(stdout);
-		return rc;
 	} else {
 		prerequisites();
-		return run_tests();
+		rc = run_tests();
 	}
+	return rc;
 }
