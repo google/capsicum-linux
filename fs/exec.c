@@ -1504,16 +1504,22 @@ static int do_execveat_common(int fd, struct filename *filename,
 	if (fd == AT_FDCWD || filename->name[0] == '/') {
 		bprm->filename = filename->name;
 	} else {
+		/*
+		 * Build a pathname that reflects how we got to the file,
+		 * either "/dev/fd/%d" (for an empty filename) or
+		 * "/dev/fd/%d/%s".
+		 */
 		pathbuf = kmalloc(PATH_MAX, GFP_TEMPORARY);
 		if (!pathbuf) {
 			retval = -ENOMEM;
 			goto out_unmark;
 		}
-		bprm->filename = d_path(&file->f_path, pathbuf, PATH_MAX);
-		if (IS_ERR(bprm->filename)) {
-			retval = PTR_ERR(bprm->filename);
-			goto out_unmark;
-		}
+		bprm->filename = pathbuf;
+		if (filename->name[0] == '\0')
+			sprintf(pathbuf, "/dev/fd/%d", fd);
+		else
+			snprintf(pathbuf, PATH_MAX,
+				 "/dev/fd/%d/%s", fd, filename->name);
 	}
 	bprm->interp = bprm->filename;
 
@@ -1680,6 +1686,7 @@ SYSCALL_DEFINE5(execveat,
 		int, flags)
 {
 	int lookup_flags = (flags & AT_EMPTY_PATH) ? LOOKUP_EMPTY : 0;
+
 	return do_execveat(fd,
 			   getname_flags(filename, lookup_flags, NULL),
 			   argv, envp, flags);
@@ -1700,6 +1707,7 @@ COMPAT_SYSCALL_DEFINE5(execveat, int, fd,
 		       int,  flags)
 {
 	int lookup_flags = (flags & AT_EMPTY_PATH) ? LOOKUP_EMPTY : 0;
+
 	return compat_do_execveat(fd,
 				  getname_flags(filename, lookup_flags, NULL),
 				  argv, envp, flags);
