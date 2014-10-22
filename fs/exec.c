@@ -1506,8 +1506,8 @@ static int do_execveat_common(int fd, struct filename *filename,
 	} else {
 		/*
 		 * Build a pathname that reflects how we got to the file,
-		 * either "/dev/fd/%d" (for an empty filename) or
-		 * "/dev/fd/%d/%s".
+		 * either "/dev/fd/<fd>" (for an empty filename) or
+		 * "/dev/fd/<fd>/<filename>".
 		 */
 		pathbuf = kmalloc(PATH_MAX, GFP_TEMPORARY);
 		if (!pathbuf) {
