@@ -1,7 +1,7 @@
 CC = $(CROSS_COMPILE)gcc
 CFLAGS = -Wall
 BINARIES = execveat
-DEPS = execveat.symlink script subdir
+DEPS = execveat.symlink execveat.denatured script subdir
 all: $(BINARIES) $(DEPS)
 
 subdir:
@@ -12,6 +12,9 @@ script:
 	chmod +x $@
 execveat.symlink: execveat
 	ln -s -f $< $@
+execveat.denatured: execveat
+	cp $< $@
+	chmod -x $@
 %: %.c
 	$(CC) $(CFLAGS) -o $@ $^
 
