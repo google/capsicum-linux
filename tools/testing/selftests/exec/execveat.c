@@ -146,6 +146,9 @@ static int run_tests(void)
 	int fd_ephemeral = open_or_die("execveat.ephemeral", O_RDONLY);
 	int fd_script_ephemeral = open_or_die("script.ephemeral", O_RDONLY);
 
+	/* Change file position to confirm it doesn't affect anything */
+	lseek(fd, 10, SEEK_SET);
+
 	/* Normal executable file: */
 	/*   dfd + path */
 	fail |= check_execveat(subdir_dfd, "../execveat", 0);
