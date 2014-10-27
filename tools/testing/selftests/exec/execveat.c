@@ -20,7 +20,7 @@
 #include <string.h>
 #include <unistd.h>
 
-static char *envp[] = { "IN_TEST=yes", NULL };
+static char *envp[] = { "IN_TEST=yes", NULL, NULL };
 static char *argv[] = { "execveat", "99", NULL };
 
 static int execveat_(int fd, const char *path, char **argv, char **envp,
@@ -286,13 +286,22 @@ void prerequisites(void)
 
 int main(int argc, char **argv)
 {
+	int ii;
 	int rc;
+	const char *verbose = getenv("VERBOSE");
 
 	if (argc >= 2) {
-		/* If we are invoked with an argument, exit immediately. */
-		/* Check expected environment transferred. */
+		/* If we are invoked with an argument, don't run tests. */
 		const char *in_test = getenv("IN_TEST");
 
+		if (verbose) {
+			printf("  invoked with:");
+			for (ii = 0; ii < argc; ii++)
+				printf(" [%d]='%s'", ii, argv[ii]);
+			printf("\n");
+		}
+
+		/* Check expected environment transferred. */
 		if (!in_test || strcmp(in_test, "yes") != 0) {
 			printf("[FAIL] (no IN_TEST=yes in env)\n");
 			return 1;
@@ -303,6 +312,8 @@ int main(int argc, char **argv)
 		fflush(stdout);
 	} else {
 		prerequisites();
+		if (verbose)
+			envp[1] = "VERBOSE=1";
 		rc = run_tests();
 	}
 	return rc;
