@@ -138,6 +138,7 @@ static int run_tests(void)
 					       O_DIRECTORY|O_RDONLY);
 	int dot_dfd = open_or_die(".", O_DIRECTORY|O_RDONLY);
 	int dot_dfd_path = open_or_die(".", O_DIRECTORY|O_RDONLY|O_PATH);
+	int dot_dfd_cloexec = open_or_die(".", O_DIRECTORY|O_RDONLY|O_CLOEXEC);
 	int fd = open_or_die("execveat", O_RDONLY);
 	int fd_path = open_or_die("execveat", O_RDONLY|O_PATH);
 	int fd_symlink = open_or_die("execveat.symlink", O_RDONLY);
@@ -145,6 +146,8 @@ static int run_tests(void)
 	int fd_script = open_or_die("script", O_RDONLY);
 	int fd_ephemeral = open_or_die("execveat.ephemeral", O_RDONLY);
 	int fd_script_ephemeral = open_or_die("script.ephemeral", O_RDONLY);
+	int fd_cloexec = open_or_die("execveat", O_RDONLY|O_CLOEXEC);
+	int fd_script_cloexec = open_or_die("script", O_RDONLY|O_CLOEXEC);
 
 	/* Change file position to confirm it doesn't affect anything */
 	lseek(fd, 10, SEEK_SET);
@@ -160,6 +163,8 @@ static int run_tests(void)
 	fail |= check_execveat(99, fullname, 0);
 	/*   fd + no path */
 	fail |= check_execveat(fd, "", AT_EMPTY_PATH);
+	/*   O_CLOEXEC fd + no path */
+	fail |= check_execveat(fd_cloexec, "", AT_EMPTY_PATH);
 
 	/* Mess with executable file that's already open: */
 	/*   fd + no path to a file that's been renamed */
@@ -205,6 +210,10 @@ static int run_tests(void)
 	fail |= check_execveat(fd_script, "", AT_EMPTY_PATH);
 	fail |= check_execveat(fd_script, "",
 			       AT_EMPTY_PATH|AT_SYMLINK_NOFOLLOW);
+	/*   O_CLOEXEC fd: interpreter runs, script file inaccessible */
+	fail |= check_execveat_invoked_rc(fd_script_cloexec, "", AT_EMPTY_PATH,
+					  127);
+	fail |= check_execveat_invoked_rc(dot_dfd_cloexec, "script", 0, 127);
 
 	/* Mess with script file that's already open: */
 	/*   fd + no path to a file that's been renamed */
