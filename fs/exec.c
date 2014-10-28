@@ -751,40 +751,31 @@ static struct file *do_open_execat(int fd, struct filename *name, int flags)
 {
 	struct file *file;
 	int err;
-	static const struct open_flags open_exec_flags = {
+	struct open_flags open_exec_flags = {
 		.open_flag = O_LARGEFILE | O_RDONLY | __FMODE_EXEC,
 		.acc_mode = MAY_EXEC | MAY_OPEN,
 		.intent = LOOKUP_OPEN,
 		.lookup_flags = LOOKUP_FOLLOW,
 	};
-	static const struct open_flags open_exec_nofollow_flags = {
-		.open_flag = O_LARGEFILE | O_RDONLY | __FMODE_EXEC,
-		.acc_mode = MAY_EXEC | MAY_OPEN,
-		.intent = LOOKUP_OPEN,
-		.lookup_flags = 0,
-	};
 
 	if ((flags & ~(AT_SYMLINK_NOFOLLOW | AT_EMPTY_PATH)) != 0)
 		return ERR_PTR(-EINVAL);
-
-	if (name->name[0] != '\0') {
-		const struct open_flags *oflags = ((flags & AT_SYMLINK_NOFOLLOW)
-						   ? &open_exec_nofollow_flags
-						   : &open_exec_flags);
-
-		file = do_filp_open(fd, name, oflags);
-		if (IS_ERR(file))
-			goto out;
-	} else {
-		file = fgetr(fd, CAP_FEXECVE);
-		if (IS_ERR(file))
-			goto out;
-
-		err = inode_permission(file->f_path.dentry->d_inode,
-				open_exec_flags.acc_mode);
-		if (err)
-			goto exit;
+	if (flags & AT_SYMLINK_NOFOLLOW)
+		open_exec_flags.lookup_flags &= ~LOOKUP_FOLLOW;
+	if (flags & AT_EMPTY_PATH) {
+		open_exec_flags.lookup_flags |= LOOKUP_EMPTY;
+		if (name->name[0] == '\0') {
+			/* Need to exclude FMODE_PATH file descriptors */
+			struct fd f = fdget(fd);
+			if (!f.file)
+				return ERR_PTR(-EBADF);
+			fdput(f);
+		}
 	}
+
+	file = do_filp_open(fd, name, &open_exec_flags);
+	if (IS_ERR(file))
+		goto out;
 
 	err = -EACCES;
 	if (!S_ISREG(file_inode(file)->i_mode))
