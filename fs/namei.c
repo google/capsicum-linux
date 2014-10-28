@@ -3286,6 +3286,8 @@ static void openat_primary_rights(struct capsicum_rights *rights,
 		cap_rights_set(rights, CAP_FTRUNCATE);
 	if (flags & (O_DSYNC|FASYNC))
 		cap_rights_set(rights, CAP_FSYNC);
+	if (flags & __FMODE_EXEC)
+		cap_rights_set(rights, CAP_FEXECVE);
 }
 
 static struct file *path_openat(int dfd, struct filename *pathname,
