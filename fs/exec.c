@@ -1504,22 +1504,20 @@ static int do_execveat_common(int fd, struct filename *filename,
 	if (fd == AT_FDCWD || filename->name[0] == '/') {
 		bprm->filename = filename->name;
 	} else {
-		/*
-		 * Build a pathname that reflects how we got to the file,
-		 * either "/dev/fd/<fd>" (for an empty filename) or
-		 * "/dev/fd/<fd>/<filename>".
-		 */
-		pathbuf = kmalloc(PATH_MAX, GFP_TEMPORARY);
+		/* "/dev/fd/2147483647/" + filename->name */
+		int maxlen = 19 + strlen(filename->name);
+
+		pathbuf = kmalloc(maxlen, GFP_TEMPORARY);
 		if (!pathbuf) {
 			retval = -ENOMEM;
 			goto out_unmark;
 		}
-		bprm->filename = pathbuf;
 		if (filename->name[0] == '\0')
 			sprintf(pathbuf, "/dev/fd/%d", fd);
 		else
-			snprintf(pathbuf, PATH_MAX,
+			snprintf(pathbuf, maxlen,
 				 "/dev/fd/%d/%s", fd, filename->name);
+		bprm->filename = pathbuf;
 	}
 	bprm->interp = bprm->filename;
 
