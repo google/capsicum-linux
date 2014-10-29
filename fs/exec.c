@@ -56,6 +56,7 @@
 #include <linux/pipe_fs_i.h>
 #include <linux/oom.h>
 #include <linux/compat.h>
+#include <linux/capsicum.h>
 
 #include <asm/uaccess.h>
 #include <asm/mmu_context.h>
@@ -769,6 +770,7 @@ static struct file *do_open_execat(int fd, struct filename *name, int flags)
 	file = do_filp_open(fd, name, &open_exec_flags);
 	if (IS_ERR(file))
 		goto out;
+	file = capsicum_file_lookup(file, NULL, NULL);
 
 	err = -EACCES;
 	if (!S_ISREG(file_inode(file)->i_mode))
