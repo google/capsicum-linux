@@ -762,16 +762,9 @@ static struct file *do_open_execat(int fd, struct filename *name, int flags)
 		return ERR_PTR(-EINVAL);
 	if (flags & AT_SYMLINK_NOFOLLOW)
 		open_exec_flags.lookup_flags &= ~LOOKUP_FOLLOW;
-	if (flags & AT_EMPTY_PATH) {
-		open_exec_flags.lookup_flags |= LOOKUP_EMPTY;
-		if (name->name[0] == '\0') {
-			/* Need to exclude FMODE_PATH file descriptors */
-			struct fd f = fdget(fd);
-			if (!f.file)
-				return ERR_PTR(-EBADF);
-			fdput(f);
-		}
-	}
+	if (flags & AT_EMPTY_PATH)
+		open_exec_flags.lookup_flags |= (LOOKUP_EMPTY |
+						 LOOKUP_EMPTY_NOPATH);
 
 	file = do_filp_open(fd, name, &open_exec_flags);
 	if (IS_ERR(file))
@@ -1508,6 +1501,11 @@ static int do_execveat_common(int fd, struct filename *filename,
 		else
 			snprintf(pathbuf, maxlen,
 				 "/dev/fd/%d/%s", fd, filename->name);
+		/* Record that a name derived from an O_CLOEXEC fd will be
+		 * inaccessible after exec. Relies on having exclusive access to
+		 * current->files (due to unshare_files above). */
+		if (close_on_exec(fd, current->files->fdt))
+			bprm->interp_flags |= BINPRM_FLAGS_PATH_INACCESSIBLE;
 		bprm->filename = pathbuf;
 	}
 	bprm->interp = bprm->filename;

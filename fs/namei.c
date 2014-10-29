@@ -1932,6 +1932,12 @@ static int path_init(int dfd, const char *name, unsigned int *flags,
 				fdput(f);
 				return -ENOTDIR;
 			}
+		} else if ((*flags) & LOOKUP_EMPTY_NOPATH) {
+			/* When using the fd alone, disallow O_PATH files */
+			if (f.file->f_mode & FMODE_PATH) {
+				fdput(f);
+				return -EBADF;
+			}
 		}
 
 		nd->path = f.file->f_path;
