@@ -210,10 +210,10 @@ static int run_tests(void)
 	fail |= check_execveat(fd_script, "", AT_EMPTY_PATH);
 	fail |= check_execveat(fd_script, "",
 			       AT_EMPTY_PATH|AT_SYMLINK_NOFOLLOW);
-	/*   O_CLOEXEC fd: interpreter runs, script file inaccessible */
-	fail |= check_execveat_invoked_rc(fd_script_cloexec, "", AT_EMPTY_PATH,
-					  127);
-	fail |= check_execveat_invoked_rc(dot_dfd_cloexec, "script", 0, 127);
+	/*   O_CLOEXEC fd fails for a script (as script file inaccessible) */
+	fail |= check_execveat_fail(fd_script_cloexec, "", AT_EMPTY_PATH,
+				    ENOENT);
+	fail |= check_execveat_fail(dot_dfd_cloexec, "script", 0, ENOENT);
 
 	/* Mess with script file that's already open: */
 	/*   fd + no path to a file that's been renamed */
@@ -246,7 +246,6 @@ static int run_tests(void)
 	fail |= check_execveat_fail(dot_dfd, "Makefile", 0, EACCES);
 	fail |= check_execveat_fail(fd_denatured, "", AT_EMPTY_PATH, EACCES);
 	/* Attempt to execute file opened with O_PATH => EBADF */
-	fail |= check_execveat_fail(dot_dfd_path, "", AT_EMPTY_PATH, EBADF);
 	fail |= check_execveat_fail(fd_path, "", AT_EMPTY_PATH, EBADF);
 	/* Attempt to execute nonsense FD => EBADF */
 	fail |= check_execveat_fail(99, "", AT_EMPTY_PATH, EBADF);
@@ -257,7 +256,7 @@ static int run_tests(void)
 	return fail ? -1 : 0;
 }
 
-void exe_cp(const char *src, const char *dest)
+static void exe_cp(const char *src, const char *dest)
 {
 	int in_fd = open_or_die(src, O_RDONLY);
 	int out_fd = open(dest, O_RDWR|O_CREAT|O_TRUNC, 0755);
@@ -269,7 +268,7 @@ void exe_cp(const char *src, const char *dest)
 	close(out_fd);
 }
 
-void prerequisites(void)
+static void prerequisites(void)
 {
 	int fd;
 	const char *script = "#!/bin/sh\nexit $*\n";
