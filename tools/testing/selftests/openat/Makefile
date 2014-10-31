@@ -1,7 +1,7 @@
 CC = $(CROSS_COMPILE)gcc
 CFLAGS = -Wall
 BINARIES = openat
-DEPS = subdir topfile subdir/bottomfile subdir/symlinkup subdir/symlinkout
+DEPS = subdir topfile symlinkdown subdir/bottomfile subdir/symlinkup subdir/symlinkout subdir/symlinkin
 all: $(BINARIES) $(DEPS)
 
 subdir:
@@ -10,10 +10,14 @@ topfile:
 	echo 0123456789 > $@
 subdir/bottomfile: | subdir
 	echo 0123456789 > $@
-subdir/symlinkup:
+subdir/symlinkup: | subdir
 	ln -s ../topfile $@
-subdir/symlinkout:
+subdir/symlinkout: | subdir
 	ln -s /etc/passwd $@
+subdir/symlinkin: | subdir
+	ln -s bottomfile $@
+symlinkdown:
+	ln -s subdir/bottomfile $@
 %: %.c
 	$(CC) $(CFLAGS) -o $@ $^
 

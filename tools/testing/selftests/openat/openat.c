@@ -121,6 +121,18 @@ int main(int argc, char *argv[])
 			     O_RDONLY|O_BENEATH);
 	fail |= check_openat(subdir_dfd, "bottomfile", O_RDONLY|O_BENEATH);
 
+	/* Symlinks without .. or leading / are OK */
+	fail |= check_openat(dot_dfd, "symlinkdown", O_RDONLY|O_BENEATH);
+	fail |= check_openat(dot_dfd, "subdir/symlinkin", O_RDONLY|O_BENEATH);
+	fail |= check_openat(subdir_dfd, "symlinkin", O_RDONLY|O_BENEATH);
+	/* ... unless of course we specify O_NOFOLLOW */
+	fail |= check_openat_fail(dot_dfd, "symlinkdown",
+				  O_RDONLY|O_BENEATH|O_NOFOLLOW, ELOOP);
+	fail |= check_openat_fail(dot_dfd, "subdir/symlinkin",
+				  O_RDONLY|O_BENEATH|O_NOFOLLOW, ELOOP);
+	fail |= check_openat_fail(subdir_dfd, "symlinkin",
+				  O_RDONLY|O_BENEATH|O_NOFOLLOW, ELOOP);
+
 	/* Can't open paths with ".." in them */
 	fail |= check_openat_fail(dot_dfd, "subdir/../topfile",
 				O_RDONLY|O_BENEATH, EACCES);
