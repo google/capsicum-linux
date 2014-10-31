@@ -21,7 +21,7 @@ void procdesc_init(struct file *pd, struct task_struct *task,
 /* Notify associated process descriptor of task exit */
 void procdesc_exit(struct task_struct *task);
 #else
-static inline void procdesc_exit(struct task_struct *)
+static inline void procdesc_exit(struct task_struct *task)
 {
 }
 #endif
