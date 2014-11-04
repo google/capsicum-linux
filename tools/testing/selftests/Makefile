@@ -16,6 +16,7 @@ TARGETS += mount
 TARGETS += mqueue
 TARGETS += net
 TARGETS += nsfs
+TARGETS += openat
 TARGETS += powerpc
 TARGETS += pstore
 TARGETS += ptrace
