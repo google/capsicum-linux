@@ -80,6 +80,24 @@ static int _check_openat_fail(int dfd, const char *path, int flags,
 	return 0;
 }
 
+int check_proc(void)
+{
+	int proc_dfd = openat_(AT_FDCWD, "/proc/self", O_RDONLY);
+	int fail = 0;
+
+	if (proc_dfd < 0) {
+		printf("'/proc/self' unavailable (errno=%d '%s'), skipping\n",
+			errno, strerror(errno));
+		return 1;
+	}
+	fail |= check_openat(proc_dfd, "root/etc/passwd", O_RDONLY);
+#ifdef O_BENEATH
+	fail |= check_openat_fail(proc_dfd, "root/etc/passwd",
+				  O_RDONLY|O_BENEATH, EPERM);
+#endif
+	return fail;
+}
+
 int main(int argc, char *argv[])
 {
 	int fail = 0;
@@ -135,27 +153,28 @@ int main(int argc, char *argv[])
 
 	/* Can't open paths with ".." in them */
 	fail |= check_openat_fail(dot_dfd, "subdir/../topfile",
-				O_RDONLY|O_BENEATH, EACCES);
+				O_RDONLY|O_BENEATH, EPERM);
 	fail |= check_openat_fail(subdir_dfd, "../topfile",
-				  O_RDONLY|O_BENEATH, EACCES);
+				  O_RDONLY|O_BENEATH, EPERM);
 	fail |= check_openat_fail(subdir_dfd, "../subdir/bottomfile",
-				O_RDONLY|O_BENEATH, EACCES);
+				O_RDONLY|O_BENEATH, EPERM);
 
 	/* Can't open paths starting with "/" */
 	fail |= check_openat_fail(AT_FDCWD, "/etc/passwd",
-				  O_RDONLY|O_BENEATH, EACCES);
+				  O_RDONLY|O_BENEATH, EPERM);
 	fail |= check_openat_fail(dot_dfd, "/etc/passwd",
-				  O_RDONLY|O_BENEATH, EACCES);
+				  O_RDONLY|O_BENEATH, EPERM);
 	fail |= check_openat_fail(subdir_dfd, "/etc/passwd",
-				  O_RDONLY|O_BENEATH, EACCES);
+				  O_RDONLY|O_BENEATH, EPERM);
 	/* Can't sneak around constraints with symlinks */
 	fail |= check_openat_fail(subdir_dfd, "symlinkup",
-				  O_RDONLY|O_BENEATH, EACCES);
+				  O_RDONLY|O_BENEATH, EPERM);
 	fail |= check_openat_fail(subdir_dfd, "symlinkout",
-				  O_RDONLY|O_BENEATH, EACCES);
+				  O_RDONLY|O_BENEATH, EPERM);
 #else
 	printf("Skipping O_BENEATH tests due to missing #define\n");
 #endif
+	fail |= check_proc();
 
 	return fail ? -1 : 0;
 }
