@@ -119,4 +119,6 @@
 
 #define EHWPOISON	133	/* Memory page has hardware error */
 
+#define ENOTBENEATH	134	/* Not beneath specified directory */
+
 #endif
