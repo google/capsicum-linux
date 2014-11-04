@@ -37,6 +37,7 @@ static const char *proc_ns_get_link(struct dentry *dentry,
 	const struct proc_ns_operations *ns_ops = PROC_I(inode)->ns_ops;
 	struct task_struct *task;
 	struct path ns_path;
+	int err;
 	void *error = ERR_PTR(-EACCES);
 
 	if (!dentry)
@@ -48,8 +49,11 @@ static const char *proc_ns_get_link(struct dentry *dentry,
 
 	if (ptrace_may_access(task, PTRACE_MODE_READ_FSCREDS)) {
 		error = ns_get_path(&ns_path, task, ns_ops);
-		if (!error)
-			nd_jump_link(&ns_path);
+		if (!error) {
+			err = nd_jump_link(&ns_path);
+			if (err)
+				error = ERR_PTR(err);
+		}
 	}
 	put_task_struct(task);
 	return error;
