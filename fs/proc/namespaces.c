@@ -113,6 +113,7 @@ static void *proc_ns_follow_link(struct dentry *dentry, struct nameidata *nd)
 	struct proc_inode *ei = PROC_I(inode);
 	struct task_struct *task;
 	struct path ns_path;
+	int err;
 	void *error = ERR_PTR(-EACCES);
 
 	task = get_proc_task(inode);
@@ -129,7 +130,11 @@ static void *proc_ns_follow_link(struct dentry *dentry, struct nameidata *nd)
 	}
 
 	ns_path.mnt = mntget(nd->path.mnt);
-	nd_jump_link(nd, &ns_path);
+	err = nd_jump_link(nd, &ns_path);
+	if (err) {
+		error = ERR_PTR(err);
+		goto out_put_task;
+	}
 	error = NULL;
 
 out_put_task:
