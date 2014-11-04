@@ -1385,7 +1385,9 @@ static void *proc_pid_follow_link(struct dentry *dentry, struct nameidata *nd)
 	if (error)
 		goto out;
 
-	nd_jump_link(nd, &path);
+	error = nd_jump_link(nd, &path);
+	if (error)
+		goto out;
 	return NULL;
 out:
 	return ERR_PTR(error);
