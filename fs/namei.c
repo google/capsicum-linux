@@ -845,14 +845,18 @@ static inline void path_to_nameidata(const struct path *path,
  * Helper to directly jump to a known parsed path from ->follow_link,
  * caller must have taken a reference to path beforehand.
  */
-void nd_jump_link(struct path *path)
+int nd_jump_link(struct path *path)
 {
 	struct nameidata *nd = current->nameidata;
+
+	if (nd->flags & LOOKUP_BENEATH)
+		return -ENOTBENEATH;
 	path_put(&nd->path);
 
 	nd->path = *path;
 	nd->inode = nd->path.dentry->d_inode;
 	nd->flags |= LOOKUP_JUMPED;
+	return 0;
 }
 
 static inline void put_link(struct nameidata *nd)
@@ -1018,6 +1022,8 @@ const char *get_link(struct nameidata *nd)
 		}
 	}
 	if (*res == '/') {
+		if (nd->flags & LOOKUP_BENEATH)
+			return ERR_PTR(-ENOTBENEATH);
 		if (nd->flags & LOOKUP_RCU) {
 			struct dentry *d;
 			if (!nd->root.mnt)
@@ -1915,6 +1921,8 @@ static int link_path_walk(const char *name, struct nameidata *nd)
 		if (name[0] == '.') switch (hashlen_len(hash_len)) {
 			case 2:
 				if (name[1] == '.') {
+					if (nd->flags & LOOKUP_BENEATH)
+						return -ENOTBENEATH;
 					type = LAST_DOTDOT;
 					nd->flags |= LOOKUP_JUMPED;
 				}
@@ -2027,6 +2035,8 @@ static const char *path_init(struct nameidata *nd, unsigned flags)
 
 	nd->m_seq = read_seqbegin(&mount_lock);
 	if (*s == '/') {
+		if (flags & LOOKUP_BENEATH)
+			return ERR_PTR(-ENOTBENEATH);
 		if (flags & LOOKUP_RCU) {
 			rcu_read_lock();
 			set_root_rcu(nd);

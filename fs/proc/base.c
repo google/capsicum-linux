@@ -1571,7 +1571,9 @@ static const char *proc_pid_follow_link(struct dentry *dentry, void **cookie)
 	if (error)
 		goto out;
 
-	nd_jump_link(&path);
+	error = nd_jump_link(&path);
+	if (error)
+		goto out;
 	return NULL;
 out:
 	return ERR_PTR(error);
