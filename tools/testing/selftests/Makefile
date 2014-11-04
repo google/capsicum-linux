@@ -15,6 +15,7 @@ TARGETS += memory-hotplug
 TARGETS += mount
 TARGETS += mqueue
 TARGETS += net
+TARGETS += openat
 TARGETS += powerpc
 TARGETS += pstore
 TARGETS += ptrace
