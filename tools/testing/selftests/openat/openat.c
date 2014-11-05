@@ -31,6 +31,7 @@ static int check_openat(int dfd, const char *path, int flags)
 {
 	int rc;
 	int fd;
+	struct stat info;
 	char buffer[4];
 
 	errno = 0;
@@ -42,12 +43,19 @@ static int check_openat(int dfd, const char *path, int flags)
 			fd, errno, strerror(errno));
 		return 1;
 	}
-	errno = 0;
-	rc = read(fd, buffer, sizeof(buffer));
-	if (rc < 0) {
-		printf("[FAIL]: read() failed, rc=%d errno=%d (%s)\n",
-			rc, errno, strerror(errno));
+	if (fstat(fd, &info) != 0) {
+		printf("[FAIL]: fstat() failed, rc=%d errno=%d (%s)\n",
+			fd, errno, strerror(errno));
 		return 1;
+	}
+	if (!S_ISDIR(info.st_mode)) {
+		errno = 0;
+		rc = read(fd, buffer, sizeof(buffer));
+		if (rc < 0) {
+			printf("[FAIL]: read() failed, rc=%d errno=%d (%s)\n",
+				rc, errno, strerror(errno));
+			return 1;
+		}
 	}
 	close(fd);
 	printf("[OK]\n");
@@ -82,6 +90,7 @@ static int _check_openat_fail(int dfd, const char *path, int flags,
 
 int check_proc(void)
 {
+	int root_dfd = openat_(AT_FDCWD, "/", O_RDONLY);
 	int proc_dfd = openat_(AT_FDCWD, "/proc/self", O_RDONLY);
 	int fail = 0;
 
@@ -91,9 +100,12 @@ int check_proc(void)
 		return 1;
 	}
 	fail |= check_openat(proc_dfd, "root/etc/passwd", O_RDONLY);
+	fail |= check_openat(root_dfd, "proc/self/root/etc/passwd", O_RDONLY);
 #ifdef O_BENEATH
 	fail |= check_openat_fail(proc_dfd, "root/etc/passwd",
 				  O_RDONLY|O_BENEATH, EPERM);
+	fail |= check_openat_fail(root_dfd, "proc/self/root/etc/passwd",
+				O_RDONLY|O_BENEATH, EPERM);
 #endif
 	return fail;
 }
@@ -138,6 +150,7 @@ int main(int argc, char *argv[])
 	fail |= check_openat(dot_dfd, "subdir/bottomfile",
 			     O_RDONLY|O_BENEATH);
 	fail |= check_openat(subdir_dfd, "bottomfile", O_RDONLY|O_BENEATH);
+	fail |= check_openat(subdir_dfd, ".", O_RDONLY|O_BENEATH);
 
 	/* Symlinks without .. or leading / are OK */
 	fail |= check_openat(dot_dfd, "symlinkdown", O_RDONLY|O_BENEATH);
@@ -158,6 +171,7 @@ int main(int argc, char *argv[])
 				  O_RDONLY|O_BENEATH, EPERM);
 	fail |= check_openat_fail(subdir_dfd, "../subdir/bottomfile",
 				O_RDONLY|O_BENEATH, EPERM);
+	fail |= check_openat_fail(subdir_dfd, "..", O_RDONLY|O_BENEATH, EPERM);
 
 	/* Can't open paths starting with "/" */
 	fail |= check_openat_fail(AT_FDCWD, "/etc/passwd",
@@ -171,6 +185,10 @@ int main(int argc, char *argv[])
 				  O_RDONLY|O_BENEATH, EPERM);
 	fail |= check_openat_fail(subdir_dfd, "symlinkout",
 				  O_RDONLY|O_BENEATH, EPERM);
+	fail |= check_openat_fail(subdir_dfd, "../symlinkdown",
+				  O_RDONLY|O_BENEATH, EPERM);
+	fail |= check_openat_fail(dot_dfd, "subdir/symlinkup",
+				O_RDONLY|O_BENEATH, EPERM);
 #else
 	printf("Skipping O_BENEATH tests due to missing #define\n");
 #endif
