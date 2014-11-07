@@ -194,6 +194,8 @@ static int run_tests(void)
 	int fd_path = open_or_die("execveat", O_RDONLY|O_PATH);
 	int fd_symlink = open_or_die("execveat.symlink", O_RDONLY);
 	int fd_denatured = open_or_die("execveat.denatured", O_RDONLY);
+	int fd_denatured_path = open_or_die("execveat.denatured",
+					    O_RDONLY|O_PATH);
 	int fd_script = open_or_die("script", O_RDONLY);
 	int fd_ephemeral = open_or_die("execveat.ephemeral", O_RDONLY);
 	int fd_script_ephemeral = open_or_die("script.ephemeral", O_RDONLY);
@@ -296,6 +298,8 @@ static int run_tests(void)
 	/* Attempt to execute non-executable => EACCES */
 	fail += check_execveat_fail(dot_dfd, "Makefile", 0, EACCES);
 	fail += check_execveat_fail(fd_denatured, "", AT_EMPTY_PATH, EACCES);
+	fail += check_execveat_fail(fd_denatured_path, "", AT_EMPTY_PATH,
+				    EACCES);
 	/* Attempt to execute file opened with O_PATH => EBADF */
 	fail += check_execveat_fail(fd_path, "", AT_EMPTY_PATH, EBADF);
 	/* Attempt to execute nonsense FD => EBADF */
