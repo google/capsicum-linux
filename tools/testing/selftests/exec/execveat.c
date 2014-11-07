@@ -218,6 +218,8 @@ static int run_tests(void)
 	fail += check_execveat(fd, "", AT_EMPTY_PATH);
 	/*   O_CLOEXEC fd + no path */
 	fail += check_execveat(fd_cloexec, "", AT_EMPTY_PATH);
+	/*   O_PATH fd */
+	fail += check_execveat(fd_path, "", AT_EMPTY_PATH);
 
 	/* Mess with executable file that's already open: */
 	/*   fd + no path to a file that's been renamed */
@@ -300,8 +302,6 @@ static int run_tests(void)
 	fail += check_execveat_fail(fd_denatured, "", AT_EMPTY_PATH, EACCES);
 	fail += check_execveat_fail(fd_denatured_path, "", AT_EMPTY_PATH,
 				    EACCES);
-	/* Attempt to execute file opened with O_PATH => EBADF */
-	fail += check_execveat_fail(fd_path, "", AT_EMPTY_PATH, EBADF);
 	/* Attempt to execute nonsense FD => EBADF */
 	fail += check_execveat_fail(99, "", AT_EMPTY_PATH, EBADF);
 	fail += check_execveat_fail(99, "execveat", 0, EBADF);
