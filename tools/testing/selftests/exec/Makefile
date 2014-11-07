@@ -22,4 +22,4 @@ run_tests: all
 	./execveat
 
 clean:
-	rm -rf $(BINARIES) $(DEPS) subdir.moved execveat.moved
+	rm -rf $(BINARIES) $(DEPS) subdir.moved execveat.moved xxxxx*

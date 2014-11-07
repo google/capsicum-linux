@@ -20,6 +20,7 @@
 #include <string.h>
 #include <unistd.h>
 
+static char longpath[2 * PATH_MAX] = "";
 static char *envp[] = { "IN_TEST=yes", NULL, NULL };
 static char *argv[] = { "execveat", "99", NULL };
 
@@ -125,6 +126,56 @@ static int open_or_die(const char *filename, int flags)
 		exit(1);
 	}
 	return fd;
+}
+
+static void exe_cp(const char *src, const char *dest)
+{
+	int in_fd = open_or_die(src, O_RDONLY);
+	int out_fd = open(dest, O_RDWR|O_CREAT|O_TRUNC, 0755);
+	struct stat info;
+
+	fstat(in_fd, &info);
+	sendfile(out_fd, in_fd, NULL, info.st_size);
+	close(in_fd);
+	close(out_fd);
+}
+
+#define XX_DIR_LEN 200
+static int check_execveat_pathmax(const char *src)
+{
+	int ii, count, len;
+	char longname[XX_DIR_LEN + 1];
+	int fd;
+	int rc;
+
+	if (*longpath == '\0') {
+		/* Create a filename close to PATH_MAX in length */
+		memset(longname, 'x', XX_DIR_LEN - 1);
+		longname[XX_DIR_LEN - 1] = '/';
+		longname[XX_DIR_LEN] = '\0';
+		count = (PATH_MAX - 3) / XX_DIR_LEN;
+		for (ii = 0; ii < count; ii++) {
+			strcat(longpath, longname);
+			mkdir(longpath, 0755);
+		}
+		len = (PATH_MAX - 3) - (count * XX_DIR_LEN);
+		memset(longname, 'y', len);
+		longname[len] = '\0';
+		strcat(longpath, longname);
+	}
+	exe_cp(src, longpath);
+
+	fd = open(longpath, O_RDONLY);
+	if (fd > 0) {
+		printf("Invoke copy of '%s' via filename of length %lu:\n",
+			src, strlen(longpath));
+		rc = check_execveat(fd, "", AT_EMPTY_PATH);
+	} else {
+		printf("Failed to open length %lu filename, errno=%d (%s)\n",
+			strlen(longpath), errno, strerror(errno));
+		rc = 1;
+	}
+	return rc;
 }
 
 static int run_tests(void)
@@ -253,19 +304,9 @@ static int run_tests(void)
 	/* Attempt to execute relative to non-directory => ENOTDIR */
 	fail += check_execveat_fail(fd, "execveat", 0, ENOTDIR);
 
+	fail += check_execveat_pathmax("execveat");
+	fail += check_execveat_pathmax("script");
 	return fail;
-}
-
-static void exe_cp(const char *src, const char *dest)
-{
-	int in_fd = open_or_die(src, O_RDONLY);
-	int out_fd = open(dest, O_RDWR|O_CREAT|O_TRUNC, 0755);
-	struct stat info;
-
-	fstat(in_fd, &info);
-	sendfile(out_fd, in_fd, NULL, info.st_size);
-	close(in_fd);
-	close(out_fd);
 }
 
 static void prerequisites(void)
@@ -281,6 +322,7 @@ static void prerequisites(void)
 	fd = open("subdir.ephemeral/script", O_RDWR|O_CREAT|O_TRUNC, 0755);
 	write(fd, script, strlen(script));
 	close(fd);
+
 }
 
 int main(int argc, char **argv)
