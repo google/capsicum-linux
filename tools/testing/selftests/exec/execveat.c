@@ -67,9 +67,14 @@ static int check_execveat_invoked_rc(int fd, const char *path, int flags,
 	int status;
 	int rc;
 	pid_t child;
+	int pathlen = path ? strlen(path) : 0;
 
-	printf("Check success of execveat(%d, '%s', %d)... ",
-		fd, path?:"(null)", flags);
+	if (pathlen > 40)
+		printf("Check success of execveat(%d, '%.20s...%s', %d)... ",
+			fd, path, (path + pathlen - 20), flags);
+	else
+		printf("Check success of execveat(%d, '%s', %d)... ",
+			fd, path?:"(null)", flags);
 	child = fork();
 	if (child < 0) {
 		printf("[FAIL] (fork() failed)\n");
@@ -141,12 +146,12 @@ static void exe_cp(const char *src, const char *dest)
 }
 
 #define XX_DIR_LEN 200
-static int check_execveat_pathmax(const char *src)
+static int check_execveat_pathmax(int dot_dfd, const char *src, int is_script)
 {
+	int fail = 0;
 	int ii, count, len;
 	char longname[XX_DIR_LEN + 1];
 	int fd;
-	int rc;
 
 	if (*longpath == '\0') {
 		/* Create a filename close to PATH_MAX in length */
@@ -159,23 +164,41 @@ static int check_execveat_pathmax(const char *src)
 			mkdir(longpath, 0755);
 		}
 		len = (PATH_MAX - 3) - (count * XX_DIR_LEN);
+		if (len <= 0)
+			len = 1;
 		memset(longname, 'y', len);
 		longname[len] = '\0';
 		strcat(longpath, longname);
 	}
 	exe_cp(src, longpath);
 
+	/*
+	 * Execute as a pre-opened file descriptor, which works whether this is
+	 * a script or not (because the interpreter sees a filename like
+	 * "/dev/fd/20").
+	 */
 	fd = open(longpath, O_RDONLY);
 	if (fd > 0) {
-		printf("Invoke copy of '%s' via filename of length %lu:\n",
+		printf("Invoke copy of '%s' via fd to filename of length %lu:\n",
 			src, strlen(longpath));
-		rc = check_execveat(fd, "", AT_EMPTY_PATH);
+		fail += check_execveat(fd, "", AT_EMPTY_PATH);
 	} else {
 		printf("Failed to open length %lu filename, errno=%d (%s)\n",
 			strlen(longpath), errno, strerror(errno));
-		rc = 1;
+		fail++;
 	}
-	return rc;
+
+	/*
+	 * Execute as a long pathname relative to ".".  If this is a script,
+	 * the interpreter will launch but fail to open the script because its
+	 * name ("/dev/fd/5/xxx....") is bigger than PATH_MAX.
+	 */
+	if (is_script)
+		fail += check_execveat_invoked_rc(dot_dfd, longpath, 0, 127);
+	else
+		fail += check_execveat(dot_dfd, longpath, 0);
+
+	return fail;
 }
 
 static int run_tests(void)
@@ -315,8 +338,8 @@ static int run_tests(void)
 	/* Attempt to execute relative to non-directory => ENOTDIR */
 	fail += check_execveat_fail(fd, "execveat", 0, ENOTDIR);
 
-	fail += check_execveat_pathmax("execveat");
-	fail += check_execveat_pathmax("script");
+	fail += check_execveat_pathmax(dot_dfd, "execveat", 0);
+	fail += check_execveat_pathmax(dot_dfd, "script", 1);
 	return fail;
 }
 
@@ -334,7 +357,6 @@ static void prerequisites(void)
 	fd = open("subdir.ephemeral/script", O_RDWR|O_CREAT|O_TRUNC, 0755);
 	write(fd, script, strlen(script));
 	close(fd);
-
 }
 
 int main(int argc, char **argv)
