@@ -764,8 +764,7 @@ static struct file *do_open_execat(int fd, struct filename *name, int flags)
 	if (flags & AT_SYMLINK_NOFOLLOW)
 		open_exec_flags.lookup_flags &= ~LOOKUP_FOLLOW;
 	if (flags & AT_EMPTY_PATH)
-		open_exec_flags.lookup_flags |= (LOOKUP_EMPTY |
-						 LOOKUP_EMPTY_NOPATH);
+		open_exec_flags.lookup_flags |= LOOKUP_EMPTY;
 
 	file = do_filp_open(fd, name, &open_exec_flags);
 	if (IS_ERR(file))
