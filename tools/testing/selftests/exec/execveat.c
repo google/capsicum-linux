@@ -198,6 +198,8 @@ static int run_tests(void)
 					    O_RDONLY|O_PATH);
 	int fd_script = open_or_die("script", O_RDONLY);
 	int fd_ephemeral = open_or_die("execveat.ephemeral", O_RDONLY);
+	int fd_ephemeral_path = open_or_die("execveat.path.ephemeral",
+					    O_RDONLY|O_PATH);
 	int fd_script_ephemeral = open_or_die("script.ephemeral", O_RDONLY);
 	int fd_cloexec = open_or_die("execveat", O_RDONLY|O_CLOEXEC);
 	int fd_script_cloexec = open_or_die("script", O_RDONLY|O_CLOEXEC);
@@ -228,6 +230,11 @@ static int run_tests(void)
 	/*   fd + no path to a file that's been deleted */
 	unlink("execveat.moved"); /* remove the file now fd open */
 	fail += check_execveat(fd_ephemeral, "", AT_EMPTY_PATH);
+
+	/* Mess with executable file that's already open with O_PATH */
+	/*   fd + no path to a file that's been deleted */
+	unlink("execveat.path.ephemeral");
+	fail += check_execveat(fd_ephemeral_path, "", AT_EMPTY_PATH);
 
 	/* Invalid argument failures */
 	fail += check_execveat_fail(fd, "", 0, ENOENT);
@@ -320,6 +327,7 @@ static void prerequisites(void)
 
 	/* Create ephemeral copies of files */
 	exe_cp("execveat", "execveat.ephemeral");
+	exe_cp("execveat", "execveat.path.ephemeral");
 	exe_cp("script", "script.ephemeral");
 	mkdir("subdir.ephemeral", 0755);
 

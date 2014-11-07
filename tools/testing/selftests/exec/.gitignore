@@ -3,6 +3,7 @@ script*
 execveat
 execveat.symlink
 execveat.moved
+execveat.path.ephemeral
 execveat.ephemeral
 execveat.denatured
 xxxxxxxx*
