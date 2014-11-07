@@ -1489,19 +1489,15 @@ static int do_execveat_common(int fd, struct filename *filename,
 	if (fd == AT_FDCWD || filename->name[0] == '/') {
 		bprm->filename = filename->name;
 	} else {
-		/* "/dev/fd/2147483647/" + filename->name */
-		int maxlen = 19 + strlen(filename->name);
-
-		pathbuf = kmalloc(maxlen, GFP_TEMPORARY);
+		if (filename->name[0] == '\0')
+			pathbuf = kasprintf(GFP_TEMPORARY, "/dev/fd/%d", fd);
+		else
+			pathbuf = kasprintf(GFP_TEMPORARY, "/dev/fd/%d/%s",
+					    fd, filename->name);
 		if (!pathbuf) {
 			retval = -ENOMEM;
 			goto out_unmark;
 		}
-		if (filename->name[0] == '\0')
-			sprintf(pathbuf, "/dev/fd/%d", fd);
-		else
-			snprintf(pathbuf, maxlen,
-				 "/dev/fd/%d/%s", fd, filename->name);
 		/* Record that a name derived from an O_CLOEXEC fd will be
 		 * inaccessible after exec. Relies on having exclusive access to
 		 * current->files (due to unshare_files above). */
