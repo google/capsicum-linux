@@ -19,7 +19,7 @@ void handle_syscall(struct uml_pt_regs *r)
 	int syscall;
 
 	/* Do the secure computing check first. */
-	if (secure_computing(r->syscall)) {
+	if (secure_computing()) {
 		/* seccomp failures shouldn't expose any additional code. */
 		return;
 	}
