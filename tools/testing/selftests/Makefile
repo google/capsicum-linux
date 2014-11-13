@@ -14,6 +14,7 @@ TARGETS += powerpc
 TARGETS += user
 TARGETS += sysctl
 TARGETS += firmware
+TARGETS += ftrace
 TARGETS += openat
 TARGETS += exec
 
