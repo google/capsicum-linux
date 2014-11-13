@@ -1508,7 +1508,7 @@ static int do_execveat_common(int fd, struct filename *filename,
 		 * inaccessible after exec. Relies on having exclusive access to
 		 * current->files (due to unshare_files above).
 		 */
-		if (close_on_exec(fd, current->files->fdt))
+		if (close_on_exec(fd, rcu_dereference_raw(current->files->fdt)))
 			bprm->interp_flags |= BINPRM_FLAGS_PATH_INACCESSIBLE;
 		bprm->filename = pathbuf;
 	}
