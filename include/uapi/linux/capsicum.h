@@ -281,25 +281,28 @@ struct cap_rights {
 #define CAP_KQUEUE		(CAP_KQUEUE_EVENT | CAP_KQUEUE_CHANGE)
 
 /* Modify signalfd signal mask. */
-#define CAP_FSIGNAL             CAPRIGHT(1, 0x0000000000200000ULL)
+#define CAP_FSIGNAL		CAPRIGHT(1, 0x0000000000200000ULL)
 
 /* Modify epollfd set of FDs/events */
-#define CAP_EPOLL_CTL           CAPRIGHT(1, 0x0000000000400000ULL)
+#define CAP_EPOLL_CTL		CAPRIGHT(1, 0x0000000000400000ULL)
 
 /* Modify things monitored by inotify/fanotify FD */
-#define CAP_NOTIFY              CAPRIGHT(1, 0x0000000000800000ULL)
+#define CAP_NOTIFY		CAPRIGHT(1, 0x0000000000800000ULL)
 
 /* Allow entry to a namespace associated with a file descriptor */
-#define CAP_SETNS               CAPRIGHT(1, 0x0000000001000000ULL)
+#define CAP_SETNS		CAPRIGHT(1, 0x0000000001000000ULL)
 
 /* Allow performance monitoring operations */
-#define CAP_PERFMON             CAPRIGHT(1, 0x0000000002000000ULL)
+#define CAP_PERFMON		CAPRIGHT(1, 0x0000000002000000ULL)
+
+/* Allow BPF pseudo-file descriptor operations */
+#define CAP_BPF		CAPRIGHT(1, 0x0000000004000000ULL)
 
 /* All used bits for index 1. */
-#define CAP_ALL1		CAPRIGHT(1, 0x0000000003FFFFFFULL)
+#define CAP_ALL1		CAPRIGHT(1, 0x0000000007FFFFFFULL)
 
 /* Available bits for index 1. */
-#define CAP_UNUSED1_27		CAPRIGHT(1, 0x0000000004000000ULL)
+#define CAP_UNUSED1_28		CAPRIGHT(1, 0x0000000008000000ULL)
 /* ... */
 #define CAP_UNUSED1_57		CAPRIGHT(1, 0x0100000000000000ULL)
 
