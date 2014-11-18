@@ -7,13 +7,13 @@ capabilities in the Linux kernel.
 
 This functionality is based on:
 
- - the original Capsicum implementation in FreeBSD 9.x,
+ - the original Capsicum implementation in FreeBSD 9.x and 10.x,
    written by Robert Watson and Jonathan Anderson.
  - the
    [Linux kernel implementation](http://git.chromium.org/gitweb/?p=chromiumos/third_party/kernel-capsicum.git;a=shortlog;h=refs/heads/capsicum)
    written by Meredydd Luff in 2012.
 
-The current functionality is based on the 3.14 upstream kernel.
+The current functionality is based on the 3.18 upstream kernel.
 
 Branch Status
 -------------
@@ -23,16 +23,19 @@ development and so may contain in-progress, untested code.  This branch is gener
 kept synchronized with the [capsicum-test](https://github.com/google/capsicum-test)
 repository.
 
-Other branches **should be avoided** as they may be rebased.  In particular, the
-following branches are used to divide the Capsicum code into distinct patchsets,
-and so are frequently rebased to synchronize with the tip of the `capsicum` branch.
+Other branches **should be avoided** as they may be rebased.  In particular,
+any branches named with the following prefixes are used to divide the Capsicum code into
+distinct patchsets, and so are frequently rebased to synchronize with the tip of
+the `capsicum` branch.
 
- - `seccomp-uml`: Enable seccomp in user-mode Linux.
- - `execveat`: execveat(2) syscall.
- - `capsicum-hooks`: Capability file descriptors via LSM hooks.
- - `capsicum-capmode`: Capability mode via seccomp and an LSM hook.
- - `procdesc`: Process descriptors.
- - `no-upstream`: Local changes for development convenience.
+ - Currently maintained topic branches:
+   - `capsicum-hooks`: Capability file descriptors via LSM hooks.
+   - `procdesc`: Process descriptors.
+   - `no-upstream`: Local changes for development convenience.
+ - Inactive topic branches:
+   - `seccomp-uml`: Enable seccomp in user-mode Linux.
+   - `execveat`: execveat(2) syscall.
+   - `capsicum-capmode`: Capability mode via seccomp and an LSM hook.
 
 
 Functionality Overview
@@ -47,18 +50,12 @@ be narrowed, not widened.
 Capsicum also introduces *capability mode*, which disables (with `ECAPMODE`)
 all syscalls that access any kind of global namespace.
 
-Taken together, these features allow userspace code to effectively sandbox
-itself, by:
-
- - creating capability FDs (with limited rights) for files and sockets that are
-   definitely needed by the process
- - closing all other file descriptors
- - entering capability mode (which means that new, non-capability, file
-   descriptors can't be opened.
+See Documentation/security/capsicum.txt for more details
 
 As process management normally involves a global namespace (that of `pid_t`
 values), Capsicum also introduces a *process descriptor* and related syscalls,
 which allows processes to be manipulated as another kind of file descriptor.
+See Documentation/procdesc.txt for more details.
 
 Building
 --------
@@ -68,11 +65,7 @@ configuration parameters that need to be enabled are:
 
  - `CONFIG_64BIT`: Capsicum support is currently only implemented for 64 bit mode.
  - `CONFIG_PROCDESC`: enable Capsicum process-descriptor functionality.
- - `CONFIG_SECURITY`: enable Linux Security Module (LSM) support.
- - `CONFIG_SECURITY_PATH`: enable LSM hooks for path operations
- - `CONFIG_SECURITY_CAPSICUM`: enable the Capsicum LSM.
- - `CONFIG_DEFAULT_SECURITY_CAPSICUM`, `CONFIG_DEFAULT_SECURITY="capsicum"`: set Capsicum
-   as default LSM.
+ - `CONFIG_SECURITY_CAPSICUM`: enable Capsicum.
 
 User-mode Linux is used for Capsicum testing, and requires the following
 additional configuration parameters:
@@ -118,7 +111,7 @@ Mount the new file system somewhere:
 
 Put an Ubuntu base system onto it:
 
-    sudo debootstrap --arch=amd64 raring /mnt http://archive.ubuntu.com/ubuntu
+    sudo debootstrap --arch=amd64 precise /mnt http://archive.ubuntu.com/ubuntu
 
 Replace some key files:
 
@@ -131,14 +124,14 @@ Replace some key files:
 Copy test binaries into the test directory:
 
     pushd ${CAPSICUM-TEST} && make && popd
-    cp ${CAPSICUM-TEST}/capsicum-test test-files/
-    cp ${CAPSICUM-TEST}/mini-me test-files/
-    cp ${CAPSICUM-TEST}/mini-me.noexec test-files/
+    cp ${CAPSICUM-TEST}/capsicum-test tools/testing/capsicum/test-files/
+    cp ${CAPSICUM-TEST}/mini-me tools/testing/capsicum/test-files/
+    cp ${CAPSICUM-TEST}/mini-me.noexec tools/testing/capsicum/test-files/
 
 Tests can then be run with the wrapper scripts:
 
     cd tools/testing/capsicum
-    ./run-test-on-last-build ./capsicum-test
+    ./run-test ./capsicum-test
 
 Under the covers the `init` script will mount `tools/testing/capsicum/test-files/`
 as `/tests/` within the UML system, and will run tests from there.  The specific
