@@ -370,11 +370,6 @@ struct file *capsicum_file_install(const struct capsicum_rights *base_rights,
 	capf = capsicum_cap_alloc(base_rights, false);
 	if (IS_ERR(capf))
 		return capf;
-
-	if (!atomic_long_inc_not_zero(&file->f_count)) {
-		fput(capf);
-		return ERR_PTR(-EBADF);
-	}
 	cap = capf->private_data;
 	cap->underlying = file;
 	return capf;
