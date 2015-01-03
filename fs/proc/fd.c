@@ -56,7 +56,8 @@ static int seq_show(struct seq_file *m, void *v)
 			   (long long)underlying->f_pos, f_flags,
 			   real_mount(underlying->f_path.mnt)->mnt_id);
 		if (file->f_op->show_fdinfo)
-			ret = file->f_op->show_fdinfo(m, file);
+			file->f_op->show_fdinfo(m, file);
+		ret = seq_has_overflowed(m);
 		fput(underlying);
 		fput(file);
 	}

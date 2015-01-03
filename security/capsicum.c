@@ -38,7 +38,7 @@ struct capsicum_capability {
 
 static void capsicum_panic_not_unwrapped(void);
 static int capsicum_release(struct inode *i, struct file *capf);
-static int capsicum_show_fdinfo(struct seq_file *m, struct file *capf);
+static void capsicum_show_fdinfo(struct seq_file *m, struct file *capf);
 
 #define panic_ptr ((void *)&capsicum_panic_not_unwrapped)
 static const struct file_operations capsicum_file_ops = {
@@ -296,13 +296,13 @@ static int capsicum_release(struct inode *i, struct file *capf)
 	return 0;
 }
 
-static int capsicum_show_fdinfo(struct seq_file *m, struct file *capf)
+static void capsicum_show_fdinfo(struct seq_file *m, struct file *capf)
 {
 	int i;
 	struct capsicum_capability *cap;
 
 	if (!capsicum_is_cap(capf))
-		return -EINVAL;
+		return;
 
 	cap = capf->private_data;
 	BUG_ON(!cap);
@@ -317,7 +317,6 @@ static int capsicum_show_fdinfo(struct seq_file *m, struct file *capf)
 			seq_printf(m, "\t%#08x", cap->rights.ioctls[i]);
 		seq_puts(m, "\n");
 	}
-	return 0;
 }
 
 static void capsicum_panic_not_unwrapped(void)

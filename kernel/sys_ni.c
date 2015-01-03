@@ -169,6 +169,8 @@ cond_syscall(ppc_rtas);
 cond_syscall(sys_spu_run);
 cond_syscall(sys_spu_create);
 cond_syscall(sys_subpage_prot);
+cond_syscall(sys_s390_pci_mmio_read);
+cond_syscall(sys_s390_pci_mmio_write);
 
 /* mmu depending weak syscall entries */
 cond_syscall(sys_mprotect);
@@ -225,12 +227,12 @@ cond_syscall(sys_seccomp);
 /* access BPF programs and maps */
 cond_syscall(sys_bpf);
 
+/* execveat */
+cond_syscall(sys_execveat);
+
 /* capsicum object capabilities */
 cond_syscall(sys_cap_rights_get);
 cond_syscall(sys_cap_rights_limit);
-
-/* execveat */
-cond_syscall(sys_execveat);
 
 cond_syscall(sys_pdfork);
 cond_syscall(sys_pdgetpid);

@@ -25,7 +25,7 @@ struct linux_dirent64;
 struct list_head;
 struct mmap_arg_struct;
 struct msgbuf;
-struct msghdr;
+struct user_msghdr;
 struct mmsghdr;
 struct msqid_ds;
 struct new_utsname;
@@ -602,13 +602,13 @@ asmlinkage long sys_getpeername(int, struct sockaddr __user *, int __user *);
 asmlinkage long sys_send(int, void __user *, size_t, unsigned);
 asmlinkage long sys_sendto(int, void __user *, size_t, unsigned,
 				struct sockaddr __user *, int);
-asmlinkage long sys_sendmsg(int fd, struct msghdr __user *msg, unsigned flags);
+asmlinkage long sys_sendmsg(int fd, struct user_msghdr __user *msg, unsigned flags);
 asmlinkage long sys_sendmmsg(int fd, struct mmsghdr __user *msg,
 			     unsigned int vlen, unsigned flags);
 asmlinkage long sys_recv(int, void __user *, size_t, unsigned);
 asmlinkage long sys_recvfrom(int, void __user *, size_t, unsigned,
 				struct sockaddr __user *, int __user *);
-asmlinkage long sys_recvmsg(int fd, struct msghdr __user *msg, unsigned flags);
+asmlinkage long sys_recvmsg(int fd, struct user_msghdr __user *msg, unsigned flags);
 asmlinkage long sys_recvmmsg(int fd, struct mmsghdr __user *msg,
 			     unsigned int vlen, unsigned flags,
 			     struct timespec __user *timeout);
@@ -879,6 +879,11 @@ asmlinkage long sys_getrandom(char __user *buf, size_t count,
 			      unsigned int flags);
 asmlinkage long sys_bpf(int cmd, union bpf_attr *attr, unsigned int size);
 
+asmlinkage long sys_execveat(int dfd, const char __user *filename,
+			const char __user *const __user *argv,
+			const char __user *const __user *envp, int flags);
+
+
 asmlinkage long sys_cap_rights_limit(unsigned int orig_fd,
 				     const struct cap_rights __user *new_rights,
 				     unsigned int fcntls,
@@ -889,10 +894,6 @@ asmlinkage long sys_cap_rights_get(unsigned int fd,
 				   unsigned int __user *fcntls,
 				   int __user *nioctls,
 				   unsigned int __user *ioctls);
-
-asmlinkage long sys_execveat(int dfd, const char __user *filename,
-			const char __user *const __user *argv,
-			const char __user *const __user *envp, int flags);
 
 asmlinkage long sys_pdfork(int __user *fdp, unsigned long flags);
 asmlinkage long sys_pdgetpid(int fd, pid_t __user *pidp);

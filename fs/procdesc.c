@@ -32,7 +32,7 @@ struct procdesc {
 static unsigned int procdesc_poll(struct file *f,
 				  struct poll_table_struct *wait);
 static int procdesc_release(struct inode *inode, struct file *f);
-static int procdesc_show_fdinfo(struct seq_file *m, struct file *f);
+static void procdesc_show_fdinfo(struct seq_file *m, struct file *f);
 
 static const struct file_operations procdesc_file_ops = {
 	.poll = procdesc_poll,
@@ -245,14 +245,13 @@ static unsigned int procdesc_poll(struct file *f,
 	return (pd->task->exit_state != 0) ? POLLHUP : 0;
 }
 
-static int procdesc_show_fdinfo(struct seq_file *m, struct file *f)
+static void procdesc_show_fdinfo(struct seq_file *m, struct file *f)
 {
 	struct procdesc *pd = procdesc_get(f);
 	pid_t pid;
 
 	if (!pd)
-		return -EINVAL;
+		return;
 	pid = task_tgid_vnr(pd->task);
 	seq_printf(m, "pid:\t%d\n", pid);
-	return 0;
 }
