@@ -883,7 +883,6 @@ asmlinkage long sys_execveat(int dfd, const char __user *filename,
 			const char __user *const __user *argv,
 			const char __user *const __user *envp, int flags);
 
-
 asmlinkage long sys_cap_rights_limit(unsigned int orig_fd,
 				     const struct cap_rights __user *new_rights,
 				     unsigned int fcntls,
