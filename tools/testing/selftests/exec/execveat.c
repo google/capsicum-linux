@@ -101,7 +101,7 @@ static int check_execveat_invoked_rc(int fd, const char *path, int flags,
 	if (WEXITSTATUS(status) != expected_rc) {
 		if (expected_rc != expected_rc2) {
 			if (WEXITSTATUS(status) != expected_rc2) {
-				printf("[FAIL] (child %d exited with %d"
+				printf("[FAIL] (child %d exited with %d;"
 					" not %d nor %d)\n",
 					child, WEXITSTATUS(status),
 					expected_rc, expected_rc2);
