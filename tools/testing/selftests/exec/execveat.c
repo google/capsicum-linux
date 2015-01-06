@@ -98,20 +98,11 @@ static int check_execveat_invoked_rc(int fd, const char *path, int flags,
 			child, status);
 		return 1;
 	}
-	if (WEXITSTATUS(status) != expected_rc) {
-		if (expected_rc != expected_rc2) {
-			if (WEXITSTATUS(status) != expected_rc2) {
-				printf("[FAIL] (child %d exited with %d;"
-					" not %d nor %d)\n",
-					child, WEXITSTATUS(status),
-					expected_rc, expected_rc2);
-				return 1;
-			}
-		} else {
-			printf("[FAIL] (child %d exited with %d not %d)\n",
-				child, WEXITSTATUS(status), expected_rc);
-			return 1;
-		}
+	if ((WEXITSTATUS(status) != expected_rc) &&
+	    (WEXITSTATUS(status) != expected_rc2)) {
+		printf("[FAIL] (child %d exited with %d not %d nor %d)\n",
+			child, WEXITSTATUS(status), expected_rc, expected_rc2);
+		return 1;
 	}
 	printf("[OK]\n");
 	return 0;
