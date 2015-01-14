@@ -775,8 +775,8 @@ struct fd fdget_rights(unsigned int fd, const struct capsicum_rights *rights)
 EXPORT_SYMBOL(fdget_rights);
 
 struct fd fdget_raw_rights(unsigned int fd,
-			   const struct capsicum_rights **actual_rights,
-			   const struct capsicum_rights *rights)
+			   const struct capsicum_rights *rights,
+			   const struct capsicum_rights **actual_rights)
 {
 	struct fd f = fdget_raw(fd);
 
@@ -832,7 +832,7 @@ struct fd _fdgetr_raw(unsigned int fd, ...)
 	va_list ap;
 
 	va_start(ap, fd);
-	f = fdget_raw_rights(fd, NULL, cap_rights_vinit(&rights, ap));
+	f = fdget_raw_rights(fd, cap_rights_vinit(&rights, ap), NULL);
 	va_end(ap);
 	return f;
 }

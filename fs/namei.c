@@ -1915,8 +1915,7 @@ static int path_init(int dfd, const char *name, unsigned int flags,
 	if (*name=='/') {
 		if (nd->flags & LOOKUP_BENEATH)
 			return -EPERM;
-		if (dfd_rights)
-			*dfd_rights = NULL;
+		*dfd_rights = NULL;
 		if (flags & LOOKUP_RCU) {
 			rcu_read_lock();
 			nd->seq = set_root_rcu(nd);
@@ -1926,8 +1925,7 @@ static int path_init(int dfd, const char *name, unsigned int flags,
 		}
 		nd->path = nd->root;
 	} else if (dfd == AT_FDCWD) {
-		if (dfd_rights)
-			*dfd_rights = NULL;
+		*dfd_rights = NULL;
 		if (flags & LOOKUP_RCU) {
 			struct fs_struct *fs = current->fs;
 			unsigned seq;
@@ -1944,7 +1942,7 @@ static int path_init(int dfd, const char *name, unsigned int flags,
 		}
 	} else {
 		/* Caller must check execute permissions on the starting path component */
-		struct fd f = fdget_raw_rights(dfd, dfd_rights, rights);
+		struct fd f = fdget_raw_rights(dfd, rights, dfd_rights);
 		struct dentry *dentry;
 
 		if (IS_ERR(f.file))
