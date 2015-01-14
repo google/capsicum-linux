@@ -497,6 +497,7 @@ struct nameidata {
 	unsigned	seq, m_seq;
 	int		last_type;
 	unsigned	depth;
+	const struct capsicum_rights *base_rights;
 	struct file	*base;
 	char *saved_names[MAX_NESTED_LINKS + 1];
 };
@@ -1873,9 +1874,7 @@ exit:
 }
 
 static int path_init(int dfd, const char *name, unsigned int flags,
-		struct nameidata *nd,
-		const struct capsicum_rights **dfd_rights,
-		const struct capsicum_rights *rights)
+		     const struct capsicum_rights *rights, struct nameidata *nd)
 {
 	int retval = 0;
 
@@ -1883,6 +1882,7 @@ static int path_init(int dfd, const char *name, unsigned int flags,
 	nd->flags = flags | LOOKUP_JUMPED | LOOKUP_PARENT;
 	nd->depth = 0;
 	nd->base = NULL;
+	nd->base_rights = NULL;
 
 	if (task_openat_beneath(current))
 		nd->flags |= LOOKUP_BENEATH;
@@ -1915,7 +1915,6 @@ static int path_init(int dfd, const char *name, unsigned int flags,
 	if (*name=='/') {
 		if (nd->flags & LOOKUP_BENEATH)
 			return -EPERM;
-		*dfd_rights = NULL;
 		if (flags & LOOKUP_RCU) {
 			rcu_read_lock();
 			nd->seq = set_root_rcu(nd);
@@ -1925,7 +1924,6 @@ static int path_init(int dfd, const char *name, unsigned int flags,
 		}
 		nd->path = nd->root;
 	} else if (dfd == AT_FDCWD) {
-		*dfd_rights = NULL;
 		if (flags & LOOKUP_RCU) {
 			struct fs_struct *fs = current->fs;
 			unsigned seq;
@@ -1942,13 +1940,16 @@ static int path_init(int dfd, const char *name, unsigned int flags,
 		}
 	} else {
 		/* Caller must check execute permissions on the starting path component */
-		struct fd f = fdget_raw_rights(dfd, rights, dfd_rights);
+		const struct capsicum_rights *dfd_rights;
+		struct fd f = fdget_raw_rights(dfd, rights, &dfd_rights);
 		struct dentry *dentry;
 
 		if (IS_ERR(f.file))
 			return PTR_ERR(f.file);
-		if (!cap_rights_is_all(*dfd_rights))
+		if (!cap_rights_is_all(dfd_rights)) {
+			nd->base_rights = dfd_rights;
 			nd->flags |= LOOKUP_BENEATH;
+		}
 
 		dentry = f.file->f_path.dentry;
 
@@ -2010,7 +2011,6 @@ static int path_lookupat(int dfd,
 			 struct nameidata *nd,
 			 const struct capsicum_rights *rights)
 {
-	const struct capsicum_rights *dfd_rights;
 	struct path path;
 	int err;
 
@@ -2028,7 +2028,7 @@ static int path_lookupat(int dfd,
 	 * be handled by restarting a traditional ref-walk (which will always
 	 * be able to complete).
 	 */
-	err = path_init(dfd, name, flags, nd, &dfd_rights, rights);
+	err = path_init(dfd, name, flags, rights, nd);
 	if (!err && !(flags & LOOKUP_PARENT)) {
 		err = lookup_last(nd, &path);
 		while (err > 0) {
@@ -2401,10 +2401,9 @@ static int
 path_mountpoint(int dfd, const char *name, struct path *path, unsigned int flags)
 {
 	struct nameidata nd;
-	const struct capsicum_rights *dfd_rights;
 	int err;
 
-	err = path_init(dfd, name, flags, &nd, &dfd_rights, &lookup_rights);
+	err = path_init(dfd, name, flags, &lookup_rights, &nd);
 	if (unlikely(err))
 		goto out;
 
@@ -3303,7 +3302,6 @@ static struct file *path_openat(int dfd, struct filename *pathname,
 		struct nameidata *nd, const struct open_flags *op, int flags)
 {
 	struct capsicum_rights rights;
-	const struct capsicum_rights *dfd_rights;
 	struct file *file;
 	struct path path;
 	int opened = 0;
@@ -3322,7 +3320,7 @@ static struct file *path_openat(int dfd, struct filename *pathname,
 	}
 
 	openat_primary_rights(&rights, file->f_flags);
-	error = path_init(dfd, pathname->name, flags, nd, &dfd_rights, &rights);
+	error = path_init(dfd, pathname->name, flags, &rights, nd);
 	if (unlikely(error))
 		goto out;
 
@@ -3350,7 +3348,7 @@ static struct file *path_openat(int dfd, struct filename *pathname,
 	if (!error) {
 		struct file *install_file;
 
-		install_file = capsicum_file_install(dfd_rights, file);
+		install_file = capsicum_file_install(nd->base_rights, file);
 		if (IS_ERR(install_file)) {
 			error = PTR_ERR(install_file);
 			goto out;
