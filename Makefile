@@ -1,7 +1,7 @@
 VERSION = 3
 PATCHLEVEL = 19
 SUBLEVEL = 0
-EXTRAVERSION = -rc7-capsicum
+EXTRAVERSION = -capsicum
 NAME = Diseased Newt
 
 # *DOCUMENTATION*
