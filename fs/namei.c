@@ -1947,6 +1947,13 @@ static int path_init(int dfd, const char *name, unsigned int flags,
 		if (IS_ERR(f.file))
 			return PTR_ERR(f.file);
 		if (!cap_rights_is_all(dfd_rights)) {
+			/*
+			 * The rights information is associated with f.file, so
+			 * need to maintain a reference to f.file to ensure
+			 * base_rights remains valid.
+			 */
+			if (f.flags & FDPUT_FPUT)
+				nd->base = f.file;
 			nd->base_rights = dfd_rights;
 			nd->flags |= LOOKUP_BENEATH;
 		}
@@ -1968,7 +1975,8 @@ static int path_init(int dfd, const char *name, unsigned int flags,
 			rcu_read_lock();
 		} else {
 			path_get(&nd->path);
-			fdput(f);
+			if (!nd->base)
+				fdput(f);
 		}
 	}
 
