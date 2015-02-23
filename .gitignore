@@ -44,6 +44,7 @@ build*
 /TAGS
 /linux
 /vmlinux
+/vmlinux-gdb.py
 /vmlinuz
 /System.map
 /Module.markers
@@ -54,6 +55,11 @@ build*
 /debian/
 *.deb
 *.diff
+
+#
+# tar directory (make tar*-pkg)
+#
+/tar-install/
 
 #
 # git files that we don't want to ignore even it they are dot-files
