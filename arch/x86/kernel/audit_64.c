@@ -49,6 +49,12 @@ int audit_classify_syscall(int abi, unsigned syscall)
 		return 2;
 	case __NR_openat:
 		return 3;
+#ifdef __NR_x32_execve
+	case __NR_x32_execve:
+#endif
+#ifdef __NR_x32_execveat
+	case __NR_x32_execveat:
+#endif
 	case __NR_execve:
 	case __NR_execveat:
 		return 5;
