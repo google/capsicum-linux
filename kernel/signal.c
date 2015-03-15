@@ -1562,6 +1562,20 @@ ret:
 	return ret;
 }
 
+/* Translate exit_code to code and status. */
+void task_exit_code_status(int exit_code, s32 *code, s32 *status)
+{
+	*status = exit_code & 0x7f;
+	if (exit_code & 0x80)
+		*code = CLD_DUMPED;
+	else if (exit_code & 0x7f)
+		*code = CLD_KILLED;
+	else {
+		*code = CLD_EXITED;
+		*status = exit_code >> 8;
+	}
+}
+
 /*
  * Let a parent know about the death of a child.
  * For a stopped/continued status change, use do_notify_parent_cldstop instead.
@@ -1617,15 +1631,7 @@ bool do_notify_parent(struct task_struct *tsk, int sig)
 	info.si_utime = cputime_to_clock_t(utime + tsk->signal->utime);
 	info.si_stime = cputime_to_clock_t(stime + tsk->signal->stime);
 
-	info.si_status = tsk->exit_code & 0x7f;
-	if (tsk->exit_code & 0x80)
-		info.si_code = CLD_DUMPED;
-	else if (tsk->exit_code & 0x7f)
-		info.si_code = CLD_KILLED;
-	else {
-		info.si_code = CLD_EXITED;
-		info.si_status = tsk->exit_code >> 8;
-	}
+	task_exit_code_status(tsk->exit_code, &info.si_code, &info.si_status);
 
 	psig = tsk->parent->sighand;
 	spin_lock_irqsave(&psig->siglock, flags);
