@@ -483,6 +483,7 @@ GLOBAL(\label)
 	PTREGSCALL stub32_execveat, compat_sys_execveat
 	PTREGSCALL stub32_fork, sys_fork
 	PTREGSCALL stub32_vfork, sys_vfork
+	PTREGSCALL stub32_clone4, compat_sys_clone4
 
 	ALIGN
 GLOBAL(stub32_clone)
