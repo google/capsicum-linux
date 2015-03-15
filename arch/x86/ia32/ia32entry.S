@@ -584,7 +584,7 @@ GLOBAL(\label)
 	ALIGN
 GLOBAL(stub32_clone)
 	leaq sys_clone(%rip),%rax
-	mov	%r8, %rcx
+	xchg %r8, %rcx
 	jmp  ia32_ptregs_common	
 
 	ALIGN
