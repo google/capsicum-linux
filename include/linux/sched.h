@@ -609,6 +609,9 @@ struct task_struct {
 	unsigned			no_cgroup_migration:1;
 #endif
 
+	/* Do not become a zombie on exit */
+	unsigned			autoreap:1;
+
 	unsigned long			atomic_flags; /* Flags requiring atomic access. */
 
 	struct restart_block		restart_block;
