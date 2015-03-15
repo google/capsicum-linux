@@ -484,6 +484,13 @@ config HAVE_IRQ_EXIT_ON_IRQ_STACK
 	  This spares a stack switch and improves cache usage on softirq
 	  processing.
 
+config HAVE_COPY_THREAD_TLS
+	bool
+	help
+	  Architecture provides copy_thread_tls to accept tls argument via
+	  normal C parameter passing, rather than extracting the syscall
+	  argument from pt_regs.
+
 #
 # ABI hall of shame
 #
