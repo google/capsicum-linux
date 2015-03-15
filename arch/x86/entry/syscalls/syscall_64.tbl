@@ -335,6 +335,7 @@
 326	common	copy_file_range		sys_copy_file_range
 327	64	preadv2			sys_preadv2
 328	64	pwritev2		sys_pwritev2
+331	64	clone4			sys_clone4/ptregs
 
 #
 # x32-specific system call numbers start at 512 to avoid cache impact
@@ -376,3 +377,4 @@
 545	x32	execveat		compat_sys_execveat/ptregs
 546	x32	preadv2			compat_sys_preadv64v2
 547	x32	pwritev2		compat_sys_pwritev64v2
+548	x32	clone4			compat_sys_clone4/ptregs

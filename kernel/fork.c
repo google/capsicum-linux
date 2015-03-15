@@ -1296,7 +1296,7 @@ init_task_pid(struct task_struct *task, enum pid_type type, struct pid *pid)
  * parts of the process environment (as per the clone
  * flags). The actual kick-off is left to the caller.
  */
-static struct task_struct *copy_process(unsigned long clone_flags,
+static struct task_struct *copy_process(u64 clone_flags,
 					unsigned long stack_start,
 					unsigned long stack_size,
 					int __user *child_tidptr,
@@ -1307,6 +1307,9 @@ static struct task_struct *copy_process(unsigned long clone_flags,
 {
 	int retval;
 	struct task_struct *p;
+
+	if (clone_flags & ~CLONE4_VALID_FLAGS)
+		return ERR_PTR(-EINVAL);
 
 	if ((clone_flags & (CLONE_NEWNS|CLONE_FS)) == (CLONE_NEWNS|CLONE_FS))
 		return ERR_PTR(-EINVAL);
@@ -1749,7 +1752,7 @@ struct task_struct *fork_idle(int cpu)
  * It copies the process, and if successful kick-starts
  * it and waits for it to finish using the VM if required.
  */
-long _do_fork(unsigned long clone_flags,
+long _do_fork(u64 clone_flags,
 	      unsigned long stack_start,
 	      unsigned long stack_size,
 	      int __user *parent_tidptr,
@@ -1820,6 +1823,15 @@ long _do_fork(unsigned long clone_flags,
 	return nr;
 }
 
+/*
+ * Convenience function for callers passing unsigned long flags, to prevent old
+ * syscall entry points from unexpectedly returning EINVAL.
+ */
+static inline u64 squelch_clone_flags(unsigned long clone_flags)
+{
+	return clone_flags & CLONE_VALID_FLAGS;
+}
+
 #ifndef CONFIG_HAVE_COPY_THREAD_TLS
 /* For compatibility with architectures that call do_fork directly rather than
  * using the syscall entry points below. */
@@ -1829,7 +1841,8 @@ long do_fork(unsigned long clone_flags,
 	      int __user *parent_tidptr,
 	      int __user *child_tidptr)
 {
-	return _do_fork(clone_flags, stack_start, stack_size,
+	return _do_fork(squelch_clone_flags(clone_flags),
+			stack_start, stack_size,
 			parent_tidptr, child_tidptr, 0);
 }
 #endif
@@ -1887,9 +1900,44 @@ SYSCALL_DEFINE5(clone, unsigned long, clone_flags, unsigned long, newsp,
 		 unsigned long, tls)
 #endif
 {
-	return _do_fork(clone_flags, newsp, 0, parent_tidptr, child_tidptr, tls);
+	return _do_fork(squelch_clone_flags(clone_flags), newsp, 0,
+			parent_tidptr, child_tidptr, tls);
 }
 #endif
+
+#ifdef CONFIG_CLONE4
+SYSCALL_DEFINE4(clone4, unsigned, flags_high, unsigned, flags_low,
+		unsigned long, args_size, struct clone4_args __user *, args)
+{
+	u64 flags = (u64)flags_high << 32 | flags_low;
+	struct clone4_args kargs = {};
+	if (args_size > sizeof(kargs))
+		return -EINVAL;
+	if (args_size && copy_from_user(&kargs, args, args_size))
+		return -EFAULT;
+	return _do_fork(flags, kargs.stack_start, kargs.stack_size,
+			kargs.ptid, kargs.ctid, kargs.tls);
+}
+
+#ifdef CONFIG_COMPAT
+COMPAT_SYSCALL_DEFINE4(clone4, unsigned, flags_high, unsigned, flags_low,
+			compat_ulong_t, args_size,
+			struct compat_clone4_args __user *, args)
+{
+	u64 flags = (u64)flags_high << 32 | flags_low;
+	struct compat_clone4_args compat_kargs = {};
+	if (args_size > sizeof(compat_kargs))
+		return -EINVAL;
+	if (args_size && copy_from_user(&compat_kargs, args, args_size))
+		return -EFAULT;
+	return _do_fork(flags, compat_kargs.stack_start,
+			compat_kargs.stack_size,
+			compat_ptr(compat_kargs.ptid),
+			compat_ptr(compat_kargs.ctid),
+			compat_kargs.tls);
+}
+#endif /* CONFIG_COMPAT */
+#endif /* CONFIG_CLONE4 */
 
 #ifndef ARCH_MIN_MMSTRUCT_ALIGN
 #define ARCH_MIN_MMSTRUCT_ALIGN 0
