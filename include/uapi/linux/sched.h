@@ -41,6 +41,7 @@
  * Flags that only work with clone4.
  */
 #define CLONE_AUTOREAP	0x00001000	/* Automatically reap the process */
+#define CLONE_FD	0x00400000	/* Signal exit via file descriptor */
 
 #ifdef __KERNEL__
 /*
@@ -48,8 +49,19 @@
  * list above, but not exposed to userspace.
  */
 #define CLONE_VALID_FLAGS	(0xffffffffULL & ~(CLONE_PID | CLONE_DETACHED | CLONE_STOPPED))
-#define CLONE4_VALID_FLAGS	(CLONE_VALID_FLAGS | CLONE_AUTOREAP)
+#define CLONE4_VALID_FLAGS	(CLONE_VALID_FLAGS | CLONE_AUTOREAP | \
+				 (IS_ENABLED(CONFIG_CLONEFD) ? CLONE_FD : 0))
 #endif /* __KERNEL__ */
+
+/*
+ * Structure read from CLONE_FD file descriptor after process exits
+ */
+struct clonefd_info {
+	__s32 code;
+	__s32 status;
+	__u64 utime;
+	__u64 stime;
+};
 
 /*
  * Structure passed to clone4 for additional arguments.  Initialized to 0,
@@ -63,6 +75,8 @@ struct clone4_args {
 	__kernel_ulong_t stack_start;
 	__kernel_ulong_t stack_size;
 	__kernel_ulong_t tls;
+	int __user *clonefd;
+	__u32 clonefd_flags;
 };
 
 /*
