@@ -2489,8 +2489,22 @@ extern struct mm_struct *mm_access(struct task_struct *task, unsigned int mode);
 /* Remove the current tasks stale references to the old mm_struct */
 extern void mm_release(struct task_struct *, struct mm_struct *);
 
+#ifdef CONFIG_HAVE_COPY_THREAD_TLS
+extern int copy_thread_tls(unsigned long, unsigned long, unsigned long,
+			struct task_struct *, unsigned long);
+#else
 extern int copy_thread(unsigned long, unsigned long, unsigned long,
 			struct task_struct *);
+
+/* Architectures that haven't opted into copy_thread_tls get the tls argument
+ * via pt_regs, so ignore the tls argument passed via C. */
+static inline int copy_thread_tls(
+		unsigned long clone_flags, unsigned long sp, unsigned long arg,
+		struct task_struct *p, unsigned long tls)
+{
+	return copy_thread(clone_flags, sp, arg, p);
+}
+#endif
 extern void flush_thread(void);
 extern void exit_thread(void);
 
