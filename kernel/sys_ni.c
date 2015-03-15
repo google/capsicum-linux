@@ -174,6 +174,7 @@ cond_syscall(sys_setfsuid);
 cond_syscall(sys_setfsgid);
 cond_syscall(sys_capget);
 cond_syscall(sys_capset);
+cond_syscall(sys_clone4);
 
 /* arch-specific weak syscall entries */
 cond_syscall(sys_pciconfig_read);
