@@ -390,3 +390,4 @@
 381	i386	pkey_alloc		sys_pkey_alloc
 382	i386	pkey_free		sys_pkey_free
 383	i386	statx			sys_statx
+386	i386	clone4			sys_clone4			compat_sys_clone4

@@ -1,6 +1,8 @@
 #ifndef _UAPI_LINUX_SCHED_H
 #define _UAPI_LINUX_SCHED_H
 
+#include <linux/types.h>
+
 /*
  * cloning flags:
  */
@@ -18,7 +20,6 @@
 #define CLONE_SETTLS	0x00080000	/* create a new TLS for the child */
 #define CLONE_PARENT_SETTID	0x00100000	/* set the TID in the parent */
 #define CLONE_CHILD_CLEARTID	0x00200000	/* clear the TID in the child */
-#define CLONE_DETACHED		0x00400000	/* Unused, ignored */
 #define CLONE_UNTRACED		0x00800000	/* set if the tracing process can't force CLONE_PTRACE on this clone */
 #define CLONE_CHILD_SETTID	0x01000000	/* set the TID in the child */
 #define CLONE_NEWCGROUP		0x02000000	/* New cgroup namespace */
@@ -28,6 +29,36 @@
 #define CLONE_NEWPID		0x20000000	/* New pid namespace */
 #define CLONE_NEWNET		0x40000000	/* New network namespace */
 #define CLONE_IO		0x80000000	/* Clone io context */
+
+/*
+ * Old flags, unused by current clone.  clone does not return EINVAL for these
+ * flags, so they can't easily be reused.  clone4 can use them.
+ */
+#define CLONE_PID	0x00001000
+#define CLONE_DETACHED	0x00400000
+
+#ifdef __KERNEL__
+/*
+ * Valid flags for clone and for clone4. Kept in this file next to the flag
+ * list above, but not exposed to userspace.
+ */
+#define CLONE_VALID_FLAGS	(0xffffffffULL & ~(CLONE_PID | CLONE_DETACHED))
+#define CLONE4_VALID_FLAGS	CLONE_VALID_FLAGS
+#endif /* __KERNEL__ */
+
+/*
+ * Structure passed to clone4 for additional arguments.  Initialized to 0,
+ * then overwritten with arguments from userspace, so arguments not supplied by
+ * userspace will remain 0.  New versions of the kernel may safely append new
+ * arguments to the end.
+ */
+struct clone4_args {
+	__kernel_pid_t __user *ptid;
+	__kernel_pid_t __user *ctid;
+	__kernel_ulong_t stack_start;
+	__kernel_ulong_t stack_size;
+	__kernel_ulong_t tls;
+};
 
 /*
  * Scheduling policies
