@@ -59,6 +59,8 @@
 #include <asm/pgtable.h>
 #include <asm/mmu_context.h>
 
+#include "clonefd.h"
+
 static void __unhash_process(struct task_struct *p, bool group_dead)
 {
 	nr_threads--;
@@ -612,6 +614,8 @@ static void exit_notify(struct task_struct *tsk, int group_dead)
 	tsk->exit_state = autoreap ? EXIT_DEAD : EXIT_ZOMBIE;
 	if (tsk->exit_state == EXIT_DEAD)
 		list_add(&tsk->ptrace_entry, &dead);
+
+	clonefd_do_notify(tsk);
 
 	/* mt-exec, de_thread() is waiting for group leader */
 	if (unlikely(tsk->signal->notify_count < 0))

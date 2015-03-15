@@ -1531,6 +1531,17 @@ config CLONE4
 
 	  If unsure, say Y.
 
+config CLONEFD
+	bool "Enable CLONE_FD flag for clone4()" if EXPERT
+	depends on CLONE4
+	select ANON_INODES
+	default y
+	help
+	  Enable the CLONE_FD flag for clone4(), which creates a file descriptor
+	  to receive child exit events rather than receiving a signal.
+
+	  If unsure, say Y.
+
 # syscall, maps, verifier
 config BPF_SYSCALL
 	bool "Enable bpf() system call"
