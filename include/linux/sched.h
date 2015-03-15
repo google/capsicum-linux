@@ -1372,6 +1372,8 @@ struct task_struct {
 	unsigned memcg_kmem_skip_account:1;
 #endif
 
+	unsigned autoreap:1; /* Do not become a zombie on exit */
+
 	unsigned long atomic_flags; /* Flags needing atomic access. */
 
 	struct restart_block restart_block;

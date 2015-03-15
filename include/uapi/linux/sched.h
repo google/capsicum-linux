@@ -37,13 +37,18 @@
 #define CLONE_DETACHED	0x00400000
 #define CLONE_STOPPED	0x02000000
 
+/*
+ * Flags that only work with clone4.
+ */
+#define CLONE_AUTOREAP	0x00001000	/* Automatically reap the process */
+
 #ifdef __KERNEL__
 /*
  * Valid flags for clone and for clone4. Kept in this file next to the flag
  * list above, but not exposed to userspace.
  */
 #define CLONE_VALID_FLAGS	(0xffffffffULL & ~(CLONE_PID | CLONE_DETACHED | CLONE_STOPPED))
-#define CLONE4_VALID_FLAGS	CLONE_VALID_FLAGS
+#define CLONE4_VALID_FLAGS	(CLONE_VALID_FLAGS | CLONE_AUTOREAP)
 #endif /* __KERNEL__ */
 
 /*
