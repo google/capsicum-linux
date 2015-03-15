@@ -295,6 +295,14 @@ struct compat_old_sigaction {
 };
 #endif
 
+struct compat_clone4_args {
+	compat_uptr_t ptid;
+	compat_uptr_t ctid;
+	compat_ulong_t stack_start;
+	compat_ulong_t stack_size;
+	compat_ulong_t tls;
+};
+
 struct compat_statfs;
 struct compat_statfs64;
 struct compat_old_linux_dirent;
@@ -721,6 +729,9 @@ asmlinkage long compat_sys_sched_rr_get_interval(compat_pid_t pid,
 
 asmlinkage long compat_sys_fanotify_mark(int, unsigned int, __u32, __u32,
 					    int, const char __user *);
+
+asmlinkage long compat_sys_clone4(unsigned, unsigned, compat_ulong_t,
+				  struct compat_clone4_args __user *);
 
 /*
  * For most but not all architectures, "am I in a compat syscall?" and
