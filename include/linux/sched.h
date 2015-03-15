@@ -14,6 +14,7 @@
 #include <linux/sem.h>
 #include <linux/shm.h>
 #include <linux/kcov.h>
+#include <linux/wait.h>
 #include <linux/mutex.h>
 #include <linux/plist.h>
 #include <linux/hrtimer.h>
@@ -611,6 +612,11 @@ struct task_struct {
 
 	/* Do not become a zombie on exit */
 	unsigned			autoreap:1;
+
+#ifdef CONFIG_CLONEFD
+	unsigned			clonefd:1; /* Notify clonefd_wqh on exit */
+	wait_queue_head_t		clonefd_wqh;
+#endif
 
 	unsigned long			atomic_flags; /* Flags requiring atomic access. */
 
