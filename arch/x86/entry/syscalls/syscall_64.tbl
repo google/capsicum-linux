@@ -333,6 +333,7 @@
 324	common	membarrier		sys_membarrier
 325	common	mlock2			sys_mlock2
 326	common	copy_file_range		sys_copy_file_range
+329	64	clone4			stub_clone4
 
 #
 # x32-specific system call numbers start at 512 to avoid cache impact
@@ -372,3 +373,4 @@
 543	x32	io_setup		compat_sys_io_setup
 544	x32	io_submit		compat_sys_io_submit
 545	x32	execveat		stub_x32_execveat
+546	x32	clone4			stub_x32_clone4

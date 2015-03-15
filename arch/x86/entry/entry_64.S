@@ -366,6 +366,14 @@ END(stub_\func)
 	FORK_LIKE  clone
 	FORK_LIKE  fork
 	FORK_LIKE  vfork
+	FORK_LIKE  clone4
+
+#ifdef CONFIG_X86_X32_ABI
+ENTRY(stub_x32_clone4)
+	SAVE_EXTRA_REGS 8
+	jmp	compat_sys_clone4
+END(stub_x32_clone4)
+#endif
 
 ENTRY(stub_execve)
 	call	sys_execve

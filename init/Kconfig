@@ -1521,6 +1521,16 @@ config EVENTFD
 
 	  If unsure, say Y.
 
+config CLONE4
+	bool "Enable clone4() system call" if EXPERT
+	depends on HAVE_COPY_THREAD_TLS
+	default y
+	help
+	  Enable the clone4() system call, which supports passing additional
+	  flags.
+
+	  If unsure, say Y.
+
 # syscall, maps, verifier
 config BPF_SYSCALL
 	bool "Enable bpf() system call"
