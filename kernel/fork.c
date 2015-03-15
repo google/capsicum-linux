@@ -89,6 +89,8 @@
 #define CREATE_TRACE_POINTS
 #include <trace/events/task.h>
 
+#include "clonefd.h"
+
 /*
  * Minimum number of threads to boot the kernel
  */
@@ -1253,7 +1255,8 @@ init_task_pid(struct task_struct *task, enum pid_type type, struct pid *pid)
 static struct task_struct *copy_process(u64 clone_flags,
 					struct clone4_args *args,
 					struct pid *pid,
-					int trace)
+					int trace,
+					struct clonefd_setup *clonefd_setup)
 {
 	int retval;
 	struct task_struct *p;
@@ -1474,6 +1477,10 @@ static struct task_struct *copy_process(u64 clone_flags,
 		}
 	}
 
+	retval = clonefd_do_clone(clone_flags, p, args, clonefd_setup);
+	if (retval)
+		goto bad_fork_free_pid;
+
 	p->set_child_tid = (clone_flags & CLONE_CHILD_SETTID) ? args->ctid : NULL;
 	/*
 	 * Clear TID on mm_release()?
@@ -1540,7 +1547,7 @@ static struct task_struct *copy_process(u64 clone_flags,
 	 */
 	retval = cgroup_can_fork(p);
 	if (retval)
-		goto bad_fork_free_pid;
+		goto bad_fork_cleanup_clonefd;
 
 	/*
 	 * Make it visible to the rest of the system, but dont wake it up yet.
@@ -1631,6 +1638,8 @@ static struct task_struct *copy_process(u64 clone_flags,
 
 bad_fork_cancel_cgroup:
 	cgroup_cancel_fork(p);
+bad_fork_cleanup_clonefd:
+	clonefd_cleanup_failed_clone(clonefd_setup);
 bad_fork_free_pid:
 	if (pid != &init_struct_pid)
 		free_pid(pid);
@@ -1687,7 +1696,7 @@ struct task_struct *fork_idle(int cpu)
 {
 	struct task_struct *task;
 	struct clone4_args args = {};
-	task = copy_process(CLONE_VM, &args, &init_struct_pid, 0);
+	task = copy_process(CLONE_VM, &args, &init_struct_pid, 0, NULL);
 	if (!IS_ERR(task)) {
 		init_idle_pids(task->pids);
 		init_idle(task, cpu);
@@ -1707,6 +1716,7 @@ long _do_fork(u64 clone_flags, struct clone4_args *args)
 	struct task_struct *p;
 	int trace = 0;
 	long nr;
+	struct clonefd_setup clonefd_setup = {};
 
 	/*
 	 * Determine whether and which event to report to ptracer.  When
@@ -1726,7 +1736,7 @@ long _do_fork(u64 clone_flags, struct clone4_args *args)
 			trace = 0;
 	}
 
-	p = copy_process(clone_flags, args, NULL, trace);
+	p = copy_process(clone_flags, args, NULL, trace, &clonefd_setup);
 	/*
 	 * Do this prior waking up the new thread - the thread pointer
 	 * might get invalid after that point, if the thread exits quickly.
@@ -1748,6 +1758,8 @@ long _do_fork(u64 clone_flags, struct clone4_args *args)
 			init_completion(&vfork);
 			get_task_struct(p);
 		}
+
+		clonefd_install_fd(args, &clonefd_setup);
 
 		wake_up_new_task(p);
 
@@ -1892,6 +1904,8 @@ COMPAT_SYSCALL_DEFINE4(clone4, unsigned, flags_high, unsigned, flags_low,
 	kargs.stack_start = compat_kargs.stack_start;
 	kargs.stack_size = compat_kargs.stack_size;
 	kargs.tls = compat_kargs.tls;
+	kargs.clonefd = compat_ptr(compat_kargs.clonefd);
+	kargs.clonefd_flags = compat_kargs.clonefd_flags;
 	return _do_fork(flags, &kargs);
 }
 #endif /* CONFIG_COMPAT */

@@ -301,6 +301,8 @@ struct compat_clone4_args {
 	compat_ulong_t stack_start;
 	compat_ulong_t stack_size;
 	compat_ulong_t tls;
+	compat_uptr_t clonefd;
+	u32 clonefd_flags;
 };
 
 struct compat_statfs;
