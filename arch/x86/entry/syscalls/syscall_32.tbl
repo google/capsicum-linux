@@ -389,3 +389,4 @@
 380	i386	pkey_mprotect		sys_pkey_mprotect
 381	i386	pkey_alloc		sys_pkey_alloc
 382	i386	pkey_free		sys_pkey_free
+385	i386	clone4			sys_clone4			compat_sys_clone4
