@@ -1,5 +1,6 @@
 TARGETS = breakpoints
 TARGETS += capabilities
+TARGETS += clone
 TARGETS += cpu-hotplug
 TARGETS += efivarfs
 TARGETS += exec
