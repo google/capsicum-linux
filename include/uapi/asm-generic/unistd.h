@@ -709,9 +709,21 @@ __SYSCALL(__NR_memfd_create, sys_memfd_create)
 __SYSCALL(__NR_bpf, sys_bpf)
 #define __NR_execveat 281
 __SC_COMP(__NR_execveat, sys_execveat, compat_sys_execveat)
+#define __NR_cap_rights_limit 282
+__SYSCALL(__NR_cap_rights_limit, sys_cap_rights_limit)
+#define __NR_cap_rights_limit 283
+__SYSCALL(__NR_cap_rights_get, sys_cap_rights_get)
+#define __NR_pdfork 284
+__SYSCALL(__NR_pdfork, sys_pdfork)
+#define __NR_pdgetpid 285
+__SYSCALL(__NR_pdgetpid, sys_pdgetpid)
+#define __NR_pdkill 286
+__SYSCALL(__NR_pdkill, sys_pdkill)
+#define __NR_pdwait4 287
+__SYSCALL(__NR_pdwait4, sys_pdwait4)
 
 #undef __NR_syscalls
-#define __NR_syscalls 282
+#define __NR_syscalls 288
 
 /*
  * All syscalls below here should go away really,
