@@ -101,6 +101,9 @@ SYSCALL_DEFINE2(pdgetpid, int, fd, pid_t __user *, pidp)
 	struct procdesc *pd;
 	pid_t pid;
 
+	if (pidp == NULL)
+		return -EFAULT;
+
 	f = fgetr(fd, CAP_PDGETPID);
 	if (IS_ERR(f))
 		return PTR_ERR(f);
@@ -115,7 +118,8 @@ SYSCALL_DEFINE2(pdgetpid, int, fd, pid_t __user *, pidp)
 	fput(f);
 	if (pid == 0)
 		return -ESRCH;
-	put_user(pid, pidp);
+	if (put_user(pid, pidp))
+		return -EFAULT;
 	return 0;
 }
 

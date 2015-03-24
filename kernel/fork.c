@@ -1758,6 +1758,8 @@ SYSCALL_DEFINE2(pdfork, int __user *, fdp, unsigned long,  flags)
 
 	if ((flags & ~(PD_DAEMON)) != 0)
 		return -EINVAL;
+	if (fdp == NULL)
+		return -EFAULT;
 
 	fd = get_unused_fd_flags(0);
 	if (fd < 0)
