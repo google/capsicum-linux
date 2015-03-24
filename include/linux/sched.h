@@ -2060,7 +2060,12 @@ TASK_PFA_CLEAR(OPENAT_BENEATH, openat_beneath)
 static inline bool task_has_procdesc(const struct task_struct *p)
 {
 #ifdef CONFIG_PROCDESC
-	return (p->procdesc != NULL);
+	bool rc;
+
+	rcu_read_lock();
+	rc = (p->procdesc != NULL);
+	rcu_read_unlock();
+	return rc;
 #else
 	return false;
 #endif
