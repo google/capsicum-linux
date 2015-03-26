@@ -578,7 +578,7 @@ COMPAT_SYSCALL_DEFINE4(timerfd_settime, int, ufd, int, flags,
 
 	if (get_compat_itimerspec(&new, utmr))
 		return -EFAULT;
-	ret = do_timerfd_settime(ufd, flags, &new, &old);
+	ret = do_timerfd_settime(ufd, flags, &new, otmr ? &old : NULL);
 	if (ret)
 		return ret;
 	if (otmr && put_compat_itimerspec(otmr, &old))
