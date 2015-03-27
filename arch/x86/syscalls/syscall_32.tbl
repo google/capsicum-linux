@@ -370,4 +370,4 @@
 361	i386	pdfork			sys_pdfork                      stub32_pdfork
 362	i386	pdgetpid		sys_pdgetpid
 363	i386	pdkill			sys_pdkill
-364	i386	pdwait4		sys_pdwait4
+364	i386	pdwait4		sys_pdwait4			compat_sys_pdwait4
