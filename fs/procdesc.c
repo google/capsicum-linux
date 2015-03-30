@@ -218,6 +218,7 @@ SYSCALL_DEFINE4(pdwait4, int, fd, int __user *, status, int, options,
 	return sys_wait4(pid, status, options, rusage);
 }
 
+#ifdef CONFIG_COMPAT
 COMPAT_SYSCALL_DEFINE4(pdwait4, int, fd,
 		compat_int_t __user *, stat_addr,
 		int, options,
@@ -247,6 +248,7 @@ COMPAT_SYSCALL_DEFINE4(pdwait4, int, fd,
 		return ret;
 	}
 }
+#endif
 
 /*
  * File operations for process descriptor pseudofiles.
