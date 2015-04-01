@@ -215,13 +215,13 @@ static int set_tls_entry(struct task_struct* task, struct user_desc *info,
 	return 0;
 }
 
-int arch_copy_tls(struct task_struct *new)
+int arch_copy_tls(struct task_struct *new, unsigned long tls)
 {
 	struct user_desc info;
 	int idx, ret = -EFAULT;
 
 	if (copy_from_user(&info,
-			   (void __user *) UPT_SI(&new->thread.regs.regs),
+			   (void __user *) tls,
 			   sizeof(info)))
 		goto out;
 
