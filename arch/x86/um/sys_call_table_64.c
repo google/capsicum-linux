@@ -29,6 +29,7 @@
 #define sys_mmap old_mmap
 
 #define stub_clone sys_clone
+#define stub_clone4 sys_clone4
 #define stub_fork sys_fork
 #define stub_vfork sys_vfork
 #define stub_execve sys_execve
