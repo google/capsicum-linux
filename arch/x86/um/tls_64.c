@@ -5,7 +5,7 @@ void clear_flushed_tls(struct task_struct *task)
 {
 }
 
-int arch_copy_tls(struct task_struct *t)
+int arch_copy_tls(struct task_struct *t, unsigned long tls)
 {
 	/*
 	 * If CLONE_SETTLS is set, we need to save the thread id
