@@ -9,6 +9,7 @@
 #include <linux/file.h>
 #include <linux/fs.h>
 #include <linux/poll.h>
+#include <linux/seq_file.h>
 #include <linux/slab.h>
 #include "clonefd.h"
 
@@ -79,6 +80,14 @@ static long clonefd_ioctl(struct file *file, unsigned int cmd,
 	return ret;
 }
 
+static void clonefd_show_fdinfo(struct seq_file *m, struct file *file)
+{
+	struct task_struct *p = file->private_data;
+
+	seq_printf(m, "pid:\t%d\ntid:\t%d\n",
+		   task_pid_vnr(p), task_tgid_vnr(p));
+}
+
 static const struct file_operations clonefd_fops = {
 	.release = clonefd_release,
 	.poll = clonefd_poll,
@@ -86,6 +95,7 @@ static const struct file_operations clonefd_fops = {
 	.llseek = no_llseek,
 	.unlocked_ioctl = clonefd_ioctl,
 	.compat_ioctl = clonefd_ioctl,
+	.show_fdinfo = clonefd_show_fdinfo,
 };
 
 /* Do process exit notification for clonefd. */
