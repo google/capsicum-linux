@@ -18,6 +18,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <sys/ioctl.h>
 #include <sys/ptrace.h>
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -40,6 +41,11 @@ const char *verbose;
 #endif
 #ifndef CLONEFD_NONBLOCK
 #define CLONEFD_NONBLOCK	0x00000002
+#endif
+
+#ifndef CLONEFD_IOC_GETTID
+#define CLONEFD_IOC_GETTID	_IO('C', 1)
+#define CLONEFD_IOC_GETPID	_IO('C', 2)
 #endif
 
 struct user_desc;
@@ -364,6 +370,12 @@ static int check_clone_fd(void)
 		gettid_(), child, fd, errno);
 	ASSERT(child > 0);
 
+	/* Unreaped child has pid/tid accessible via ioctl */
+	rc = ioctl(fd, CLONEFD_IOC_GETTID, 0);
+	EXPECT(rc == child);
+	rc = ioctl(fd, CLONEFD_IOC_GETPID, 0);
+	EXPECT(rc == child);
+
 	/* Wait on the file descriptor for child exit. */
 	fdp.fd = fd;
 	fdp.events = POLLIN | POLLERR | POLLHUP;
@@ -389,7 +401,10 @@ static int check_clone_fd(void)
 	/* Second read fails */
 	rc = read(fd, buffer, sizeof(buffer));
 	EXPECT(rc == 0);
-	close(fd);
+
+	/* Unreaped zombie child has pid accessible via ioctl */
+	rc = ioctl(fd, CLONEFD_IOC_GETTID, 0);
+	EXPECT(rc == child);
 
 	/* Still need to reap the child */
 	EXPECT(pid_present(child));
@@ -399,6 +414,11 @@ static int check_clone_fd(void)
 	EXPECT(WIFEXITED(status));
 	EXPECT(WEXITSTATUS(status) == 0);
 
+	/* Reaped child has zero pid value returned */
+	rc = ioctl(fd, CLONEFD_IOC_GETTID, 0);
+	EXPECT(rc == 0);
+
+	close(fd);
 	return fail;
 }
 
