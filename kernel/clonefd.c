@@ -56,11 +56,36 @@ static ssize_t clonefd_read(struct file *file, char __user *buf,
 	return ret;
 }
 
+static long clonefd_ioctl(struct file *file, unsigned int cmd,
+			  unsigned long arg)
+{
+	struct task_struct *p = file->private_data;
+	int ret = 0;
+
+	switch (cmd) {
+	case CLONEFD_IOC_GETTID: {
+		ret = task_pid_vnr(p);
+		break;
+	}
+	case CLONEFD_IOC_GETPID: {
+		ret = task_tgid_vnr(p);
+		break;
+	}
+	default:
+		ret = -ENOTTY;
+		break;
+	}
+
+	return ret;
+}
+
 static const struct file_operations clonefd_fops = {
 	.release = clonefd_release,
 	.poll = clonefd_poll,
 	.read = clonefd_read,
 	.llseek = no_llseek,
+	.unlocked_ioctl = clonefd_ioctl,
+	.compat_ioctl = clonefd_ioctl,
 };
 
 /* Do process exit notification for clonefd. */
