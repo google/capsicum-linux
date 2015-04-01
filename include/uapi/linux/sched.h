@@ -1,6 +1,7 @@
 #ifndef _UAPI_LINUX_SCHED_H
 #define _UAPI_LINUX_SCHED_H
 
+#include <linux/ioctl.h>
 #include <linux/types.h>
 
 /*
@@ -85,6 +86,12 @@ struct clone4_args {
  */
 #define CLONEFD_CLOEXEC	0x00000001	/* As O_CLOEXEC */
 #define CLONEFD_NONBLOCK	0x00000002	/* As O_NONBLOCK */
+
+/*
+ * ioctl(2) operations that can be performed on clone FDs.
+ */
+#define CLONEFD_IOC_GETTID	_IO('C', 1)	/* as per gettid(2) */
+#define CLONEFD_IOC_GETPID	_IO('C', 2)	/* as per getpid(2) */
 
 /*
  * Scheduling policies
