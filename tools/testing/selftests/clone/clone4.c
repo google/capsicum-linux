@@ -576,6 +576,85 @@ static int check_clone_fd_invalid(void)
 	return fail;
 }
 
+static int check_clone_fd_write(void)
+{
+	int fail = 0;
+	pid_t child, waited;
+	int fd = -1;
+	int rc, status;
+	struct clonefd_info fdinfo;
+	struct pollfd fdp;
+	unsigned char signum;
+
+	child = clone4_(SIGCHLD|CLONE_FD, NULL, NULL, NULL, &fd, 0);
+	if (child == 0)
+		exit(child_loop_forever(NULL));
+	vprintf("[%d] clone4() returned child=%d fd=%d errno=%d\n",
+		gettid_(), child, fd, errno);
+	ASSERT(child > 0);
+
+	/* Send a SIGSTOP */
+	signum = SIGSTOP;
+	rc = write(fd, &signum, 1);
+	vprintf("[%d] write(%d, &SIGSTOP) = %d errno %d\n",
+		gettid_(), fd, rc, errno);
+	EXPECT(rc == 1);
+	waited = waitpid(child, &status, WUNTRACED|WCONTINUED);
+	EXPECT(waited == child);
+	EXPECT(WIFSTOPPED(status));
+	EXPECT(WSTOPSIG(status) == SIGSTOP);
+
+	/* Send a SIGCONT */
+	signum = SIGCONT;
+	rc = write(fd, &signum, 1);
+	vprintf("[%d] write(%d, &SIGCONT) = %d errno %d\n",
+		gettid_(), fd, rc, errno);
+	EXPECT(rc == 1);
+	waited = waitpid(child, &status, WUNTRACED|WCONTINUED);
+	EXPECT(waited == child);
+	EXPECT(!WIFSTOPPED(status));
+
+	EXPECT(pid_present(child));
+	signum = SIGKILL;
+	rc = write(fd, &signum, 1);
+	vprintf("[%d] write(%d, &SIGKILL) = %d errno %d\n",
+		gettid_(), fd, rc, errno);
+	EXPECT(rc == 1);
+
+	/* Wait on the file descriptor for child exit. */
+	fdp.fd = fd;
+	fdp.events = POLLIN | POLLERR | POLLHUP;
+	fdp.revents = 0;
+	do {
+		rc = poll(&fdp, 1, 5000);
+	} while (rc == -1 && errno == EINTR);
+	EXPECT(rc == 1);
+	EXPECT(fdp.revents & POLLHUP);
+	EXPECT(fdp.revents & POLLIN);
+	EXPECT(sigchld_count >= 1);
+
+	/* Read retrieves status info. */
+	rc = read(fd, &fdinfo, sizeof(fdinfo));
+	EXPECT(rc == sizeof(fdinfo));
+	vprintf("[%d] read(%d): {code=%u, status=%u, utime=%lu, stime=%lu}\n",
+		gettid_(), fd, fdinfo.code, fdinfo.status,
+		(long)fdinfo.utime, (long)fdinfo.stime);
+	EXPECT(fdinfo.code == CLD_KILLED);
+	EXPECT(WIFSIGNALED(fdinfo.status));
+	EXPECT(WTERMSIG(fdinfo.status) == SIGKILL);
+
+	/* Still need to reap the child */
+	EXPECT(pid_present(child));
+	waited = waitpid(child, &status, 0);
+	EXPECT(waited == child);
+	EXPECT(!pid_present(child));
+	EXPECT(WIFSIGNALED(status));
+	EXPECT(WTERMSIG(status) == SIGKILL);
+
+	close(fd);
+	return fail;
+}
+
 int main(int argc, char **argv)
 {
 	int fail = 0;
@@ -600,6 +679,7 @@ int main(int argc, char **argv)
 	fail += RUN_TEST(check_clone_fd_cloexec, 0);
 	fail += RUN_TEST(check_clone_fd_nonblock, 0);
 	fail += RUN_TEST(check_clone_fd_invalid, 0);
+	fail += RUN_TEST(check_clone_fd_write, 0);
 
 	return fail;
 }
