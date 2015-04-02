@@ -9,9 +9,59 @@
 #include <linux/file.h>
 #include <linux/fs.h>
 #include <linux/poll.h>
+#include <linux/security.h>
 #include <linux/seq_file.h>
+#include <linux/signal.h>
 #include <linux/slab.h>
+#include "audit.h"
 #include "clonefd.h"
+
+static int clonefd_task_kill(struct task_struct *task, __u8 signum)
+{
+	struct siginfo info;
+	int error;
+
+	if (!valid_signal(signum))
+		return -EINVAL;
+
+	info.si_signo = signum;
+	info.si_errno = 0;
+	info.si_code = SI_USER;
+	info.si_pid = task_tgid_vnr(current);
+	info.si_uid = from_kuid_munged(current_user_ns(), current_uid());
+
+	/* Let audit and LSM see the signal. */
+	rcu_read_lock();
+	error = audit_signal_info(signum, task);
+	if (error)
+		goto err_unlock;
+	error = security_task_kill(task, &info, signum, 0);
+	if (error)
+		goto err_unlock;
+	rcu_read_unlock();
+
+	/*
+	 * The task to be signalled is directly identified, so jump straight
+	 * to the signaling part of normal kill(2) processing.
+	 */
+	return do_send_sig_info(signum, &info, task, true);
+
+err_unlock:
+	rcu_read_unlock();
+	return error;
+}
+
+static ssize_t clonefd_write(struct file *file, const char __user *buf,
+			     size_t count, loff_t *ppos)
+{
+	struct task_struct *task = file->private_data;
+	__u8 signum;
+
+	if (copy_from_user(&signum, buf, sizeof(signum)))
+		return -EFAULT;
+
+	return clonefd_task_kill(task, signum) ?: sizeof(signum);
+}
 
 static int clonefd_release(struct inode *inode, struct file *file)
 {
@@ -93,6 +143,7 @@ static const struct file_operations clonefd_fops = {
 	.poll = clonefd_poll,
 	.read = clonefd_read,
 	.llseek = no_llseek,
+	.write = clonefd_write,
 	.unlocked_ioctl = clonefd_ioctl,
 	.compat_ioctl = clonefd_ioctl,
 	.show_fdinfo = clonefd_show_fdinfo,
@@ -123,7 +174,7 @@ int clonefd_do_clone(u64 clone_flags, struct task_struct *p,
 	init_waitqueue_head(&p->clonefd_wqh);
 
 	get_task_struct(p);
-	flags = O_RDONLY | FMODE_ATOMIC_POS;
+	flags = O_RDWR | FMODE_ATOMIC_POS;
 	if (args->clonefd_flags & CLONEFD_CLOEXEC)
 		flags |= O_CLOEXEC;
 	if (args->clonefd_flags & CLONEFD_NONBLOCK)
