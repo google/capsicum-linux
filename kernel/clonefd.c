@@ -72,6 +72,11 @@ static int clonefd_release(struct inode *inode, struct file *file)
 {
 	struct clonefd_data *data = file->private_data;
 
+	if ((data->flags & CLONEFD_KILL_ON_CLOSE) &&
+	    (data->task->exit_state == 0)) {
+		clonefd_task_kill(data->task, SIGKILL);
+	}
+
 	put_task_struct(data->task);
 	kfree(data);
 	return 0;
@@ -181,7 +186,8 @@ int clonefd_do_clone(u64 clone_flags, struct task_struct *p,
 	if (!p->clonefd)
 		return 0;
 
-	if (args->clonefd_flags & ~(CLONEFD_CLOEXEC | CLONEFD_NONBLOCK))
+	if (args->clonefd_flags & ~(CLONEFD_CLOEXEC | CLONEFD_NONBLOCK |
+				    CLONEFD_KILL_ON_CLOSE))
 		return -EINVAL;
 
 	data = kmalloc(sizeof(*data), GFP_KERNEL);
