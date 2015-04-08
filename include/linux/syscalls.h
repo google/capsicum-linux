@@ -65,6 +65,7 @@ struct old_linux_dirent;
 struct perf_event_attr;
 struct file_handle;
 struct sigaltstack;
+struct clone4_args;
 union bpf_attr;
 
 #include <linux/types.h>
@@ -898,4 +899,7 @@ asmlinkage long sys_copy_file_range(int fd_in, loff_t __user *off_in,
 
 asmlinkage long sys_mlock2(unsigned long start, size_t len, int flags);
 
+asmlinkage long sys_clone4(unsigned int flags_high, unsigned int flags_low,
+			   unsigned long args_size,
+			   struct clone4_args __user *args);
 #endif
