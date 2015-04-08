@@ -25,7 +25,8 @@ static unsigned int clonefd_poll(struct file *file, poll_table *wait)
 	return p->exit_state ? (POLLIN | POLLRDNORM | POLLHUP) : 0;
 }
 
-static ssize_t clonefd_read(struct file *file, char __user *buf, size_t count, loff_t *ppos)
+static ssize_t clonefd_read(struct file *file, char __user *buf,
+			    size_t count, loff_t *ppos)
 {
 	struct task_struct *p = file->private_data;
 	int ret = 0;
@@ -42,6 +43,7 @@ static ssize_t clonefd_read(struct file *file, char __user *buf, size_t count, l
 	if (p->exit_state) {
 		struct clonefd_info info = {};
 		cputime_t utime, stime;
+
 		task_exit_code_status(p->exit_code, &info.code, &info.status);
 		info.code &= ~__SI_MASK;
 		task_cputime(p, &utime, &stime);
@@ -52,7 +54,7 @@ static ssize_t clonefd_read(struct file *file, char __user *buf, size_t count, l
 	return ret;
 }
 
-static struct file_operations clonefd_fops = {
+static const struct file_operations clonefd_fops = {
 	.release = clonefd_release,
 	.poll = clonefd_poll,
 	.read = clonefd_read,

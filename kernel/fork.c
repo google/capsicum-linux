@@ -1777,7 +1777,7 @@ long do_fork(unsigned long clone_flags,
 		.ptid = parent_tidptr,
 		.ctid = child_tidptr,
 		.stack_start = stack_start,
-		.stack_start = stack_size,
+		.stack_size = stack_size,
 	};
 	return _do_fork(squelch_clone_flags(clone_flags), &kargs);
 }
