@@ -1456,7 +1456,8 @@ static struct task_struct *copy_process(u64 clone_flags,
 	retval = copy_io(clone_flags, p);
 	if (retval)
 		goto bad_fork_cleanup_namespaces;
-	retval = copy_thread_tls(clone_flags, args->stack_start, args->stack_size, p, args->tls);
+	retval = copy_thread_tls(clone_flags, args->stack_start,
+				 args->stack_size, p, args->tls);
 	if (retval)
 		goto bad_fork_cleanup_io;
 
@@ -1472,11 +1473,13 @@ static struct task_struct *copy_process(u64 clone_flags,
 	if (retval)
 		goto bad_fork_free_pid;
 
-	p->set_child_tid = (clone_flags & CLONE_CHILD_SETTID) ? args->ctid : NULL;
+	p->set_child_tid = (clone_flags & CLONE_CHILD_SETTID) ?
+			    args->ctid : NULL;
 	/*
 	 * Clear TID on mm_release()?
 	 */
-	p->clear_child_tid = (clone_flags & CLONE_CHILD_CLEARTID) ? args->ctid : NULL;
+	p->clear_child_tid = (clone_flags & CLONE_CHILD_CLEARTID) ?
+			      args->ctid : NULL;
 #ifdef CONFIG_BLOCK
 	p->plug = NULL;
 #endif
@@ -1687,6 +1690,7 @@ struct task_struct *fork_idle(int cpu)
 {
 	struct task_struct *task;
 	struct clone4_args args = {};
+
 	task = copy_process(CLONE_VM, &args, &init_struct_pid, 0, NULL);
 	if (!IS_ERR(task)) {
 		init_idle_pids(task->pids);
@@ -1792,8 +1796,9 @@ long do_fork(unsigned long clone_flags,
 		.ptid = parent_tidptr,
 		.ctid = child_tidptr,
 		.stack_start = stack_start,
-		.stack_start = stack_size,
+		.stack_size = stack_size,
 	};
+
 	return _do_fork(squelch_clone_flags(clone_flags), &kargs);
 }
 #endif
@@ -1807,6 +1812,7 @@ pid_t kernel_thread(int (*fn)(void *), void *arg, unsigned long flags)
 		.stack_start = (unsigned long)fn,
 		.stack_size = (unsigned long)arg,
 	};
+
 	return _do_fork(flags|CLONE_VM|CLONE_UNTRACED, &kargs);
 }
 
@@ -1815,6 +1821,7 @@ SYSCALL_DEFINE0(fork)
 {
 #ifdef CONFIG_MMU
 	struct clone4_args kargs = {};
+
 	return _do_fork(SIGCHLD, &kargs);
 #else
 	/* can not support in nommu mode */
@@ -1827,6 +1834,7 @@ SYSCALL_DEFINE0(fork)
 SYSCALL_DEFINE0(vfork)
 {
 	struct clone4_args kargs = {};
+
 	return _do_fork(CLONE_VFORK | CLONE_VM | SIGCHLD, &kargs);
 }
 #endif
@@ -1861,6 +1869,7 @@ SYSCALL_DEFINE5(clone, unsigned long, clone_flags, unsigned long, newsp,
 		.stack_start = newsp,
 		.tls = tls,
 	};
+
 	return _do_fork(squelch_clone_flags(clone_flags), &kargs);
 }
 #endif
@@ -1871,6 +1880,7 @@ SYSCALL_DEFINE4(clone4, unsigned, flags_high, unsigned, flags_low,
 {
 	u64 flags = (u64)flags_high << 32 | flags_low;
 	struct clone4_args kargs = {};
+
 	if (args_size > sizeof(kargs))
 		return -EINVAL;
 	if (args_size && copy_from_user(&kargs, args, args_size))
@@ -1886,6 +1896,7 @@ COMPAT_SYSCALL_DEFINE4(clone4, unsigned, flags_high, unsigned, flags_low,
 	u64 flags = (u64)flags_high << 32 | flags_low;
 	struct compat_clone4_args compat_kargs = {};
 	struct clone4_args kargs = {};
+
 	if (args_size > sizeof(compat_kargs))
 		return -EINVAL;
 	if (args_size && copy_from_user(&compat_kargs, args, args_size))
