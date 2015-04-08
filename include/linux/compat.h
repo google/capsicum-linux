@@ -296,9 +296,9 @@ struct compat_old_sigaction {
 struct compat_clone4_args {
 	compat_uptr_t ptid;
 	compat_uptr_t ctid;
-	compat_ulong_t stack_start;
-	compat_ulong_t stack_size;
-	compat_ulong_t tls;
+	compat_uptr_t stack_start;
+	compat_uptr_t stack_size;
+	compat_uptr_t tls;
 	compat_uptr_t clonefd;
 	u32 clonefd_flags;
 };
