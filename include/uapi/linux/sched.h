@@ -77,8 +77,14 @@ struct clone4_args {
 	__kernel_ulong_t stack_size;
 	__kernel_ulong_t tls;
 	int __user *clonefd;
-	__u32 clonefd_flags;
+	__u32 clonefd_flags;	/* Combination of CLONEFD_* flags */
 };
+
+/*
+ * Flags for clonefd_flags field.
+ */
+#define CLONEFD_CLOEXEC	0x00000001	/* As O_CLOEXEC */
+#define CLONEFD_NONBLOCK	0x00000002	/* As O_NONBLOCK */
 
 /*
  * Scheduling policies
