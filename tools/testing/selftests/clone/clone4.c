@@ -42,6 +42,9 @@ const char *verbose;
 #ifndef CLONEFD_NONBLOCK
 #define CLONEFD_NONBLOCK	0x00000002
 #endif
+#ifndef CLONEFD_KILL_ON_CLOSE
+#define CLONEFD_KILL_ON_CLOSE	0x00000004
+#endif
 
 #ifndef CLONEFD_IOC_GETTID
 #define CLONEFD_IOC_GETTID	_IO('C', 1)
@@ -655,6 +658,37 @@ static int check_clone_fd_write(void)
 	return fail;
 }
 
+static int check_clone_fd_kill_on_close(void)
+{
+	int fail = 0;
+	pid_t child, waited;
+	int fd = -1;
+	int status;
+
+	child = clone4_(SIGCHLD|CLONE_FD, NULL, NULL, NULL, &fd,
+			CLONEFD_KILL_ON_CLOSE);
+	if (child == 0)
+		exit(child_loop_forever(NULL));
+	vprintf("[%d] clone4() returned child=%d fd=%d errno=%d\n",
+		gettid_(), child, fd, errno);
+	ASSERT(child > 0);
+
+	/* Child is running */
+	EXPECT(pid_present(child));
+	waited = waitpid(child, &status, WNOHANG);
+	EXPECT(waited == 0);
+
+	/* Closing the clonefd kills the child */
+	close(fd);
+	waited = waitpid(child, &status, 0);
+	EXPECT(waited == child);
+	EXPECT(WIFSIGNALED(status));
+	EXPECT(WTERMSIG(status) == SIGKILL);
+	EXPECT(!pid_present(child));
+
+	return fail;
+}
+
 int main(int argc, char **argv)
 {
 	int fail = 0;
@@ -680,6 +714,7 @@ int main(int argc, char **argv)
 	fail += RUN_TEST(check_clone_fd_nonblock, 0);
 	fail += RUN_TEST(check_clone_fd_invalid, 0);
 	fail += RUN_TEST(check_clone_fd_write, 0);
+	fail += RUN_TEST(check_clone_fd_kill_on_close, 0);
 
 	return fail;
 }
