@@ -65,6 +65,7 @@ struct old_linux_dirent;
 struct perf_event_attr;
 struct file_handle;
 struct sigaltstack;
+struct clone4_args;
 union bpf_attr;
 
 #include <linux/types.h>
@@ -903,4 +904,7 @@ asmlinkage long sys_pkey_mprotect(unsigned long start, size_t len,
 asmlinkage long sys_pkey_alloc(unsigned long flags, unsigned long init_val);
 asmlinkage long sys_pkey_free(int pkey);
 
+asmlinkage long sys_clone4(unsigned int flags_high, unsigned int flags_low,
+			   unsigned long args_size,
+			   struct clone4_args __user *args);
 #endif
