@@ -73,9 +73,9 @@ struct clonefd_info {
 struct clone4_args {
 	__kernel_pid_t __user *ptid;
 	__kernel_pid_t __user *ctid;
-	__kernel_ulong_t stack_start;
-	__kernel_ulong_t stack_size;
-	__kernel_ulong_t tls;
+	void *stack_start;
+	void *stack_size;
+	void *tls;
 	int __user *clonefd;
 	__u32 clonefd_flags;	/* Combination of CLONEFD_* flags */
 };
