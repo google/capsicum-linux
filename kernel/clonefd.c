@@ -82,13 +82,17 @@ int clonefd_do_clone(u64 clone_flags, struct task_struct *p,
 	if (!p->clonefd)
 		return 0;
 
-	if (args->clonefd_flags & ~(O_CLOEXEC | O_NONBLOCK))
+	if (args->clonefd_flags & ~(CLONEFD_CLOEXEC | CLONEFD_NONBLOCK))
 		return -EINVAL;
 
 	init_waitqueue_head(&p->clonefd_wqh);
 
 	get_task_struct(p);
-	flags = O_RDONLY | FMODE_ATOMIC_POS | args->clonefd_flags;
+	flags = O_RDONLY | FMODE_ATOMIC_POS;
+	if (args->clonefd_flags & CLONEFD_CLOEXEC)
+		flags |= O_CLOEXEC;
+	if (args->clonefd_flags & CLONEFD_NONBLOCK)
+		flags |= O_NONBLOCK;
 	file = anon_inode_getfile("[process]", &clonefd_fops, p, flags);
 	if (IS_ERR(file)) {
 		put_task_struct(p);
