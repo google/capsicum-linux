@@ -86,6 +86,7 @@ struct clone4_args {
  */
 #define CLONEFD_CLOEXEC	0x00000001	/* As O_CLOEXEC */
 #define CLONEFD_NONBLOCK	0x00000002	/* As O_NONBLOCK */
+#define CLONEFD_KILL_ON_CLOSE	0x00000004	/* Final close => SIGKILL */
 
 /*
  * ioctl(2) operations that can be performed on clone FDs.
