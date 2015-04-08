@@ -1511,8 +1511,9 @@ static struct task_struct *copy_process(u64 clone_flags,
 	retval = copy_io(clone_flags, p);
 	if (retval)
 		goto bad_fork_cleanup_namespaces;
-	retval = copy_thread_tls(clone_flags, args->stack_start,
-				 args->stack_size, p, args->tls);
+	retval = copy_thread_tls(clone_flags, (unsigned long)args->stack_start,
+				 (unsigned long)args->stack_size, p,
+				 (unsigned long)args->tls);
 	if (retval)
 		goto bad_fork_cleanup_io;
 
@@ -1855,8 +1856,8 @@ long do_fork(unsigned long clone_flags,
 	struct clone4_args kargs = {
 		.ptid = parent_tidptr,
 		.ctid = child_tidptr,
-		.stack_start = stack_start,
-		.stack_size = stack_size,
+		.stack_start = (void *)stack_start,
+		.stack_size = (void *)stack_size,
 	};
 
 	return _do_fork(squelch_clone_flags(clone_flags), &kargs);
@@ -1869,8 +1870,8 @@ long do_fork(unsigned long clone_flags,
 pid_t kernel_thread(int (*fn)(void *), void *arg, unsigned long flags)
 {
 	struct clone4_args kargs = {
-		.stack_start = (unsigned long)fn,
-		.stack_size = (unsigned long)arg,
+		.stack_start = fn,
+		.stack_size = arg,
 	};
 
 	return _do_fork(flags|CLONE_VM|CLONE_UNTRACED, &kargs);
@@ -1926,8 +1927,8 @@ SYSCALL_DEFINE5(clone, unsigned long, clone_flags, unsigned long, newsp,
 	struct clone4_args kargs = {
 		.ptid = parent_tidptr,
 		.ctid = child_tidptr,
-		.stack_start = newsp,
-		.tls = tls,
+		.stack_start = (void *)newsp,
+		.tls = (void *)tls,
 	};
 
 	return _do_fork(squelch_clone_flags(clone_flags), &kargs);
@@ -1963,9 +1964,9 @@ COMPAT_SYSCALL_DEFINE4(clone4, unsigned, flags_high, unsigned, flags_low,
 		return -EFAULT;
 	kargs.ptid = compat_ptr(compat_kargs.ptid);
 	kargs.ctid = compat_ptr(compat_kargs.ctid);
-	kargs.stack_start = compat_kargs.stack_start;
-	kargs.stack_size = compat_kargs.stack_size;
-	kargs.tls = compat_kargs.tls;
+	kargs.stack_start = compat_ptr(compat_kargs.stack_start);
+	kargs.stack_size = compat_ptr(compat_kargs.stack_size);
+	kargs.tls = compat_ptr(compat_kargs.tls);
 	kargs.clonefd = compat_ptr(compat_kargs.clonefd);
 	kargs.clonefd_flags = compat_kargs.clonefd_flags;
 	return _do_fork(flags, &kargs);
