@@ -16,6 +16,11 @@
 #include "audit.h"
 #include "clonefd.h"
 
+struct clonefd_data {
+	struct task_struct *task;
+	u32 flags;
+};
+
 static int clonefd_task_kill(struct task_struct *task, __u8 signum)
 {
 	struct siginfo info;
@@ -54,24 +59,28 @@ err_unlock:
 static ssize_t clonefd_write(struct file *file, const char __user *buf,
 			     size_t count, loff_t *ppos)
 {
-	struct task_struct *task = file->private_data;
+	struct clonefd_data *data = file->private_data;
 	__u8 signum;
 
 	if (copy_from_user(&signum, buf, sizeof(signum)))
 		return -EFAULT;
 
-	return clonefd_task_kill(task, signum) ?: sizeof(signum);
+	return clonefd_task_kill(data->task, signum) ?: sizeof(signum);
 }
 
 static int clonefd_release(struct inode *inode, struct file *file)
 {
-	put_task_struct(file->private_data);
+	struct clonefd_data *data = file->private_data;
+
+	put_task_struct(data->task);
+	kfree(data);
 	return 0;
 }
 
 static unsigned int clonefd_poll(struct file *file, poll_table *wait)
 {
-	struct task_struct *p = file->private_data;
+	struct clonefd_data *data = file->private_data;
+	struct task_struct *p = data->task;
 
 	poll_wait(file, &p->clonefd_wqh, wait);
 	return p->exit_state ? (POLLIN | POLLRDNORM | POLLHUP) : 0;
@@ -80,7 +89,8 @@ static unsigned int clonefd_poll(struct file *file, poll_table *wait)
 static ssize_t clonefd_read(struct file *file, char __user *buf,
 			    size_t count, loff_t *ppos)
 {
-	struct task_struct *p = file->private_data;
+	struct clonefd_data *data = file->private_data;
+	struct task_struct *p = data->task;
 	int ret = 0;
 
 	/* EOF after first read */
@@ -110,7 +120,8 @@ static ssize_t clonefd_read(struct file *file, char __user *buf,
 static long clonefd_ioctl(struct file *file, unsigned int cmd,
 			  unsigned long arg)
 {
-	struct task_struct *p = file->private_data;
+	struct clonefd_data *data = file->private_data;
+	struct task_struct *p = data->task;
 	int ret = 0;
 
 	switch (cmd) {
@@ -132,7 +143,8 @@ static long clonefd_ioctl(struct file *file, unsigned int cmd,
 
 static void clonefd_show_fdinfo(struct seq_file *m, struct file *file)
 {
-	struct task_struct *p = file->private_data;
+	struct clonefd_data *data = file->private_data;
+	struct task_struct *p = data->task;
 
 	seq_printf(m, "pid:\t%d\ntid:\t%d\n",
 		   task_pid_vnr(p), task_tgid_vnr(p));
@@ -161,6 +173,7 @@ int clonefd_do_clone(u64 clone_flags, struct task_struct *p,
 		     struct clone4_args *args, struct clonefd_setup *setup)
 {
 	int flags;
+	struct clonefd_data *data;
 	struct file *file;
 	int fd;
 
@@ -171,6 +184,12 @@ int clonefd_do_clone(u64 clone_flags, struct task_struct *p,
 	if (args->clonefd_flags & ~(CLONEFD_CLOEXEC | CLONEFD_NONBLOCK))
 		return -EINVAL;
 
+	data = kmalloc(sizeof(*data), GFP_KERNEL);
+	if (!data)
+		return -ENOMEM;
+	data->flags = args->clonefd_flags;
+	data->task = p;
+
 	init_waitqueue_head(&p->clonefd_wqh);
 
 	get_task_struct(p);
@@ -179,7 +198,7 @@ int clonefd_do_clone(u64 clone_flags, struct task_struct *p,
 		flags |= O_CLOEXEC;
 	if (args->clonefd_flags & CLONEFD_NONBLOCK)
 		flags |= O_NONBLOCK;
-	file = anon_inode_getfile("[process]", &clonefd_fops, p, flags);
+	file = anon_inode_getfile("[process]", &clonefd_fops, data, flags);
 	if (IS_ERR(file)) {
 		put_task_struct(p);
 		return PTR_ERR(file);
@@ -201,6 +220,7 @@ void clonefd_cleanup_failed_clone(struct clonefd_setup *setup)
 {
 	if (setup->file) {
 		put_unused_fd(setup->fd);
+		kfree(setup->file->private_data);
 		fput(setup->file);
 	}
 }
