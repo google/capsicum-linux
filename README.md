@@ -13,7 +13,7 @@ This functionality is based on:
    [Linux kernel implementation](http://git.chromium.org/gitweb/?p=chromiumos/third_party/kernel-capsicum.git;a=shortlog;h=refs/heads/capsicum)
    written by Meredydd Luff in 2012.
 
-The current functionality is based on the 3.18 upstream kernel.
+The current functionality is based on the 4.0 upstream kernel.
 
 Branch Status
 -------------
@@ -23,19 +23,19 @@ development and so may contain in-progress, untested code.  This branch is gener
 kept synchronized with the [capsicum-test](https://github.com/google/capsicum-test)
 repository.
 
-Other branches **should be avoided** as they may be rebased.  In particular,
+Other branches **should be avoided** as they are frequently rebased.  In particular,
 any branches named with the following prefixes are used to divide the Capsicum code into
-distinct patchsets, and so are frequently rebased to synchronize with the tip of
+distinct per-topic patchsets, and so are rebased to synchronize with the tip of
 the `capsicum` branch.
 
- - Currently maintained topic branches:
-   - `capsicum-hooks`: Capability file descriptors via LSM hooks.
-   - `procdesc`: Process descriptors.
-   - `no-upstream`: Local changes for development convenience.
- - Inactive topic branches:
-   - `seccomp-uml`: Enable seccomp in user-mode Linux.
-   - `execveat`: execveat(2) syscall.
-   - `capsicum-capmode`: Capability mode via seccomp and an LSM hook.
+ - `capsicum-hooks-<ver>`: Capability file descriptors via LSM hooks.
+ - `procdesc-<ver>`: Process descriptors.
+ - `misc-<ver>`: Other kernel changes not specifically needed for Capsicum.
+ - `no-upstream-<ver>`: Local changes for development convenience.
+
+A merge of the latest versions of these topic branches should yield a codebase
+that is the same as the current `capsicum` branch (although this sometimes lags
+behind as this requires manual merging).
 
 
 Functionality Overview
@@ -50,22 +50,23 @@ be narrowed, not widened.
 Capsicum also introduces *capability mode*, which disables (with `ECAPMODE`)
 all syscalls that access any kind of global namespace.
 
-See Documentation/security/capsicum.txt for more details
+See [Documentation/security/capsicum.txt](Documentation/security/capsicum.txt)
+for more details
 
 As process management normally involves a global namespace (that of `pid_t`
 values), Capsicum also introduces a *process descriptor* and related syscalls,
 which allows processes to be manipulated as another kind of file descriptor.
-See Documentation/procdesc.txt for more details.
+See [Documentation/procdesc.txt](Documentation/procdesc.txt) for more details.
+
 
 Building
 --------
 
-Capsicum support is currently included for x86_64 and user-mode Linux.  The
+Capsicum support is currently included for x86 variants and user-mode Linux.  The
 configuration parameters that need to be enabled are:
 
- - `CONFIG_64BIT`: Capsicum support is currently only implemented for 64 bit mode.
- - `CONFIG_PROCDESC`: enable Capsicum process-descriptor functionality.
  - `CONFIG_SECURITY_CAPSICUM`: enable Capsicum.
+ - `CONFIG_PROCDESC`: enable Capsicum process-descriptor functionality.
 
 User-mode Linux is used for Capsicum testing, and requires the following
 additional configuration parameters:
