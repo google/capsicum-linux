@@ -105,9 +105,9 @@ SYSCALL_DEFINE2(pdgetpid, int, fd, pid_t __user *, pidp)
 	if (pidp == NULL)
 		return -EFAULT;
 
-	f = fget(fd);
-	if (!f)
-		return -EBADF;
+	f = fgetr(fd, CAP_PDGETPID);
+	if (IS_ERR(f))
+		return PTR_ERR(f);
 
 	pd = procdesc_get(f);
 	if (!pd) {
@@ -179,9 +179,9 @@ SYSCALL_DEFINE2(pdkill, int, fd, int, signum)
 	if (!valid_signal(signum))
 		return -EINVAL;
 
-	f = fget(fd);
-	if (!f)
-		return -EBADF;
+	f = fgetr(fd, CAP_PDKILL);
+	if (IS_ERR(f))
+		return PTR_ERR(f);
 
 	pd = procdesc_get(f);
 	if (!pd) {
@@ -201,9 +201,9 @@ SYSCALL_DEFINE4(pdwait4, int, fd, int __user *, status, int, options,
 	struct procdesc *pd;
 	pid_t pid;
 
-	f = fget(fd);
-	if (!f)
-		return -EBADF;
+	f = fgetr(fd, CAP_PDWAIT);
+	if (IS_ERR(f))
+		return PTR_ERR(f);
 
 	/* Convert to a pid_t and forward on to wait4(2) */
 	pd = procdesc_get(f);
