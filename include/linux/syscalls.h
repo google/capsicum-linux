@@ -889,12 +889,14 @@ asmlinkage long sys_cap_rights_limit(unsigned int orig_fd,
 				     const struct cap_rights __user *new_rights,
 				     unsigned int fcntls,
 				     int nioctls,
-				     unsigned int __user *ioctls);
+				     unsigned int __user *ioctls,
+				     unsigned int flags);
 asmlinkage long sys_cap_rights_get(unsigned int fd,
 				   struct cap_rights __user *rightsp,
 				   unsigned int __user *fcntls,
 				   int __user *nioctls,
-				   unsigned int __user *ioctls);
+				   unsigned int __user *ioctls,
+				   unsigned int flags);
 
 asmlinkage long sys_pdfork(int __user *fdp, unsigned long flags);
 asmlinkage long sys_pdgetpid(int fd, pid_t __user *pidp);
