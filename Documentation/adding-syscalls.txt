@@ -298,8 +298,8 @@ compatibility wrapper:
     ...
     555   x32      xyzzy     compat_sys_xyzzy
 
-If no pointers are involved, then it is often possible to re-use the 64-bit
-system call for the x32 ABI (and consequently the entry in
+If no pointers are involved, then it is preferable to re-use the 64-bit system
+call for the x32 ABI (and consequently the entry in
 arch/x86/syscalls/syscall_64.tbl is unchanged).
 
 In either case, you should check that the types involved in your argument
@@ -461,3 +461,6 @@ References and Sources
    https://lkml.org/lkml/2008/12/12/187
  - Recommendation from Greg Kroah-Hartman that unknown flags should be
    policed: https://lkml.org/lkml/2014/7/17/577
+ - Recommendation from Linus Torvalds that x32 system calls should prefer
+   compatibility with 64-bit versions rather than 32-bit versions:
+   https://lkml.org/lkml/2011/8/31/244
