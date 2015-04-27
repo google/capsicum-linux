@@ -9,6 +9,7 @@
 #include <linux/capsicum.h>
 #include <linux/file.h>
 #include <linux/seq_file.h>
+#include <linux/fs.h>
 
 #include <linux/proc_fs.h>
 
@@ -38,6 +39,7 @@ static int seq_show(struct seq_file *m, void *v)
 		file = fcheck_files(files, fd);
 		if (file) {
 			struct fdtable *fdt = files_fdtable(files);
+
 			underlying = capsicum_file_lookup(file, NULL, NULL);
 			f_flags = underlying->f_flags;
 			if (close_on_exec(fd, fdt))
@@ -51,18 +53,24 @@ static int seq_show(struct seq_file *m, void *v)
 		put_files_struct(files);
 	}
 
-	if (!ret) {
-		seq_printf(m, "pos:\t%lli\nflags:\t0%o\nmnt_id:\t%i\n",
-			   (long long)underlying->f_pos, f_flags,
-			   real_mount(underlying->f_path.mnt)->mnt_id);
-		if (file->f_op->show_fdinfo)
-			file->f_op->show_fdinfo(m, file);
-		ret = seq_has_overflowed(m);
-		fput(underlying);
-		fput(file);
-	}
+	if (ret)
+		return ret;
 
-	return ret;
+	seq_printf(m, "pos:\t%lli\nflags:\t0%o\nmnt_id:\t%i\n",
+		   (long long)underlying->f_pos, f_flags,
+		   real_mount(underlying->f_path.mnt)->mnt_id);
+
+	show_fd_locks(m, underlying, files);
+	if (seq_has_overflowed(m))
+		goto out;
+
+	if (file->f_op->show_fdinfo)
+		file->f_op->show_fdinfo(m, file);
+
+out:
+	fput(underlying);
+	fput(file);
+	return 0;
 }
 
 static int seq_fdinfo_open(struct inode *inode, struct file *file)
@@ -88,7 +96,7 @@ static int tid_fd_revalidate(struct dentry *dentry, unsigned int flags)
 	if (flags & LOOKUP_RCU)
 		return -ECHILD;
 
-	inode = dentry->d_inode;
+	inode = d_inode(dentry);
 	task = get_proc_task(inode);
 	fd = proc_fd(inode);
 
@@ -151,14 +159,14 @@ static int proc_fd_link(struct dentry *dentry, struct path *path)
 	struct task_struct *task;
 	int ret = -ENOENT;
 
-	task = get_proc_task(dentry->d_inode);
+	task = get_proc_task(d_inode(dentry));
 	if (task) {
 		files = get_files_struct(task);
 		put_task_struct(task);
 	}
 
 	if (files) {
-		int fd = proc_fd(dentry->d_inode);
+		int fd = proc_fd(d_inode(dentry));
 		struct file *fd_file;
 
 		spin_lock(&files->file_lock);
