@@ -206,9 +206,10 @@ include an explicit pointer, this is handled transparently.
 However, there are a couple of situations where a compatibility layer is
 needed to cope with size differences between 32-bit and 64-bit.
 
-The first is if the 64-bit kernel needs to parse areas of (__user) memory that
-could hold either 32-bit or 64-bit values.  In particular, this is needed
-whenever a system call argument is:
+The first is if the 64-bit kernel also supports 32-bit userspace programs, and
+so needs to parse areas of (__user) memory that could hold either 32-bit or
+64-bit values.  In particular, this is needed whenever a system call argument
+is:
 
  - a pointer to a pointer
  - a pointer to a struct containing a pointer (e.g. struct iovec __user *)
@@ -218,8 +219,8 @@ whenever a system call argument is:
 The second situation that requires a compatibility layer is if one of the
 system call's arguments has a type that is explicitly 64-bit even on a 32-bit
 architecture, for example loff_t or __u64.  In this case, a value that arrives
-from a 32-bit application will be split into two 32-bit values, which then
-need to be re-assembled in the compatibility layer.
+at a 64-bit kernel from a 32-bit application will be split into two 32-bit
+values, which then need to be re-assembled in the compatibility layer.
 
 (Note that a system call argument that's a pointer to an explicit 64-bit type
 does *not* need a compatibility layer; for example, splice(2)'s arguments of
@@ -227,11 +228,11 @@ type loff_t __user * do not trigger the need for a compat_ system call.)
 
 The compatibility version of the system call is called compat_sys_xyzzy(), and
 is added with the COMPAT_SYSCALL_DEFINEn() macro, analogously to
-SYSCALL_DEFINEn.  This version of the implementation expects 32-bit parameter
-values, and does the work of converting those values to the 64-bit versions
-that are expected internally.  (Typically, the compat_sys_ version either
-calls on to the sys_ version, or both of them call a common inner
-implementation function.)
+SYSCALL_DEFINEn.  This version of the implementation runs as part of a 64-bit
+kernel, but expects to receive 32-bit parameter values and does whatever is
+needed to deal with them.  (Typically, the compat_sys_ version converts the
+values to 64-bit versions and either calls on to the sys_ version, or both of
+them call a common inner implementation function.)
 
 The compat entry point also needs a corresponding function prototype, in
 include/linux/compat.h, marked as asmlinkage to match the way that system
@@ -239,15 +240,20 @@ calls are invoked:
 
     asmlinkage long compat_sys_xyzzy(...);
 
-If the system call involves a structure, say struct xyzzy_args, then this
+If the system call involves a structure that is laid out differently on 32-bit
+and 64-bit systems, say struct xyzzy_args, then the include/linux/compat.h
 header file should also include a compat version of the structure (struct
-compat_xyzzy_args) where each field has the appropriate compat_ type that
-corresponds to the type in struct xyzzy_args.
+compat_xyzzy_args) where each variable-size field has the appropriate compat_
+type that corresponds to the type in struct xyzzy_args.  The
+compat_sys_xyzzy() routine can then use this compat_ structure to parse the
+arguments from a 32-bit invocation.
 
-For example, if there is a field:
+For example, if there are fields:
 
     struct xyzzy_args {
         const char __user *ptr;
+        __kernel_long_t varying_val;
+        u64 fixed_val;
         /* ... */
     };
 
@@ -255,6 +261,8 @@ in struct xyzzy_args, then struct compat_xyzzy_args would have:
 
     struct compat_xyzzy_args {
         compat_uptr_t ptr;
+        compat_long_t varying_val;
+        u64 fixed_val;
         /* ... */
     };
 
@@ -312,8 +320,8 @@ System Calls Returning Elsewhere
 
 For most system calls, once the system call is complete the user program
 continues exactly where it left off -- at the next instruction, with the same
-stack and registers as before the system call, with the same virtual memory
-space.
+stack and registers as before the system call, and with the same virtual
+memory space.
 
 However, a few system calls do things differently.  They might return to a
 different location (rt_sigreturn) or change the memory space (fork/vfork/clone)
@@ -339,6 +347,13 @@ corresponding syscall table adjustment in arch/x86/syscalls/syscall_32.tbl:
 
     380   i386     xyzzy     sys_xyzzy    stub32_xyzzy
 
+If the system call needs a compatibility layer (as in the previous section)
+then the stub32_ version needs to call on to the compat_sys_ version of the
+system call rather than the native 64-bit version.  Also, if the x32 ABI
+implementation is not common with the x86_64 version, then its syscall
+table will also need to invoke a stub that calls on to the compat_sys_
+version.
+
 For completeness, it's also nice to set up a mapping so that user-mode Linux
 still works -- its syscall table will reference stub_xyzzy, but the UML build
 doesn't include arch/x86/kernel/entry_64.S implementation (because UML
@@ -346,34 +361,6 @@ simulates registers etc).  Fixing this is as simple as adding a #define to
 arch/x86/um/sys_call_table_64.c:
 
     #define stub_xyzzy sys_xyzzy
-
-
-Compatibility Elsewhere
------------------------
-
-Very occasionally, both of the special cases from the previous sections apply:
-system calls like execve(2) and execveat(2) may return elsewhere, and also have
-size-dependent parameters.
-
-For this case (on x86_64), there need to be three distinct wrapper entry
-points:
-
- - stub_xyzzy (in arch/x86/kernel/entry_64.S): accept calls in 64-bit calling
-   convention, save extra registers and invoke sys_xyzzy().
- - stub32_xyzzy (in arch/x86/ia32/ia32entry.S): accept calls in 32-bit calling
-   convention, save extra registers and invoke compat_sys_xyzzy().
- - stub_x32_xyzzy (in arch/x86/kernel/entry_64.S): accept calls in 64-bit calling
-   convention, save extra registers and invoke compat_sys_xyzzy().
-
-For this, the entry in arch/x86/syscalls/syscall_32.tbl is:
-
-    380   i386     xyzzy     sys_xyzzy    stub32_xyzzy
-
-The entry in arch/x86/syscalls/syscall_64.tbl is:
-
-    333   64       xyzzy     stub_xyzzy
-    ...
-    555   x32      xyzzy     stub_x32_xyzzy
 
 
 Other Details
