@@ -501,7 +501,6 @@ END(stub_\func)
 	FORK_LIKE  clone
 	FORK_LIKE  fork
 	FORK_LIKE  vfork
-	FORK_LIKE  pdfork
 
 ENTRY(stub_execve)
 	CFI_STARTPROC
