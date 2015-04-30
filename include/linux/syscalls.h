@@ -66,6 +66,7 @@ struct perf_event_attr;
 struct file_handle;
 struct sigaltstack;
 struct cap_rights;
+struct clone4_args;
 union bpf_attr;
 
 #include <linux/types.h>
@@ -828,15 +829,15 @@ asmlinkage long sys_syncfs(int fd);
 asmlinkage long sys_fork(void);
 asmlinkage long sys_vfork(void);
 #ifdef CONFIG_CLONE_BACKWARDS
-asmlinkage long sys_clone(unsigned long, unsigned long, int __user *, int,
+asmlinkage long sys_clone(unsigned long, unsigned long, int __user *, unsigned long,
 	       int __user *);
 #else
 #ifdef CONFIG_CLONE_BACKWARDS3
 asmlinkage long sys_clone(unsigned long, unsigned long, int, int __user *,
-			  int __user *, int);
+			  int __user *, unsigned long);
 #else
 asmlinkage long sys_clone(unsigned long, unsigned long, int __user *,
-	       int __user *, int);
+	       int __user *, unsigned long);
 #endif
 #endif
 
@@ -898,4 +899,7 @@ asmlinkage long sys_cap_rights_get(unsigned int fd,
 				   unsigned int __user *ioctls,
 				   unsigned int flags);
 
+asmlinkage long sys_clone4(unsigned int flags_high, unsigned int flags_low,
+			   unsigned long args_size,
+			   struct clone4_args __user *args);
 #endif

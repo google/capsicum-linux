@@ -88,6 +88,8 @@
 #define CREATE_TRACE_POINTS
 #include <trace/events/task.h>
 
+#include "clonefd.h"
+
 /*
  * Minimum number of threads to boot the kernel
  */
@@ -1236,15 +1238,17 @@ init_task_pid(struct task_struct *task, enum pid_type type, struct pid *pid)
  * parts of the process environment (as per the clone
  * flags). The actual kick-off is left to the caller.
  */
-static struct task_struct *copy_process(unsigned long clone_flags,
-					unsigned long stack_start,
-					unsigned long stack_size,
-					int __user *child_tidptr,
+static struct task_struct *copy_process(u64 clone_flags,
+					struct clone4_args *args,
 					struct pid *pid,
-					int trace)
+					int trace,
+					struct clonefd_setup *clonefd_setup)
 {
 	int retval;
 	struct task_struct *p;
+
+	if (clone_flags & ~CLONE4_VALID_FLAGS)
+		return ERR_PTR(-EINVAL);
 
 	if ((clone_flags & (CLONE_NEWNS|CLONE_FS)) == (CLONE_NEWNS|CLONE_FS))
 		return ERR_PTR(-EINVAL);
@@ -1447,7 +1451,9 @@ static struct task_struct *copy_process(unsigned long clone_flags,
 	retval = copy_io(clone_flags, p);
 	if (retval)
 		goto bad_fork_cleanup_namespaces;
-	retval = copy_thread(clone_flags, stack_start, stack_size, p);
+	retval = copy_thread_tls(clone_flags, (unsigned long)args->stack_start,
+				 (unsigned long)args->stack_size, p,
+				 (unsigned long)args->tls);
 	if (retval)
 		goto bad_fork_cleanup_io;
 
@@ -1459,11 +1465,15 @@ static struct task_struct *copy_process(unsigned long clone_flags,
 		}
 	}
 
-	p->set_child_tid = (clone_flags & CLONE_CHILD_SETTID) ? child_tidptr : NULL;
+	retval = clonefd_do_clone(clone_flags, p, args, clonefd_setup);
+	if (retval)
+		goto bad_fork_free_pid;
+
+	p->set_child_tid = (clone_flags & CLONE_CHILD_SETTID) ? args->ctid : NULL;
 	/*
 	 * Clear TID on mm_release()?
 	 */
-	p->clear_child_tid = (clone_flags & CLONE_CHILD_CLEARTID) ? child_tidptr : NULL;
+	p->clear_child_tid = (clone_flags & CLONE_CHILD_CLEARTID) ? args->ctid : NULL;
 #ifdef CONFIG_BLOCK
 	p->plug = NULL;
 #endif
@@ -1506,6 +1516,8 @@ static struct task_struct *copy_process(unsigned long clone_flags,
 		p->group_leader = p;
 		p->tgid = p->pid;
 	}
+
+	p->autoreap = !!(clone_flags & CLONE_AUTOREAP);
 
 	p->nr_dirtied = 0;
 	p->nr_dirtied_pause = 128 >> (PAGE_SHIFT - 10);
@@ -1551,7 +1563,7 @@ static struct task_struct *copy_process(unsigned long clone_flags,
 		spin_unlock(&current->sighand->siglock);
 		write_unlock_irq(&tasklist_lock);
 		retval = -ERESTARTNOINTR;
-		goto bad_fork_free_pid;
+		goto bad_fork_cleanup_clonefd;
 	}
 
 	if (likely(p->pid)) {
@@ -1603,6 +1615,8 @@ static struct task_struct *copy_process(unsigned long clone_flags,
 
 	return p;
 
+bad_fork_cleanup_clonefd:
+	clonefd_cleanup_failed_clone(clonefd_setup);
 bad_fork_free_pid:
 	if (pid != &init_struct_pid)
 		free_pid(pid);
@@ -1659,7 +1673,8 @@ static inline void init_idle_pids(struct pid_link *links)
 struct task_struct *fork_idle(int cpu)
 {
 	struct task_struct *task;
-	task = copy_process(CLONE_VM, 0, 0, NULL, &init_struct_pid, 0);
+	struct clone4_args args = {};
+	task = copy_process(CLONE_VM, &args, &init_struct_pid, 0, NULL);
 	if (!IS_ERR(task)) {
 		init_idle_pids(task->pids);
 		init_idle(task, cpu);
@@ -1674,15 +1689,12 @@ struct task_struct *fork_idle(int cpu)
  * It copies the process, and if successful kick-starts
  * it and waits for it to finish using the VM if required.
  */
-long do_fork(unsigned long clone_flags,
-	      unsigned long stack_start,
-	      unsigned long stack_size,
-	      int __user *parent_tidptr,
-	      int __user *child_tidptr)
+static long _do_fork(u64 clone_flags, struct clone4_args *args)
 {
 	struct task_struct *p;
 	int trace = 0;
 	long nr;
+	struct clonefd_setup clonefd_setup = {};
 
 	/*
 	 * Determine whether and which event to report to ptracer.  When
@@ -1702,8 +1714,7 @@ long do_fork(unsigned long clone_flags,
 			trace = 0;
 	}
 
-	p = copy_process(clone_flags, stack_start, stack_size,
-			 child_tidptr, NULL, trace);
+	p = copy_process(clone_flags, args, NULL, trace, &clonefd_setup);
 	/*
 	 * Do this prior waking up the new thread - the thread pointer
 	 * might get invalid after that point, if the thread exits quickly.
@@ -1718,13 +1729,15 @@ long do_fork(unsigned long clone_flags,
 		nr = pid_vnr(pid);
 
 		if (clone_flags & CLONE_PARENT_SETTID)
-			put_user(nr, parent_tidptr);
+			put_user(nr, args->ptid);
 
 		if (clone_flags & CLONE_VFORK) {
 			p->vfork_done = &vfork;
 			init_completion(&vfork);
 			get_task_struct(p);
 		}
+
+		clonefd_install_fd(args, &clonefd_setup);
 
 		wake_up_new_task(p);
 
@@ -1745,19 +1758,51 @@ long do_fork(unsigned long clone_flags,
 }
 
 /*
+ * Convenience function for callers passing unsigned long flags, to prevent old
+ * syscall entry points from unexpectedly returning EINVAL.
+ */
+static inline u64 squelch_clone_flags(unsigned long clone_flags)
+{
+	return clone_flags & CLONE_VALID_FLAGS;
+}
+
+#ifndef CONFIG_HAVE_COPY_THREAD_TLS
+/* For compatibility with architectures that call do_fork directly rather than
+ * using the syscall entry points below. */
+long do_fork(unsigned long clone_flags,
+	      unsigned long stack_start,
+	      unsigned long stack_size,
+	      int __user *parent_tidptr,
+	      int __user *child_tidptr)
+{
+	struct clone4_args kargs = {
+		.ptid = parent_tidptr,
+		.ctid = child_tidptr,
+		.stack_start = stack_start,
+		.stack_size = stack_size,
+	};
+	return _do_fork(squelch_clone_flags(clone_flags), &kargs);
+}
+#endif
+
+/*
  * Create a kernel thread.
  */
 pid_t kernel_thread(int (*fn)(void *), void *arg, unsigned long flags)
 {
-	return do_fork(flags|CLONE_VM|CLONE_UNTRACED, (unsigned long)fn,
-		(unsigned long)arg, NULL, NULL);
+	struct clone4_args kargs = {
+		.stack_start = fn,
+		.stack_size = arg,
+	};
+	return _do_fork(flags|CLONE_VM|CLONE_UNTRACED, &kargs);
 }
 
 #ifdef __ARCH_WANT_SYS_FORK
 SYSCALL_DEFINE0(fork)
 {
 #ifdef CONFIG_MMU
-	return do_fork(SIGCHLD, 0, 0, NULL, NULL);
+	struct clone4_args kargs = {};
+	return _do_fork(SIGCHLD, &kargs);
 #else
 	/* can not support in nommu mode */
 	return -EINVAL;
@@ -1768,8 +1813,8 @@ SYSCALL_DEFINE0(fork)
 #ifdef __ARCH_WANT_SYS_VFORK
 SYSCALL_DEFINE0(vfork)
 {
-	return do_fork(CLONE_VFORK | CLONE_VM | SIGCHLD, 0,
-			0, NULL, NULL);
+	struct clone4_args kargs = {};
+	return _do_fork(CLONE_VFORK | CLONE_VM | SIGCHLD, &kargs);
 }
 #endif
 
@@ -1777,29 +1822,72 @@ SYSCALL_DEFINE0(vfork)
 #ifdef CONFIG_CLONE_BACKWARDS
 SYSCALL_DEFINE5(clone, unsigned long, clone_flags, unsigned long, newsp,
 		 int __user *, parent_tidptr,
-		 int, tls_val,
+		 unsigned long, tls,
 		 int __user *, child_tidptr)
 #elif defined(CONFIG_CLONE_BACKWARDS2)
 SYSCALL_DEFINE5(clone, unsigned long, newsp, unsigned long, clone_flags,
 		 int __user *, parent_tidptr,
 		 int __user *, child_tidptr,
-		 int, tls_val)
+		 unsigned long, tls)
 #elif defined(CONFIG_CLONE_BACKWARDS3)
 SYSCALL_DEFINE6(clone, unsigned long, clone_flags, unsigned long, newsp,
 		int, stack_size,
 		int __user *, parent_tidptr,
 		int __user *, child_tidptr,
-		int, tls_val)
+		unsigned long, tls)
 #else
 SYSCALL_DEFINE5(clone, unsigned long, clone_flags, unsigned long, newsp,
 		 int __user *, parent_tidptr,
 		 int __user *, child_tidptr,
-		 int, tls_val)
+		 unsigned long, tls)
 #endif
 {
-	return do_fork(clone_flags, newsp, 0, parent_tidptr, child_tidptr);
+	struct clone4_args kargs = {
+		.ptid = parent_tidptr,
+		.ctid = child_tidptr,
+		.stack_start = (void *)newsp,
+		.tls = (void *)tls,
+	};
+	return _do_fork(squelch_clone_flags(clone_flags), &kargs);
 }
 #endif
+
+#ifdef CONFIG_CLONE4
+SYSCALL_DEFINE4(clone4, unsigned, flags_high, unsigned, flags_low,
+		unsigned long, args_size, struct clone4_args __user *, args)
+{
+	u64 flags = (u64)flags_high << 32 | flags_low;
+	struct clone4_args kargs = {};
+	if (args_size > sizeof(kargs))
+		return -EINVAL;
+	if (args_size && copy_from_user(&kargs, args, args_size))
+		return -EFAULT;
+	return _do_fork(flags, &kargs);
+}
+
+#ifdef CONFIG_COMPAT
+COMPAT_SYSCALL_DEFINE4(clone4, unsigned, flags_high, unsigned, flags_low,
+			compat_ulong_t, args_size,
+			struct compat_clone4_args __user *, args)
+{
+	u64 flags = (u64)flags_high << 32 | flags_low;
+	struct compat_clone4_args compat_kargs = {};
+	struct clone4_args kargs = {};
+	if (args_size > sizeof(compat_kargs))
+		return -EINVAL;
+	if (args_size && copy_from_user(&compat_kargs, args, args_size))
+		return -EFAULT;
+	kargs.ptid = compat_ptr(compat_kargs.ptid);
+	kargs.ctid = compat_ptr(compat_kargs.ctid);
+	kargs.stack_start = compat_ptr(compat_kargs.stack_start);
+	kargs.stack_size = compat_ptr(compat_kargs.stack_size);
+	kargs.tls = compat_ptr(compat_kargs.tls);
+	kargs.clonefd = compat_ptr(compat_kargs.clonefd);
+	kargs.clonefd_flags = compat_kargs.clonefd_flags;
+	return _do_fork(flags, &kargs);
+}
+#endif /* CONFIG_COMPAT */
+#endif /* CONFIG_CLONE4 */
 
 #ifndef ARCH_MIN_MMSTRUCT_ALIGN
 #define ARCH_MIN_MMSTRUCT_ALIGN 0
