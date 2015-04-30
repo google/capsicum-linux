@@ -3,7 +3,9 @@ Capsicum Object-Capabilities on Linux
 
 This repository is used for the development of
 [Capsicum](http://www.cl.cam.ac.uk/research/security/capsicum/) object
-capabilities in the Linux kernel.
+capabilities in the Linux kernel.  Overall status of the
+Capsicum for Linux project is described at
+[capsicum-linux.org](http://capsicum-linux.org/index.html).
 
 This functionality is based on:
 
