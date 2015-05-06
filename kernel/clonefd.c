@@ -239,3 +239,23 @@ void clonefd_install_fd(struct clone4_args *args, struct clonefd_setup *setup)
 		put_user(setup->fd, args->clonefd);
 	}
 }
+
+struct pid *clonefd_get_pid(int fd)
+{
+	struct file *file;
+	struct clonefd_data *data;
+	struct pid *pid = ERR_PTR(-EINVAL);
+
+	file = fget(fd);
+	if (!file)
+		return ERR_PTR(-EBADF);
+
+	if (file->f_op != &clonefd_fops)
+		goto out;
+	data = file->private_data;
+	BUG_ON(!data);
+	pid = get_task_pid(data->task, PIDTYPE_PID);
+out:
+	fput(file);
+	return pid;
+}
