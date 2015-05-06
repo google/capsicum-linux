@@ -245,9 +245,9 @@ struct pid *clonefd_get_pid(int fd)
 	struct clonefd_data *data;
 	struct pid *pid = ERR_PTR(-EINVAL);
 
-	file = fget(fd);
-	if (!file)
-		return ERR_PTR(-EBADF);
+	file = fgetr(fd, CAP_PDWAIT);
+	if (IS_ERR(file))
+		return ERR_PTR(PTR_ERR(file));
 
 	if (file->f_op != &clonefd_fops)
 		goto out;
