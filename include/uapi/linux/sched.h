@@ -1,6 +1,9 @@
 #ifndef _UAPI_LINUX_SCHED_H
 #define _UAPI_LINUX_SCHED_H
 
+#include <linux/ioctl.h>
+#include <linux/types.h>
+
 /*
  * cloning flags:
  */
@@ -18,17 +21,77 @@
 #define CLONE_SETTLS	0x00080000	/* create a new TLS for the child */
 #define CLONE_PARENT_SETTID	0x00100000	/* set the TID in the parent */
 #define CLONE_CHILD_CLEARTID	0x00200000	/* clear the TID in the child */
-#define CLONE_DETACHED		0x00400000	/* Unused, ignored */
 #define CLONE_UNTRACED		0x00800000	/* set if the tracing process can't force CLONE_PTRACE on this clone */
 #define CLONE_CHILD_SETTID	0x01000000	/* set the TID in the child */
-/* 0x02000000 was previously the unused CLONE_STOPPED (Start in stopped state)
-   and is now available for re-use. */
 #define CLONE_NEWUTS		0x04000000	/* New utsname namespace */
 #define CLONE_NEWIPC		0x08000000	/* New ipc namespace */
 #define CLONE_NEWUSER		0x10000000	/* New user namespace */
 #define CLONE_NEWPID		0x20000000	/* New pid namespace */
 #define CLONE_NEWNET		0x40000000	/* New network namespace */
 #define CLONE_IO		0x80000000	/* Clone io context */
+
+/*
+ * Old flags, unused by current clone.  clone does not return EINVAL for these
+ * flags, so they can't easily be reused.  clone4 can use them.
+ */
+#define CLONE_PID	0x00001000
+#define CLONE_DETACHED	0x00400000
+#define CLONE_STOPPED	0x02000000
+
+/*
+ * Flags that only work with clone4.
+ */
+#define CLONE_AUTOREAP	0x00001000	/* Automatically reap the process */
+#define CLONE_FD	0x00400000	/* Signal exit via file descriptor */
+
+#ifdef __KERNEL__
+/*
+ * Valid flags for clone and for clone4. Kept in this file next to the flag
+ * list above, but not exposed to userspace.
+ */
+#define CLONE_VALID_FLAGS	(0xffffffffULL & ~(CLONE_PID | CLONE_DETACHED | CLONE_STOPPED))
+#define CLONE4_VALID_FLAGS	(CLONE_VALID_FLAGS | CLONE_AUTOREAP | \
+				 (IS_ENABLED(CONFIG_CLONEFD) ? CLONE_FD : 0))
+#endif /* __KERNEL__ */
+
+/*
+ * Structure read from CLONE_FD file descriptor after process exits
+ */
+struct clonefd_info {
+	__s32 code;
+	__s32 status;
+	__u64 utime;
+	__u64 stime;
+};
+
+/*
+ * Structure passed to clone4 for additional arguments.  Initialized to 0,
+ * then overwritten with arguments from userspace, so arguments not supplied by
+ * userspace will remain 0.  New versions of the kernel may safely append new
+ * arguments to the end.
+ */
+struct clone4_args {
+	__kernel_pid_t __user *ptid;
+	__kernel_pid_t __user *ctid;
+	void *stack_start;
+	void *stack_size;
+	void *tls;
+	int __user *clonefd;
+	__u32 clonefd_flags;	/* Combination of CLONEFD_* flags */
+};
+
+/*
+ * Flags for clonefd_flags field.
+ */
+#define CLONEFD_CLOEXEC	0x00000001	/* As O_CLOEXEC */
+#define CLONEFD_NONBLOCK	0x00000002	/* As O_NONBLOCK */
+#define CLONEFD_KILL_ON_CLOSE	0x00000004	/* Final close => SIGKILL */
+
+/*
+ * ioctl(2) operations that can be performed on clone FDs.
+ */
+#define CLONEFD_IOC_GETTID	_IO('C', 1)	/* as per gettid(2) */
+#define CLONEFD_IOC_GETPID	_IO('C', 2)	/* as per getpid(2) */
 
 /*
  * Scheduling policies

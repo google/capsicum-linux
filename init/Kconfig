@@ -418,15 +418,6 @@ config BSD_PROCESS_ACCT_V3
 	  for processing it. A preliminary version of these tools is available
 	  at <http://www.gnu.org/software/acct/>.
 
-config PROCDESC
-	bool "Process descriptors"
-	default y
-	help
-	  Process descriptors are file descriptors which represent a handle
-	  on another process. See Documentation/procdesc.txt.
-
-	  Say N if unsure.
-
 config TASKSTATS
 	bool "Export task/process statistics through netlink"
 	depends on NET
@@ -1541,6 +1532,27 @@ config EVENTFD
 	help
 	  Enable the eventfd() system call that allows to receive both
 	  kernel notification (ie. KAIO) or userspace notifications.
+
+	  If unsure, say Y.
+
+config CLONE4
+	bool "Enable clone4() system call" if EXPERT
+	depends on HAVE_COPY_THREAD_TLS
+	default y
+	help
+	  Enable the clone4() system call, which supports passing additional
+	  flags.
+
+	  If unsure, say Y.
+
+config CLONEFD
+	bool "Enable CLONE_FD flag for clone4()" if EXPERT
+	depends on CLONE4
+	select ANON_INODES
+	default y
+	help
+	  Enable the CLONE_FD flag for clone4(), which creates a file descriptor
+	  to receive child exit events rather than receiving a signal.
 
 	  If unsure, say Y.
 

@@ -173,6 +173,7 @@ cond_syscall(sys_setfsuid);
 cond_syscall(sys_setfsgid);
 cond_syscall(sys_capget);
 cond_syscall(sys_capset);
+cond_syscall(sys_clone4);
 
 /* arch-specific weak syscall entries */
 cond_syscall(sys_pciconfig_read);
@@ -247,8 +248,3 @@ cond_syscall(sys_execveat);
 /* capsicum object capabilities */
 cond_syscall(sys_cap_rights_get);
 cond_syscall(sys_cap_rights_limit);
-
-cond_syscall(sys_pdfork);
-cond_syscall(sys_pdgetpid);
-cond_syscall(sys_pdkill);
-cond_syscall(sys_pdwait4);

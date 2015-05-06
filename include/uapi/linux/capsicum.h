@@ -248,12 +248,19 @@ struct cap_rights {
 #define CAP_TTYHOOK		CAPRIGHT(1, 0x0000000000000100ULL)
 
 /* Process management via process descriptors. */
-/* Allows for pdgetpid(2). */
-#define CAP_PDGETPID		CAPRIGHT(1, 0x0000000000000200ULL)
 /* Allows for pdwait4(2). */
 #define CAP_PDWAIT		CAPRIGHT(1, 0x0000000000000400ULL)
+/* Linux implements some process descriptor operations as basic file operations */
+/* Allows for pdgetpid(3). */
+#define CAP_PDGETPID		CAP_IOCTL
+/* Allows for pdkill(3). */
+#define CAP_PDKILL		CAP_WRITE
+/* Include the separate FreeBSD definitions of these rights for reference */
+/* and to prevent accidental re-use of those bits. */
+/* Allows for pdgetpid(2). */
+#define CAP_PDGETPID_FREEBSD		CAPRIGHT(1, 0x0000000000000200ULL)
 /* Allows for pdkill(2). */
-#define CAP_PDKILL		CAPRIGHT(1, 0x0000000000000800ULL)
+#define CAP_PDKILL_FREEBSD		CAPRIGHT(1, 0x0000000000000800ULL)
 
 /* Extended attributes. */
 /* Allows for extattr_delete_fd(2). */

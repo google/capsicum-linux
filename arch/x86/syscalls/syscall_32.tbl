@@ -367,7 +367,4 @@
 358	i386	execveat		sys_execveat			stub32_execveat
 359	i386	cap_rights_limit	sys_cap_rights_limit
 360	i386	cap_rights_get		sys_cap_rights_get
-361	i386	pdfork			sys_pdfork                      stub32_pdfork
-362	i386	pdgetpid		sys_pdgetpid
-363	i386	pdkill			sys_pdkill
-364	i386	pdwait4		sys_pdwait4			compat_sys_pdwait4
+361	i386	clone4			sys_clone4			stub32_clone4
