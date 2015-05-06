@@ -1683,13 +1683,18 @@ SYSCALL_DEFINE4(wait4, pid_t, upid, int __user *, stat_addr,
 	enum pid_type type;
 	long ret;
 
-	if (options & ~(WNOHANG|WUNTRACED|WCONTINUED|
+	if (options & ~(WNOHANG|WUNTRACED|WCONTINUED|WCLONEFD|
 			__WNOTHREAD|__WCLONE|__WALL))
 		return -EINVAL;
 
-	if (upid == -1)
+	if (options & WCLONEFD) {
+		type = PIDTYPE_PID;
+		pid = clonefd_get_pid(upid);
+		if (IS_ERR(pid))
+			return PTR_ERR(pid);
+	} else if (upid == -1) {
 		type = PIDTYPE_MAX;
-	else if (upid < 0) {
+	} else if (upid < 0) {
 		type = PIDTYPE_PGID;
 		pid = find_get_pid(-upid);
 	} else if (upid == 0) {
