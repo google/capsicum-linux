@@ -1,7 +1,7 @@
 VERSION = 4
 PATCHLEVEL = 1
 SUBLEVEL = 0
-EXTRAVERSION = -rc3-capsicum
+EXTRAVERSION = -rc5-capsicum
 NAME = Hurr durr I'ma sheep
 
 # *DOCUMENTATION*
