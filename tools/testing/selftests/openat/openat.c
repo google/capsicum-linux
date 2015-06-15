@@ -14,6 +14,10 @@ static int openat_(int dirfd, const char *pathname, int flags)
 {
 	return syscall(__NR_openat, dirfd, pathname, flags);
 }
+static int open_(const char *pathname, int flags)
+{
+	return syscall(__NR_open, pathname, flags);
+}
 
 static int openat_or_die(int dfd, const char *path, int flags)
 {
@@ -27,17 +31,12 @@ static int openat_or_die(int dfd, const char *path, int flags)
 	return fd;
 }
 
-static int check_openat(int dfd, const char *path, int flags)
+static int check_fd(int fd)
 {
 	int rc;
-	int fd;
 	struct stat info;
 	char buffer[4];
 
-	errno = 0;
-	printf("Check success of openat(%d, '%s', %x)... ",
-	       dfd, path?:"(null)", flags);
-	fd = openat_(dfd, path, flags);
 	if (fd < 0) {
 		printf("[FAIL]: openat() failed, rc=%d errno=%d (%s)\n",
 			fd, errno, strerror(errno));
@@ -62,6 +61,44 @@ static int check_openat(int dfd, const char *path, int flags)
 	return 0;
 }
 
+static int check_openat(int dfd, const char *path, int flags)
+{
+	int fd;
+
+	errno = 0;
+	printf("Check success of openat(%d, '%s', %x)... ",
+	       dfd, path?:"(null)", flags);
+	fd = openat_(dfd, path, flags);
+	return check_fd(fd);
+}
+
+static int check_open(const char *path, int flags)
+{
+	int fd;
+
+	errno = 0;
+	printf("Check success of open('%s', %x)... ", path?:"(null)", flags);
+	fd = open_(path, flags);
+	return check_fd(fd);
+}
+
+static int check_fail(int rc, int expected_errno, const char *errno_str)
+{
+	if (rc > 0) {
+		printf("[FAIL] (unexpected success from open operation)\n");
+		close(rc);
+		return 1;
+	}
+	if (errno != expected_errno) {
+		printf("[FAIL] (expected errno %d (%s) not %d (%s)\n",
+			expected_errno, strerror(expected_errno),
+			       errno, strerror(errno));
+		return 1;
+	}
+	printf("[OK]\n");
+	return 0;
+}
+
 #define check_openat_fail(dfd, path, flags, errno)	\
 	_check_openat_fail(dfd, path, flags, errno, #errno)
 static int _check_openat_fail(int dfd, const char *path, int flags,
@@ -69,23 +106,25 @@ static int _check_openat_fail(int dfd, const char *path, int flags,
 {
 	int rc;
 
-	errno = 0;
 	printf("Check failure of openat(%d, '%s', %x) with %s... ",
 		dfd, path?:"(null)", flags, errno_str);
+	errno = 0;
 	rc = openat_(dfd, path, flags);
-	if (rc > 0) {
-		printf("[FAIL] (unexpected success from openat(2))\n");
-		close(rc);
-		return 1;
-	}
-	if (errno != expected_errno) {
-		printf("[FAIL] (expected errno %d (%s) not %d (%s)\n",
-			expected_errno, strerror(expected_errno),
-			errno, strerror(errno));
-		return 1;
-	}
-	printf("[OK]\n");
-	return 0;
+	return check_fail(rc, expected_errno, errno_str);
+}
+
+#define check_open_fail(path, flags, errno)	\
+	_check_open_fail(path, flags, errno, #errno)
+static int _check_open_fail(const char *path, int flags,
+			    int expected_errno, const char *errno_str)
+{
+	int rc;
+
+	printf("Check failure of open('%s', %x) with %s... ",
+	       path?:"(null)", flags, errno_str);
+	errno = 0;
+	rc = open_(path, flags);
+	return check_fail(rc, expected_errno, errno_str);
 }
 
 int check_proc(void)
@@ -118,12 +157,15 @@ int main(int argc, char *argv[])
 	int file_fd = openat_or_die(AT_FDCWD, "topfile", O_RDONLY);
 
 	/* Sanity check normal behavior */
+	fail += check_open("topfile", O_RDONLY);
+	fail += check_open("subdir/bottomfile", O_RDONLY);
 	fail += check_openat(AT_FDCWD, "topfile", O_RDONLY);
 	fail += check_openat(AT_FDCWD, "subdir/bottomfile", O_RDONLY);
 
 	fail += check_openat(dot_dfd, "topfile", O_RDONLY);
 	fail += check_openat(dot_dfd, "subdir/bottomfile", O_RDONLY);
 	fail += check_openat(dot_dfd, "subdir/../topfile", O_RDONLY);
+	fail += check_open("subdir/../topfile", O_RDONLY);
 
 	fail += check_openat(subdir_dfd, "../topfile", O_RDONLY);
 	fail += check_openat(subdir_dfd, "bottomfile", O_RDONLY);
@@ -131,6 +173,7 @@ int main(int argc, char *argv[])
 	fail += check_openat(subdir_dfd, "symlinkup", O_RDONLY);
 	fail += check_openat(subdir_dfd, "symlinkout", O_RDONLY);
 
+	fail += check_open("/etc/passwd", O_RDONLY);
 	fail += check_openat(AT_FDCWD, "/etc/passwd", O_RDONLY);
 	fail += check_openat(dot_dfd, "/etc/passwd", O_RDONLY);
 	fail += check_openat(subdir_dfd, "/etc/passwd", O_RDONLY);
@@ -142,6 +185,8 @@ int main(int argc, char *argv[])
 
 #ifdef O_BENEATH
 	/* Test out O_BENEATH */
+	fail += check_open("topfile", O_RDONLY|O_BENEATH);
+	fail += check_open("subdir/bottomfile", O_RDONLY|O_BENEATH);
 	fail += check_openat(AT_FDCWD, "topfile", O_RDONLY|O_BENEATH);
 	fail += check_openat(AT_FDCWD, "subdir/bottomfile",
 			     O_RDONLY|O_BENEATH);
@@ -153,10 +198,16 @@ int main(int argc, char *argv[])
 	fail += check_openat(subdir_dfd, ".", O_RDONLY|O_BENEATH);
 
 	/* Symlinks without .. or leading / are OK */
+	fail += check_open("symlinkdown", O_RDONLY|O_BENEATH);
+	fail += check_open("subdir/symlinkin", O_RDONLY|O_BENEATH);
 	fail += check_openat(dot_dfd, "symlinkdown", O_RDONLY|O_BENEATH);
 	fail += check_openat(dot_dfd, "subdir/symlinkin", O_RDONLY|O_BENEATH);
 	fail += check_openat(subdir_dfd, "symlinkin", O_RDONLY|O_BENEATH);
 	/* ... unless of course we specify O_NOFOLLOW */
+	fail += check_open_fail("symlinkdown",
+				O_RDONLY|O_BENEATH|O_NOFOLLOW, ELOOP);
+	fail += check_open_fail("subdir/symlinkin",
+				O_RDONLY|O_BENEATH|O_NOFOLLOW, ELOOP);
 	fail += check_openat_fail(dot_dfd, "symlinkdown",
 				  O_RDONLY|O_BENEATH|O_NOFOLLOW, ELOOP);
 	fail += check_openat_fail(dot_dfd, "subdir/symlinkin",
@@ -165,6 +216,8 @@ int main(int argc, char *argv[])
 				  O_RDONLY|O_BENEATH|O_NOFOLLOW, ELOOP);
 
 	/* Can't open paths with ".." in them */
+	fail += check_open_fail("subdir/../topfile",
+				O_RDONLY|O_BENEATH, EPERM);
 	fail += check_openat_fail(dot_dfd, "subdir/../topfile",
 				O_RDONLY|O_BENEATH, EPERM);
 	fail += check_openat_fail(subdir_dfd, "../topfile",
@@ -174,6 +227,7 @@ int main(int argc, char *argv[])
 	fail += check_openat_fail(subdir_dfd, "..", O_RDONLY|O_BENEATH, EPERM);
 
 	/* Can't open paths starting with "/" */
+	fail += check_open_fail("/etc/passwd", O_RDONLY|O_BENEATH, EPERM);
 	fail += check_openat_fail(AT_FDCWD, "/etc/passwd",
 				  O_RDONLY|O_BENEATH, EPERM);
 	fail += check_openat_fail(dot_dfd, "/etc/passwd",
@@ -188,7 +242,8 @@ int main(int argc, char *argv[])
 	fail += check_openat_fail(subdir_dfd, "../symlinkdown",
 				  O_RDONLY|O_BENEATH, EPERM);
 	fail += check_openat_fail(dot_dfd, "subdir/symlinkup",
-				O_RDONLY|O_BENEATH, EPERM);
+				  O_RDONLY|O_BENEATH, EPERM);
+	fail += check_open_fail("subdir/symlinkup", O_RDONLY|O_BENEATH, EPERM);
 #else
 	printf("Skipping O_BENEATH tests due to missing #define\n");
 #endif
