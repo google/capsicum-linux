@@ -404,7 +404,6 @@ static int check_clone_fd(void)
 	/* Second read fails */
 	rc = read(fd, buffer, sizeof(buffer));
 	EXPECT(rc == 0);
-	close(fd);
 
 	/* Unreaped zombie child has pid accessible via ioctl */
 	rc = ioctl(fd, CLONEFD_IOC_GETTID, 0);
