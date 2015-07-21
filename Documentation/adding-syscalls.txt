@@ -72,7 +72,7 @@ argument should include a value that is equivalent to setting O_CLOEXEC on the
 new FD.  This makes it possible for userspace to close the timing window
 between xyzzy() and calling fcntl(fd, F_SETFD, FD_CLOEXEC), where an
 unexpected fork() and execve() in another thread could leak a descriptor to
-the execed program. (However, resist the temptation to re-use the actual value
+the exec'ed program. (However, resist the temptation to re-use the actual value
 of the O_CLOEXEC constant, as it is architecture-specific and is part of a
 numbering space of O_* flags that is fairly full.)
 
@@ -183,12 +183,12 @@ x86 System Call Implementation
 
 To wire up your new system call for x86 platforms, you need to update the
 master syscall tables.  Assuming your new system call isn't special in some
-way (see below), this involves a "common" entry in
-arch/x86/syscalls/syscall_64.tbl:
+way (see below), this involves a "common" entry (for x86_64 and x32) in
+arch/x86/entry/syscalls/syscall_64.tbl:
 
     333   common   xyzzy     sys_xyzzy
 
-and an "i386" entry in arch/x86/syscalls/syscall_32.tbl:
+and an "i386" entry in arch/x86/entry/syscalls/syscall_32.tbl:
 
     380   i386     xyzzy     sys_xyzzy
 
@@ -287,9 +287,9 @@ Compatibility System Calls (x86)
 To wire up the x86 architecture of a system call with a compatibility version,
 the entries in the syscall tables need to be adjusted.
 
-First, the entry in arch/x86/syscalls/syscall_32.tbl gets an extra column to
-indicate that a 32-bit userspace program running on a 64-bit kernel should hit
-the compat entry point:
+First, the entry in arch/x86/entry/syscalls/syscall_32.tbl gets an extra
+column to indicate that a 32-bit userspace program running on a 64-bit kernel
+should hit the compat entry point:
 
     380   i386     xyzzy     sys_xyzzy    compat_sys_xyzzy
 
@@ -299,7 +299,7 @@ should either match the 64-bit version or the 32-bit version.
 
 If there's a pointer-to-a-pointer involved, the decision is easy: x32 is
 ILP32, so the layout should match the 32-bit version, and the entry in
-arch/x86/syscalls/syscall_64.tbl is split so that x32 programs hit the
+arch/x86/entry/syscalls/syscall_64.tbl is split so that x32 programs hit the
 compatibility wrapper:
 
     333   64       xyzzy     sys_xyzzy
@@ -308,7 +308,7 @@ compatibility wrapper:
 
 If no pointers are involved, then it is preferable to re-use the 64-bit system
 call for the x32 ABI (and consequently the entry in
-arch/x86/syscalls/syscall_64.tbl is unchanged).
+arch/x86/entry/syscalls/syscall_64.tbl is unchanged).
 
 In either case, you should check that the types involved in your argument
 layout do indeed map exactly from x32 (-mx32) to either the 32-bit (-m32) or
@@ -336,14 +336,15 @@ that save/restore additional registers and invoke the real system call entry
 point.
 
 For x86_64, this is implemented as a stub_xyzzy entry point in
-arch/x86/kernel/entry_64.S, and the entry in the syscall table
-(arch/x86/syscalls/syscall_64.tbl) is adjusted to match:
+arch/x86/entry/entry_64.S, and the entry in the syscall table
+(arch/x86/entry/syscalls/syscall_64.tbl) is adjusted to match:
 
     333   common   xyzzy     stub_xyzzy
 
 The equivalent for 32-bit programs running on a 64-bit kernel is normally
-called stub32_xyzzy and implemented in arch/x86/ia32/ia32entry.S, with the
-corresponding syscall table adjustment in arch/x86/syscalls/syscall_32.tbl:
+called stub32_xyzzy and implemented in arch/x86/entry/entry_64_compat.S,
+with the corresponding syscall table adjustment in
+arch/x86/entry/syscalls/syscall_32.tbl:
 
     380   i386     xyzzy     sys_xyzzy    stub32_xyzzy
 
@@ -356,7 +357,7 @@ version.
 
 For completeness, it's also nice to set up a mapping so that user-mode Linux
 still works -- its syscall table will reference stub_xyzzy, but the UML build
-doesn't include arch/x86/kernel/entry_64.S implementation (because UML
+doesn't include arch/x86/entry/entry_64.S implementation (because UML
 simulates registers etc).  Fixing this is as simple as adding a #define to
 arch/x86/um/sys_call_table_64.c:
 

@@ -113,14 +113,14 @@ union bpf_attr;
 #define __SC_STR_ADECL(t, a)	#a
 #define __SC_STR_TDECL(t, a)	#t
 
-extern struct ftrace_event_class event_class_syscall_enter;
-extern struct ftrace_event_class event_class_syscall_exit;
+extern struct trace_event_class event_class_syscall_enter;
+extern struct trace_event_class event_class_syscall_exit;
 extern struct trace_event_functions enter_syscall_print_funcs;
 extern struct trace_event_functions exit_syscall_print_funcs;
 
 #define SYSCALL_TRACE_ENTER_EVENT(sname)				\
 	static struct syscall_metadata __syscall_meta_##sname;		\
-	static struct ftrace_event_call __used				\
+	static struct trace_event_call __used				\
 	  event_enter_##sname = {					\
 		.class			= &event_class_syscall_enter,	\
 		{							\
@@ -130,13 +130,13 @@ extern struct trace_event_functions exit_syscall_print_funcs;
 		.data			= (void *)&__syscall_meta_##sname,\
 		.flags                  = TRACE_EVENT_FL_CAP_ANY,	\
 	};								\
-	static struct ftrace_event_call __used				\
+	static struct trace_event_call __used				\
 	  __attribute__((section("_ftrace_events")))			\
 	 *__event_enter_##sname = &event_enter_##sname;
 
 #define SYSCALL_TRACE_EXIT_EVENT(sname)					\
 	static struct syscall_metadata __syscall_meta_##sname;		\
-	static struct ftrace_event_call __used				\
+	static struct trace_event_call __used				\
 	  event_exit_##sname = {					\
 		.class			= &event_class_syscall_exit,	\
 		{							\
@@ -146,7 +146,7 @@ extern struct trace_event_functions exit_syscall_print_funcs;
 		.data			= (void *)&__syscall_meta_##sname,\
 		.flags                  = TRACE_EVENT_FL_CAP_ANY,	\
 	};								\
-	static struct ftrace_event_call __used				\
+	static struct trace_event_call __used				\
 	  __attribute__((section("_ftrace_events")))			\
 	*__event_exit_##sname = &event_exit_##sname;
 

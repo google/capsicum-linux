@@ -98,10 +98,6 @@ static inline struct fd fdget_pos(unsigned int fd)
  *    unrecognized FD, or -ENOTCAPABLE for a Capsicum capability FD that does
  *    not have the requisite rights).
  *
- * The fdget_raw_rights() function also optionally returns the actual Capsicum
- * rights associated with the file descriptor; the caller should only access
- * this structure while it holds a reference to the file.
- *
  * These functions should normally only be used:
  *  - when the operation being performed on the file requires more detailed
  *    specification (in particular: the ioctl(2) or fcntl(2) command invoked)
@@ -117,8 +113,7 @@ extern struct file *fget_raw_rights(unsigned int fd,
 extern struct fd fdget_rights(unsigned int fd,
 			      const struct capsicum_rights *rights);
 extern struct fd fdget_raw_rights(unsigned int fd,
-				  const struct capsicum_rights *rights,
-				  const struct capsicum_rights **actual_rights);
+				  const struct capsicum_rights *rights);
 
 /*
  * The simple unwrapping variant functions are:
@@ -143,11 +138,23 @@ extern struct fd fdget_raw_rights(unsigned int fd,
 #define fdgetr(fd, ...)	_fdgetr((fd), __VA_ARGS__, CAP_LIST_END)
 #define fdgetr_raw(fd, ...)	_fdgetr_raw((fd), __VA_ARGS__, CAP_LIST_END)
 #define fdgetr_pos(fd, ...)	_fdgetr_pos((fd), __VA_ARGS__, CAP_LIST_END)
-extern struct file *_fgetr(unsigned int fd, ...);
-extern struct file *_fgetr_raw(unsigned int fd, ...);
-extern struct fd _fdgetr(unsigned int fd, ...);
-extern struct fd _fdgetr_raw(unsigned int fd, ...);
-extern struct fd _fdgetr_pos(unsigned int fd, ...);
+struct file *_fgetr(unsigned int fd, ...);
+struct file *_fgetr_raw(unsigned int fd, ...);
+struct fd _fdgetr(unsigned int fd, ...);
+struct fd _fdgetr_raw(unsigned int fd, ...);
+struct fd _fdgetr_pos(unsigned int fd, ...);
+
+/*
+ * Check whether a file, which may be a Capsicum capability wrapper, has a
+ * specified set of rights. If it does, return the normal underlying file and
+ * (optionally) the actual rights associated with the capability.
+ * If update_refcnt is set, then the refcount for the wrapper will be decremented
+ * and the refcount for the underlying file incremented.
+ */
+struct file *file_unwrap(struct file *orig,
+			 const struct capsicum_rights *required_rights,
+			 const struct capsicum_rights **actual_rights,
+			 bool update_refcnt);
 
 #else
 /*
@@ -196,6 +203,16 @@ static inline struct fd fdgetr_pos(int fd, ...)
 	if (f.file == NULL)
 		f.file = ERR_PTR(-EBADF);
 	return f;
+}
+
+static inline struct file *file_unwrap(struct file *orig,
+				const struct capsicum_rights *required_rights,
+				const struct capsicum_rights **actual_rights,
+				bool update_refcnt)
+{
+	if (orig == NULL)
+		return ERR_PTR(-EBADF);
+	return orig;
 }
 #endif
 

@@ -24,7 +24,10 @@ void handle_syscall(struct uml_pt_regs *r)
 		return;
 	}
 
-	syscall_trace_enter(regs);
+	if (syscall_trace_enter(regs)) {
+		result = -ENOSYS;
+		goto out;
+	}
 
 	/*
 	 * This should go in the declaration of syscall, but when I do that,
@@ -40,6 +43,7 @@ void handle_syscall(struct uml_pt_regs *r)
 		result = -ENOSYS;
 	else result = EXECUTE_SYSCALL(syscall, regs);
 
+out:
 	PT_REGS_SET_SYSCALL_RETURN(regs, result);
 
 	syscall_trace_leave(regs);

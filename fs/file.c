@@ -149,6 +149,13 @@ static int expand_fdtable(struct files_struct *files, int nr)
 
 	spin_unlock(&files->file_lock);
 	new_fdt = alloc_fdtable(nr);
+
+	/* make sure all __fd_install() have seen resize_in_progress
+	 * or have finished their rcu_read_lock_sched() section.
+	 */
+	if (atomic_read(&files->count) > 1)
+		synchronize_sched();
+
 	spin_lock(&files->file_lock);
 	if (!new_fdt)
 		return -ENOMEM;
@@ -160,21 +167,14 @@ static int expand_fdtable(struct files_struct *files, int nr)
 		__free_fdtable(new_fdt);
 		return -EMFILE;
 	}
-	/*
-	 * Check again since another task may have expanded the fd table while
-	 * we dropped the lock
-	 */
 	cur_fdt = files_fdtable(files);
-	if (nr >= cur_fdt->max_fds) {
-		/* Continue as planned */
-		copy_fdtable(new_fdt, cur_fdt);
-		rcu_assign_pointer(files->fdt, new_fdt);
-		if (cur_fdt != &files->fdtab)
-			call_rcu(&cur_fdt->rcu, free_fdtable_rcu);
-	} else {
-		/* Somebody else expanded, so undo our attempt */
-		__free_fdtable(new_fdt);
-	}
+	BUG_ON(nr < cur_fdt->max_fds);
+	copy_fdtable(new_fdt, cur_fdt);
+	rcu_assign_pointer(files->fdt, new_fdt);
+	if (cur_fdt != &files->fdtab)
+		call_rcu(&cur_fdt->rcu, free_fdtable_rcu);
+	/* coupled with smp_rmb() in __fd_install() */
+	smp_wmb();
 	return 1;
 }
 
@@ -187,21 +187,38 @@ static int expand_fdtable(struct files_struct *files, int nr)
  * The files->file_lock should be held on entry, and will be held on exit.
  */
 static int expand_files(struct files_struct *files, int nr)
+	__releases(files->file_lock)
+	__acquires(files->file_lock)
 {
 	struct fdtable *fdt;
+	int expanded = 0;
 
+repeat:
 	fdt = files_fdtable(files);
 
 	/* Do we need to expand? */
 	if (nr < fdt->max_fds)
-		return 0;
+		return expanded;
 
 	/* Can we expand? */
 	if (nr >= sysctl_nr_open)
 		return -EMFILE;
 
+	if (unlikely(files->resize_in_progress)) {
+		spin_unlock(&files->file_lock);
+		expanded = 1;
+		wait_event(files->resize_wait, !files->resize_in_progress);
+		spin_lock(&files->file_lock);
+		goto repeat;
+	}
+
 	/* All good, so we try */
-	return expand_fdtable(files, nr);
+	files->resize_in_progress = true;
+	expanded = expand_fdtable(files, nr);
+	files->resize_in_progress = false;
+
+	wake_up_all(&files->resize_wait);
+	return expanded;
 }
 
 static inline void __set_close_on_exec(int fd, struct fdtable *fdt)
@@ -258,6 +275,8 @@ struct files_struct *dup_fd(struct files_struct *oldf, int *errorp)
 	atomic_set(&newf->count, 1);
 
 	spin_lock_init(&newf->file_lock);
+	newf->resize_in_progress = false;
+	init_waitqueue_head(&newf->resize_wait);
 	newf->next_fd = 0;
 	new_fdt = &newf->fdtab;
 	new_fdt->max_fds = NR_OPEN_DEFAULT;
@@ -555,11 +574,21 @@ void __fd_install(struct files_struct *files, unsigned int fd,
 		struct file *file)
 {
 	struct fdtable *fdt;
-	spin_lock(&files->file_lock);
-	fdt = files_fdtable(files);
+
+	might_sleep();
+	rcu_read_lock_sched();
+
+	while (unlikely(files->resize_in_progress)) {
+		rcu_read_unlock_sched();
+		wait_event(files->resize_wait, !files->resize_in_progress);
+		rcu_read_lock_sched();
+	}
+	/* coupled with smp_wmb() in expand_fdtable() */
+	smp_rmb();
+	fdt = rcu_dereference_sched(files->fdt);
 	BUG_ON(fdt->fd[fd] != NULL);
 	rcu_assign_pointer(fdt->fd[fd], file);
-	spin_unlock(&files->file_lock);
+	rcu_read_unlock_sched();
 }
 
 void fd_install(unsigned int fd, struct file *file)
@@ -637,11 +666,17 @@ static struct file *__fget(unsigned int fd, fmode_t mask)
 	struct file *file;
 
 	rcu_read_lock();
+loop:
 	file = fcheck_files(files, fd);
 	if (file) {
-		/* File object ref couldn't be taken */
-		if ((file->f_mode & mask) || !get_file_rcu(file))
+		/* File object ref couldn't be taken.
+		 * dup2() atomicity guarantee is the reason
+		 * we loop to catch the new file (or NULL pointer)
+		 */
+		if (file->f_mode & mask)
 			file = NULL;
+		else if (!get_file_rcu(file))
+			goto loop;
 	}
 	rcu_read_unlock();
 
@@ -718,6 +753,12 @@ unsigned long __fdget_pos(unsigned int fd)
 	return v;
 }
 
+/*
+ * We only lock f_pos if we have threads or if the file might be
+ * shared with another process. In both cases we'll have an elevated
+ * file count (done either by fdget() or by fork()).
+ */
+
 #ifdef CONFIG_SECURITY_CAPSICUM
 /*
  * Capsicum might want to change the return value of fget() and friends.  This
@@ -725,10 +766,10 @@ unsigned long __fdget_pos(unsigned int fd)
  * return whatever is returned from here. We adjust the reference counter if
  * necessary.
  */
-static struct file *unwrap_file(struct file *orig,
-				const struct capsicum_rights *required_rights,
-				const struct capsicum_rights **actual_rights,
-				bool update_refcnt)
+struct file *file_unwrap(struct file *orig,
+			 const struct capsicum_rights *required_rights,
+			 const struct capsicum_rights **actual_rights,
+			 bool update_refcnt)
 {
 	struct file *f;
 
@@ -738,7 +779,8 @@ static struct file *unwrap_file(struct file *orig,
 		return orig;
 	f = capsicum_file_lookup(orig, required_rights, actual_rights);
 	if (f != orig && update_refcnt) {
-		/* We're not returning the original, and the calling code
+		/*
+		 * We're not returning the original, and the calling code
 		 * has already incremented the refcount on it, we need to
 		 * release that reference and obtain a reference to the new
 		 * return value, if any.
@@ -753,14 +795,14 @@ static struct file *unwrap_file(struct file *orig,
 
 struct file *fget_rights(unsigned int fd, const struct capsicum_rights *rights)
 {
-	return unwrap_file(fget(fd), rights, NULL, true);
+	return file_unwrap(fget(fd), rights, NULL, true);
 }
 EXPORT_SYMBOL(fget_rights);
 
 struct file *fget_raw_rights(unsigned int fd,
 			     const struct capsicum_rights *rights)
 {
-	return unwrap_file(fget_raw(fd), rights, NULL, true);
+	return file_unwrap(fget_raw(fd), rights, NULL, true);
 }
 EXPORT_SYMBOL(fget_raw_rights);
 
@@ -768,19 +810,17 @@ struct fd fdget_rights(unsigned int fd, const struct capsicum_rights *rights)
 {
 	struct fd f = fdget(fd);
 
-	f.file = unwrap_file(f.file, rights, NULL, (f.flags & FDPUT_FPUT));
+	f.file = file_unwrap(f.file, rights, NULL, (f.flags & FDPUT_FPUT));
 	return f;
 }
 EXPORT_SYMBOL(fdget_rights);
 
 struct fd fdget_raw_rights(unsigned int fd,
-			   const struct capsicum_rights *rights,
-			   const struct capsicum_rights **actual_rights)
+			   const struct capsicum_rights *rights)
 {
 	struct fd f = fdget_raw(fd);
 
-	f.file = unwrap_file(f.file, rights, actual_rights,
-			     (f.flags & FDPUT_FPUT));
+	f.file = file_unwrap(f.file, rights, NULL, (f.flags & FDPUT_FPUT));
 	return f;
 }
 EXPORT_SYMBOL(fdget_raw_rights);
@@ -831,7 +871,7 @@ struct fd _fdgetr_raw(unsigned int fd, ...)
 	va_list ap;
 
 	va_start(ap, fd);
-	f = fdget_raw_rights(fd, cap_rights_vinit(&rights, ap), NULL);
+	f = fdget_raw_rights(fd, cap_rights_vinit(&rights, ap));
 	va_end(ap);
 	return f;
 }
@@ -845,19 +885,13 @@ struct fd _fdgetr_pos(unsigned int fd, ...)
 
 	f = __to_fd(__fdget_pos(fd));
 	va_start(ap, fd);
-	f.file = unwrap_file(f.file, cap_rights_vinit(&rights, ap), NULL,
+	f.file = file_unwrap(f.file, cap_rights_vinit(&rights, ap), NULL,
 			     (f.flags & FDPUT_FPUT));
 	va_end(ap);
 	return f;
 }
 EXPORT_SYMBOL(_fdgetr_pos);
 #endif
-
-/*
- * We only lock f_pos if we have threads or if the file might be
- * shared with another process. In both cases we'll have an elevated
- * file count (done either by fdget() or by fork()).
- */
 
 void set_close_on_exec(unsigned int fd, int flag)
 {
