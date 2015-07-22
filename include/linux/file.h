@@ -182,7 +182,6 @@ static inline struct fd fdget_rights(unsigned int fd,
 }
 static inline struct fd
 fdget_raw_rights(unsigned int fd,
-		 const struct capsicum_rights **actual_rights,
 		 const struct capsicum_rights *rights)
 {
 	struct fd f = fdget_raw(fd);
@@ -195,7 +194,7 @@ fdget_raw_rights(unsigned int fd,
 #define fgetr(fd, ...)		(fget(fd) ?: ERR_PTR(-EBADF))
 #define fgetr_raw(fd, ...)	(fget_raw(fd) ?: ERR_PTR(-EBADF))
 #define fdgetr(fd, ...)	fdget_rights((fd), NULL)
-#define fdgetr_raw(fd, ...)	fdget_raw_rights((fd), NULL, NULL)
+#define fdgetr_raw(fd, ...)	fdget_raw_rights((fd), NULL)
 static inline struct fd fdgetr_pos(int fd, ...)
 {
 	struct fd f = fdget_pos(fd);
