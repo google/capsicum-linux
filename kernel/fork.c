@@ -1779,8 +1779,8 @@ long do_fork(unsigned long clone_flags,
 	struct clone4_args kargs = {
 		.ptid = parent_tidptr,
 		.ctid = child_tidptr,
-		.stack_start = stack_start,
-		.stack_size = stack_size,
+		.stack_start = (void *)stack_start,
+		.stack_size = (void *)stack_size,
 	};
 	return _do_fork(squelch_clone_flags(clone_flags), &kargs);
 }
