@@ -194,7 +194,10 @@ int main(int argc, char *argv[])
 	fail += check_openat(dot_dfd, "topfile", O_RDONLY|O_BENEATH);
 	fail += check_openat(dot_dfd, "subdir/bottomfile",
 			     O_RDONLY|O_BENEATH);
+	fail += check_openat(dot_dfd, "subdir///bottomfile",
+			     O_RDONLY|O_BENEATH);
 	fail += check_openat(subdir_dfd, "bottomfile", O_RDONLY|O_BENEATH);
+	fail += check_openat(subdir_dfd, "./bottomfile", O_RDONLY|O_BENEATH);
 	fail += check_openat(subdir_dfd, ".", O_RDONLY|O_BENEATH);
 
 	/* Symlinks without .. or leading / are OK */
