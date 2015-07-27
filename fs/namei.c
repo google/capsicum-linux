@@ -1893,11 +1893,8 @@ static int link_path_walk(const char *name, struct nameidata *nd)
 {
 	int err;
 
-	while (*name == '/') {
-		if (nd->flags & LOOKUP_BENEATH)
-			return -EPERM;
+	while (*name=='/')
 		name++;
-	}
 	if (!*name)
 		return 0;
 
@@ -2000,8 +1997,8 @@ static const char *path_init(struct nameidata *nd, unsigned flags)
 	nd->dfd_cap.file = NULL;
 	nd->dfd_cap.flags = 0;
 	nd->total_link_count = 0;
-       if (task_openat_beneath(current))
-               nd->flags |= LOOKUP_BENEATH;
+	if (task_openat_beneath(current))
+		nd->flags |= LOOKUP_BENEATH;
 
 	if (flags & LOOKUP_ROOT) {
 		struct dentry *root = nd->root.dentry;
