@@ -30,7 +30,8 @@ interface.
    (see Documentation/filesystems/sysfs.txt) or the /proc filesystem may be
    more appropriate.  However, access to these mechanisms requires that the
    relevant filesystem is mounted, which might not always be the case (e.g.
-   in a namespaced/sandboxed/chrooted environment).
+   in a namespaced/sandboxed/chrooted environment).  Avoid adding anything to
+   debugfs, as this is not considered a 'production' interface to userspace.
  - If the operation is specific to a particular file or file descriptor, then
    an additional fcntl(2) command option may be more appropriate.  However,
    fcntl(2) is a multiplexing system call that hides a lot of complexity, so
@@ -67,6 +68,8 @@ sycall (with EINVAL) if it does:
     if (flags & ~(THING_FLAG1 | THING_FLAG2 | THING_FLAG3))
         return -EINVAL;
 
+(If no flags values are used yet, check that the flags argument is zero.)
+
 If your new xyzzy(2) system call returns a new file descriptor, then the flags
 argument should include a value that is equivalent to setting O_CLOEXEC on the
 new FD.  This makes it possible for userspace to close the timing window
@@ -100,8 +103,8 @@ within a file, make its type loff_t so that 64-bit offsets can be supported
 even on 32-bit architectures.
 
 If your new xyzzy(2) system call involves administrative functionality, it
-needs to be governed by the appropriate Linux capability bit, as described in
-the capabilities(7) man page.
+needs to be governed by the appropriate Linux capability bit (checked with a
+call to capable()), as described in the capabilities(7) man page.
 
  - If there is an existing capability that governs related functionality, then
    use that.  However, avoid combining lots of only vaguely related functions
@@ -130,10 +133,11 @@ distinct commits (each of which is described further below):
  - Wiring up of the new system call for one particular architecture, usually
    x86 (including all of x86_64, x86_32 and x32).
  - A demonstration of the use of the new system call in userspace via a
-   selftest.
+   selftest in tools/testing/selftests/.
  - A draft man-page for the new system call.
 
-Changes to the kernel's API should always be cc'ed to linux-api@vger.kernel.org
+New system call proposals, like any change to the kernel's API, should always
+be cc'ed to linux-api@vger.kernel.org
 
 
 Generic System Call Implementation
@@ -408,7 +412,7 @@ pre-rendered ASCII version of the man page in the cover email for the
 patchset, for the convenience of reviewers.
 
 The man page should be cc'ed to linux-man@vger.kernel.org
-
+For more details, see https://www.kernel.org/doc/man-pages/patches.html
 
 References and Sources
 ----------------------
