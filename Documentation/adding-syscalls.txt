@@ -389,6 +389,11 @@ reviewers with a demonstration of how user space programs will use the system
 call.  A good way to combine these aims is to include a simple self-test
 program in a new directory under tools/testing/selftests/.
 
+For a new system call, there will obviously be no libc wrapper function and so
+the test will need to invoke it using syscall(); also, if the system call
+involves a new userspace-visible structure, the corresponding header will need
+to be installed to compile the test.
+
 Make sure the selftest runs successfully on all supported architectures.  For
 example, check that it works when compiled as an x86_64 (-m64), x86_32 (-m32)
 and x32 (-mx32) ABI program.
