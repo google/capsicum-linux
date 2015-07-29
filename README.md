@@ -7,7 +7,7 @@ capabilities in the Linux kernel.  Overall status of the
 Capsicum for Linux project is described at
 [capsicum-linux.org](http://capsicum-linux.org/index.html).
 
-This functionality is based on:
+This functionality is originally based on:
 
  - the original Capsicum implementation in FreeBSD 9.x and 10.x,
    written by Robert Watson and Jonathan Anderson.
@@ -15,7 +15,7 @@ This functionality is based on:
    [Linux kernel implementation](http://git.chromium.org/gitweb/?p=chromiumos/third_party/kernel-capsicum.git;a=shortlog;h=refs/heads/capsicum)
    written by Meredydd Luff in 2012.
 
-The current functionality is based on the 4.0 upstream kernel.
+The current functionality is based on the 4.2 upstream kernel.
 
 Branch Status
 -------------
@@ -58,19 +58,15 @@ for more details
 As process management normally involves a global namespace (that of `pid_t`
 values), Capsicum also introduces a *process descriptor* and related syscalls,
 which allows processes to be manipulated as another kind of file descriptor.
-See [Documentation/procdesc.txt](Documentation/procdesc.txt) for more details.
 
 
 Building
 --------
 
-Capsicum support is currently included for x86 variants and user-mode Linux.  The
-configuration parameters that need to be enabled are:
+Capsicum support is currently included for x86 variants and user-mode Linux; the
+`CONFIG_SECURITY_CAPSICUM` configuration parameter needs to be enabled.
 
- - `CONFIG_SECURITY_CAPSICUM`: enable Capsicum.
- - `CONFIG_PROCDESC`: enable Capsicum process-descriptor functionality.
-
-User-mode Linux is used for Capsicum testing, and requires the following
+User-mode Linux can be used for Capsicum testing, and requires the following
 additional configuration parameters:
 
  - `CONFIG_DEBUG_FS`: enable debug filesystem.
