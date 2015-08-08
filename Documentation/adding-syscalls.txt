@@ -142,18 +142,14 @@ If your new xyzzy(2) system call involves a parameter describing an offset
 within a file, make its type loff_t so that 64-bit offsets can be supported
 even on 32-bit architectures.
 
-If your new xyzzy(2) system call involves privileged functionality, it
-needs to be governed by the appropriate Linux capability bit (checked with a
-call to capable()), as described in the capabilities(7) man page.
-
- - If there is an existing capability that governs related functionality, then
-   use that.  However, avoid combining lots of only vaguely related functions
-   together under the same bit, as this goes against capabilities' purpose of
-   splitting the power of root.  In particular, avoid adding new uses of the
-   already overly-general CAP_SYS_ADMIN capability.
- - If there is no related capability, then consider adding a new capability
-   bit -- but bear in mind that the numbering space is limited, and each new
-   bit needs to be understood and administered by sysadmins.
+If your new xyzzy(2) system call involves privileged functionality, it needs
+to be governed by the appropriate Linux capability bit (checked with a call to
+capable()), as described in the capabilities(7) man page.  Choose an existing
+capability bit that governs related functionality, but try to avoid combining
+lots of only vaguely related functions together under the same bit, as this
+goes against capabilities' purpose of splitting the power of root.  In
+particular, avoid adding new uses of the already overly-general CAP_SYS_ADMIN
+capability.
 
 If your new xyzzy(2) system call manipulates a process other than the calling
 process, it should be restricted (using a call to ptrace_may_access()) so that
