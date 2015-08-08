@@ -58,11 +58,11 @@ together with the corresponding follow-up system calls -- eventfd/eventfd2,
 dup2/dup3, inotify_init/inotify_init1,  pipe/pipe2, renameat/renameat2 -- so
 learn from the history of the kernel and plan for extensions from the start.)
 
-For simpler system calls that only take a couple of arguments, the preferred way
-to allow for future extensibility is to include a flags argument to the system
-call.  To make sure that userspace programs can safely use flags between kernel
-versions, check whether the flags value holds any unknown flags, and reject the
-sycall (with EINVAL) if it does:
+For simpler system calls that only take a couple of arguments, the preferred
+way to allow for future extensibility is to include a flags argument to the
+system call.  To make sure that userspace programs can safely use flags
+between kernel versions, check whether the flags value holds any unknown
+flags, and reject the system call (with EINVAL) if it does:
 
     if (flags & ~(THING_FLAG1 | THING_FLAG2 | THING_FLAG3))
         return -EINVAL;
@@ -81,16 +81,16 @@ by including a size argument in the structure:
         u64 param_3;
     };
 
-As long as any subsequently added field, say param_4, is designed so that a zero
-value gives the previous behaviour, then this allows both directions of version
-mismatch:
+As long as any subsequently added field, say param_4, is designed so that a
+zero value gives the previous behaviour, then this allows both directions of
+version mismatch:
 
  - To cope with a later userspace program calling an older kernel, the kernel
    code should check that any memory beyond the size of the structure that it
    expects is zero (effectively checking that param_4 == 0).
  - To cope with an older userspace program calling a newer kernel, the kernel
-   code can zero-extend a smaller instance of the structure (effectively setting
-   param_4 = 0).
+   code can zero-extend a smaller instance of the structure (effectively
+   setting param_4 = 0).
 
 See perf_event_open(2) and the perf_copy_attr() function (in
 kernel/events/core.c) for an example of this approach.
@@ -180,7 +180,7 @@ distinct commits (each of which is described further below):
    cover letter, or as a patch to the (separate) man-pages repository.
 
 New system call proposals, like any change to the kernel's API, should always
-be cc'ed to linux-api@vger.kernel.org
+be cc'ed to linux-api@vger.kernel.org.
 
 
 Generic System Call Implementation
@@ -379,9 +379,9 @@ System Calls Returning Elsewhere
 --------------------------------
 
 For most system calls, once the system call is complete the user program
-continues exactly where it left off -- at the next instruction, with the same
-stack and registers as before the system call, and with the same virtual
-memory space.
+continues exactly where it left off -- at the next instruction, with the
+stack the same and most of the registers the same as before the system call,
+and with the same virtual memory space.
 
 However, a few system calls do things differently.  They might return to a
 different location (rt_sigreturn) or change the memory space (fork/vfork/clone)
@@ -509,9 +509,9 @@ References and Sources
    come with a man-page & selftest: https://lkml.org/lkml/2014/3/19/710
  - Discussion from Michael Kerrisk of new system call vs. prctl(2) extension:
    https://lkml.org/lkml/2014/6/3/411
- - Suggestion from Ingo Molnar that system calls that involve multiple arguments
-   should encapsulate those arguments in a struct, which includes a size field
-   for future extensibility: https://lkml.org/lkml/2015/7/30/117
+ - Suggestion from Ingo Molnar that system calls that involve multiple
+   arguments should encapsulate those arguments in a struct, which includes a
+   size field for future extensibility: https://lkml.org/lkml/2015/7/30/117
  - Numbering oddities arising from (re-)use of O_* numbering space flags:
     - commit 75069f2b5bfb ("vfs: renumber FMODE_NONOTIFY and add to uniqueness
       check")
