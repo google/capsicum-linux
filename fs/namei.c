@@ -1981,8 +1981,13 @@ OK:
 				continue;
 			}
 		}
-		if (unlikely(!d_can_lookup(nd->path.dentry)))
+		if (unlikely(!d_can_lookup(nd->path.dentry))) {
+			if (nd->flags & LOOKUP_RCU) {
+				if (unlazy_walk(nd, NULL, 0))
+					return -ECHILD;
+			}
 			return -ENOTDIR;
+		}
 	}
 }
 
