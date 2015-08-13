@@ -1,4 +1,3 @@
-CC = $(CROSS_COMPILE)gcc
 CFLAGS = -Wall
 BINARIES = openat
 DEPS = subdir topfile symlinkdown subdir/bottomfile subdir/symlinkup subdir/symlinkout subdir/symlinkin
@@ -21,8 +20,10 @@ symlinkdown:
 %: %.c
 	$(CC) $(CFLAGS) -o $@ $^
 
-run_tests: all
-	./openat
+TEST_PROGS := openat
+TEST_FILES := $(DEPS)
+
+include ../lib.mk
 
 clean:
 	rm -rf $(BINARIES) $(DEPS)
