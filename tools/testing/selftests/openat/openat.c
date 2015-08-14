@@ -18,6 +18,10 @@ static int open_(const char *pathname, int flags)
 {
 	return syscall(__NR_open, pathname, flags);
 }
+static int fcntl_(int fd, int cmd, int arg)
+{
+	return syscall(__NR_fcntl, fd, cmd, arg);
+}
 
 static int openat_or_die(int dfd, const char *path, int flags)
 {
@@ -127,7 +131,7 @@ static int _check_open_fail(const char *path, int flags,
 	return check_fail(rc, expected_errno, errno_str);
 }
 
-int check_proc(void)
+static int check_proc(void)
 {
 	int root_dfd = openat_(AT_FDCWD, "/", O_RDONLY);
 	int proc_dfd = openat_(AT_FDCWD, "/proc/self", O_RDONLY);
@@ -146,6 +150,64 @@ int check_proc(void)
 	fail += check_openat_fail(root_dfd, "proc/self/root/etc/passwd",
 				O_RDONLY|O_BENEATH, EPERM);
 #endif
+	return fail;
+}
+
+#define check_setfl_ignored(fd, ignored_flag) \
+	_check_setfl_ignored(fd, ignored_flag, #ignored_flag)
+static int _check_setfl_ignored(int fd, int ignored_flag, const char *flagname)
+{
+	int flags;
+	int newflags;
+	int rc;
+
+	printf("Check fcntl(%d, F_SETFL, +%s) is ignored... ", fd, flagname);
+	flags = fcntl_(fd, F_GETFL, 0);
+	if (flags == -1) {
+		printf("[FAIL]: fcntl(F_GETFL) failed, rc=%d errno=%d (%s)\n",
+		       flags, errno, strerror(errno));
+		return 1;
+	}
+	if (flags & ignored_flag) {
+		printf("[FAIL]: fcntl(F_GETFL) included %s (%x) in %x\n",
+		       flagname, ignored_flag, flags);
+		return 1;
+	}
+	rc = fcntl_(fd, F_SETFL, (flags | ignored_flag));
+	if (rc == -1) {
+		printf("[FAIL]: fcntl(F_SETFL) failed, rc=%d errno=%d (%s)\n",
+		       rc, errno, strerror(errno));
+		return 1;
+	}
+	newflags = fcntl_(fd, F_GETFL, 0);
+	if (newflags != flags) {
+		printf("[FAIL]: fcntl(F_SETFL) changed value of %s (%x) flag\n",
+		       flagname, ignored_flag);
+		return 1;
+	}
+	printf("[OK]\n");
+	return 0;
+}
+
+static int check_setfl(void)
+{
+	int fd = open_("topfile", O_RDONLY|O_DIRECT);
+	int fail = 0;
+
+	/* Attempts to set file creation flags are silently ignored. */
+	fail += check_setfl_ignored(fd, O_CLOEXEC);
+	fail += check_setfl_ignored(fd, O_CREAT);
+	fail += check_setfl_ignored(fd, O_DIRECTORY);
+	fail += check_setfl_ignored(fd, O_EXCL);
+	fail += check_setfl_ignored(fd, O_NOCTTY);
+	fail += check_setfl_ignored(fd, O_NOFOLLOW);
+	fail += check_setfl_ignored(fd, O_TMPFILE);
+	fail += check_setfl_ignored(fd, O_TRUNC);
+#ifdef O_BENEATH
+	fail += check_setfl_ignored(fd, O_BENEATH);
+#endif
+
+	close(fd);
 	return fail;
 }
 
@@ -251,6 +313,7 @@ int main(int argc, char *argv[])
 	printf("Skipping O_BENEATH tests due to missing #define\n");
 #endif
 	fail += check_proc();
+	fail += check_setfl();
 
 	if (fail > 0)
 		printf("%d tests failed\n", fail);

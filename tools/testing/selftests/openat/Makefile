@@ -1,4 +1,4 @@
-CFLAGS = -Wall
+CFLAGS += -Wall
 BINARIES = openat
 DEPS = subdir topfile symlinkdown subdir/bottomfile subdir/symlinkup subdir/symlinkout subdir/symlinkin
 all: $(BINARIES) $(DEPS)
