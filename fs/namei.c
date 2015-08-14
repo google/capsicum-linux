@@ -3667,11 +3667,17 @@ SYSCALL_DEFINE4(mknodat, int, dfd, const char __user *, filename, umode_t, mode,
 
 	cap_rights_init(&rights, CAP_LOOKUP);
 	switch (mode & S_IFMT) {
+	case 0: case S_IFREG:
+		cap_rights_set(&rights, CAP_CREATE);
+		break;
 	case S_IFCHR: case S_IFBLK:
 		cap_rights_set(&rights, CAP_MKNODAT);
 		break;
 	case S_IFIFO:
 		cap_rights_set(&rights, CAP_MKFIFOAT);
+		break;
+	case S_IFSOCK:
+		cap_rights_set(&rights, CAP_BIND);
 		break;
 	}
 
