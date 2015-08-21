@@ -1,4 +1,4 @@
-CFLAGS = -Wall -g
+CFLAGS += -Wall -g
 BINARIES = clone clone4
 all: $(BINARIES)
 
