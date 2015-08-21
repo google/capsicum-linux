@@ -1,28 +1,9 @@
-CFLAGS = -Wall
-BINARIES = execveat
-DEPS = execveat.symlink execveat.denatured script
-all: $(BINARIES) $(DEPS)
-
-subdir:
-	mkdir -p $@
-script:
-	echo '#!/bin/sh' > $@
-	echo 'exit $$*' >> $@
-	chmod +x $@
-execveat.symlink: execveat
-	ln -s -f $< $@
-execveat.denatured: execveat
-	cp $< $@
-	chmod -x $@
-%: %.c
-	$(CC) $(CFLAGS) -o $@ $^
-
+CFLAGS += -Wall
 TEST_PROGS := execveat
-TEST_FILES := $(DEPS)
+CREATED = subdir subdir.moved execveat.symlink exeveat.moved execveat.denatured script non-script
+all: $(TEST_PROGS)
 
 include ../lib.mk
 
-override EMIT_TESTS := echo "mkdir -p subdir; (./execveat && echo \"selftests: execveat [PASS]\") || echo \"selftests: execveat [FAIL]\""
-
 clean:
-	rm -rf $(BINARIES) $(DEPS) subdir.moved execveat.moved xxxxx*
+	rm -rf $(TEST_PROGS) $(CREATED) xxxxx* *.ephemeral

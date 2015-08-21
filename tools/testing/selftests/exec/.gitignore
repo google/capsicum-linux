@@ -1,5 +1,6 @@
 subdir*
 script*
+non-script
 execveat
 execveat.symlink
 execveat.moved
