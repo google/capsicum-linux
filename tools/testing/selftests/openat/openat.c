@@ -1,11 +1,11 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <unistd.h>
 #include <string.h>
-#include <errno.h>
+#include <unistd.h>
 
 #include <linux/fcntl.h>
 
@@ -14,9 +14,9 @@ static int openat_(int dirfd, const char *pathname, int flags)
 {
 	return syscall(__NR_openat, dirfd, pathname, flags);
 }
-static int open_(const char *pathname, int flags)
+static int open_(const char *pathname, int flags, int mode)
 {
-	return syscall(__NR_open, pathname, flags);
+	return syscall(__NR_open, pathname, flags, mode);
 }
 static int fcntl_(int fd, int cmd, int arg)
 {
@@ -82,7 +82,7 @@ static int check_open(const char *path, int flags)
 
 	errno = 0;
 	printf("Check success of open('%s', %x)... ", path?:"(null)", flags);
-	fd = open_(path, flags);
+	fd = open_(path, flags, 0);
 	return check_fd(fd);
 }
 
@@ -127,7 +127,7 @@ static int _check_open_fail(const char *path, int flags,
 	printf("Check failure of open('%s', %x) with %s... ",
 	       path?:"(null)", flags, errno_str);
 	errno = 0;
-	rc = open_(path, flags);
+	rc = open_(path, flags, 0);
 	return check_fail(rc, expected_errno, errno_str);
 }
 
@@ -191,7 +191,7 @@ static int _check_setfl_ignored(int fd, int ignored_flag, const char *flagname)
 
 static int check_setfl(void)
 {
-	int fd = open_("topfile", O_RDONLY|O_DIRECT);
+	int fd = open_("topfile", O_RDONLY|O_DIRECT, 0);
 	int fail = 0;
 
 	/* Attempts to set file creation flags are silently ignored. */
@@ -211,12 +211,35 @@ static int check_setfl(void)
 	return fail;
 }
 
+static void prerequisites(void)
+{
+	int fd;
+	const char *contents = "0123456789\n";
+
+	mkdir("subdir", 0755);
+	fd = open_("topfile", O_RDWR|O_CREAT|O_TRUNC, 0644);
+	write(fd, contents, strlen(contents));
+	close(fd);
+	fd = open_("subdir/bottomfile", O_RDWR|O_CREAT|O_TRUNC, 0644);
+	write(fd, contents, strlen(contents));
+	close(fd);
+	symlink("../topfile", "subdir/symlinkup");
+	symlink("/etc/passwd", "subdir/symlinkout");
+	symlink("bottomfile", "subdir/symlinkin");
+	symlink("subdir/bottomfile", "symlinkdown");
+}
+
 int main(int argc, char *argv[])
 {
 	int fail = 0;
-	int dot_dfd = openat_or_die(AT_FDCWD, ".", O_RDONLY);
-	int subdir_dfd = openat_or_die(AT_FDCWD, "subdir", O_RDONLY);
-	int file_fd = openat_or_die(AT_FDCWD, "topfile", O_RDONLY);
+	int dot_dfd;
+	int subdir_dfd;
+	int file_fd;
+
+	prerequisites();
+	dot_dfd = openat_or_die(AT_FDCWD, ".", O_RDONLY);
+	subdir_dfd = openat_or_die(AT_FDCWD, "subdir", O_RDONLY);
+	file_fd = openat_or_die(AT_FDCWD, "topfile", O_RDONLY);
 
 	/* Sanity check normal behavior */
 	fail += check_open("topfile", O_RDONLY);
