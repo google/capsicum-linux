@@ -851,7 +851,7 @@ int nd_jump_link(struct path *path)
 	struct nameidata *nd = current->nameidata;
 
 	if (nd->flags & LOOKUP_BENEATH)
-		return -EPERM;
+		return -ENOTBENEATH;
 	path_put(&nd->path);
 
 	nd->path = *path;
@@ -1024,7 +1024,7 @@ const char *get_link(struct nameidata *nd)
 	}
 	if (*res == '/') {
 		if (nd->flags & LOOKUP_BENEATH)
-			return ERR_PTR(-EPERM);
+			return ERR_PTR(-ENOTBENEATH);
 		if (nd->flags & LOOKUP_RCU) {
 			struct dentry *d;
 			if (!nd->root.mnt)
@@ -1914,7 +1914,7 @@ static int link_path_walk(const char *name, struct nameidata *nd)
 			case 2:
 				if (name[1] == '.') {
 					if (nd->flags & LOOKUP_BENEATH)
-						return -EPERM;
+						return -ENOTBENEATH;
 					type = LAST_DOTDOT;
 					nd->flags |= LOOKUP_JUMPED;
 				}
@@ -2033,7 +2033,7 @@ static const char *path_init(struct nameidata *nd, unsigned flags)
 	nd->m_seq = read_seqbegin(&mount_lock);
 	if (*s == '/') {
 		if (nd->flags & LOOKUP_BENEATH)
-			return ERR_PTR(-EPERM);
+			return ERR_PTR(-ENOTBENEATH);
 		if (flags & LOOKUP_RCU) {
 			rcu_read_lock();
 			set_root_rcu(nd);
