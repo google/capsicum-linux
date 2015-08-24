@@ -9,6 +9,10 @@
 
 #include <linux/fcntl.h>
 
+#ifndef ENOTBENEATH
+#define ENOTBENEATH 134
+#endif
+
 /* Bypass glibc */
 static int openat_(int dirfd, const char *pathname, int flags)
 {
@@ -146,9 +150,9 @@ static int check_proc(void)
 	fail += check_openat(root_dfd, "proc/self/root/etc/passwd", O_RDONLY);
 #ifdef O_BENEATH
 	fail += check_openat_fail(proc_dfd, "root/etc/passwd",
-				  O_RDONLY|O_BENEATH, EPERM);
+				  O_RDONLY|O_BENEATH, ENOTBENEATH);
 	fail += check_openat_fail(root_dfd, "proc/self/root/etc/passwd",
-				O_RDONLY|O_BENEATH, EPERM);
+				O_RDONLY|O_BENEATH, ENOTBENEATH);
 #endif
 	return fail;
 }
@@ -305,33 +309,33 @@ int main(int argc, char *argv[])
 
 	/* Can't open paths with ".." in them */
 	fail += check_open_fail("subdir/../topfile",
-				O_RDONLY|O_BENEATH, EPERM);
+				O_RDONLY|O_BENEATH, ENOTBENEATH);
 	fail += check_openat_fail(dot_dfd, "subdir/../topfile",
-				O_RDONLY|O_BENEATH, EPERM);
+				O_RDONLY|O_BENEATH, ENOTBENEATH);
 	fail += check_openat_fail(subdir_dfd, "../topfile",
-				  O_RDONLY|O_BENEATH, EPERM);
+				  O_RDONLY|O_BENEATH, ENOTBENEATH);
 	fail += check_openat_fail(subdir_dfd, "../subdir/bottomfile",
-				O_RDONLY|O_BENEATH, EPERM);
-	fail += check_openat_fail(subdir_dfd, "..", O_RDONLY|O_BENEATH, EPERM);
+				O_RDONLY|O_BENEATH, ENOTBENEATH);
+	fail += check_openat_fail(subdir_dfd, "..", O_RDONLY|O_BENEATH, ENOTBENEATH);
 
 	/* Can't open paths starting with "/" */
-	fail += check_open_fail("/etc/passwd", O_RDONLY|O_BENEATH, EPERM);
+	fail += check_open_fail("/etc/passwd", O_RDONLY|O_BENEATH, ENOTBENEATH);
 	fail += check_openat_fail(AT_FDCWD, "/etc/passwd",
-				  O_RDONLY|O_BENEATH, EPERM);
+				  O_RDONLY|O_BENEATH, ENOTBENEATH);
 	fail += check_openat_fail(dot_dfd, "/etc/passwd",
-				  O_RDONLY|O_BENEATH, EPERM);
+				  O_RDONLY|O_BENEATH, ENOTBENEATH);
 	fail += check_openat_fail(subdir_dfd, "/etc/passwd",
-				  O_RDONLY|O_BENEATH, EPERM);
+				  O_RDONLY|O_BENEATH, ENOTBENEATH);
 	/* Can't sneak around constraints with symlinks */
 	fail += check_openat_fail(subdir_dfd, "symlinkup",
-				  O_RDONLY|O_BENEATH, EPERM);
+				  O_RDONLY|O_BENEATH, ENOTBENEATH);
 	fail += check_openat_fail(subdir_dfd, "symlinkout",
-				  O_RDONLY|O_BENEATH, EPERM);
+				  O_RDONLY|O_BENEATH, ENOTBENEATH);
 	fail += check_openat_fail(subdir_dfd, "../symlinkdown",
-				  O_RDONLY|O_BENEATH, EPERM);
+				  O_RDONLY|O_BENEATH, ENOTBENEATH);
 	fail += check_openat_fail(dot_dfd, "subdir/symlinkup",
-				  O_RDONLY|O_BENEATH, EPERM);
-	fail += check_open_fail("subdir/symlinkup", O_RDONLY|O_BENEATH, EPERM);
+				  O_RDONLY|O_BENEATH, ENOTBENEATH);
+	fail += check_open_fail("subdir/symlinkup", O_RDONLY|O_BENEATH, ENOTBENEATH);
 #else
 	printf("Skipping O_BENEATH tests due to missing #define\n");
 #endif
