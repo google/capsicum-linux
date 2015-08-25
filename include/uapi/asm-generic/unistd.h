@@ -717,9 +717,13 @@ __SYSCALL(__NR_membarrier, sys_membarrier)
 __SYSCALL(__NR_mlock2, sys_mlock2)
 #define __NR_copy_file_range 285
 __SYSCALL(__NR_copy_file_range, sys_copy_file_range)
+#define __NR_cap_rights_limit 286
+__SYSCALL(__NR_cap_rights_limit, sys_cap_rights_limit)
+#define __NR_cap_rights_limit 287
+__SYSCALL(__NR_cap_rights_get, sys_cap_rights_get)
 
 #undef __NR_syscalls
-#define __NR_syscalls 286
+#define __NR_syscalls 288
 
 /*
  * All syscalls below here should go away really,
