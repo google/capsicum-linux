@@ -335,6 +335,8 @@
 326	common	copy_file_range		sys_copy_file_range
 327	64	preadv2			sys_preadv2
 328	64	pwritev2		sys_pwritev2
+329	common	cap_rights_limit	sys_cap_rights_limit
+330	common	cap_rights_get		sys_cap_rights_get
 
 #
 # x32-specific system call numbers start at 512 to avoid cache impact
