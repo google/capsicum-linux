@@ -65,6 +65,7 @@ struct old_linux_dirent;
 struct perf_event_attr;
 struct file_handle;
 struct sigaltstack;
+struct cap_rights;
 union bpf_attr;
 
 #include <linux/types.h>
@@ -902,5 +903,18 @@ asmlinkage long sys_pkey_mprotect(unsigned long start, size_t len,
 				  unsigned long prot, int pkey);
 asmlinkage long sys_pkey_alloc(unsigned long flags, unsigned long init_val);
 asmlinkage long sys_pkey_free(int pkey);
+
+asmlinkage long sys_cap_rights_limit(unsigned int orig_fd,
+				     const struct cap_rights __user *new_rights,
+				     unsigned int fcntls,
+				     int nioctls,
+				     unsigned int __user *ioctls,
+				     unsigned int flags);
+asmlinkage long sys_cap_rights_get(unsigned int fd,
+				   struct cap_rights __user *rightsp,
+				   unsigned int __user *fcntls,
+				   int __user *nioctls,
+				   unsigned int __user *ioctls,
+				   unsigned int flags);
 
 #endif

@@ -255,3 +255,7 @@ cond_syscall(sys_membarrier);
 cond_syscall(sys_pkey_mprotect);
 cond_syscall(sys_pkey_alloc);
 cond_syscall(sys_pkey_free);
+
+/* capsicum object capabilities */
+cond_syscall(sys_cap_rights_get);
+cond_syscall(sys_cap_rights_limit);
