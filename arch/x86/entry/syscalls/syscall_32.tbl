@@ -382,3 +382,5 @@
 373	i386	shutdown		sys_shutdown
 374	i386	userfaultfd		sys_userfaultfd
 375	i386	membarrier		sys_membarrier
+376	i386	cap_rights_limit	sys_cap_rights_limit
+377	i386	cap_rights_get		sys_cap_rights_get
