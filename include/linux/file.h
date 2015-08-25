@@ -148,8 +148,8 @@ struct fd _fdgetr_pos(unsigned int fd, ...);
  * Check whether a file, which may be a Capsicum capability wrapper, has a
  * specified set of rights. If it does, return the normal underlying file and
  * (optionally) the actual rights associated with the capability.
- * If update_refcnt is set, then the refcount for the wrapper will be decremented
- * and the refcount for the underlying file incremented.
+ * If update_refcnt is set, then the refcount for the wrapper will be
+ * decremented and the refcount for the underlying file incremented.
  */
 struct file *file_unwrap(struct file *orig,
 			 const struct capsicum_rights *required_rights,

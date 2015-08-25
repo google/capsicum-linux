@@ -28,7 +28,7 @@
 #include "clonetest.h"
 
 void *stack_top;
-const char *verbose = NULL;
+const char *verbose;
 
 #ifndef CLONE_AUTOREAP
 #define CLONE_AUTOREAP 0x00001000

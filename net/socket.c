@@ -481,6 +481,7 @@ struct socket *_sockfd_lookupr_light(int fd, int *err, int *fput_needed, ...)
 	va_end(ap);
 	return sock;
 }
+
 #define sockfd_lookupr_light(fd, err, fpn, ...) \
 	_sockfd_lookupr_light((fd), (err), (fpn), __VA_ARGS__, 0ULL)
 
@@ -2157,8 +2158,8 @@ int __sys_sendmmsg(int fd, struct mmsghdr __user *mmsg, unsigned int vlen,
 	while (datagrams < vlen) {
 		if (MSG_CMSG_COMPAT & flags) {
 			err = ___sys_sendmsg(sock_noaddr, sock_addr,
-					(struct user_msghdr __user *)compat_entry,
-					&msg_sys, flags, &used_address);
+					     (struct user_msghdr __user *)compat_entry,
+					     &msg_sys, flags, &used_address);
 			if (err < 0)
 				break;
 			err = __put_user(err, &compat_entry->msg_len);

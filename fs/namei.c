@@ -2294,7 +2294,7 @@ int vfs_path_lookup(struct dentry *dentry, struct vfsmount *mnt,
 	struct path root = {.mnt = mnt, .dentry = dentry};
 	/* the first argument of filename_lookup() is ignored with root */
 	return filename_lookup(AT_FDCWD, getname_kernel(name),
-			flags , path, &root, NULL);
+			       flags, path, &root, NULL);
 }
 EXPORT_SYMBOL(vfs_path_lookup);
 
@@ -3429,11 +3429,10 @@ static struct file *path_openat(struct nameidata *nd,
 		 */
 		file_unwrap(nd->dfd_cap.file, NULL, &dfd_rights, false);
 		install_file = capsicum_file_install(dfd_rights, file);
-		if (IS_ERR(install_file)) {
+		if (IS_ERR(install_file))
 			error = PTR_ERR(install_file);
-		} else {
+		else
 			file = install_file;
-		}
 	}
 	terminate_walk(nd);
 out2:
@@ -3520,7 +3519,8 @@ static struct dentry *filename_create(int dfd, struct filename *name,
 	 */
 	lookup_flags &= LOOKUP_REVAL;
 
-	name = filename_parentat(dfd, name, lookup_flags, path, &last, &type, rights);
+	name = filename_parentat(dfd, name, lookup_flags, path,
+				 &last, &type, rights);
 	if (IS_ERR(name))
 		return ERR_CAST(name);
 
@@ -3592,18 +3592,22 @@ void done_path_create(struct path *path, struct dentry *dentry)
 }
 EXPORT_SYMBOL(done_path_create);
 
-inline struct dentry *user_path_create_rights(int dfd, const char __user *pathname,
-					struct path *path, unsigned int lookup_flags,
+inline struct dentry *user_path_create_rights(int dfd,
+					const char __user *pathname,
+					struct path *path,
+					unsigned int lookup_flags,
 					const struct capsicum_rights *rights)
 {
-	return filename_create(dfd, getname(pathname), path, lookup_flags, rights);
+	return filename_create(dfd, getname(pathname), path,
+			       lookup_flags, rights);
 }
 EXPORT_SYMBOL(user_path_create_rights);
 
 inline struct dentry *user_path_create(int dfd, const char __user *pathname,
 				struct path *path, unsigned int lookup_flags)
 {
-	return filename_create(dfd, getname(pathname), path, lookup_flags, &lookup_rights);
+	return filename_create(dfd, getname(pathname), path,
+			       lookup_flags, &lookup_rights);
 }
 EXPORT_SYMBOL(user_path_create);
 
@@ -3682,7 +3686,8 @@ SYSCALL_DEFINE4(mknodat, int, dfd, const char __user *, filename, umode_t, mode,
 	}
 
 retry:
-	dentry = user_path_create_rights(dfd, filename, &path, lookup_flags, &rights);
+	dentry = user_path_create_rights(dfd, filename, &path,
+					 lookup_flags, &rights);
 	if (IS_ERR(dentry))
 		return PTR_ERR(dentry);
 
@@ -3754,7 +3759,8 @@ SYSCALL_DEFINE3(mkdirat, int, dfd, const char __user *, pathname, umode_t, mode)
 	cap_rights_init(&rights, CAP_LOOKUP, CAP_MKDIRAT);
 
 retry:
-	dentry = user_path_create_rights(dfd, pathname, &path, lookup_flags, &rights);
+	dentry = user_path_create_rights(dfd, pathname, &path,
+					 lookup_flags, &rights);
 	if (IS_ERR(dentry))
 		return PTR_ERR(dentry);
 
@@ -4099,8 +4105,8 @@ SYSCALL_DEFINE3(symlinkat, const char __user *, oldname,
 		return PTR_ERR(from);
 	cap_rights_init(&rights, CAP_SYMLINKAT);
 retry:
-	dentry = user_path_create_rights(newdfd, newname, &path, lookup_flags,
-					&rights);
+	dentry = user_path_create_rights(newdfd, newname, &path,
+					 lookup_flags, &rights);
 	error = PTR_ERR(dentry);
 	if (IS_ERR(dentry))
 		goto out_putname;
@@ -4237,7 +4243,7 @@ retry:
 		return error;
 
 	new_dentry = user_path_create_rights(newdfd, newname, &new_path,
-					(how & LOOKUP_REVAL), &rights);
+					     (how & LOOKUP_REVAL), &rights);
 	error = PTR_ERR(new_dentry);
 	if (IS_ERR(new_dentry))
 		goto out;

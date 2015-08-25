@@ -49,7 +49,8 @@
  * Valid flags for clone and for clone4. Kept in this file next to the flag
  * list above, but not exposed to userspace.
  */
-#define CLONE_VALID_FLAGS	(0xffffffffULL & ~(CLONE_PID | CLONE_DETACHED | CLONE_STOPPED))
+#define CLONE_VALID_FLAGS	(0xffffffffULL & \
+				 ~(CLONE_PID | CLONE_DETACHED | CLONE_STOPPED))
 #define CLONE4_VALID_FLAGS	(CLONE_VALID_FLAGS | CLONE_AUTOREAP | \
 				 (IS_ENABLED(CONFIG_CLONEFD) ? CLONE_FD : 0))
 #endif /* __KERNEL__ */

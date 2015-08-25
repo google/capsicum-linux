@@ -14,20 +14,20 @@
  * timeval etc) that clash with normal userspace definitions.
  */
 struct clone4_args {
-       pid_t *ptid;
-       pid_t *ctid;
-       void *stack_start;
-       void *stack_size;
-       void *tls;
-       int *clonefd;
-       uint32_t clonefd_flags;
+	pid_t *ptid;
+	pid_t *ctid;
+	void *stack_start;
+	void *stack_size;
+	void *tls;
+	int *clonefd;
+	uint32_t clonefd_flags;
 };
 
 struct clonefd_info {
-       int32_t code;
-       int32_t status;
-       uint64_t utime;
-       uint64_t stime;
+	int32_t code;
+	int32_t status;
+	uint64_t utime;
+	uint64_t stime;
 };
 
 #define STACK_SIZE (1*1024*1024)

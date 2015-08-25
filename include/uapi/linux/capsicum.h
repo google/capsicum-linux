@@ -250,7 +250,7 @@ struct cap_rights {
 /* Process management via process descriptors. */
 /* Allows for pdwait4(2). */
 #define CAP_PDWAIT		CAPRIGHT(1, 0x0000000000000400ULL)
-/* Linux implements some process descriptor operations as basic file operations */
+/* Linux implements some process descriptor operations as file operations */
 /* Allows for pdgetpid(3). */
 #define CAP_PDGETPID		CAP_IOCTL
 /* Allows for pdkill(3). */

@@ -316,10 +316,12 @@ int main(int argc, char *argv[])
 				  O_RDONLY|O_BENEATH, ENOTBENEATH);
 	fail += check_openat_fail(subdir_dfd, "../subdir/bottomfile",
 				O_RDONLY|O_BENEATH, ENOTBENEATH);
-	fail += check_openat_fail(subdir_dfd, "..", O_RDONLY|O_BENEATH, ENOTBENEATH);
+	fail += check_openat_fail(subdir_dfd, "..", O_RDONLY|O_BENEATH,
+				  ENOTBENEATH);
 
 	/* Can't open paths starting with "/" */
-	fail += check_open_fail("/etc/passwd", O_RDONLY|O_BENEATH, ENOTBENEATH);
+	fail += check_open_fail("/etc/passwd", O_RDONLY|O_BENEATH,
+				ENOTBENEATH);
 	fail += check_openat_fail(AT_FDCWD, "/etc/passwd",
 				  O_RDONLY|O_BENEATH, ENOTBENEATH);
 	fail += check_openat_fail(dot_dfd, "/etc/passwd",
@@ -335,7 +337,8 @@ int main(int argc, char *argv[])
 				  O_RDONLY|O_BENEATH, ENOTBENEATH);
 	fail += check_openat_fail(dot_dfd, "subdir/symlinkup",
 				  O_RDONLY|O_BENEATH, ENOTBENEATH);
-	fail += check_open_fail("subdir/symlinkup", O_RDONLY|O_BENEATH, ENOTBENEATH);
+	fail += check_open_fail("subdir/symlinkup", O_RDONLY|O_BENEATH,
+				ENOTBENEATH);
 #else
 	printf("Skipping O_BENEATH tests due to missing #define\n");
 #endif

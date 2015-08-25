@@ -24,7 +24,7 @@
 #include "clonetest.h"
 
 void *stack_top;
-const char *verbose = NULL;
+const char *verbose;
 
 struct user_desc;
 typedef int (*clone_wrapper)(int (*fn)(void *), void *child_stack,

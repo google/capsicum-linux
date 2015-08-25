@@ -116,7 +116,8 @@ static ssize_t clonefd_read(struct file *file, char __user *buf,
 		task_cputime(p, &utime, &stime);
 		info.utime = cputime_to_clock_t(utime + p->signal->utime);
 		info.stime = cputime_to_clock_t(stime + p->signal->stime);
-		ret = simple_read_from_buffer(buf, count, ppos, &info, sizeof(info));
+		ret = simple_read_from_buffer(buf, count, ppos,
+					      &info, sizeof(info));
 	}
 	return ret;
 }
