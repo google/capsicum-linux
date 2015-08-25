@@ -724,9 +724,13 @@ __SYSCALL(__NR_copy_file_range, sys_copy_file_range)
 __SC_COMP(__NR_preadv2, sys_preadv2, compat_sys_preadv2)
 #define __NR_pwritev2 287
 __SC_COMP(__NR_pwritev2, sys_pwritev2, compat_sys_pwritev2)
+#define __NR_cap_rights_limit 288
+__SYSCALL(__NR_cap_rights_limit, sys_cap_rights_limit)
+#define __NR_cap_rights_limit 289
+__SYSCALL(__NR_cap_rights_get, sys_cap_rights_get)
 
 #undef __NR_syscalls
-#define __NR_syscalls 288
+#define __NR_syscalls 290
 
 /*
  * All syscalls below here should go away really,
