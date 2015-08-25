@@ -332,6 +332,8 @@
 323	common	userfaultfd		sys_userfaultfd
 324	common	membarrier		sys_membarrier
 325	common	mlock2			sys_mlock2
+326	common	cap_rights_limit	sys_cap_rights_limit
+327	common	cap_rights_get		sys_cap_rights_get
 
 #
 # x32-specific system call numbers start at 512 to avoid cache impact
