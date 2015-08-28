@@ -4217,7 +4217,8 @@ SYSCALL_DEFINE5(linkat, int, olddfd, const char __user *, oldname,
 	struct dentry *new_dentry;
 	struct path old_path, new_path;
 	struct inode *delegated_inode = NULL;
-	struct capsicum_rights rights;
+	struct capsicum_rights old_rights;
+	struct capsicum_rights new_rights;
 	int how = 0;
 	int error;
 
@@ -4236,14 +4237,16 @@ SYSCALL_DEFINE5(linkat, int, olddfd, const char __user *, oldname,
 
 	if (flags & AT_SYMLINK_FOLLOW)
 		how |= LOOKUP_FOLLOW;
-	cap_rights_init(&rights, CAP_LINKAT);
+	cap_rights_init(&old_rights, CAP_LINKAT_SOURCE);
+	cap_rights_init(&new_rights, CAP_LINKAT_TARGET);
 retry:
-	error = user_path_at(olddfd, oldname, how, &old_path);
+	error = user_path_at_empty_rights(olddfd, oldname, how, &old_path,
+					  NULL, &old_rights);
 	if (error)
 		return error;
 
 	new_dentry = user_path_create_rights(newdfd, newname, &new_path,
-					     (how & LOOKUP_REVAL), &rights);
+					     (how & LOOKUP_REVAL), &new_rights);
 	error = PTR_ERR(new_dentry);
 	if (IS_ERR(new_dentry))
 		goto out;
@@ -4496,8 +4499,8 @@ SYSCALL_DEFINE5(renameat2, int, olddfd, const char __user *, oldname,
 	if (flags & RENAME_EXCHANGE)
 		target_flags = 0;
 
-	cap_rights_init(&old_rights, CAP_RENAMEAT);
-	cap_rights_init(&new_rights, CAP_LINKAT);
+	cap_rights_init(&old_rights, CAP_RENAMEAT_SOURCE);
+	cap_rights_init(&new_rights, CAP_RENAMEAT_TARGET);
 
 retry:
 	from = user_path_parent(olddfd, oldname,
