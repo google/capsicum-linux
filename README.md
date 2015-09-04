@@ -25,7 +25,7 @@ development (and so may contain in-progress code); the
 [capsicum-test](https://github.com/google/capsicum-test) repository is normally kept
 in sync with this branch.
 
-There are also four sets of topic branches, which hold patchsets that can be applied
+There are also four (per-version) topic branches, which hold patchsets that can be applied
 on top of an upstream kernel version.  These branches are **frequently rebased**, either
 because a new upstream release candidate has become available, or because a fix to
 the `capsicum` branch has been back-applied to the topic branches
@@ -34,9 +34,9 @@ the `capsicum` branch has been back-applied to the topic branches
 
 The topic branches are:
 
- - `capsicum-hooks-<ver>`: Capability file descriptors via LSM hooks.
+ - `capsicum-hooks-<ver>`: Capability file descriptors.
  - `procdesc-<ver>`: Process descriptors.
- - `misc-<ver>`: Other kernel changes not specifically needed for Capsicum.
+ - `misc-<ver>`: Other kernel changes not specific to Capsicum.
  - `no-upstream-<ver>`: Local changes for development convenience.
 
 A merge of the latest versions of these four topic branches should yield a codebase
@@ -54,7 +54,8 @@ on a capability FD that are not allowed by the associated rights are rejected
 be narrowed, not widened.
 
 Capsicum also introduces *capability mode*, which disables (with `ECAPMODE`)
-all syscalls that access any kind of global namespace.
+all syscalls that access any kind of global namespace; this is mostly (but not
+completely) implemented in userspace as a seccomp-bpf filter.
 
 See [Documentation/security/capsicum.txt](Documentation/security/capsicum.txt)
 for more details
@@ -62,6 +63,7 @@ for more details
 As process management normally involves a global namespace (that of `pid_t`
 values), Capsicum also introduces a *process descriptor* and related syscalls,
 which allows processes to be manipulated as another kind of file descriptor.
+This functionality is based on Josh Triplett's proposed clonefd patches.
 
 
 Building
@@ -75,36 +77,41 @@ following config settings need to be enabled:
  - `CONFIG_CLONEFD` enables the clonefd functionality that process descriptors
    are built on.
 
+The following configuration options are useful for development:
+
+ - `CONFIG_DEBUG_KMEMLEAK`: enable kernel memory leak detection.
+ - `CONFIG_DEBUG_BUGVERBOSE`: verbose bug reporting.
+
 User-mode Linux can be used for Capsicum testing, and requires the following
 additional configuration parameters:
 
  - `CONFIG_DEBUG_FS`: enable debug filesystem.
 
-The following configuration options are also useful for development:
-
- - `CONFIG_DEBUG_KMEMLEAK`: enable kernel memory leak detection.
- - `CONFIG_DEBUG_BUGVERBOSE`: verbose bug reporting.
 
 Testing
 -------
 
-The capsicum-linux currently includes test scripts in the
-`tools/testing/capsicum/` directory, although the (user-space) tests themselves are
-in the separate [capsicum-test](https://github.com/google/capsicum-test) repository.
+The test suite for Capsicum is held in a separate
+[capsicum-test](https://github.com/google/capsicum-test) repository, to allow
+the tests to be easily shared between Linux and FreeBSD.
 
-These test scripts currently expect specific build configurations (replacing the
-`-j 5` flag with an appropriate parallelization factor for the local machine):
+This repository also includes kernel self-tests for some aspects of Capsicum
+functionality, specifically:
 
- - For user-mode Linux, the kernel should be built with ``make -j 5 ARCH=um
-   O=`pwd`/build/ linux`` (i.e. the old-style `linux` target is required, and the
-   output tree is expect to be under the `build/` subdirectory).
+ - `selftests/openat`: tests of openat(2) and the new `O_BENEATH` flag for it.
+ - `selftests/clone`: tests of the clonefd functionality used for process
+   descriptors.
 
- - For native Linux (including VMs), the kernel should be built with
-   ``make -j 5 O=`pwd`/build-native``
+There are also some test scripts in the `tools/testing/capsicum/` directory,
+purely for local convenience when testing under user-mode Linux (`ARCH=um`).
 
 
 UML Testing Setup
 -----------------
+
+Capsicum can be run and tested in a user-mode Linux build, for convenience and
+speed of development iterations.  This section describes the setup procedure
+for this method of testing.
 
 Create a file to use as the disk for user-mode Linux (UML):
 
