@@ -21,21 +21,25 @@ Branch Status
 -------------
 
 The `capsicum` branch is the main Capsicum development branch, which is under active
-development and so may contain in-progress, untested code.  This branch is generally
-kept synchronized with the [capsicum-test](https://github.com/google/capsicum-test)
-repository.
+development (and so may contain in-progress code); the
+[capsicum-test](https://github.com/google/capsicum-test) repository is normally kept
+in sync with this branch.
 
-Other branches **should be avoided** as they are frequently rebased.  In particular,
-any branches named with the following prefixes are used to divide the Capsicum code into
-distinct per-topic patchsets, and so are rebased to synchronize with the tip of
-the `capsicum` branch.
+There are also four sets of topic branches, which hold patchsets that can be applied
+on top of an upstream kernel version.  These branches are **frequently rebased**, either
+because a new upstream release candidate has become available, or because a fix to
+the `capsicum` branch has been back-applied to the topic branches
+
+![Capsicum branch structure](capsicum-branches.png)
+
+The topic branches are:
 
  - `capsicum-hooks-<ver>`: Capability file descriptors via LSM hooks.
  - `procdesc-<ver>`: Process descriptors.
  - `misc-<ver>`: Other kernel changes not specifically needed for Capsicum.
  - `no-upstream-<ver>`: Local changes for development convenience.
 
-A merge of the latest versions of these topic branches should yield a codebase
+A merge of the latest versions of these four topic branches should yield a codebase
 that is the same as the current `capsicum` branch (although this sometimes lags
 behind as this requires manual merging).
 
@@ -64,7 +68,12 @@ Building
 --------
 
 Capsicum support is currently included for x86 variants and user-mode Linux; the
-`CONFIG_SECURITY_CAPSICUM` configuration parameter needs to be enabled.
+following config settings need to be enabled:
+
+ - `CONFIG_SECURITY_CAPSICUM` enables Capsicum capabilities
+ - `CONFIG_CLONE4` enables the clone4(2) system call, which is needed for...
+ - `CONFIG_CLONEFD` enables the clonefd functionality that process descriptors
+   are built on.
 
 User-mode Linux can be used for Capsicum testing, and requires the following
 additional configuration parameters:
