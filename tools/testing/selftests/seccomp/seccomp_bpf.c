@@ -87,6 +87,13 @@ struct seccomp_data {
 };
 #endif
 
+#ifdef SECCOMP_DATA_TID_PRESENT
+/* seccomp_data structure includes __u32 tgid, tid fields */
+#define ARG_EXTRA 8
+#else
+#define ARG_EXTRA 0
+#endif
+
 #if __BYTE_ORDER == __LITTLE_ENDIAN
 #define syscall_arg(_n) (offsetof(struct seccomp_data, args[_n]))
 #elif __BYTE_ORDER == __BIG_ENDIAN
@@ -524,7 +531,7 @@ TEST_SIGNAL(KILL_one_arg_six, SIGSYS)
 TEST(arg_out_of_range)
 {
 	struct sock_filter filter[] = {
-		BPF_STMT(BPF_LD|BPF_W|BPF_ABS, syscall_arg(6)),
+		BPF_STMT(BPF_LD|BPF_W|BPF_ABS, syscall_arg(6) + ARG_EXTRA),
 		BPF_STMT(BPF_RET|BPF_K, SECCOMP_RET_ALLOW),
 	};
 	struct sock_fprog prog = {
@@ -2403,6 +2410,80 @@ TEST(syscall_restart)
 	if (WIFSIGNALED(status) || WEXITSTATUS(status))
 		_metadata->passed = 0;
 }
+
+#ifdef SECCOMP_DATA_TID_PRESENT
+TEST(tid_data) {
+	long ret;
+	int actual_tid = syscall(__NR_gettid);
+	int actual_tgid = getpid();
+	int actual_ppid = getppid();
+	struct sock_filter filter[] = {
+		/* If tgid/tid info not present, fail with EINVAL */
+		BPF_STMT(BPF_LD+BPF_W+BPF_LEN, 0),  /* A <- data len */
+		BPF_JUMP(BPF_JMP+BPF_JGE+BPF_K,
+			offsetof(struct seccomp_data, tgid) + sizeof(pid_t),
+			0, 1),
+		BPF_JUMP(BPF_JMP+BPF_JGE+BPF_K,
+			offsetof(struct seccomp_data, tid) + sizeof(pid_t),
+			1, 0),
+		BPF_STMT(BPF_RET+BPF_K, SECCOMP_RET_ERRNO | EINVAL),
+		BPF_STMT(BPF_LD+BPF_W+BPF_ABS,
+			offsetof(struct seccomp_data, nr)),
+		/* Only allow read(2) if seccomp_data.tid == tid */
+		BPF_JUMP(BPF_JMP+BPF_JEQ+BPF_K, __NR_read, 0, 4),
+		BPF_STMT(BPF_LD+BPF_W+BPF_ABS,
+			offsetof(struct seccomp_data, tid)),
+		BPF_JUMP(BPF_JMP+BPF_JEQ+BPF_K, actual_tid, 0, 1),
+		BPF_STMT(BPF_RET+BPF_K, SECCOMP_RET_ALLOW),
+		BPF_STMT(BPF_RET+BPF_K, SECCOMP_RET_ERRNO | ENOTEMPTY),
+		/* If seccomp_data.tid != 1, fail close(2) with EMFILE */
+		BPF_JUMP(BPF_JMP+BPF_JEQ+BPF_K, __NR_close, 0, 4),
+		BPF_STMT(BPF_LD+BPF_W+BPF_ABS,
+			offsetof(struct seccomp_data, tid)),
+		BPF_JUMP(BPF_JMP+BPF_JEQ+BPF_K, 1, 0, 1),
+		BPF_STMT(BPF_RET+BPF_K, SECCOMP_RET_ALLOW),
+		BPF_STMT(BPF_RET+BPF_K, SECCOMP_RET_ERRNO | EMFILE),
+		/* Only allow getppid(2) if seccomp_data.tgid == tgid */
+		BPF_JUMP(BPF_JMP+BPF_JEQ+BPF_K, __NR_getppid, 0, 4),
+		BPF_STMT(BPF_LD+BPF_W+BPF_ABS,
+			offsetof(struct seccomp_data, tgid)),
+		BPF_JUMP(BPF_JMP+BPF_JEQ+BPF_K, actual_tgid, 0, 1),
+		BPF_STMT(BPF_RET+BPF_K, SECCOMP_RET_ALLOW),
+		BPF_STMT(BPF_RET+BPF_K, SECCOMP_RET_ERRNO | ENFILE),
+		/* If seccomp_data.tgid != 1, fail dup(2) with ELOOP */
+		BPF_JUMP(BPF_JMP+BPF_JEQ+BPF_K, __NR_dup, 0, 4),
+		BPF_STMT(BPF_LD+BPF_W+BPF_ABS,
+			offsetof(struct seccomp_data, tgid)),
+		BPF_JUMP(BPF_JMP+BPF_JEQ+BPF_K, 1, 0, 1),
+		BPF_STMT(BPF_RET+BPF_K, SECCOMP_RET_ALLOW),
+		BPF_STMT(BPF_RET+BPF_K, SECCOMP_RET_ERRNO | ELOOP),
+		BPF_STMT(BPF_RET+BPF_K, SECCOMP_RET_ALLOW),
+	};
+	struct sock_fprog prog = {
+		.len = (sizeof(filter) / sizeof(filter[0])),
+		.filter = filter
+	};
+	ASSERT_EQ(0, prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0)) {
+		TH_LOG("Kernel does not support PR_SET_NO_NEW_PRIVS!");
+	}
+	ret = prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, &prog, 0, 0);
+	ASSERT_EQ(0, ret);
+
+	/* read(2) has matching tid, so OK */
+	EXPECT_EQ(0, read(0, NULL, 0));
+
+	/* We're not tid 1, so close(2) fails */
+	EXPECT_EQ(-1, close(1));
+	EXPECT_EQ(EMFILE, errno);
+
+	/* getppid(2) has matching tgid, so OK */
+	EXPECT_EQ(actual_ppid, getppid());
+
+	/* We're not tgid 1, so dup(2) fails */
+	EXPECT_EQ(-1, dup(0));
+	EXPECT_EQ(ELOOP, errno);
+}
+#endif
 
 /*
  * TODO:
