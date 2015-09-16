@@ -329,9 +329,11 @@
 320	common	kexec_file_load		sys_kexec_file_load
 321	common	bpf			sys_bpf
 322	64	execveat		stub_execveat
-323	common	cap_rights_limit	sys_cap_rights_limit
-324	common	cap_rights_get		sys_cap_rights_get
-325	64	clone4			stub_clone4
+323	common	userfaultfd		sys_userfaultfd
+324	common	membarrier		sys_membarrier
+325	common	cap_rights_limit	sys_cap_rights_limit
+326	common	cap_rights_get		sys_cap_rights_get
+327	64	clone4			stub_clone4
 
 #
 # x32-specific system call numbers start at 512 to avoid cache impact

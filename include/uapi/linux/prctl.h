@@ -190,13 +190,20 @@ struct prctl_mm_map {
 # define PR_FP_MODE_FR		(1 << 0)	/* 64b FP registers */
 # define PR_FP_MODE_FRE		(1 << 1)	/* 32b compatibility */
 
+/* Control the ambient capability set */
+#define PR_CAP_AMBIENT			47
+# define PR_CAP_AMBIENT_IS_SET		1
+# define PR_CAP_AMBIENT_RAISE		2
+# define PR_CAP_AMBIENT_LOWER		3
+# define PR_CAP_AMBIENT_CLEAR_ALL	4
+
 /*
  * If openat_beneath is set for a task, then all openat(2) operations will
  * implicitly have the O_BENEATH flag set for them.  Once set, this flag cannot
  * be cleared.
  */
-#define PR_SET_OPENAT_BENEATH	47
-#define PR_GET_OPENAT_BENEATH	48
+#define PR_SET_OPENAT_BENEATH	48
+#define PR_GET_OPENAT_BENEATH	49
 
 /*
   Indicate that the openat_beneath flag should be synchronized across all
