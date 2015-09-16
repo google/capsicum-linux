@@ -8775,7 +8775,7 @@ void perf_event_delayed_put(struct task_struct *task)
 struct perf_event *perf_event_get(unsigned int fd)
 {
 	int err;
-	struct fd f;
+	struct fd f = { .file = NULL };
 	struct perf_event *event;
 
 	err = perf_fget_light(fd, &f);
