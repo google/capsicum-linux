@@ -128,8 +128,8 @@ struct bpf_map *bpf_map_get(struct fd f)
 {
 	struct bpf_map *map;
 
-	if (!f.file)
-		return ERR_PTR(-EBADF);
+	if (IS_ERR(f.file))
+		return ERR_PTR(PTR_ERR(f.file));
 
 	if (f.file->f_op != &bpf_map_fops) {
 		fdput(f);
