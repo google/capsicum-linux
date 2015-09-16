@@ -1,47 +1,80 @@
 Capsicum Object-Capabilities on Linux
 =====================================
 
-This repository is used for the development of
-[Capsicum](http://www.cl.cam.ac.uk/research/security/capsicum/) object
-capabilities in the Linux kernel.  Overall status of the
-Capsicum for Linux project is described at
+This repository holds the kernel code for the Linux version of the
+[Capsicum](http://www.cl.cam.ac.uk/research/security/capsicum/)
+security framework. Overall status of the Capsicum for Linux project is described at
 [capsicum-linux.org](http://capsicum-linux.org/index.html).
 
-This functionality is originally based on:
+Topic Branches
+--------------
+
+This repository includes four (per-version) topic branches, which hold
+patchsets that apply cleanly on top of an upstream kernel version.  These
+branches are **frequently rebased**, either because a new upstream release
+candidate has become available, or because a fix to Capsicum code has been
+folded into the patchset.
+
+The `capsicum-hooks-<ver>` branch holds a patch set that can be applied on top
+of the specified upstream kernel version, in order to provide the core Capsicum
+object capability functionality.  This patch set breaks the functionality down
+into individual chunks for ease of review and application; there are also
+several commits that include independent pieces of function that are
+potentially of interest on their own:
+
+ - The first commits in the series add the `O_BENEATH` flag to `openat(2)`; this
+   prevents the opening of paths with a leading '/' or that contain '..'.
+ - A later commit in the series adds a `prctl(2)` operation to implicitly force
+   the use of the `O_BENEATH` flag for all `openat(2)` operations for a task.
+ - The penultimate commits in the series extend the `seccomp_data` structure to
+   include the tid/tgid of the running process in the input data for any
+   seccomp BPF programs; this allows the filter to police operations so that
+   only the current thread or process can be targetted.
+ - The final commit in the series exports additional headers and constants for
+   system call numbers so that userspace tools can simultaneously access the
+   different values for all x86 architectures.
+
+The `procdesc-<ver>` branch holds a separate patch set that provides an
+implementation of Capsicum's process descriptors, building on draft patches
+from Josh Triplett in an incremental manner.  Note that this patchset is
+completely independent from the `capsicum-hooks-<ver>` patchset.
+
+The `misc-<ver>` branch holds a few independent fixes that are not required
+for Capsicum functionality, but which should ideally be upstreamed at some point.
+
+The `no-upstream-<ver>` branch holds local changes that should never be upstreamed;
+they are held locally purely for the convenience of the Capsicum developers.
+
+
+Development Branch
+------------------
+
+The `capsicum` branch is the main Capsicum development branch (and so may
+contain in-progress code); the
+[capsicum-test](https://github.com/google/capsicum-test) repository is normally
+kept in sync with this branch.  This branch is never rebased; new upstream
+kernel releases are merged into it as they become available.
+
+Fixes to the Capsicum functionality on this branch will also be merged into the
+appropriate topic branch.  As a result, a merge of the latest versions of the
+four topic branches should normally be equivalent to the current status of the
+`capsicum` branch.
+
+![Capsicum branch structure](capsicum-branches.png)
+
+
+Provenance
+----------
+
+This Capsicum implementation is based on:
 
  - the original Capsicum implementation in FreeBSD 9.x and 10.x,
-   written by Robert Watson and Jonathan Anderson.
- - the
+   written by Robert Watson, Jonathan Anderson and Pawel Dawidek
+ - an earlier
    [Linux kernel implementation](http://git.chromium.org/gitweb/?p=chromiumos/third_party/kernel-capsicum.git;a=shortlog;h=refs/heads/capsicum)
    written by Meredydd Luff in 2012.
 
 The current functionality is based on the 4.2 upstream kernel.
-
-Branch Status
--------------
-
-The `capsicum` branch is the main Capsicum development branch, which is under active
-development (and so may contain in-progress code); the
-[capsicum-test](https://github.com/google/capsicum-test) repository is normally kept
-in sync with this branch.
-
-There are also four (per-version) topic branches, which hold patchsets that can be applied
-on top of an upstream kernel version.  These branches are **frequently rebased**, either
-because a new upstream release candidate has become available, or because a fix to
-the `capsicum` branch has been back-applied to the topic branches
-
-![Capsicum branch structure](capsicum-branches.png)
-
-The topic branches are:
-
- - `capsicum-hooks-<ver>`: Capability file descriptors.
- - `procdesc-<ver>`: Process descriptors.
- - `misc-<ver>`: Other kernel changes not specific to Capsicum.
- - `no-upstream-<ver>`: Local changes for development convenience.
-
-A merge of the latest versions of these four topic branches should yield a codebase
-that is the same as the current `capsicum` branch (although this sometimes lags
-behind as this requires manual merging).
 
 
 Functionality Overview
