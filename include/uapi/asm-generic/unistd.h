@@ -709,23 +709,25 @@ __SYSCALL(__NR_memfd_create, sys_memfd_create)
 __SYSCALL(__NR_bpf, sys_bpf)
 #define __NR_execveat 281
 __SC_COMP(__NR_execveat, sys_execveat, compat_sys_execveat)
-#define __NR_membarrier 282
+#define __NR_userfaultfd 282
+__SYSCALL(__NR_userfaultfd, sys_userfaultfd)
+#define __NR_membarrier 283
 __SYSCALL(__NR_membarrier, sys_membarrier)
-#define __NR_cap_rights_limit 283
-__SYSCALL(__NR_cap_rights_limit, sys_cap_rights_limit)
 #define __NR_cap_rights_limit 284
+__SYSCALL(__NR_cap_rights_limit, sys_cap_rights_limit)
+#define __NR_cap_rights_limit 285
 __SYSCALL(__NR_cap_rights_get, sys_cap_rights_get)
-#define __NR_clone4 285
+#define __NR_clone4 286
 __SC_COMP(__NR_clone4, sys_clone4, compat_sys_clone4)
 
 #undef __NR_syscalls
-#define __NR_syscalls 286
+#define __NR_syscalls 287
 
 /*
  * All syscalls below here should go away really,
  * these are provided for both review and as a porting
  * help for the C library version.
-*
+ *
  * Last chance: are any of these important enough to
  * enable by default?
  */
