@@ -1,5 +1,6 @@
 subdir*
 script*
+justafile
 execveat
 execveat.symlink
 execveat.moved
