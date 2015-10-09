@@ -343,7 +343,7 @@ static int run_tests(void)
 	/* Attempt to execute directory => EACCES */
 	fail += check_execveat_fail(dot_dfd, "", AT_EMPTY_PATH, EACCES);
 	/* Attempt to execute non-executable => EACCES */
-	fail += check_execveat_fail(dot_dfd, "non-script", 0, EACCES);
+	fail += check_execveat_fail(dot_dfd, "Makefile", 0, EACCES);
 	fail += check_execveat_fail(fd_denatured, "", AT_EMPTY_PATH, EACCES);
 	fail += check_execveat_fail(fd_denatured_path, "", AT_EMPTY_PATH,
 				    EACCES);
@@ -362,26 +362,16 @@ static void prerequisites(void)
 {
 	int fd;
 	const char *script = "#!/bin/sh\nexit $*\n";
-	const char *nonscript = "1234\n";
-
-	/* Create files/dirs */
-	mkdir("subdir", 0755);
-	symlink("execveat", "execveat.symlink");
-	exe_cp("execveat", "execveat.denatured");
-	chmod("execveat.denatured", 0644);
-	fd = open("script", O_RDWR|O_CREAT|O_TRUNC, 0755);
-	write(fd, script, strlen(script));
-	close(fd);
-	fd = open("non-script", O_RDWR|O_CREAT|O_TRUNC, 0644);
-	write(fd, nonscript, strlen(nonscript));
-	close(fd);
 
 	/* Create ephemeral copies of files */
 	exe_cp("execveat", "execveat.ephemeral");
 	exe_cp("execveat", "execveat.path.ephemeral");
 	exe_cp("script", "script.ephemeral");
 	mkdir("subdir.ephemeral", 0755);
-	exe_cp("script", "subdir.ephemeral/script");
+
+	fd = open("subdir.ephemeral/script", O_RDWR|O_CREAT|O_TRUNC, 0755);
+	write(fd, script, strlen(script));
+	close(fd);
 }
 
 int main(int argc, char **argv)
