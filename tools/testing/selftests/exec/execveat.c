@@ -343,7 +343,7 @@ static int run_tests(void)
 	/* Attempt to execute directory => EACCES */
 	fail += check_execveat_fail(dot_dfd, "", AT_EMPTY_PATH, EACCES);
 	/* Attempt to execute non-executable => EACCES */
-	fail += check_execveat_fail(dot_dfd, "Makefile", 0, EACCES);
+	fail += check_execveat_fail(dot_dfd, "justafile", 0, EACCES);
 	fail += check_execveat_fail(fd_denatured, "", AT_EMPTY_PATH, EACCES);
 	fail += check_execveat_fail(fd_denatured_path, "", AT_EMPTY_PATH,
 				    EACCES);
