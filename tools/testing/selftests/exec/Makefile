@@ -1,6 +1,6 @@
 CFLAGS = -Wall
 BINARIES = execveat
-DEPS = execveat.symlink execveat.denatured script subdir
+DEPS = execveat.symlink execveat.denatured script justafile subdir
 all: $(BINARIES) $(DEPS)
 
 subdir:
@@ -9,6 +9,8 @@ script:
 	echo '#!/bin/sh' > $@
 	echo 'exit $$*' >> $@
 	chmod +x $@
+justafile:
+	echo 'abc' > $@
 execveat.symlink: execveat
 	ln -s -f $< $@
 execveat.denatured: execveat
