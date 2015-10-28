@@ -1,8 +1,8 @@
 VERSION = 4
 PATCHLEVEL = 3
 SUBLEVEL = 0
-EXTRAVERSION = -rc4-capsicum
-NAME = Hurr durr I'ma sheep
+EXTRAVERSION = -rc7-capsicum
+NAME = Blurry Fish Butt
 
 # *DOCUMENTATION*
 # To see a list of typical targets execute "make help"

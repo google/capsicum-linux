@@ -2366,8 +2366,15 @@ void wake_up_new_task(struct task_struct *p)
 	trace_sched_wakeup_new(p);
 	check_preempt_curr(rq, p, WF_FORK);
 #ifdef CONFIG_SMP
-	if (p->sched_class->task_woken)
+	if (p->sched_class->task_woken) {
+		/*
+		 * Nothing relies on rq->lock after this, so its fine to
+		 * drop it.
+		 */
+		lockdep_unpin_lock(&rq->lock);
 		p->sched_class->task_woken(rq, p);
+		lockdep_pin_lock(&rq->lock);
+	}
 #endif
 	task_rq_unlock(rq, p, &flags);
 }
@@ -2517,11 +2524,11 @@ static struct rq *finish_task_switch(struct task_struct *prev)
 	 * If a task dies, then it sets TASK_DEAD in tsk->state and calls
 	 * schedule one last time. The schedule call will never return, and
 	 * the scheduled task must drop that reference.
-	 * The test for TASK_DEAD must occur while the runqueue locks are
-	 * still held, otherwise prev could be scheduled on another cpu, die
-	 * there before we look at prev->state, and then the reference would
-	 * be dropped twice.
-	 *		Manfred Spraul <manfred@colorfullife.com>
+	 *
+	 * We must observe prev->state before clearing prev->on_cpu (in
+	 * finish_lock_switch), otherwise a concurrent wakeup can get prev
+	 * running on another CPU and we could rave with its RUNNING -> DEAD
+	 * transition, resulting in a double drop.
 	 */
 	prev_state = prev->state;
 	vtime_task_switch(prev);
@@ -7237,9 +7244,6 @@ void __init sched_init_smp(void)
 
 	alloc_cpumask_var(&non_isolated_cpus, GFP_KERNEL);
 	alloc_cpumask_var(&fallback_doms, GFP_KERNEL);
-
-	/* nohz_full won't take effect without isolating the cpus. */
-	tick_nohz_full_add_cpus_to(cpu_isolated_map);
 
 	sched_init_numa();
 
