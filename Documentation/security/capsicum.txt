@@ -60,7 +60,7 @@ failure (returning a new ECAPMODE errno).
 For example, tcpdump might restrict itself at start-of-day so that it can only
 read from the network file descriptor, and only write to stdout.  It can then
 enter capability mode and begin processing; if the untrusted input does cause
-an exploit, the exploit code is only capable of writing to stdout.
+an exploit, the only thing that the exploit code can write to is stdout.
 
 
 Capability Data Structure
@@ -160,9 +160,11 @@ New System Calls
 
 Capsicum implements the following 2 new system calls:
 
- - cap_rights_limit: restrict the rights associated with file descriptor, thus
-   turning it into a capability FD; internally this is implemented by wrapping
-   the original struct file with a capability file (security/capsicum.c)
+ - cap_rights_limit: restrict the rights associated with a file descriptor to
+   a subset of the existing rights (which can implictly be 'all rights' for
+   a normal file descriptor, in which case this system call converts it into
+   a capability FD); internally this is implemented by wrapping the original
+   struct file with a capability file (security/capsicum.c)
  - cap_rights_get: return the rights associated with a capability FD
    (security/capsicum.c)
 

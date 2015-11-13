@@ -46,7 +46,10 @@
  * The top two bits in all remaining array elements should be 0.
  * The next five bits contain array index. Only one bit is used and bit position
  * in this five-bits range defines array index. This means there can be at most
- * five array elements.
+ * five array elements. (Only using a single bit in this set allows detection of
+ * applications that erroneously attempt to OR-together rights bits from
+ * different array entries, e.g. CAP_READ|CAP_IOCTL will give a
+ * detectably-invalid value.)
  */
 #define CAP_RIGHTS_VERSION_00	0
 /*
