@@ -227,6 +227,7 @@ SYSCALL_DEFINE6(cap_rights_limit,
 			return -EFAULT;
 		}
 	}
+	cap_rights_regularize(&rights);
 
 	return capsicum_rights_limit(fd, &rights);
 }

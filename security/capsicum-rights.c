@@ -28,10 +28,12 @@
  */
 
 #include <stdarg.h>
-#include <linux/capsicum.h>
-#include <linux/slab.h>
-#include <linux/fcntl.h>
+#include <linux/bsearch.h>
 #include <linux/bug.h>
+#include <linux/capsicum.h>
+#include <linux/fcntl.h>
+#include <linux/slab.h>
+#include <linux/sort.h>
 
 #include "capsicum-rights.h"
 
@@ -129,21 +131,29 @@ struct capsicum_rights *cap_rights_set_all(struct capsicum_rights *rights)
 }
 EXPORT_SYMBOL(cap_rights_set_all);
 
+static int cmpuint(const void *a, const void *b)
+{
+	return *(unsigned int *)a - *(unsigned int *)b;
+}
+
+static inline bool cap_rights_ioctls_has(const struct capsicum_rights *big,
+					 unsigned int value)
+{
+	return bsearch(&value, big->ioctls, big->nioctls, sizeof(unsigned int), cmpuint);
+}
+
 static bool cap_rights_ioctls_contains(const struct capsicum_rights *big,
 				       const struct capsicum_rights *little)
 {
-	int i, j;
+	int i;
 
 	if (big->nioctls == -1)
 		return true;
 	if (big->nioctls < little->nioctls)
 		return false;
+	/* Assume big->ioctls are in ascending order */
 	for (i = 0; i < little->nioctls; i++) {
-		for (j = 0; j < big->nioctls; j++) {
-			if (little->ioctls[i] == big->ioctls[j])
-				break;
-		}
-		if (j == big->nioctls)
+		if (!cap_rights_ioctls_has(big, little->ioctls[i]))
 			return false;
 	}
 	return true;
@@ -167,6 +177,12 @@ static bool cap_rights_primary_contains(const struct cap_rights *big,
 		}
 	}
 	return true;
+}
+
+void cap_rights_regularize(struct capsicum_rights *rights)
+{
+	sort(rights->ioctls, rights->nioctls, sizeof(unsigned int), cmpuint,
+	     NULL);
 }
 
 bool cap_rights_contains(const struct capsicum_rights *big,
