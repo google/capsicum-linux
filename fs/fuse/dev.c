@@ -2245,7 +2245,7 @@ static long fuse_dev_ioctl(struct file *file, unsigned int cmd,
 			struct file *old = fgetr(oldfd, CAP_LIST_END);
 
 			err = -EINVAL;
-			if (old) {
+			if (!IS_ERR(old)) {
 				struct fuse_dev *fud = NULL;
 
 				/*

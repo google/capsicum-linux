@@ -362,7 +362,7 @@ static const struct file_operations timerfd_fops = {
 
 #ifdef CONFIG_SECURITY_CAPSICUM
 #define timerfd_fgetr(f, p, ...) \
-	_timerfd_fgetr((f), (p), __VA_ARGS__, 0ULL)
+	_timerfd_fgetr((f), (p), __VA_ARGS__, CAP_LIST_END)
 static int _timerfd_fgetr(int fd, struct fd *p, ...)
 {
 	struct capsicum_rights rights;

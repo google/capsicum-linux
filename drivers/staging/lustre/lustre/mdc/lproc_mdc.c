@@ -143,11 +143,12 @@ static ssize_t mdc_kuc_write(struct file *file,
 	} else {
 		struct file *fp = fgetr(fd, CAP_WRITE);
 
-		if (IS_ERR(fp))
+		if (IS_ERR(fp)) {
 			rc = PTR_ERR(fp);
-		else
+		} else {
 			rc = libcfs_kkuc_msg_put(fp, lh);
-		fput(fp);
+			fput(fp);
+		}
 	}
 	kfree(lh);
 	if (rc < 0)
