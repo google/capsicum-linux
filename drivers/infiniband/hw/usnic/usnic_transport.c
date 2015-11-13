@@ -153,7 +153,10 @@ struct socket *usnic_transport_get_socket(int sock_fd)
 	if (!sock) {
 		usnic_err("Unable to lookup socket for fd %d with err %d\n",
 				sock_fd, err);
-		return ERR_PTR(-ENOENT);
+		if (PTR_ERR(f.file) == EBADF)
+			return ERR_PTR(-ENOENT);
+		else
+			return ERR_PTR(PTR_ERR(f.file));
 	}
 
 	usnic_transport_sock_to_str(buf, sizeof(buf), sock);
