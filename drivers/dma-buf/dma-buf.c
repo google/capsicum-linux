@@ -389,7 +389,7 @@ struct dma_buf *dma_buf_get(int fd)
 	file = fgetr(fd, CAP_MMAP, CAP_READ, CAP_WRITE);
 
 	if (IS_ERR(file))
-		return (struct dma_buf *)file;
+		return ERR_PTR(PTR_ERR(file));
 
 	if (!is_dma_buf_file(file)) {
 		fput(file);

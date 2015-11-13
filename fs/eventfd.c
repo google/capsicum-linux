@@ -351,7 +351,7 @@ struct eventfd_ctx *eventfd_ctx_fdget(int fd)
 	struct fd f = fdgetr(fd, CAP_WRITE);
 
 	if (IS_ERR(f.file))
-		return (struct eventfd_ctx *) f.file;
+		return ERR_PTR(PTR_ERR(f.file));
 	ctx = eventfd_ctx_fileget(f.file);
 	fdput(f);
 	return ctx;
