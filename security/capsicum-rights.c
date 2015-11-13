@@ -48,15 +48,16 @@ static const int bit2idx[] = {
 	4, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1
 };
 
-static inline int right_to_index(__u64 right)
+static inline int right_to_index(u64 right)
 {
 	return bit2idx[CAPIDXBIT(right)];
 }
 
-static inline bool has_right(const struct capsicum_rights *rights, u64 right)
+bool cap_rights_has(const struct capsicum_rights *rights, u64 right)
 {
 	int idx = right_to_index(right);
 
+	BUG_ON(idx < 0 || idx >= CAPARSIZE(&rights->primary));
 	return (rights->primary.cr_rights[idx] & right) == right;
 }
 
@@ -71,7 +72,7 @@ cap_rights_vset(struct capsicum_rights *rights, va_list ap)
 
 	while (true) {
 		right = va_arg(ap, u64);
-		if (right == 0)
+		if (right == CAP_LIST_END)
 			break;
 		BUG_ON(CAPRVER(right) != 0);
 		i = right_to_index(right);
@@ -95,23 +96,6 @@ cap_rights_vinit(struct capsicum_rights *rights, va_list ap)
 	return rights;
 }
 EXPORT_SYMBOL(cap_rights_vinit);
-
-bool cap_rights_regularize(struct capsicum_rights *rights)
-{
-	bool changed = false;
-
-	if (!has_right(rights, CAP_FCNTL) && rights->fcntls != 0x00) {
-		changed = true;
-		rights->fcntls = 0x00;
-	}
-	if (!has_right(rights, CAP_IOCTL) && (rights->nioctls != 0)) {
-		changed = true;
-		kfree(rights->ioctls);
-		rights->nioctls = 0;
-		rights->ioctls = NULL;
-	}
-	return changed;
-}
 
 struct capsicum_rights *_cap_rights_init(struct capsicum_rights *rights, ...)
 {

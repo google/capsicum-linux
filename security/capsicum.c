@@ -187,6 +187,7 @@ SYSCALL_DEFINE6(cap_rights_limit,
 		unsigned int __user *, new_ioctls,
 		unsigned int, flags)
 {
+	int ii;
 	struct capsicum_rights rights;
 
 	if (flags != 0)
@@ -195,17 +196,29 @@ SYSCALL_DEFINE6(cap_rights_limit,
 		return -EFAULT;
 	if (nioctls < 0 && nioctls != -1)
 		return -EINVAL;
+	if (nioctls > 0 && new_ioctls == NULL)
+		return -EINVAL;
 	if (copy_from_user(&rights.primary, new_rights,
-			   sizeof(struct cap_rights)))
+				sizeof(struct cap_rights)))
 		return -EFAULT;
+
+	/* Check validity of the combined rights information */
+	if (CAPVER(&rights.primary) > CAP_RIGHTS_VERSION)
+		return -EINVAL;
+	for (ii = 0; ii < CAPARSIZE(&rights.primary); ii++)
+		if (CAPIDXBIT(rights.primary.cr_rights[ii]) != (ii + 1))
+			return -EINVAL;
+	if (new_fcntls != 0 && !cap_rights_has(&rights, CAP_FCNTL))
+		return -EINVAL;
+	if (nioctls > 0 && !cap_rights_has(&rights, CAP_IOCTL))
+		return -EINVAL;
+
 	rights.fcntls = new_fcntls;
 	rights.nioctls = nioctls;
+	rights.ioctls = NULL;
 	if (rights.nioctls > 0) {
-		size_t size;
+		size_t size = rights.nioctls * sizeof(unsigned int);
 
-		if (!new_ioctls)
-			return -EINVAL;
-		size = rights.nioctls * sizeof(unsigned int);
 		rights.ioctls = kmalloc(size, GFP_KERNEL);
 		if (!rights.ioctls)
 			return -ENOMEM;
@@ -213,11 +226,7 @@ SYSCALL_DEFINE6(cap_rights_limit,
 			kfree(rights.ioctls);
 			return -EFAULT;
 		}
-	} else {
-		rights.ioctls = NULL;
 	}
-	if (cap_rights_regularize(&rights))
-		return -ENOTCAPABLE;
 
 	return capsicum_rights_limit(fd, &rights);
 }
