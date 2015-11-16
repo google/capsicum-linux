@@ -1803,12 +1803,8 @@ static int snd_pcm_link(struct snd_pcm_substream *substream, int fd)
 	struct snd_pcm_group *group;
 	struct fd f = fdgetr(fd, CAP_LIST_END);
 
-	if (IS_ERR(f.file)) {
-		res = PTR_ERR(f.file);
-		if (res == -EBADF)
-			return -EBADFD;
-		return res;
-	}
+	if (IS_ERR(f.file))
+		return map_ebadf_to(f.file, -EBADFD);
 	if (!is_pcm_file(f.file)) {
 		res = -EBADFD;
 		goto _badf;

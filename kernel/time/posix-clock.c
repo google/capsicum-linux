@@ -252,12 +252,8 @@ static int get_clock_desc(const clockid_t id, struct posix_clock_desc *cd,
 	struct file *fp = fgetr(CLOCKID_TO_FD(id), right);
 	int err = -EINVAL;
 
-	if (IS_ERR(fp)) {
-		err = PTR_ERR(fp);
-		if (err == -EBADF)
-			err = -EINVAL;
-		return err;
-	}
+	if (IS_ERR(fp))
+		return map_ebadf_to(fp, -EINVAL);
 
 	if (fp->f_op->open != posix_clock_open || !fp->private_data)
 		goto out;

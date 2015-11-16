@@ -1700,9 +1700,7 @@ static ssize_t o2hb_region_dev_write(struct o2hb_region *reg,
 
 	f = fdgetr(fd, CAP_FSTAT);
 	if (IS_ERR(f.file)) {
-		ret = PTR_ERR(f.file);
-		if (ret == -EBADF)
-			ret = -EINVAL;
+		ret = map_ebadf_to(f.file, -EINVAL);
 		goto out;
 	}
 

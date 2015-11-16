@@ -2692,12 +2692,8 @@ static int copy_module_from_fd(int fd, struct load_info *info)
 	loff_t pos;
 	ssize_t bytes = 0;
 
-	if (IS_ERR(f.file)) {
-		err = PTR_ERR(f.file);
-		if (err == -EBADF)
-			err = -ENOEXEC;
-		return err;
-	}
+	if (IS_ERR(f.file))
+		return map_ebadf_to(f.file, -ENOEXEC);
 
 	err = security_kernel_module_from_file(f.file);
 	if (err)

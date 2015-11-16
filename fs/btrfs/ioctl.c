@@ -1634,9 +1634,7 @@ static noinline int btrfs_ioctl_snap_create_transid(struct file *file,
 		struct fd src = fdgetr(fd, CAP_FSTAT);
 		struct inode *src_inode;
 		if (IS_ERR(src.file)) {
-			ret = PTR_ERR(src.file);
-			if (ret == -EBADF)
-				ret = -EINVAL;
+			ret = map_ebadf_to(src.file, -EINVAL);
 			goto out_drop_write;
 		}
 

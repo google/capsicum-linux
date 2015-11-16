@@ -1064,9 +1064,7 @@ static int fuse_fill_super(struct super_block *sb, void *data, int silent)
 
 	file = fgetr(d.fd, CAP_READ, CAP_WRITE);
 	if (IS_ERR(file)) {
-		err = PTR_ERR(file);
-		if (err == -EBADF)
-			err = -EINVAL;
+		err = map_ebadf_to(file, -EINVAL);
 		goto err;
 	}
 
