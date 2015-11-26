@@ -889,6 +889,8 @@ asmlinkage long sys_execveat(int dfd, const char __user *filename,
 
 asmlinkage long sys_membarrier(int cmd, int flags);
 
+asmlinkage long sys_mlock2(unsigned long start, size_t len, int flags);
+
 asmlinkage long sys_cap_rights_limit(unsigned int orig_fd,
 				     const struct cap_rights __user *new_rights,
 				     unsigned int fcntls,
