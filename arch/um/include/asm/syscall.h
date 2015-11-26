@@ -19,12 +19,11 @@
 #include <linux/err.h>
 
 #include "linux/kernel.h"
-#include "linux/ptrace.h"
-#include "kern_util.h"
 #include "sysdep/ptrace.h"
-#include "sysdep/syscalls.h"
 
-extern syscall_handler_t *sys_call_table[];
+typedef asmlinkage long (*sys_call_ptr_t)(unsigned long, unsigned long,
+					  unsigned long, unsigned long,
+					  unsigned long, unsigned long);
 
 /*
  * Only the low 32 bits of orig_ax are meaningful, so we return int.
@@ -39,6 +38,7 @@ static inline int syscall_get_nr(struct task_struct *task, struct pt_regs *regs)
 static inline void syscall_rollback(struct task_struct *task,
 				    struct pt_regs *regs)
 {
+	/* No-op in UML. */
 }
 
 static inline long syscall_get_error(struct task_struct *task,
