@@ -149,7 +149,7 @@ for this method of testing.
 Create a file to use as the disk for user-mode Linux (UML):
 
     # Create (sparse) empty file
-    dd if=/dev/zero of=tools/testing/capsicum/test.img bs=1 count=0 seek=500GB
+    dd if=/dev/zero of=tools/testing/capsicum/test.img bs=1 count=0 seek=500MB
     # Make an ext3 filesystem in it
     mke2fs -t ext3 -F tools/testing/capsicum/test.img
 
@@ -159,7 +159,7 @@ Mount the new file system somewhere:
 
 Put an Ubuntu base system onto it:
 
-    sudo debootstrap --arch=amd64 precise /mnt http://archive.ubuntu.com/ubuntu
+    sudo debootstrap --arch=amd64 --include libsctp1 trusty /mnt http://archive.ubuntu.com/ubuntu
 
 Replace some key files:
 
