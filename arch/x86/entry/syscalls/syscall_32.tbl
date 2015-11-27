@@ -385,4 +385,4 @@
 376	i386	mlock2			sys_mlock2
 377	i386	cap_rights_limit	sys_cap_rights_limit
 378	i386	cap_rights_get		sys_cap_rights_get
-379	i386	clone4			sys_clone4			stub32_clone4
+379	i386	clone4			sys_clone4			compat_sys_clone4
