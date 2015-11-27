@@ -58,6 +58,7 @@ build*
 /debian/
 *.deb
 *.diff
+*.changes
 
 #
 # tar directory (make tar*-pkg)
