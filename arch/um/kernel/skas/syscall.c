@@ -16,6 +16,9 @@ void handle_syscall(struct uml_pt_regs *r)
 	long result;
 	int syscall;
 
+	/* Get the syscall, which also populates r->syscall */
+	syscall = get_syscall(r);
+
 	/* Do the secure computing check first. */
 	if (secure_computing()) {
 		/* seccomp failures shouldn't expose any additional code. */
@@ -26,8 +29,6 @@ void handle_syscall(struct uml_pt_regs *r)
 		result = -ENOSYS;
 		goto out;
 	}
-
-	syscall = get_syscall(r);
 
 	if ((syscall > __NR_syscall_max) || syscall < 0)
 		result = -ENOSYS;
