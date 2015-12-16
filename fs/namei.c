@@ -2025,7 +2025,6 @@ static const char *path_init(struct nameidata *nd, unsigned flags)
 	nd->depth = 0;
 	nd->dfd_cap.file = NULL;
 	nd->dfd_cap.flags = 0;
-	nd->total_link_count = 0;
 	if (task_openat_beneath(current))
 		nd->flags |= LOOKUP_BENEATH;
 
