@@ -258,6 +258,7 @@ static struct inode *sock_alloc_inode(struct super_block *sb)
 	}
 	init_waitqueue_head(&wq->wait);
 	wq->fasync_list = NULL;
+	wq->flags = 0;
 	RCU_INIT_POINTER(ei->socket.wq, wq);
 
 	ei->socket.state = SS_UNCONNECTED;
@@ -1801,6 +1802,7 @@ SYSCALL_DEFINE6(recvfrom, int, fd, void __user *, ubuf, size_t, size,
 	msg.msg_name = addr ? (struct sockaddr *)&address : NULL;
 	/* We assume all kernel code knows the size of sockaddr_storage */
 	msg.msg_namelen = 0;
+	msg.msg_iocb = NULL;
 	if (sock->file->f_flags & O_NONBLOCK)
 		flags |= MSG_DONTWAIT;
 	err = sock_recvmsg(sock, &msg, iov_iter_count(&msg.msg_iter), flags);
