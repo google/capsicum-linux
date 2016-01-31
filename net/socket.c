@@ -295,7 +295,7 @@ static int init_inodecache(void)
 					      0,
 					      (SLAB_HWCACHE_ALIGN |
 					       SLAB_RECLAIM_ACCOUNT |
-					       SLAB_MEM_SPREAD),
+					       SLAB_MEM_SPREAD | SLAB_ACCOUNT),
 					      init_once);
 	if (sock_inode_cachep == NULL)
 		return -ENOMEM;
@@ -2172,6 +2172,7 @@ int __sys_sendmmsg(int fd, struct mmsghdr __user *mmsg, unsigned int vlen,
 		if (err)
 			break;
 		++datagrams;
+		cond_resched();
 	}
 
 	fput_light(sock_noaddr->file, fput_needed);
@@ -2367,6 +2368,7 @@ int __sys_recvmmsg(int fd, struct mmsghdr __user *mmsg, unsigned int vlen,
 		/* Out of band data, return right away */
 		if (msg_sys.msg_flags & MSG_OOB)
 			break;
+		cond_resched();
 	}
 
 out_put:
