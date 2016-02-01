@@ -218,11 +218,11 @@ static int ioctl_fiemap(struct file *filp, unsigned long arg)
 static long ioctl_file_clone(struct file *dst_file, unsigned long srcfd,
 			     u64 off, u64 olen, u64 destoff)
 {
-	struct fd src_file = fdget(srcfd);
+	struct fd src_file = fdgetr(srcfd, CAP_READ, CAP_SEEK, CAP_FSTAT);
 	int ret;
 
-	if (!src_file.file)
-		return -EBADF;
+	if (IS_ERR(src_file.file))
+		return PTR_ERR(src_file.file);
 	ret = vfs_clone_file_range(src_file.file, off, dst_file, destoff, olen);
 	fdput(src_file);
 	return ret;

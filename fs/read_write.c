@@ -1455,13 +1455,17 @@ SYSCALL_DEFINE6(copy_file_range, int, fd_in, loff_t __user *, off_in,
 	struct fd f_out;
 	ssize_t ret = -EBADF;
 
-	f_in = fdget(fd_in);
-	if (!f_in.file)
+	f_in = fdgetr(fd_in, CAP_READ, CAP_SEEK, CAP_FSTAT);
+	if (IS_ERR(f_in.file)) {
+		ret = PTR_ERR(f_in.file);
 		goto out2;
+	}
 
-	f_out = fdget(fd_out);
-	if (!f_out.file)
+	f_out = fdgetr(fd_out, CAP_WRITE, CAP_SEEK, CAP_FSTAT);
+	if (IS_ERR(f_out.file)) {
+		ret = PTR_ERR(f_out.file);
 		goto out1;
+	}
 
 	ret = -EFAULT;
 	if (off_in) {
@@ -1623,11 +1627,11 @@ int vfs_dedupe_file_range(struct file *file, struct file_dedupe_range *same)
 
 	for (i = 0, info = same->info; i < count; i++, info++) {
 		struct inode *dst;
-		struct fd dst_fd = fdget(info->dest_fd);
+		struct fd dst_fd = fdgetr(info->dest_fd, CAP_WRITE, CAP_SEEK, CAP_FSTAT);
 
 		dst_file = dst_fd.file;
-		if (!dst_file) {
-			info->status = -EBADF;
+		if (IS_ERR(dst_file)) {
+			info->status = PTR_ERR(dst_file);
 			goto next_loop;
 		}
 		dst = file_inode(dst_file);
@@ -1635,7 +1639,7 @@ int vfs_dedupe_file_range(struct file *file, struct file_dedupe_range *same)
 		ret = mnt_want_write_file(dst_file);
 		if (ret) {
 			info->status = ret;
-			goto next_loop;
+			goto put_next_loop;
 		}
 
 		dst_off = info->dest_offset;
@@ -1670,8 +1674,9 @@ int vfs_dedupe_file_range(struct file *file, struct file_dedupe_range *same)
 
 next_file:
 		mnt_drop_write_file(dst_file);
-next_loop:
+put_next_loop:
 		fdput(dst_fd);
+next_loop:
 
 		if (fatal_signal_pending(current))
 			goto out;
