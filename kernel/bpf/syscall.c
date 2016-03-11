@@ -210,7 +210,7 @@ void bpf_map_inc(struct bpf_map *map, bool uref)
 
 struct bpf_map *bpf_map_get_with_uref(u32 ufd)
 {
-	struct fd f = fdget(ufd);
+	struct fd f = fdgetr(ufd, CAP_BPF);
 	struct bpf_map *map;
 
 	map = __bpf_map_get(f);
@@ -590,8 +590,8 @@ int bpf_prog_new_fd(struct bpf_prog *prog)
 
 static struct bpf_prog *__bpf_prog_get(struct fd f)
 {
-	if (!f.file)
-		return ERR_PTR(-EBADF);
+	if (IS_ERR(f.file))
+		return ERR_PTR(PTR_ERR(f.file));
 	if (f.file->f_op != &bpf_prog_fops) {
 		fdput(f);
 		return ERR_PTR(-EINVAL);
