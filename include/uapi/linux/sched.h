@@ -23,6 +23,7 @@
 #define CLONE_CHILD_CLEARTID	0x00200000	/* clear the TID in the child */
 #define CLONE_UNTRACED		0x00800000	/* set if the tracing process can't force CLONE_PTRACE on this clone */
 #define CLONE_CHILD_SETTID	0x01000000	/* set the TID in the child */
+#define CLONE_NEWCGROUP		0x02000000	/* New cgroup namespace */
 #define CLONE_NEWUTS		0x04000000	/* New utsname namespace */
 #define CLONE_NEWIPC		0x08000000	/* New ipc namespace */
 #define CLONE_NEWUSER		0x10000000	/* New user namespace */
@@ -36,7 +37,6 @@
  */
 #define CLONE_PID	0x00001000
 #define CLONE_DETACHED	0x00400000
-#define CLONE_STOPPED	0x02000000
 
 /*
  * Flags that only work with clone4.
@@ -50,7 +50,7 @@
  * list above, but not exposed to userspace.
  */
 #define CLONE_VALID_FLAGS	(0xffffffffULL & \
-				 ~(CLONE_PID | CLONE_DETACHED | CLONE_STOPPED))
+				 ~(CLONE_PID | CLONE_DETACHED))
 #define CLONE4_VALID_FLAGS	(CLONE_VALID_FLAGS | CLONE_AUTOREAP | \
 				 (IS_ENABLED(CONFIG_CLONEFD) ? CLONE_FD : 0))
 #endif /* __KERNEL__ */
