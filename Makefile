@@ -1,7 +1,7 @@
 VERSION = 4
 PATCHLEVEL = 6
 SUBLEVEL = 0
-EXTRAVERSION = -rc6-capsicum
+EXTRAVERSION = -capsicum
 NAME = Charred Weasel
 
 # *DOCUMENTATION*
