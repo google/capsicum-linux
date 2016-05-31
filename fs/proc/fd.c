@@ -285,8 +285,8 @@ static int proc_readfd(struct file *file, struct dir_context *ctx)
 
 const struct file_operations proc_fd_operations = {
 	.read		= generic_read_dir,
-	.iterate	= proc_readfd,
-	.llseek		= default_llseek,
+	.iterate_shared	= proc_readfd,
+	.llseek		= generic_file_llseek,
 };
 
 static struct dentry *proc_lookupfd(struct inode *dir, struct dentry *dentry,
@@ -370,6 +370,6 @@ const struct inode_operations proc_fdinfo_inode_operations = {
 
 const struct file_operations proc_fdinfo_operations = {
 	.read		= generic_read_dir,
-	.iterate	= proc_readfdinfo,
-	.llseek		= default_llseek,
+	.iterate_shared	= proc_readfdinfo,
+	.llseek		= generic_file_llseek,
 };

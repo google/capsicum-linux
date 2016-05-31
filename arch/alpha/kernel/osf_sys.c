@@ -147,7 +147,7 @@ SYSCALL_DEFINE4(osf_getdirentries, unsigned int, fd,
 		long __user *, basep)
 {
 	int error;
-	struct fd arg = fdgetr(fd, CAP_READ);
+	struct fd arg = fdgetr_pos(fd, CAP_READ);
 	struct osf_dirent_callback buf = {
 		.ctx.actor = osf_filldir,
 		.dirent = dirent,
@@ -164,7 +164,7 @@ SYSCALL_DEFINE4(osf_getdirentries, unsigned int, fd,
 	if (count != buf.count)
 		error = count - buf.count;
 
-	fdput(arg);
+	fdput_pos(arg);
 	return error;
 }
 

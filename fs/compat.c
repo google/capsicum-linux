@@ -884,7 +884,7 @@ COMPAT_SYSCALL_DEFINE3(old_readdir, unsigned int, fd,
 		struct compat_old_linux_dirent __user *, dirent, unsigned int, count)
 {
 	int error;
-	struct fd f = fdgetr(fd, CAP_READ);
+	struct fd f = fdgetr_pos(fd, CAP_READ);
 	struct compat_readdir_callback buf = {
 		.ctx.actor = compat_fillonedir,
 		.dirent = dirent
@@ -897,7 +897,7 @@ COMPAT_SYSCALL_DEFINE3(old_readdir, unsigned int, fd,
 	if (buf.result)
 		error = buf.result;
 
-	fdput(f);
+	fdput_pos(f);
 	return error;
 }
 
@@ -936,6 +936,8 @@ static int compat_filldir(struct dir_context *ctx, const char *name, int namlen,
 	}
 	dirent = buf->previous;
 	if (dirent) {
+		if (signal_pending(current))
+			return -EINTR;
 		if (__put_user(offset, &dirent->d_off))
 			goto efault;
 	}
@@ -975,7 +977,7 @@ COMPAT_SYSCALL_DEFINE3(getdents, unsigned int, fd,
 	if (!access_ok(VERIFY_WRITE, dirent, count))
 		return -EFAULT;
 
-	f = fdgetr(fd, CAP_READ);
+	f = fdgetr_pos(fd, CAP_READ);
 	if (IS_ERR(f.file))
 		return PTR_ERR(f.file);
 
@@ -989,7 +991,7 @@ COMPAT_SYSCALL_DEFINE3(getdents, unsigned int, fd,
 		else
 			error = count - buf.count;
 	}
-	fdput(f);
+	fdput_pos(f);
 	return error;
 }
 
@@ -1020,6 +1022,8 @@ static int compat_filldir64(struct dir_context *ctx, const char *name,
 	dirent = buf->previous;
 
 	if (dirent) {
+		if (signal_pending(current))
+			return -EINTR;
 		if (__put_user_unaligned(offset, &dirent->d_off))
 			goto efault;
 	}
@@ -1062,7 +1066,7 @@ COMPAT_SYSCALL_DEFINE3(getdents64, unsigned int, fd,
 	if (!access_ok(VERIFY_WRITE, dirent, count))
 		return -EFAULT;
 
-	f = fdgetr(fd, CAP_READ);
+	f = fdgetr_pos(fd, CAP_READ);
 	if (IS_ERR(f.file))
 		return PTR_ERR(f.file);
 
@@ -1077,7 +1081,7 @@ COMPAT_SYSCALL_DEFINE3(getdents64, unsigned int, fd,
 		else
 			error = count - buf.count;
 	}
-	fdput(f);
+	fdput_pos(f);
 	return error;
 }
 #endif /* __ARCH_WANT_COMPAT_SYS_GETDENTS64 */
