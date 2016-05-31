@@ -139,7 +139,7 @@ static ssize_t store_sockfd(struct device *dev, struct device_attribute *attr,
 			goto unlock_ud;
 		}
 
-		socket = sockfd_lookup(sockfd, &err);
+		socket = sockfd_lookupr(sockfd, &err, CAP_LIST_END);
 		if (!socket) {
 			dev_err(dev, "failed to lookup sock");
 			ret = -EINVAL;
