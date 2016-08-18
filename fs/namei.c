@@ -37,6 +37,7 @@
 #include <linux/capsicum.h>
 #include <linux/hash.h>
 #include <linux/bitops.h>
+#include <linux/init_task.h>
 #include <asm/uaccess.h>
 
 #include "internal.h"
@@ -410,6 +411,14 @@ int __inode_permission(struct inode *inode, int mask)
 		 * Nobody gets write access to an immutable file.
 		 */
 		if (IS_IMMUTABLE(inode))
+			return -EPERM;
+
+		/*
+		 * Updating mtime will likely cause i_uid and i_gid to be
+		 * written back improperly if their true value is unknown
+		 * to the vfs.
+		 */
+		if (HAS_UNMAPPED_ID(inode))
 			return -EACCES;
 	}
 
@@ -924,6 +933,7 @@ static inline int may_follow_link(struct nameidata *nd)
 {
 	const struct inode *inode;
 	const struct inode *parent;
+	kuid_t puid;
 
 	if (!sysctl_protected_symlinks)
 		return 0;
@@ -939,7 +949,8 @@ static inline int may_follow_link(struct nameidata *nd)
 		return 0;
 
 	/* Allowed if parent directory and link owner match. */
-	if (uid_eq(parent->i_uid, inode->i_uid))
+	puid = parent->i_uid;
+	if (uid_valid(puid) && uid_eq(puid, inode->i_uid))
 		return 0;
 
 	if (nd->flags & LOOKUP_RCU)
@@ -1114,6 +1125,7 @@ static int follow_automount(struct path *path, struct nameidata *nd,
 			    bool *need_mntput)
 {
 	struct vfsmount *mnt;
+	const struct cred *old_cred;
 	int err;
 
 	if (!path->dentry->d_op || !path->dentry->d_op->d_automount)
@@ -1135,11 +1147,16 @@ static int follow_automount(struct path *path, struct nameidata *nd,
 	    path->dentry->d_inode)
 		return -EISDIR;
 
+	if (path->dentry->d_sb->s_user_ns != &init_user_ns)
+		return -EACCES;
+
 	nd->total_link_count++;
 	if (nd->total_link_count >= 40)
 		return -ELOOP;
 
+	old_cred = override_creds(&init_cred);
 	mnt = path->dentry->d_op->d_automount(path);
+	revert_creds(old_cred);
 	if (IS_ERR(mnt)) {
 		/*
 		 * The filesystem is allowed to return -EISDIR here to indicate
@@ -1474,9 +1491,8 @@ static int follow_dotdot(struct nameidata *nd)
 }
 
 /*
- * This looks up the name in dcache, possibly revalidates the old dentry and
- * allocates a new one if not found or not valid.  In the need_lookup argument
- * returns whether i_op->lookup is necessary.
+ * This looks up the name in dcache and possibly revalidates the found dentry.
+ * NULL is returned if the dentry does not exist in the cache.
  */
 static struct dentry *lookup_dcache(const struct qstr *name,
 				    struct dentry *dir,
@@ -1915,9 +1931,9 @@ static inline unsigned int fold_hash(unsigned long x, unsigned long y)
  * payload bytes, to match the way that hash_name() iterates until it
  * finds the delimiter after the name.
  */
-unsigned int full_name_hash(const char *name, unsigned int len)
+unsigned int full_name_hash(const void *salt, const char *name, unsigned int len)
 {
-	unsigned long a, x = 0, y = 0;
+	unsigned long a, x = 0, y = (unsigned long)salt;
 
 	for (;;) {
 		if (!len)
@@ -1936,15 +1952,19 @@ done:
 EXPORT_SYMBOL(full_name_hash);
 
 /* Return the "hash_len" (hash and length) of a null-terminated string */
-u64 hashlen_string(const char *name)
+u64 hashlen_string(const void *salt, const char *name)
 {
-	unsigned long a = 0, x = 0, y = 0, adata, mask, len;
+	unsigned long a = 0, x = 0, y = (unsigned long)salt;
+	unsigned long adata, mask, len;
 	const struct word_at_a_time constants = WORD_AT_A_TIME_CONSTANTS;
 
-	len = -sizeof(unsigned long);
+	len = 0;
+	goto inside;
+
 	do {
 		HASH_MIX(x, y, a);
 		len += sizeof(unsigned long);
+inside:
 		a = load_unaligned_zeropad(name+len);
 	} while (!has_zero(a, &adata, &constants));
 
@@ -1960,15 +1980,19 @@ EXPORT_SYMBOL(hashlen_string);
  * Calculate the length and hash of the path component, and
  * return the "hash_len" as the result.
  */
-static inline u64 hash_name(const char *name)
+static inline u64 hash_name(const void *salt, const char *name)
 {
-	unsigned long a = 0, b, x = 0, y = 0, adata, bdata, mask, len;
+	unsigned long a = 0, b, x = 0, y = (unsigned long)salt;
+	unsigned long adata, bdata, mask, len;
 	const struct word_at_a_time constants = WORD_AT_A_TIME_CONSTANTS;
 
-	len = -sizeof(unsigned long);
+	len = 0;
+	goto inside;
+
 	do {
 		HASH_MIX(x, y, a);
 		len += sizeof(unsigned long);
+inside:
 		a = load_unaligned_zeropad(name+len);
 		b = a ^ REPEAT_BYTE('/');
 	} while (!(has_zero(a, &adata, &constants) | has_zero(b, &bdata, &constants)));
@@ -1984,9 +2008,9 @@ static inline u64 hash_name(const char *name)
 #else	/* !CONFIG_DCACHE_WORD_ACCESS: Slow, byte-at-a-time version */
 
 /* Return the hash of a string of known length */
-unsigned int full_name_hash(const char *name, unsigned int len)
+unsigned int full_name_hash(const void *salt, const char *name, unsigned int len)
 {
-	unsigned long hash = init_name_hash();
+	unsigned long hash = init_name_hash(salt);
 	while (len--)
 		hash = partial_name_hash((unsigned char)*name++, hash);
 	return end_name_hash(hash);
@@ -1994,9 +2018,9 @@ unsigned int full_name_hash(const char *name, unsigned int len)
 EXPORT_SYMBOL(full_name_hash);
 
 /* Return the "hash_len" (hash and length) of a null-terminated string */
-u64 hashlen_string(const char *name)
+u64 hashlen_string(const void *salt, const char *name)
 {
-	unsigned long hash = init_name_hash();
+	unsigned long hash = init_name_hash(salt);
 	unsigned long len = 0, c;
 
 	c = (unsigned char)*name;
@@ -2013,9 +2037,9 @@ EXPORT_SYMBOL(hashlen_string);
  * We know there's a real path component here of at least
  * one character.
  */
-static inline u64 hash_name(const char *name)
+static inline u64 hash_name(const void *salt, const char *name)
 {
-	unsigned long hash = init_name_hash();
+	unsigned long hash = init_name_hash(salt);
 	unsigned long len = 0, c;
 
 	c = (unsigned char)*name;
@@ -2055,7 +2079,7 @@ static int link_path_walk(const char *name, struct nameidata *nd)
 		if (err)
 			return err;
 
-		hash_len = hash_name(name);
+		hash_len = hash_name(nd->path.dentry, name);
 
 		type = LAST_NORM;
 		if (name[0] == '.') switch (hashlen_len(hash_len)) {
@@ -2440,33 +2464,6 @@ int vfs_path_lookup(struct dentry *dentry, struct vfsmount *mnt,
 EXPORT_SYMBOL(vfs_path_lookup);
 
 /**
- * lookup_hash - lookup single pathname component on already hashed name
- * @name:	name and hash to lookup
- * @base:	base directory to lookup from
- *
- * The name must have been verified and hashed (see lookup_one_len()).  Using
- * this after just full_name_hash() is unsafe.
- *
- * This function also doesn't check for search permission on base directory.
- *
- * Use lookup_one_len_unlocked() instead, unless you really know what you are
- * doing.
- *
- * Do not hold i_mutex; this helper takes i_mutex if necessary.
- */
-struct dentry *lookup_hash(const struct qstr *name, struct dentry *base)
-{
-	struct dentry *ret;
-
-	ret = lookup_dcache(name, base, 0);
-	if (!ret)
-		ret = lookup_slow(name, base, 0);
-
-	return ret;
-}
-EXPORT_SYMBOL(lookup_hash);
-
-/**
  * lookup_one_len - filesystem helper to lookup single pathname component
  * @name:	pathname component to lookup
  * @base:	base directory to lookup from
@@ -2487,7 +2484,7 @@ struct dentry *lookup_one_len(const char *name, struct dentry *base, int len)
 
 	this.name = name;
 	this.len = len;
-	this.hash = full_name_hash(name, len);
+	this.hash = full_name_hash(base, name, len);
 	if (!len)
 		return ERR_PTR(-EACCES);
 
@@ -2537,10 +2534,11 @@ struct dentry *lookup_one_len_unlocked(const char *name,
 	struct qstr this;
 	unsigned int c;
 	int err;
+	struct dentry *ret;
 
 	this.name = name;
 	this.len = len;
-	this.hash = full_name_hash(name, len);
+	this.hash = full_name_hash(base, name, len);
 	if (!len)
 		return ERR_PTR(-EACCES);
 
@@ -2568,7 +2566,10 @@ struct dentry *lookup_one_len_unlocked(const char *name,
 	if (err)
 		return ERR_PTR(err);
 
-	return lookup_hash(&this, base);
+	ret = lookup_dcache(&this, base, 0);
+	if (!ret)
+		ret = lookup_slow(&this, base, 0);
+	return ret;
 }
 EXPORT_SYMBOL(lookup_one_len_unlocked);
 
@@ -2839,10 +2840,11 @@ EXPORT_SYMBOL(__check_sticky);
  *	c. have CAP_FOWNER capability
  *  6. If the victim is append-only or immutable we can't do antyhing with
  *     links pointing to it.
- *  7. If we were asked to remove a directory and victim isn't one - ENOTDIR.
- *  8. If we were asked to remove a non-directory and victim isn't one - EISDIR.
- *  9. We can't remove a root or mountpoint.
- * 10. We don't allow removal of NFS sillyrenamed files; it's handled by
+ *  7. If the victim has an unknown uid or gid we can't change the inode.
+ *  8. If we were asked to remove a directory and victim isn't one - ENOTDIR.
+ *  9. If we were asked to remove a non-directory and victim isn't one - EISDIR.
+ * 10. We can't remove a root or mountpoint.
+ * 11. We don't allow removal of NFS sillyrenamed files; it's handled by
  *     nfs_async_unlink().
  */
 static int may_delete(struct inode *dir, struct dentry *victim, bool isdir)
@@ -2864,7 +2866,7 @@ static int may_delete(struct inode *dir, struct dentry *victim, bool isdir)
 		return -EPERM;
 
 	if (check_sticky(dir, inode) || IS_APPEND(inode) ||
-	    IS_IMMUTABLE(inode) || IS_SWAPFILE(inode))
+	    IS_IMMUTABLE(inode) || IS_SWAPFILE(inode) || HAS_UNMAPPED_ID(inode))
 		return -EPERM;
 	if (isdir) {
 		if (!d_is_dir(victim))
@@ -2885,16 +2887,22 @@ static int may_delete(struct inode *dir, struct dentry *victim, bool isdir)
  *  1. We can't do it if child already exists (open has special treatment for
  *     this case, but since we are inlined it's OK)
  *  2. We can't do it if dir is read-only (done in permission())
- *  3. We should have write and exec permissions on dir
- *  4. We can't do it if dir is immutable (done in permission())
+ *  3. We can't do it if the fs can't represent the fsuid or fsgid.
+ *  4. We should have write and exec permissions on dir
+ *  5. We can't do it if dir is immutable (done in permission())
  */
 static inline int may_create(struct inode *dir, struct dentry *child)
 {
+	struct user_namespace *s_user_ns;
 	audit_inode_child(dir, child, AUDIT_TYPE_CHILD_CREATE);
 	if (child->d_inode)
 		return -EEXIST;
 	if (IS_DEADDIR(dir))
 		return -ENOENT;
+	s_user_ns = dir->i_sb->s_user_ns;
+	if (!kuid_has_mapping(s_user_ns, current_fsuid()) ||
+	    !kgid_has_mapping(s_user_ns, current_fsgid()))
+		return -EOVERFLOW;
 	return inode_permission(dir, MAY_WRITE | MAY_EXEC);
 }
 
@@ -2963,6 +2971,12 @@ int vfs_create(struct inode *dir, struct dentry *dentry, umode_t mode,
 }
 EXPORT_SYMBOL(vfs_create);
 
+bool may_open_dev(const struct path *path)
+{
+	return !(path->mnt->mnt_flags & MNT_NODEV) &&
+		!(path->mnt->mnt_sb->s_iflags & SB_I_NODEV);
+}
+
 static int may_open(struct path *path, int acc_mode, int flag)
 {
 	struct dentry *dentry = path->dentry;
@@ -2981,7 +2995,7 @@ static int may_open(struct path *path, int acc_mode, int flag)
 		break;
 	case S_IFBLK:
 	case S_IFCHR:
-		if (path->mnt->mnt_flags & MNT_NODEV)
+		if (!may_open_dev(path))
 			return -EACCES;
 		/*FALLTHRU*/
 	case S_IFIFO:
@@ -4329,6 +4343,13 @@ int vfs_link(struct dentry *old_dentry, struct inode *dir, struct dentry *new_de
 	 */
 	if (IS_APPEND(inode) || IS_IMMUTABLE(inode))
 		return -EPERM;
+	/*
+	 * Updating the link count will likely cause i_uid and i_gid to
+	 * be writen back improperly if their true value is unknown to
+	 * the vfs.
+	 */
+	if (HAS_UNMAPPED_ID(inode))
+		return -EPERM;
 	if (!dir->i_op->link)
 		return -EPERM;
 	if (S_ISDIR(inode->i_mode))
@@ -4511,7 +4532,7 @@ int vfs_rename(struct inode *old_dir, struct dentry *old_dentry,
 	 * Check source == target.
 	 * On overlayfs need to look at underlying inodes.
 	 */
-	if (vfs_select_inode(old_dentry, 0) == vfs_select_inode(new_dentry, 0))
+	if (d_real_inode(old_dentry) == d_real_inode(new_dentry))
 		return 0;
 
 	error = may_delete(old_dir, old_dentry, is_dir);

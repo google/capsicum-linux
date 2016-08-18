@@ -38,6 +38,7 @@ Module.symvers
 build*
 *.dwo
 *.su
+*.c.[012]*.*
 
 #
 # Top-level generic files
@@ -70,6 +71,7 @@ build*
 #
 !.gitignore
 !.mailmap
+!.cocciconfig
 
 #
 # Generated include files
