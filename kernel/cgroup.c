@@ -6221,9 +6221,9 @@ struct cgroup *cgroup_get_from_fd(int fd)
 	struct cgroup *cgrp;
 	struct file *f;
 
-	f = fget_raw(fd);
-	if (!f)
-		return ERR_PTR(-EBADF);
+	f = fgetr_raw(fd, CAP_LIST_END);
+	if (IS_ERR(f))
+		return PTR_ERR(f);
 
 	css = css_tryget_online_from_dir(f->f_path.dentry, NULL);
 	fput(f);
