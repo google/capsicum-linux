@@ -55,7 +55,6 @@ static const struct file_operations capsicum_file_ops = {
 	.flush = NULL,  /* This is called on close if implemented. */
 	.release = capsicum_release,  /* This is the only one we want. */
 	.fsync = panic_ptr,
-	.aio_fsync = panic_ptr,
 	.fasync = panic_ptr,
 	.lock = panic_ptr,
 	.sendpage = panic_ptr,
