@@ -724,15 +724,21 @@ __SYSCALL(__NR_copy_file_range, sys_copy_file_range)
 __SC_COMP(__NR_preadv2, sys_preadv2, compat_sys_preadv2)
 #define __NR_pwritev2 287
 __SC_COMP(__NR_pwritev2, sys_pwritev2, compat_sys_pwritev2)
-#define __NR_cap_rights_limit 288
+#define __NR_pkey_mprotect 288
+__SYSCALL(__NR_pkey_mprotect, sys_pkey_mprotect)
+#define __NR_pkey_alloc 289
+__SYSCALL(__NR_pkey_alloc,    sys_pkey_alloc)
+#define __NR_pkey_free 290
+__SYSCALL(__NR_pkey_free,     sys_pkey_free)
+#define __NR_cap_rights_limit 291
 __SYSCALL(__NR_cap_rights_limit, sys_cap_rights_limit)
-#define __NR_cap_rights_limit 289
+#define __NR_cap_rights_limit 292
 __SYSCALL(__NR_cap_rights_get, sys_cap_rights_get)
-#define __NR_clone4 290
+#define __NR_clone4 293
 __SC_COMP(__NR_clone4, sys_clone4, compat_sys_clone4)
 
 #undef __NR_syscalls
-#define __NR_syscalls 291
+#define __NR_syscalls 294
 
 /*
  * All syscalls below here should go away really,
