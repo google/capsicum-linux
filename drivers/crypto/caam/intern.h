@@ -41,6 +41,7 @@ struct caam_drv_private_jr {
 	struct device		*dev;
 	int ridx;
 	struct caam_job_ring __iomem *rregs;	/* JobR's register space */
+	struct tasklet_struct irqtask;
 	int irq;			/* One per queue */
 
 	/* Number of scatterlist crypt transforms active on the JobR */
@@ -65,7 +66,6 @@ struct caam_drv_private_jr {
 struct caam_drv_private {
 
 	struct device *dev;
-	struct platform_device **jrpdev; /* Alloc'ed array per sub-device */
 	struct platform_device *pdev;
 
 	/* Physical-presence section */

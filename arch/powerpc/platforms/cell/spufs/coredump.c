@@ -31,7 +31,7 @@
 #include <linux/binfmts.h>
 #include <linux/capsicum.h>
 
-#include <asm/uaccess.h>
+#include <linux/uaccess.h>
 
 #include "spufs.h"
 

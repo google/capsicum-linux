@@ -338,9 +338,10 @@
 329	common	pkey_mprotect		sys_pkey_mprotect
 330	common	pkey_alloc		sys_pkey_alloc
 331	common	pkey_free		sys_pkey_free
-332	common	cap_rights_limit	sys_cap_rights_limit
-333	common	cap_rights_get		sys_cap_rights_get
-334	64	clone4			sys_clone4/ptregs
+332	common	statx			sys_statx
+333	common	cap_rights_limit	sys_cap_rights_limit
+334	common	cap_rights_get		sys_cap_rights_get
+335	64	clone4			sys_clone4/ptregs
 
 #
 # x32-specific system call numbers start at 512 to avoid cache impact

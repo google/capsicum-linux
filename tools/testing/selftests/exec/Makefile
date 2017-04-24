@@ -1,29 +1,25 @@
 CFLAGS = -Wall
-BINARIES = execveat
-DEPS = execveat.symlink execveat.denatured script justafile subdir
-all: $(BINARIES) $(DEPS)
 
-subdir:
-	mkdir -p $@
-script:
-	echo '#!/bin/sh' > $@
-	echo 'exit $$*' >> $@
-	chmod +x $@
-justafile:
-	echo 'abc' > $@
-execveat.symlink: execveat
-	ln -s -f $< $@
-execveat.denatured: execveat
-	cp $< $@
-	chmod -x $@
-%: %.c
-	$(CC) $(CFLAGS) -o $@ $^
-
-TEST_PROGS := execveat
+TEST_GEN_PROGS := execveat
+TEST_GEN_FILES := execveat.symlink execveat.denatured script justafile subdir
 # Makefile is a run-time dependency, since it's accessed by the execveat test
-TEST_FILES := $(DEPS) Makefile
+TEST_FILES := Makefile
+
+EXTRA_CLEAN := $(OUTPUT)/subdir.moved $(OUTPUT)/execveat.moved $(OUTPUT)/xxxxx*
 
 include ../lib.mk
 
-clean:
-	rm -rf $(BINARIES) $(DEPS) subdir.moved execveat.moved xxxxx*
+$(OUTPUT)/subdir:
+	mkdir -p $@
+$(OUTPUT)/script:
+	echo '#!/bin/sh' > $@
+	echo 'exit $$*' >> $@
+	chmod +x $@
+$(OUTPUT)/justafile:
+	echo 'abc' > $@
+$(OUTPUT)/execveat.symlink: $(OUTPUT)/execveat
+	cd $(OUTPUT) && ln -s -f $(shell basename $<) $(shell basename $@)
+$(OUTPUT)/execveat.denatured: $(OUTPUT)/execveat
+	cp $< $@
+	chmod -x $@
+

@@ -247,7 +247,7 @@ static inline int qdisc_restart(struct Qdisc *q, int *packets)
 
 void __qdisc_run(struct Qdisc *q)
 {
-	int quota = weight_p;
+	int quota = dev_tx_weight;
 	int packets;
 
 	while (qdisc_restart(q, &packets)) {
@@ -709,7 +709,7 @@ void qdisc_destroy(struct Qdisc *qdisc)
 
 	qdisc_put_stab(rtnl_dereference(qdisc->stab));
 #endif
-	gen_kill_estimator(&qdisc->bstats, &qdisc->rate_est);
+	gen_kill_estimator(&qdisc->rate_est);
 	if (ops->reset)
 		ops->reset(qdisc);
 	if (ops->destroy)
@@ -794,7 +794,7 @@ static void attach_default_qdiscs(struct net_device *dev)
 		}
 	}
 #ifdef CONFIG_NET_SCHED
-	if (dev->qdisc)
+	if (dev->qdisc != &noop_qdisc)
 		qdisc_hash_add(dev->qdisc);
 #endif
 }

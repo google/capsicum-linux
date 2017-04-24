@@ -730,15 +730,17 @@ __SYSCALL(__NR_pkey_mprotect, sys_pkey_mprotect)
 __SYSCALL(__NR_pkey_alloc,    sys_pkey_alloc)
 #define __NR_pkey_free 290
 __SYSCALL(__NR_pkey_free,     sys_pkey_free)
-#define __NR_cap_rights_limit 291
-__SYSCALL(__NR_cap_rights_limit, sys_cap_rights_limit)
+#define __NR_statx 291
+__SYSCALL(__NR_statx,     sys_statx)
 #define __NR_cap_rights_limit 292
+__SYSCALL(__NR_cap_rights_limit, sys_cap_rights_limit)
+#define __NR_cap_rights_limit 293
 __SYSCALL(__NR_cap_rights_get, sys_cap_rights_get)
-#define __NR_clone4 293
+#define __NR_clone4 294
 __SC_COMP(__NR_clone4, sys_clone4, compat_sys_clone4)
 
 #undef __NR_syscalls
-#define __NR_syscalls 294
+#define __NR_syscalls 295
 
 /*
  * All syscalls below here should go away really,

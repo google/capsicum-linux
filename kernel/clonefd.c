@@ -9,6 +9,7 @@
 #include <linux/file.h>
 #include <linux/fs.h>
 #include <linux/poll.h>
+#include <linux/sched/cputime.h>
 #include <linux/security.h>
 #include <linux/seq_file.h>
 #include <linux/signal.h>
@@ -109,13 +110,13 @@ static ssize_t clonefd_read(struct file *file, char __user *buf,
 
 	if (p->exit_state) {
 		struct clonefd_info info = {};
-		cputime_t utime, stime;
+		u64 utime, stime;
 
 		task_exit_code_status(p->exit_code, &info.code, &info.status);
 		info.code &= ~__SI_MASK;
 		task_cputime(p, &utime, &stime);
-		info.utime = cputime_to_clock_t(utime + p->signal->utime);
-		info.stime = cputime_to_clock_t(stime + p->signal->stime);
+		info.utime = utime + p->signal->utime;
+		info.stime = stime + p->signal->stime;
 		ret = simple_read_from_buffer(buf, count, ppos,
 					      &info, sizeof(info));
 	}

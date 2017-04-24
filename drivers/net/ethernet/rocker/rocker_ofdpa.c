@@ -2216,18 +2216,15 @@ static int ofdpa_port_stp_update(struct ofdpa_port *ofdpa_port,
 {
 	bool want[OFDPA_CTRL_MAX] = { 0, };
 	bool prev_ctrls[OFDPA_CTRL_MAX];
-	u8 uninitialized_var(prev_state);
+	u8 prev_state;
 	int err;
 	int i;
 
-	if (switchdev_trans_ph_prepare(trans)) {
-		memcpy(prev_ctrls, ofdpa_port->ctrls, sizeof(prev_ctrls));
-		prev_state = ofdpa_port->stp_state;
-	}
-
-	if (ofdpa_port->stp_state == state)
+	prev_state = ofdpa_port->stp_state;
+	if (prev_state == state)
 		return 0;
 
+	memcpy(prev_ctrls, ofdpa_port->ctrls, sizeof(prev_ctrls));
 	ofdpa_port->stp_state = state;
 
 	switch (state) {
@@ -2516,6 +2513,7 @@ static void ofdpa_fini(struct rocker *rocker)
 	int bkt;
 
 	del_timer_sync(&ofdpa->fdb_cleanup_timer);
+	flush_workqueue(rocker->rocker_owq);
 
 	spin_lock_irqsave(&ofdpa->flow_tbl_lock, flags);
 	hash_for_each_safe(ofdpa->flow_tbl, bkt, tmp, flow_entry, entry)

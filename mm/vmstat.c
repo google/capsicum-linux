@@ -1038,6 +1038,8 @@ const char * const vmstat_text[] = {
 	"compact_fail",
 	"compact_success",
 	"compact_daemon_wake",
+	"compact_daemon_migrate_scanned",
+	"compact_daemon_free_scanned",
 #endif
 
 #ifdef CONFIG_HUGETLB_PAGE
@@ -1063,6 +1065,9 @@ const char * const vmstat_text[] = {
 	"thp_split_page_failed",
 	"thp_deferred_split_page",
 	"thp_split_pmd",
+#ifdef CONFIG_HAVE_ARCH_TRANSPARENT_HUGEPAGE_PUD
+	"thp_split_pud",
+#endif
 	"thp_zero_page_alloc",
 	"thp_zero_page_alloc_failed",
 #endif
@@ -1547,7 +1552,6 @@ static const struct file_operations proc_vmstat_file_operations = {
 #endif /* CONFIG_PROC_FS */
 
 #ifdef CONFIG_SMP
-static struct workqueue_struct *vmstat_wq;
 static DEFINE_PER_CPU(struct delayed_work, vmstat_work);
 int sysctl_stat_interval __read_mostly = HZ;
 
@@ -1618,7 +1622,7 @@ static void vmstat_update(struct work_struct *w)
 		 * to occur in the future. Keep on running the
 		 * update worker thread.
 		 */
-		queue_delayed_work_on(smp_processor_id(), vmstat_wq,
+		queue_delayed_work_on(smp_processor_id(), mm_percpu_wq,
 				this_cpu_ptr(&vmstat_work),
 				round_jiffies_relative(sysctl_stat_interval));
 	}
@@ -1697,7 +1701,7 @@ static void vmstat_shepherd(struct work_struct *w)
 		struct delayed_work *dw = &per_cpu(vmstat_work, cpu);
 
 		if (!delayed_work_pending(dw) && need_update(cpu))
-			queue_delayed_work_on(cpu, vmstat_wq, dw, 0);
+			queue_delayed_work_on(cpu, mm_percpu_wq, dw, 0);
 	}
 	put_online_cpus();
 
@@ -1713,82 +1717,77 @@ static void __init start_shepherd_timer(void)
 		INIT_DEFERRABLE_WORK(per_cpu_ptr(&vmstat_work, cpu),
 			vmstat_update);
 
-	vmstat_wq = alloc_workqueue("vmstat", WQ_FREEZABLE|WQ_MEM_RECLAIM, 0);
 	schedule_delayed_work(&shepherd,
 		round_jiffies_relative(sysctl_stat_interval));
 }
 
 static void __init init_cpu_node_state(void)
 {
-	int cpu;
+	int node;
 
-	get_online_cpus();
-	for_each_online_cpu(cpu)
-		node_set_state(cpu_to_node(cpu), N_CPU);
-	put_online_cpus();
+	for_each_online_node(node) {
+		if (cpumask_weight(cpumask_of_node(node)) > 0)
+			node_set_state(node, N_CPU);
+	}
 }
 
-static void vmstat_cpu_dead(int node)
+static int vmstat_cpu_online(unsigned int cpu)
 {
-	int cpu;
+	refresh_zone_stat_thresholds();
+	node_set_state(cpu_to_node(cpu), N_CPU);
+	return 0;
+}
 
-	get_online_cpus();
-	for_each_online_cpu(cpu)
-		if (cpu_to_node(cpu) == node)
-			goto end;
+static int vmstat_cpu_down_prep(unsigned int cpu)
+{
+	cancel_delayed_work_sync(&per_cpu(vmstat_work, cpu));
+	return 0;
+}
+
+static int vmstat_cpu_dead(unsigned int cpu)
+{
+	const struct cpumask *node_cpus;
+	int node;
+
+	node = cpu_to_node(cpu);
+
+	refresh_zone_stat_thresholds();
+	node_cpus = cpumask_of_node(node);
+	if (cpumask_weight(node_cpus) > 0)
+		return 0;
 
 	node_clear_state(node, N_CPU);
-end:
-	put_online_cpus();
+	return 0;
 }
 
-/*
- * Use the cpu notifier to insure that the thresholds are recalculated
- * when necessary.
- */
-static int vmstat_cpuup_callback(struct notifier_block *nfb,
-		unsigned long action,
-		void *hcpu)
-{
-	long cpu = (long)hcpu;
-
-	switch (action) {
-	case CPU_ONLINE:
-	case CPU_ONLINE_FROZEN:
-		refresh_zone_stat_thresholds();
-		node_set_state(cpu_to_node(cpu), N_CPU);
-		break;
-	case CPU_DOWN_PREPARE:
-	case CPU_DOWN_PREPARE_FROZEN:
-		cancel_delayed_work_sync(&per_cpu(vmstat_work, cpu));
-		break;
-	case CPU_DOWN_FAILED:
-	case CPU_DOWN_FAILED_FROZEN:
-		break;
-	case CPU_DEAD:
-	case CPU_DEAD_FROZEN:
-		refresh_zone_stat_thresholds();
-		vmstat_cpu_dead(cpu_to_node(cpu));
-		break;
-	default:
-		break;
-	}
-	return NOTIFY_OK;
-}
-
-static struct notifier_block vmstat_notifier =
-	{ &vmstat_cpuup_callback, NULL, 0 };
 #endif
 
-static int __init setup_vmstat(void)
+struct workqueue_struct *mm_percpu_wq;
+
+void __init init_mm_internals(void)
 {
+	int ret __maybe_unused;
+
+	mm_percpu_wq = alloc_workqueue("mm_percpu_wq",
+				       WQ_FREEZABLE|WQ_MEM_RECLAIM, 0);
+
 #ifdef CONFIG_SMP
-	cpu_notifier_register_begin();
-	__register_cpu_notifier(&vmstat_notifier);
+	ret = cpuhp_setup_state_nocalls(CPUHP_MM_VMSTAT_DEAD, "mm/vmstat:dead",
+					NULL, vmstat_cpu_dead);
+	if (ret < 0)
+		pr_err("vmstat: failed to register 'dead' hotplug state\n");
+
+	ret = cpuhp_setup_state_nocalls(CPUHP_AP_ONLINE_DYN, "mm/vmstat:online",
+					vmstat_cpu_online,
+					vmstat_cpu_down_prep);
+	if (ret < 0)
+		pr_err("vmstat: failed to register 'online' hotplug state\n");
+
+	get_online_cpus();
 	init_cpu_node_state();
+	put_online_cpus();
 
 	start_shepherd_timer();
-	cpu_notifier_register_done();
 #endif
 #ifdef CONFIG_PROC_FS
 	proc_create("buddyinfo", S_IRUGO, NULL, &fragmentation_file_operations);
@@ -1796,9 +1795,7 @@ static int __init setup_vmstat(void)
 	proc_create("vmstat", S_IRUGO, NULL, &proc_vmstat_file_operations);
 	proc_create("zoneinfo", S_IRUGO, NULL, &proc_zoneinfo_file_operations);
 #endif
-	return 0;
 }
-module_init(setup_vmstat)
 
 #if defined(CONFIG_DEBUG_FS) && defined(CONFIG_COMPACTION)
 

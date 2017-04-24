@@ -10,6 +10,9 @@
 #include <linux/fs.h>
 #include <linux/delay.h>
 #include <linux/root_dev.h>
+#include <linux/clk.h>
+#include <linux/clk-provider.h>
+#include <linux/clocksource.h>
 #include <linux/console.h>
 #include <linux/module.h>
 #include <linux/cpu.h>
@@ -234,11 +237,11 @@ static char *arc_cpu_mumbojumbo(int cpu_id, char *buf, int len)
 		       is_isa_arcompact() ? "ARCompact" : "ARCv2",
 		       IS_AVAIL1(cpu->isa.be, "[Big-Endian]"));
 
-	n += scnprintf(buf + n, len - n, "Timers\t\t: %s%s%s%s\nISA Extn\t: ",
+	n += scnprintf(buf + n, len - n, "Timers\t\t: %s%s%s%s%s%s\nISA Extn\t: ",
 		       IS_AVAIL1(cpu->extn.timer0, "Timer0 "),
 		       IS_AVAIL1(cpu->extn.timer1, "Timer1 "),
-		       IS_AVAIL2(cpu->extn.rtc, "Local-64-bit-Ctr ",
-				 CONFIG_ARC_HAS_RTC));
+		       IS_AVAIL2(cpu->extn.rtc, "RTC [UP 64-bit] ", CONFIG_ARC_TIMERS_64BIT),
+		       IS_AVAIL2(cpu->extn.gfrc, "GFRC [SMP 64-bit] ", CONFIG_ARC_TIMERS_64BIT));
 
 	n += i = scnprintf(buf + n, len - n, "%s%s%s%s%s",
 			   IS_AVAIL2(cpu->isa.atomic, "atomic ", CONFIG_ARC_HAS_LLSC),
@@ -449,6 +452,15 @@ void __init setup_arch(char **cmdline_p)
 	arc_unwind_init();
 }
 
+/*
+ * Called from start_kernel() - boot CPU only
+ */
+void __init time_init(void)
+{
+	of_clk_init(NULL);
+	clocksource_probe();
+}
+
 static int __init customize_machine(void)
 {
 	if (machine_desc->init_machine)
@@ -477,8 +489,9 @@ static int show_cpuinfo(struct seq_file *m, void *v)
 {
 	char *str;
 	int cpu_id = ptr_to_cpu(v);
-	struct device_node *core_clk = of_find_node_by_name(NULL, "core_clk");
-	u32 freq = 0;
+	struct device *cpu_dev = get_cpu_device(cpu_id);
+	struct clk *cpu_clk;
+	unsigned long freq = 0;
 
 	if (!cpu_online(cpu_id)) {
 		seq_printf(m, "processor [%d]\t: Offline\n", cpu_id);
@@ -491,9 +504,15 @@ static int show_cpuinfo(struct seq_file *m, void *v)
 
 	seq_printf(m, arc_cpu_mumbojumbo(cpu_id, str, PAGE_SIZE));
 
-	of_property_read_u32(core_clk, "clock-frequency", &freq);
+	cpu_clk = clk_get(cpu_dev, NULL);
+	if (IS_ERR(cpu_clk)) {
+		seq_printf(m, "CPU speed \t: Cannot get clock for processor [%d]\n",
+			   cpu_id);
+	} else {
+		freq = clk_get_rate(cpu_clk);
+	}
 	if (freq)
-		seq_printf(m, "CPU speed\t: %u.%02u Mhz\n",
+		seq_printf(m, "CPU speed\t: %lu.%02lu Mhz\n",
 			   freq / 1000000, (freq / 10000) % 100);
 
 	seq_printf(m, "Bogo MIPS\t: %lu.%02lu\n",
