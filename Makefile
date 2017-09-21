@@ -1,7 +1,7 @@
 VERSION = 4
 PATCHLEVEL = 11
 SUBLEVEL = 0
-EXTRAVERSION = -rc7-capsicum
+EXTRAVERSION = -capsicum
 NAME = Fearless Coyote
 
 # *DOCUMENTATION*
