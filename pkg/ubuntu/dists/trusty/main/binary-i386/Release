@@ -1,0 +1,5 @@
+Component: main
+Origin: capsicum
+Label: capsicum
+Architecture: i386
+Description: Repository for Capsicum packages

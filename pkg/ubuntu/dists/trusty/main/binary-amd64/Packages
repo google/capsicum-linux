@@ -1,0 +1,563 @@
+Package: binutils
+Version: 2.24-5ubuntu3.1capsicum1
+Architecture: amd64
+Maintainer: Ubuntu Developers <ubuntu-devel-discuss@lists.ubuntu.com>
+Installed-Size: 18951
+Depends: libc6 (>= 2.14), libcaprights0, zlib1g (>= 1:1.2.0)
+Suggests: binutils-doc (>= 2.24-5ubuntu3.1capsicum1)
+Conflicts: binutils-gold (<< 2.20.51.20100415), binutils-mingw-w64-i686 (<< 2.23.52.20130612-1+3), binutils-mingw-w64-x86-64 (<< 2.23.52.20130612-1+3), elf-binutils, gas, modutils (<< 2.4.19-1)
+Breaks: binutils-mingw-w64-i686 (<< 2.23.52.20130612-1+3), binutils-mingw-w64-x86-64 (<< 2.23.52.20130612-1+3)
+Replaces: binutils-gold (<< 2.20.51.20100415), binutils-mingw-w64-i686 (<< 2.23.52.20130612-1+3), binutils-mingw-w64-x86-64 (<< 2.23.52.20130612-1+3)
+Provides: binutils-gold, elf-binutils
+Priority: optional
+Section: devel
+Filename: pool/main/b/binutils/binutils_2.24-5ubuntu3.1capsicum1_amd64.deb
+Size: 3251056
+SHA256: 90a356b1e5b94c8ba9f402e3f3c972637688e014ac6ad51ebf09aacef56402d8
+SHA1: f644b42dd3d06e67b47b5ab297a668e1484bc53a
+MD5sum: d736d05f8edc4f1b6c77cd94c0ec3737
+Description: GNU assembler, linker and binary utilities
+ The programs in this package are used to assemble, link and manipulate
+ binary and object files.  They may be used in conjunction with a compiler
+ and various libraries to build programs.
+Original-Maintainer: Matthias Klose <doko@debian.org>
+
+Package: binutils-dev
+Source: binutils
+Version: 2.24-5ubuntu3.1capsicum1
+Architecture: amd64
+Maintainer: Ubuntu Developers <ubuntu-devel-discuss@lists.ubuntu.com>
+Installed-Size: 16291
+Depends: binutils (= 2.24-5ubuntu3.1capsicum1)
+Conflicts: libbfd-dev
+Replaces: libbfd-dev, libc5-dev
+Provides: libbfd-dev
+Priority: extra
+Section: devel
+Filename: pool/main/b/binutils/binutils-dev_2.24-5ubuntu3.1capsicum1_amd64.deb
+Size: 1971586
+SHA256: 99e927cfb6d17f976a34b8d9a88b272b0a4ac1c0d643631bca7aded4db1ed8a5
+SHA1: 32d3d8bc21c3e2f9c55ba4973f34bbb104172822
+MD5sum: 4219729518da9bab64ca6282d1e92bee
+Description: GNU binary utilities (BFD development files)
+ This package includes header files and static libraries necessary to build
+ programs which use the GNU BFD library, which is part of binutils.  Note
+ that building Debian packages which depend on the shared libbfd is Not
+ Allowed.
+Original-Maintainer: Matthias Klose <doko@debian.org>
+
+Package: binutils-doc
+Source: binutils
+Version: 2.24-5ubuntu3.1capsicum1
+Architecture: all
+Maintainer: Ubuntu Developers <ubuntu-devel-discuss@lists.ubuntu.com>
+Installed-Size: 512
+Depends: dpkg (>= 1.15.4) | install-info
+Suggests: binutils (= 2.24-5ubuntu3.1capsicum1)
+Conflicts: binutils (<< 2.9.1.0.25-3)
+Priority: optional
+Section: doc
+Filename: pool/main/b/binutils/binutils-doc_2.24-5ubuntu3.1capsicum1_all.deb
+Size: 497926
+SHA256: b8cf8bf749d7f12dd5d757c4808eadaa0ce0e9034f32254e31bac22afbc21ad8
+SHA1: 3cd14a0c5765b85b50a8116a7dfd4f40ba812535
+MD5sum: 6055fb9aa76e9d7a4585be8e14f5f30b
+Description: Documentation for the GNU assembler, linker and binary utilities
+ This package consists of the documentation for the GNU assembler,
+ linker and binary utilities in info format.
+Original-Maintainer: Matthias Klose <doko@debian.org>
+
+Package: binutils-multiarch
+Source: binutils
+Version: 2.24-5ubuntu3.1capsicum1
+Architecture: amd64
+Maintainer: Ubuntu Developers <ubuntu-devel-discuss@lists.ubuntu.com>
+Installed-Size: 7353
+Depends: libc6 (>= 2.14), libcaprights0, zlib1g (>= 1:1.2.0), binutils (= 2.24-5ubuntu3.1capsicum1)
+Priority: extra
+Section: devel
+Filename: pool/main/b/binutils/binutils-multiarch_2.24-5ubuntu3.1capsicum1_amd64.deb
+Size: 1408762
+SHA256: f2f86691f9c7c11a3563925c54e9f27badff58e54cbe23af6ff35daf71a63b2e
+SHA1: ce776e7c2adb43dd6b038fe3173a44dcaee601df
+MD5sum: 1ea08d24601744930f89b2087fac8b35
+Description: Binary utilities that support multi-arch targets
+ The programs in this package are used to manipulate binary and object
+ files that may have been created on other architectures.  This package
+ is primarily for multi-architecture developers and cross-compilers and
+ is not needed by normal users or developers.  Note that a cross-assembling
+ version of gas is not included in this package, just the binary utilities.
+ .
+ NORMAL USERS SHOULD NOT INSTALL THIS PACKAGE.  It's meant only for those
+ requiring support for reading info from binaries from other architectures.
+Original-Maintainer: Matthias Klose <doko@debian.org>
+
+Package: binutils-multiarch-dev
+Source: binutils
+Version: 2.24-5ubuntu3.1capsicum1
+Architecture: amd64
+Maintainer: Ubuntu Developers <ubuntu-devel-discuss@lists.ubuntu.com>
+Installed-Size: 25
+Depends: binutils-dev (= 2.24-5ubuntu3.1capsicum1), binutils-multiarch (= 2.24-5ubuntu3.1capsicum1)
+Replaces: binutils-multiarch (<< 2.24-5)
+Priority: extra
+Section: devel
+Filename: pool/main/b/binutils/binutils-multiarch-dev_2.24-5ubuntu3.1capsicum1_amd64.deb
+Size: 1172
+SHA256: aabd1e2a516bb58699af8f43c2644c3e9adbbbec3c981d64dc1df5b2b68fc2e4
+SHA1: 24b292e939ce2372a95fb7abc3729efc5f075e23
+MD5sum: 8ed56cd2daadc33b0cc04966c7664237
+Description: GNU binary utilities that support multi-arch targets (BFD development files)
+ This package includes header files, static and shared libraries necessary
+ to build programs which use the GNU BFD library for multi-arch targets,
+ which is part of binutils. Note that building Debian packages which depend
+ on the shared libbfd is Not Allowed.
+ .
+ NORMAL USERS SHOULD NOT INSTALL THIS PACKAGE.  It's meant only for those
+ requiring support for reading info from binaries from other architectures.
+Original-Maintainer: Matthias Klose <doko@debian.org>
+
+Package: binutils-source
+Source: binutils
+Version: 2.24-5ubuntu3.1capsicum1
+Architecture: all
+Maintainer: Ubuntu Developers <ubuntu-devel-discuss@lists.ubuntu.com>
+Installed-Size: 19242
+Depends: texinfo, zlib1g-dev, make, python
+Priority: optional
+Section: devel
+Filename: pool/main/b/binutils/binutils-source_2.24-5ubuntu3.1capsicum1_all.deb
+Size: 16763568
+SHA256: 4eeae68929c4d1d4d65e4210e8eb9fc2dbc8740d91dac40f0dd3966daf0c25fc
+SHA1: aa0a2717129259aede76d60c9dbea9d030bc4d84
+MD5sum: abcb1f477ef92b7c41a9924fa4924cc1
+Description: GNU assembler, linker and binary utilities (source)
+ This package contains the sources and patches which are needed to
+ build binutils.
+Original-Maintainer: Matthias Klose <doko@debian.org>
+
+Package: binutils-static
+Source: binutils
+Version: 2.24-5ubuntu3.1capsicum1
+Architecture: amd64
+Maintainer: Ubuntu Developers <ubuntu-devel-discuss@lists.ubuntu.com>
+Installed-Size: 2532
+Priority: optional
+Section: devel
+Filename: pool/main/b/binutils/binutils-static_2.24-5ubuntu3.1capsicum1_amd64.deb
+Size: 745398
+SHA256: d74c62507fa73f3dfcbe443ffd1b46d0e65ad1b2370f5ff955dc6fb9d58290bb
+SHA1: bfe5694af2193411322fbde46c11850dc5278b6d
+MD5sum: f2bed7f581ac1c1105f700e3d04b3ec2
+Description: statically linked binutils tools
+ This package contains statically linked binutils tools used
+ for linking kernel modules needed to mount /usr or /.  At the moment,
+ it only contains ld.
+Original-Maintainer: Matthias Klose <doko@debian.org>
+
+Package: chaps
+Version: 0.42-6812-1
+Architecture: amd64
+Maintainer: David Drysdale <drysdale@google.com>
+Installed-Size: 2832
+Depends: trousers (>= 0.3.7), libc6 (>= 2.14), libdbus-c++-1-0, libgcc1 (>= 1:4.1.1), libleveldb1, libpam0g (>= 0.99.7.1), libprotobuf-lite8, libssl1.0.0 (>= 1.0.0), libstdc++6 (>= 4.9), libtspi1 (>= 0.3.1)
+Priority: extra
+Section: admin
+Filename: pool/main/c/chaps/chaps_0.42-6812-1_amd64.deb
+Size: 599416
+SHA256: d4d8808eb7b7db8c4be0c76a9006409e37c84d1ce0c6514fc15ae6f0515e04b0
+SHA1: 8c2897b9605c1fd6f27cd447b8e69bb3723ea648
+MD5sum: 4f2d2469f7db05850f61603b8f6dd470
+Description: PKCS #11 implementation for TPM backed services
+ Chaps is a PKCS #11 implementation that provides trusted platform module (TPM)
+ backed cryptographic services. It aims to improve speed and reliability of
+ cryptographic token operations as well as to provide a simpler and more
+ flexible codebase for future enhancements.  Chaps works with a TCG Software
+ Stack (TSS).  Typically the TrouSerS TSS implementation is used, but Chaps
+ is not limited to working with TrouSerS.  The name "Chaps" has no real
+ significance other than its fitness as a name for a layer above TrouSerS.
+ .
+ This package includes the daemon and a PAM module which, if enabled,
+ generates a PKCS #11 token for each user that logs into the system.
+ .
+ To generate a PKCS #11 token, the installing user should log out and in again
+ to get access to their token.
+
+Package: libcaprights-dev
+Source: libcaprights
+Version: 0.1.6-1
+Architecture: amd64
+Maintainer: David Drysdale <drysdale@google.com>
+Installed-Size: 103
+Depends: libcaprights0 (= 0.1.6-1)
+Homepage: https://github.com/google/capsicum-test
+Priority: optional
+Section: libdevel
+Filename: pool/main/libc/libcaprights/libcaprights-dev_0.1.6-1_amd64.deb
+Size: 21806
+SHA256: 7890145a2b7db286d05958721f570b2c7455aa12fa022a63b6e1ae25db1aa1e6
+SHA1: 79a41af80c0adbdbcbe5168b499905f4ac1c54ee
+MD5sum: 4b8f4ad69c57a67a988a7d86782db955
+Description: Development files for Capsicum security framework
+ This package provides the <sys/capsicum.h> header file that holds
+ declarations for the Capsicum functionality provided by the
+ libcaprights0 package, plus development libraries.
+
+Package: libcaprights0
+Source: libcaprights
+Version: 0.1.6-1
+Architecture: amd64
+Maintainer: David Drysdale <drysdale@google.com>
+Installed-Size: 66
+Depends: libc6 (>= 2.2.5)
+Homepage: https://github.com/google/capsicum-test
+Priority: optional
+Section: libs
+Filename: pool/main/libc/libcaprights/libcaprights0_0.1.6-1_amd64.deb
+Size: 10006
+SHA256: 7a2a3ae6ee36286b937d7313d114c72d936ddb654cf636f093993876f4606e96
+SHA1: 430e69cd9bae0adfcc9e2fc558280d9025b43bec
+MD5sum: 1bbc8a1f4fa1b6a72cabdd6532b2ceea
+Description: Userspace support library for Capsicum security framework
+ This package holds the libcaprights userspace library, which allows
+ userspace programs to use the Capsicum security features provided
+ by modern Linux kernels.  In particular this library provides
+ cap_enter(3), cap_getmode(3), cap_rights_init(3), cap_rights_set(3),
+ cap_rights_clear(3), cap_rights_is_set(3), cap_rights_merge(3),
+ cap_rights_remove(3), cap_rights_contains(3),
+ cap_rights_get(3), cap_rights_limit(3), cap_ioctls_get(3),
+ cap_ioctls_limit(3), cap_fcntls_get(3), cap_fcntls_limit(3),
+ pdfork(2), pdkill(2), pdgetpid(2), pdwait4(2).
+
+Package: libchaps0
+Source: chaps
+Version: 0.42-6812-1
+Architecture: amd64
+Maintainer: David Drysdale <drysdale@google.com>
+Installed-Size: 969
+Depends: chaps (= 0.42-6812-1), libc6 (>= 2.14), libdbus-c++-1-0, libgcc1 (>= 1:4.1.1), libprotobuf-lite8, libssl1.0.0 (>= 1.0.0), libstdc++6 (>= 4.9)
+Priority: extra
+Section: admin
+Filename: pool/main/c/chaps/libchaps0_0.42-6812-1_amd64.deb
+Size: 298062
+SHA256: 6cac713e238d8f9f015d95e608917243183c39f8e25decc43432ded5eeaccbf7
+SHA1: 98997ba0ee00f4f4c88be3244475f6f0aaea5d3f
+MD5sum: 5aa074d774c9fb9f62d8855a62bcf323
+Description: PKCS #11 implementation library
+ Chaps is a PKCS #11 implementation that provides trusted platform module (TPM)
+ backed cryptographic services. It aims to improve speed and reliability of
+ cryptographic token operations as well as to provide a simpler and more
+ flexible codebase for future enhancements.  Chaps works with a TCG Software
+ Stack (TSS).  Typically the TrouSerS TSS implementation is used, but Chaps
+ is not limited to working with TrouSerS.  The name "Chaps" has no real
+ significance other than its fitness as a name for a layer above TrouSerS.
+ .
+ This package includes the shared library that provides application
+ access to the PKCS #11 API.
+
+Package: linux-firmware-image-3.19.0-capsicum+
+Source: linux-upstream
+Version: 3.19.0-capsicum+-4
+Architecture: amd64
+Maintainer: David Drysdale <drysdale@google.com>
+Installed-Size: 2156
+Homepage: http://www.kernel.org/
+Priority: optional
+Section: kernel
+Filename: pool/main/l/linux-upstream/linux-firmware-image-3.19.0-capsicum+_3.19.0-capsicum+-4_amd64.deb
+Size: 968876
+SHA256: 11923f790f59bf68e26b380124a46a10e4b989159d4fdd0604606480a7146858
+SHA1: 696301af9ad97b869311c634bccd9698a493c367
+MD5sum: 93861fd27197219da9820b633b509870
+Description: Linux kernel firmware, version 3.19.0-capsicum+
+ This package contains firmware from the Linux kernel, version 3.19.0-capsicum+.
+
+Package: linux-firmware-image-4.11.0-capsicum+
+Source: linux-4.11.0-capsicum+
+Version: 4.11.0-capsicum+-1
+Architecture: amd64
+Maintainer: David Drysdale <drysdale@google.com>
+Installed-Size: 2119
+Homepage: http://www.kernel.org/
+Priority: optional
+Section: kernel
+Filename: pool/main/l/linux-4.11.0-capsicum+/linux-firmware-image-4.11.0-capsicum+_4.11.0-capsicum+-1_amd64.deb
+Size: 964860
+SHA256: c226a007a88e899d77f4b4f53a538baabc5813ff15a0f4304697e9285733ba77
+SHA1: 9c45ba389715d209ed7546ed9913030af49fa9c7
+MD5sum: 942deabd28ab2ff2ba4e9ee8865e1f99
+Description: Linux kernel firmware, version 4.11.0-capsicum+
+ This package contains firmware from the Linux kernel, version 4.11.0-capsicum+.
+
+Package: linux-headers-3.19.0-capsicum+
+Source: linux-upstream
+Version: 3.19.0-capsicum+-4
+Architecture: amd64
+Maintainer: David Drysdale <drysdale@google.com>
+Installed-Size: 240679
+Provides: linux-headers, linux-headers-2.6
+Homepage: http://www.kernel.org/
+Priority: optional
+Section: kernel
+Filename: pool/main/l/linux-upstream/linux-headers-3.19.0-capsicum+_3.19.0-capsicum+-4_amd64.deb
+Size: 15104950
+SHA256: 632d4889449dd230d20df465795f95b48ef19a4143877550c3e3ef31bbbbe896
+SHA1: 5a333232e06291f4c033e9d5d446cf6c851a91a1
+MD5sum: 992507584bfc170e54c5db2a85771670
+Description: Linux kernel headers for 3.19.0-capsicum+ on amd64
+ This package provides kernel header files for 3.19.0-capsicum+ on amd64
+ .
+ This is useful for people who need to build external modules
+
+Package: linux-headers-4.11.0-capsicum+
+Source: linux-4.11.0-capsicum+
+Version: 4.11.0-capsicum+-1
+Architecture: amd64
+Maintainer: David Drysdale <drysdale@google.com>
+Installed-Size: 101374
+Provides: linux-headers, linux-headers-2.6
+Homepage: http://www.kernel.org/
+Priority: optional
+Section: kernel
+Filename: pool/main/l/linux-4.11.0-capsicum+/linux-headers-4.11.0-capsicum+_4.11.0-capsicum+-1_amd64.deb
+Size: 12219618
+SHA256: 25dd01a6a244ee60d23432b0337784a25c0c7bfb735aca55ce2d1655a7bcb431
+SHA1: 393a569cc2376515ff691a8d0808e3dbbe517258
+MD5sum: 058f22ae545d443f84b2b9fe455eaed0
+Description: Linux kernel headers for 4.11.0-capsicum+ on amd64
+ This package provides kernel header files for 4.11.0-capsicum+ on amd64
+ .
+ This is useful for people who need to build external modules
+
+Package: linux-image-3.19.0-capsicum+
+Source: linux-upstream
+Version: 3.19.0-capsicum+-4
+Architecture: amd64
+Maintainer: David Drysdale <drysdale@google.com>
+Installed-Size: 182742
+Suggests: linux-firmware-image-3.19.0-capsicum+
+Provides: linux-image, linux-image-2.6, linux-modules-3.19.0-capsicum+
+Homepage: http://www.kernel.org/
+Priority: optional
+Section: kernel
+Filename: pool/main/l/linux-upstream/linux-image-3.19.0-capsicum+_3.19.0-capsicum+-4_amd64.deb
+Size: 38989208
+SHA256: 59b0a1570312a8e356e5046bc4df4e379013af0aeceda0d85cbc7ac59d6c7051
+SHA1: 739ce814fc04f12bc9adfc38b470ed0c0e1001b6
+MD5sum: e1888e898682aca2e11ed3a93f4c6cab
+Description: Linux kernel, version 3.19.0-capsicum+
+ This package contains the Linux kernel, modules and corresponding other
+ files, version: 3.19.0-capsicum+.
+
+Package: linux-image-4.11.0-capsicum+
+Source: linux-4.11.0-capsicum+
+Version: 4.11.0-capsicum+-1
+Architecture: amd64
+Maintainer: David Drysdale <drysdale@google.com>
+Installed-Size: 216504
+Suggests: linux-firmware-image-4.11.0-capsicum+
+Provides: linux-image, linux-image-2.6, linux-modules-4.11.0-capsicum+
+Homepage: http://www.kernel.org/
+Priority: optional
+Section: kernel
+Filename: pool/main/l/linux-4.11.0-capsicum+/linux-image-4.11.0-capsicum+_4.11.0-capsicum+-1_amd64.deb
+Size: 48245366
+SHA256: 6db466d69f857f6138d356050d55a7ac4741c6f1a8582b9023e8102bfa6c8360
+SHA1: 403628989504d6443f50854f54535e7e43d4fce0
+MD5sum: 63d0ff6dddbbaedd0124f6f9da14f09a
+Description: Linux kernel, version 4.11.0-capsicum+
+ This package contains the Linux kernel, modules and corresponding other
+ files, version: 4.11.0-capsicum+.
+
+Package: linux-libc-dev
+Source: linux-4.11.0-capsicum+
+Version: 4.11.0-capsicum+-1
+Architecture: amd64
+Maintainer: David Drysdale <drysdale@google.com>
+Installed-Size: 4389
+Provides: linux-kernel-headers
+Homepage: http://www.kernel.org/
+Priority: optional
+Section: devel
+Filename: pool/main/l/linux-4.11.0-capsicum+/linux-libc-dev_4.11.0-capsicum+-1_amd64.deb
+Size: 916384
+SHA256: e04ff2e6f8cf99c8aefcada4ddee95a45f82b2052e8f2d9765518ed189e8f608
+SHA1: f3e26afdb8a3e97445f03862f2f64662f3666bb9
+MD5sum: 3c033620985ce5b02c4885bd7f5103ee
+Description: Linux support headers for userspace development
+ This package provides userspaces headers from the Linux kernel.  These headers
+ are used by the installed headers for GNU glibc and other system libraries.
+
+Package: openssh-client
+Source: openssh
+Version: 1:6.6p1-2ubuntu2capsicum1
+Architecture: amd64
+Maintainer: Debian OpenSSH Maintainers <debian-ssh@lists.debian.org>
+Installed-Size: 3434
+Depends: libc6 (>= 2.17), libedit2 (>= 2.11-20080614), libgssapi-krb5-2 (>= 1.10+dfsg~), libselinux1 (>= 1.32), libssl1.0.0 (>= 1.0.1), zlib1g (>= 1:1.1.4), adduser (>= 3.10), dpkg (>= 1.7.0), passwd
+Recommends: xauth
+Suggests: ssh-askpass, libpam-ssh, keychain, monkeysphere
+Conflicts: sftp
+Replaces: ssh, ssh-krb5
+Provides: rsh-client, ssh-client
+Multi-Arch: foreign
+Homepage: http://www.openssh.org/
+Priority: standard
+Section: net
+Filename: pool/main/o/openssh/openssh-client_6.6p1-2ubuntu2capsicum1_amd64.deb
+Size: 619458
+SHA256: 8bed7aeb7495d022feec160b7185315779865e7b1b706ec425ea9061bfa5c918
+SHA1: d3026ab18ec0812c3d8b4d66d671e28034b1b2a9
+MD5sum: 8ef78278883f5ff67af5ccbe7f298559
+Description: secure shell (SSH) client, for secure access to remote machines
+ This is the portable version of OpenSSH, a free implementation of
+ the Secure Shell protocol as specified by the IETF secsh working
+ group.
+ .
+ Ssh (Secure Shell) is a program for logging into a remote machine
+ and for executing commands on a remote machine.
+ It provides secure encrypted communications between two untrusted
+ hosts over an insecure network. X11 connections and arbitrary TCP/IP
+ ports can also be forwarded over the secure channel.
+ It can be used to provide applications with a secure communication
+ channel.
+ .
+ This package provides the ssh, scp and sftp clients, the ssh-agent
+ and ssh-add programs to make public key authentication more convenient,
+ and the ssh-keygen, ssh-keyscan, ssh-copy-id and ssh-argv0 utilities.
+ .
+ In some countries it may be illegal to use any encryption at all
+ without a special permit.
+ .
+ ssh replaces the insecure rsh, rcp and rlogin programs, which are
+ obsolete for most purposes.
+
+Package: openssh-server
+Source: openssh
+Version: 1:6.6p1-2ubuntu2capsicum1
+Architecture: amd64
+Maintainer: Debian OpenSSH Maintainers <debian-ssh@lists.debian.org>
+Installed-Size: 929
+Depends: libc6 (>= 2.17), libcaprights0 (>= 0.1.0), libck-connector0 (>= 0.2.1), libcomerr2 (>= 1.01), libdbus-1-3 (>= 1.0.2), libgssapi-krb5-2 (>= 1.10+dfsg~), libkrb5-3 (>= 1.6.dfsg.2), libpam0g (>= 0.99.7.1), libselinux1 (>= 1.32), libssl1.0.0 (>= 1.0.1), libwrap0 (>= 7.6-4~), zlib1g (>= 1:1.1.4), debconf (>= 0.5) | debconf-2.0, init-system-helpers (>= 1.13~), openssh-client (= 1:6.6p1-2ubuntu2capsicum1), sysv-rc (>= 2.88dsf-24) | file-rc (>= 0.8.16), libpam-runtime (>= 0.76-14), libpam-modules (>= 0.72-9), adduser (>= 3.9), dpkg (>= 1.9.0), lsb-base (>= 4.1+Debian3), procps, openssh-sftp-server
+Recommends: xauth, ncurses-term, ssh-import-id
+Suggests: ssh-askpass, rssh, molly-guard, ufw, monkeysphere
+Conflicts: sftp, ssh-socks, ssh2
+Replaces: ssh, ssh-krb5
+Provides: ssh-server
+Multi-Arch: foreign
+Homepage: http://www.openssh.org/
+Priority: optional
+Section: net
+Filename: pool/main/o/openssh/openssh-server_6.6p1-2ubuntu2capsicum1_amd64.deb
+Size: 319054
+SHA256: 7f3e14947e219b89e53779b0413ed0e7f61bf5fba2a329aa99cefbf0b354b346
+SHA1: b00f84f358b18cebc88ae89b3b0fac1837bc62df
+MD5sum: 9e1fa767fbf69a3d69bb9d716d8ae8c8
+Description: secure shell (SSH) server, for secure access from remote machines
+ This is the portable version of OpenSSH, a free implementation of
+ the Secure Shell protocol as specified by the IETF secsh working
+ group.
+ .
+ Ssh (Secure Shell) is a program for logging into a remote machine
+ and for executing commands on a remote machine.
+ It provides secure encrypted communications between two untrusted
+ hosts over an insecure network. X11 connections and arbitrary TCP/IP
+ ports can also be forwarded over the secure channel.
+ It can be used to provide applications with a secure communication
+ channel.
+ .
+ This package provides the sshd server.
+ .
+ In some countries it may be illegal to use any encryption at all
+ without a special permit.
+ .
+ sshd replaces the insecure rshd program, which is obsolete for most
+ purposes.
+
+Package: openssh-sftp-server
+Source: openssh
+Version: 1:6.6p1-2ubuntu2capsicum1
+Architecture: amd64
+Maintainer: Debian OpenSSH Maintainers <debian-ssh@lists.debian.org>
+Installed-Size: 118
+Depends: libc6 (>= 2.17), openssh-client
+Recommends: openssh-server | ssh-server
+Enhances: openssh-server, ssh-server
+Breaks: openssh-server (<< 1:6.5p1-5)
+Replaces: openssh-server (<< 1:6.5p1-5)
+Homepage: http://www.openssh.org/
+Priority: optional
+Section: net
+Filename: pool/main/o/openssh/openssh-sftp-server_6.6p1-2ubuntu2capsicum1_amd64.deb
+Size: 34032
+SHA256: 2aa408b3025cf12f9797c7e03f8240e2795bf38bf97d0a7d973f2530669501db
+SHA1: a88dfc42bb368a1b5319ba0a24191a6ca4cc7994
+MD5sum: 231b491ad56e67bc015782909c3a22e9
+Description: secure shell (SSH) sftp server module, for SFTP access from remote machines
+ This is the portable version of OpenSSH, a free implementation of
+ the Secure Shell protocol as specified by the IETF secsh working
+ group.
+ .
+ Ssh (Secure Shell) is a program for logging into a remote machine
+ and for executing commands on a remote machine.
+ It provides secure encrypted communications between two untrusted
+ hosts over an insecure network. X11 connections and arbitrary TCP/IP
+ ports can also be forwarded over the secure channel.
+ It can be used to provide applications with a secure communication
+ channel.
+ .
+ This package provides the SFTP server module for the SSH server. It
+ is needed if you want to access your SSH server with SFTP. The SFTP
+ server module also works with other SSH daemons like dropbear.
+
+Package: ssh-askpass-gnome
+Source: openssh
+Version: 1:6.6p1-2ubuntu2capsicum1
+Architecture: amd64
+Maintainer: Debian OpenSSH Maintainers <debian-ssh@lists.debian.org>
+Installed-Size: 129
+Depends: libc6 (>= 2.2.5), libglib2.0-0 (>= 2.12.0), libgtk2.0-0 (>= 2.8.0), libx11-6, openssh-client | ssh (>= 1:1.2pre7-4) | ssh-krb5
+Replaces: ssh (<< 1:3.5p1-3)
+Provides: ssh-askpass
+Homepage: http://www.openssh.org/
+Priority: optional
+Section: gnome
+Filename: pool/main/o/openssh/ssh-askpass-gnome_6.6p1-2ubuntu2capsicum1_amd64.deb
+Size: 71932
+SHA256: 6d9fcf8accaea9f6611b0724f51c3960c294e409aa730618be943b4370efa5dc
+SHA1: 3d7ec8b5604ef18087dd48a470b0aa9dd20bbad2
+MD5sum: 054a1d50e30ea50d605c828d2cbd4c3b
+Description: interactive X program to prompt users for a passphrase for ssh-add
+ This has been split out of the main openssh-client package so that
+ openssh-client does not need to depend on GTK+.
+ .
+ You probably want the ssh-askpass package instead, but this is
+ provided to add to your choice and/or confusion.
+
+Package: tcpdump
+Version: 4.5.1-2ubuntu1.1capsicum1
+Architecture: amd64
+Maintainer: Ubuntu Developers <ubuntu-devel-discuss@lists.ubuntu.com>
+Installed-Size: 1101
+Depends: libc6 (>= 2.14), libcaprights0, libpcap0.8 (>= 1.2.1), libssl1.0.0 (>= 1.0.0)
+Suggests: apparmor (>= 2.3)
+Homepage: http://www.tcpdump.org/
+Priority: optional
+Section: net
+Filename: pool/main/t/tcpdump/tcpdump_4.5.1-2ubuntu1.1capsicum1_amd64.deb
+Size: 362572
+SHA256: e92b632d1e1f33831833ab67d6b5021706528fe62c6d43e00a4b2346a4b94036
+SHA1: cc00df9c9cd239ddb6596bb99226eb34cfab6e22
+MD5sum: 4c3ec5f5ddc2c3126eec826fa159d1d7
+Description: command-line network traffic analyzer
+ This program allows you to dump the traffic on a network. tcpdump
+ is able to examine IPv4, ICMPv4, IPv6, ICMPv6, UDP, TCP, SNMP, AFS
+ BGP, RIP, PIM, DVMRP, IGMP, SMB, OSPF, NFS and many other packet
+ types.
+ .
+ It can be used to print out the headers of packets on a network
+ interface, filter packets that match a certain expression. You can
+ use this tool to track down network problems, to detect attacks
+ or to monitor network activities.
+Original-Maintainer: Romain Francoise <rfrancoise@debian.org>
+

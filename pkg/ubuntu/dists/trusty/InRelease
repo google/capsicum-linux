@@ -1,0 +1,57 @@
+-----BEGIN PGP SIGNED MESSAGE-----
+Hash: SHA512
+
+Origin: capsicum
+Label: capsicum
+Codename: trusty
+Date: Wed, 10 Jan 2018 11:44:29 UTC
+Architectures: amd64 i386
+Components: main
+Description: Repository for Capsicum packages
+MD5Sum:
+ b8de597a2938ffcce649ebd3f8953220 24574 main/binary-amd64/Packages
+ 43ee984e59fc7b2a5eac7c2c953d55bc 7035 main/binary-amd64/Packages.gz
+ 6980c837b3a0c5e1b2653172ce4734f6 115 main/binary-amd64/Release
+ d964e9d5bdcf17e087dd92540a04111b 1559 main/binary-i386/Packages
+ 811a0d99029d9bc465a6329aeabe0a20 730 main/binary-i386/Packages.gz
+ 79a4a2741d57dbe7f54ccd5d56890939 114 main/binary-i386/Release
+ 06a6bde37b53702d94a85f463810005d 7088 main/source/Sources
+ 4f050476b204e54737780419a14ce6c9 2654 main/source/Sources.gz
+ 24d9f5a224a6d42983eb1aa958ab30f0 116 main/source/Release
+SHA1:
+ 53957a4ea65ba89518ca71656492a24e82b8d2c1 24574 main/binary-amd64/Packages
+ f2ad9d697ff1961a8a962d1521a29d0a46f2cbdc 7035 main/binary-amd64/Packages.gz
+ ab09427d026c969a06b07a694919250b1dddd2b9 115 main/binary-amd64/Release
+ 2938e36012d1204afcc9f3fd836a67bdf223d252 1559 main/binary-i386/Packages
+ dfaa0cb4c14bf24a66da346aa25559347200051f 730 main/binary-i386/Packages.gz
+ a980ce3397fbede32b45712082d0529709bbd681 114 main/binary-i386/Release
+ c48b3a000e07c0c4045c125401986b8078acdef6 7088 main/source/Sources
+ ab971684fd51e7e20b8a12110ce451fd41fdfb36 2654 main/source/Sources.gz
+ e5b2934ecf54f35b69352d39fcce399c2e9f5a8c 116 main/source/Release
+SHA256:
+ 219520b6dc91ca886e9de2880b4bfc09417d308aefb650c01fa8f164163f760a 24574 main/binary-amd64/Packages
+ c16a96335d45f961da15d36ffe3110b0fc387b741aaaa97e037b527023a35e77 7035 main/binary-amd64/Packages.gz
+ ae66f543059194dfe5045b86714d60000c1369c954391afab8d487f937302789 115 main/binary-amd64/Release
+ 85dae728f9f8a3de3013e2c5a84ee88b0a833e5b50f72c370fba9415681d7a84 1559 main/binary-i386/Packages
+ ce88eff6f932ddbe8ea331144b39611ead2b1b91e9ccd6a8711cb031159bb62b 730 main/binary-i386/Packages.gz
+ da4c25a7d7cf7a169eb3bf67e16e4b825a277a6f4e75c94686f36a3f52b24964 114 main/binary-i386/Release
+ a6b894c7e048fc6c224175747c36220e75cf7638ba9d174a52a75c63d3d63315 7088 main/source/Sources
+ 2cafcb43e826e4e510b60a49b69b2032880da05d9d1f10fbbd4c852df8b3675a 2654 main/source/Sources.gz
+ 1abdc22d57089b4c255a65c930465334e55e03678c60c6821da9eb4ddaa0366b 116 main/source/Release
+-----BEGIN PGP SIGNATURE-----
+Version: GnuPG v1
+
+iQIcBAEBCgAGBQJaVfydAAoJEHBBzKjvSyxQKmgP/0IeRk5sD0iizeC2UPf+ZPPO
+bEEV09LWBz0bthikrQL/jPzlhoCmRqTQdAIPRlS+JaAHmCuAf2CaTDsWNv4fYZrH
+yz2uQDRODMBWj+0HKVItPJHPiZ/I4cW7dfruEA9z2QKKF5jFNF0E/l9+m0aDD2Er
+xdrIfGi7JX0RnM/Ys0cjiVqeXNOnbmYQv+rN03agQF4nQbW4fepUNkabsbqtOyVO
+dzvjQNTzrBsXq4TbLohaPhp257DswIpuTaiXoZtuiVUPogiJI1kd6Jjgx0QN3xN0
+1gomT9GkOd98l6OPTtGeRZYM70w3LRJS1ATTTz40vsdVpC/COkqhoisYl4zRvNoH
+PGSDpe5CIKc46cQrjbHRmqF46mKm6OWTXGl7TS/4dFiNcDH5Wbo+Oid7tkiXgxuB
+xpKvhiMnDwawRnL6uYycpyanfsL+ztQDxfQToefYruqInS0Zk3QLf8LHNsl+jHKC
+C7XuBbKwxRBZ9h1LHFBRwhgwTH6xY7ismUrfscVx2Bi+F5W7YyTOyFtnx/Pj/c7r
+/hED8admPLw+ghpv2abSRn8ppPvZkwOZ08Bq4hQUhu0B+ApFkX4tmwqJVfkIAp52
+L3BFHuvzZiYfibKISTfW5JAz7PK1UgI5Hw1GXp88xQpwJqbOpxp9pIW4DtPWGB65
+N0QpAjJ1a0zEwBGojrpW
+=mJnb
+-----END PGP SIGNATURE-----

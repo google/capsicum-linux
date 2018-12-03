@@ -1,0 +1,5 @@
+Component: main
+Origin: capsicum
+Label: capsicum
+Architecture: source
+Description: Repository for Capsicum packages

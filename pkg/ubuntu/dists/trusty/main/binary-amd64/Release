@@ -1,0 +1,5 @@
+Component: main
+Origin: capsicum
+Label: capsicum
+Architecture: amd64
+Description: Repository for Capsicum packages

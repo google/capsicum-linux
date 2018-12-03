@@ -1,0 +1,10 @@
+Origin: capsicum
+Label: capsicum
+Codename: trusty
+Architectures: amd64 i386 source
+Components: main
+Description: Repository for Capsicum packages
+SignWith: 57F68B3C
+DebOverride: override.testing
+DscOverride: override.testing
+

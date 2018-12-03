@@ -1,0 +1,40 @@
+Package: binutils-doc
+Source: binutils
+Version: 2.24-5ubuntu3.1capsicum1
+Architecture: all
+Maintainer: Ubuntu Developers <ubuntu-devel-discuss@lists.ubuntu.com>
+Installed-Size: 512
+Depends: dpkg (>= 1.15.4) | install-info
+Suggests: binutils (= 2.24-5ubuntu3.1capsicum1)
+Conflicts: binutils (<< 2.9.1.0.25-3)
+Priority: optional
+Section: doc
+Filename: pool/main/b/binutils/binutils-doc_2.24-5ubuntu3.1capsicum1_all.deb
+Size: 497926
+SHA256: b8cf8bf749d7f12dd5d757c4808eadaa0ce0e9034f32254e31bac22afbc21ad8
+SHA1: 3cd14a0c5765b85b50a8116a7dfd4f40ba812535
+MD5sum: 6055fb9aa76e9d7a4585be8e14f5f30b
+Description: Documentation for the GNU assembler, linker and binary utilities
+ This package consists of the documentation for the GNU assembler,
+ linker and binary utilities in info format.
+Original-Maintainer: Matthias Klose <doko@debian.org>
+
+Package: binutils-source
+Source: binutils
+Version: 2.24-5ubuntu3.1capsicum1
+Architecture: all
+Maintainer: Ubuntu Developers <ubuntu-devel-discuss@lists.ubuntu.com>
+Installed-Size: 19242
+Depends: texinfo, zlib1g-dev, make, python
+Priority: optional
+Section: devel
+Filename: pool/main/b/binutils/binutils-source_2.24-5ubuntu3.1capsicum1_all.deb
+Size: 16763568
+SHA256: 4eeae68929c4d1d4d65e4210e8eb9fc2dbc8740d91dac40f0dd3966daf0c25fc
+SHA1: aa0a2717129259aede76d60c9dbea9d030bc4d84
+MD5sum: abcb1f477ef92b7c41a9924fa4924cc1
+Description: GNU assembler, linker and binary utilities (source)
+ This package contains the sources and patches which are needed to
+ build binutils.
+Original-Maintainer: Matthias Klose <doko@debian.org>
+
