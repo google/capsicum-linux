@@ -1,0 +1,233 @@
+<html>
+  <head>
+    <title>Capsicum Personal Package Archive</title>
+  </head>
+  <body>
+    <h1>Capsicum Personal Package Archive</h1>
+    <p>
+      This page explains how to set up an Ubuntu system to experiment with Capsicum on Linux.
+      The Capsicum version of the Linux kernel is <b>experimental</b> and subject to change,
+      so install and use <b>at your own risk</b>.  If you are installing into a virtual machine, it's probably a good
+      idea to take a snapshot before proceeding.
+    </p>
+
+    <h2>Add the Repository</h2>
+    <p>
+      The Capsicum package archive lives at <a href="http://pkg.capsicum-linux.org">pkg.capsicum-linux.org</a>, and holds
+      packages for Ubuntu Trusty (14.04).  The following steps are needed to use the archive.
+    </p>
+    <ul>
+      <li>Edit (as root) the <tt>/etc/apt/sources.list</tt> file that holds the list of repositories.  Add an entry at
+        the top (to give it priority):
+        <pre>
+          ## Capsicum Ubuntu APT repository
+          deb http://pkg.capsicum-linux.org/ubuntu trusty main
+          deb-src http://pkg.capsicum-linux.org/ubuntu trusty main
+        </pre>
+      </li>
+      <li>Add the public signing key used for the Capsicum packages.
+        <pre>
+          # wget -O - -q http://pkg.capsicum-linux.org/capsicum.gpg.key | apt-key add -
+        </pre>
+      </li>
+      <li>Update the system's list of available packages with <b><tt>apt-get update</tt></b></li>
+    </ul>
+    <h2>Install the Kernel</h2>
+    <p>
+      The kernel packages available at the Capsicum archive have been configured similarly to the normal generic Ubuntu
+      kernel, but are built from the main upstream kernel sources, without any Ubuntu/Debian-specific changes.
+      To allow multiple kernels to be installed in parallel, most of the package names include the kernel version.
+    </p>
+    <ul>
+      <li><b><tt>linux-image-3.19.0-capsicum+</tt></b> holds the kernel itself, plus the kernel modules, plus
+        installation scripts (to set up Grub boot choices etc).</li>
+      <li><b><tt>linux-firmware-image-3.19.0-capsicum+</tt></b> holds firmware files that may be needed for
+        specific hardware.</li>
+      <li><b><tt>linux-headers-3.19.0-capsicum+</tt></b> holds the kernel header files, needed for any additional
+        code that needs to be built into the kernel after the fact.</li>
+    </ul>
+    <p>
+      The final package that is part of the Capsicum kernel build is <tt><b>linux-libc-dev</b></tt>, which holds the
+      header files that are needed for userspace development.  This package does not include the kernel version in
+      its name, because later kernel versions are always supposed to be back-compatible with userspace programs &ndash;
+      so it should always be OK to install the latest version of the headers.
+    </p>
+    <p>
+      Taken as a whole, installing a Capsicum kernel goes something like:
+    </p>
+    <pre>
+      % apt-cache search capsicum
+      linux-firmware-image-3.19.0-capsicum+ - Linux kernel firmware, version 3.19.0-capsicum+
+      linux-headers-3.19.0-capsicum+ - Linux kernel headers for version 3.19.0-capsicum+ on amd64
+      linux-image-3.19.0-capsicum+ - Linux kernel, version 3.19.0-capsicum+
+      % V=3.19.0-capsicum+
+      % sudo apt-get install linux-image-$V linux-firmware-image-$V linux-headers-$V linux-libc-dev
+      % sudo reboot
+    </pre>
+    <p>
+      On rebooting, the Capsicum kernel will probably be entered by default, as it is likely to be a higher
+      version than that shipped with Ubuntu by default.  To see the list of available kernels, hold
+      (right) shift during boot, then select "Advanced options for Ubuntu".  A Capsicum kernel should be
+      at the top of the list, with the original kernel (an older "-generic" kernel) further down.  If
+      there are any problems, boot into the original kernel to explore.
+    </p>
+
+    <h3>VMware Shared Folders</h3>
+    <p>
+      If the Capsicum kernel is installed within a VMware guest, the VMware <tt><b>vmhgfs</b></tt> kernel module will
+      become unavailable after reboot.  This means that shared folders (between the guest and host) will no longer be
+      available.
+    </p>
+    <pre>
+      # <b>sudo insmod vmhgfs</b>
+      insmod: ERROR: could not load module vmhgfs: No such file or directory</pre>
+    <p>
+      The normal way to fix this would be to
+      <a href="http://kb.vmware.com/selfservice/microsites/search.do?language=en_US&cmd=displayKC&externalId=1022525">reinstall
+      the VMware tools</a>; however, the kernel module code included in VMware has not been updated to match recent
+      Linux kernels (3.19) and so does not build.
+    </p>
+    <p>
+      To patch the VMware kernel module so it works with a recent kernel, follow the instructions at the
+      <a href="https://github.com/rasa/vmware-tools-patches">vmware-tools-patches GitHub repo</a>
+      (at your own risk).
+    </p>
+
+    <h2>Install the User Library</h2>
+    <p>
+      This should be as simple as <tt>sudo apt-get install libcaprights0 libcaprights-dev</tt>.  Afterwards,
+      the file <tt>/usr/include/sys/capsicum.h</tt> should exist, and <tt>man cap_rights_limit</tt> should
+      show information about the Capsicum userspace API.
+    </p>
+
+    <h2>Optional: Run the Test Suite</h2>
+    <p>
+      Clone the <a href="https://github.com/google/capsicum-test">Capsicum test suite</a> into a suitable directory with <tt>git
+      clone https://github.com/google/capsicum-test</tt>.  Install the package dependencies with
+      <tt>sudo apt-get install g++ libcap-dev libsctp-dev libsctp1</tt> then move into the <tt>capsicum-test</tt>
+      subdirectory and type <tt>make test</tt>
+    </p>
+
+    <h2>Install Capsicumized Versions of Applications</h2>
+    <p>
+      Various Capsicumized application packages are available at the repo; to see what's available, run:
+    </p>
+<pre>
+% awk '$1 == "Package:" { print $2 }' /var/lib/apt/lists/pkg.capsicum-linux.org_*_Packages
+</pre>
+    <p>
+      Some particular Capsicumized applications are:
+    </p>
+    <ul>
+      <li><b>OpenSSH</b>: The key updated package is <tt>openssh-server</tt>, but there are also updated
+        versions of <tt>openssh-client</tt>, <tt>openssh-sftp-server</tt> and <tt>ssh-askpass-gnome</tt>.
+        (Updates trivially adapted from the
+        <a href=https://github.com/openssh/openssh-portable/commit/868ea1ea1c1bfdbe"">changes</a> applied by Loganaden
+        Velvindron to Capsicumize for FreeBSD; original patch from Dag-Erling Sm&oslash;rgrav).</li>
+
+      <li><b>tcpdump</b>: Updates trivially adapted from
+        the <a href="https://github.com/the-tcpdump-group/tcpdump/commit/c8275aaf91">changes</a> applied by Loganaden
+        Velvindron.</li>
+      <li><b>strings</b>: The <tt>binutils</tt> package holds a Capsicumized version of the <tt>strings</tt>
+        application.</li>
+    </ul>
+
+    <h4>Checking Capsicum Status of an Application</h4>
+    <p>
+      There are a couple of ways of checking that an application is using Capsicum.  Firstly, you can look for a
+      run-time dependency on the Capsicum userspace library:
+    </p>
+    <pre>
+% <b>ldd `which sshd`</b>
+	linux-vdso.so.1 =>  (0x00007ffff17c5000)
+	libwrap.so.0 => /lib/x86_64-linux-gnu/libwrap.so.0 (0x00007fde51696000)
+	libpam.so.0 => /lib/x86_64-linux-gnu/libpam.so.0 (0x00007fde51488000)
+	<b>libcaprights.so.0 => /usr/lib/x86_64-linux-gnu/libcaprights.so.0 (0x00007fde51283000)</b>
+	libselinux.so.1 => /lib/x86_64-linux-gnu/libselinux.so.1 (0x00007fde51060000)
+	libck-connector.so.0 => /usr/lib/x86_64-linux-gnu/libck-connector.so.0 (0x00007fde50e5c000)
+	libdbus-1.so.3 => /lib/x86_64-linux-gnu/libdbus-1.so.3 (0x00007fde50c16000)
+	libcrypto.so.1.0.0 => /lib/x86_64-linux-gnu/libcrypto.so.1.0.0 (0x00007fde5083c000)
+	libutil.so.1 => /lib/x86_64-linux-gnu/libutil.so.1 (0x00007fde50639000)
+	libz.so.1 => /lib/x86_64-linux-gnu/libz.so.1 (0x00007fde5041f000)
+	libcrypt.so.1 => /lib/x86_64-linux-gnu/libcrypt.so.1 (0x00007fde501e6000)
+	libgssapi_krb5.so.2 => /usr/lib/x86_64-linux-gnu/libgssapi_krb5.so.2 (0x00007fde4ffa0000)
+	libkrb5.so.3 => /usr/lib/x86_64-linux-gnu/libkrb5.so.3 (0x00007fde4fcd4000)
+	libcom_err.so.2 => /lib/x86_64-linux-gnu/libcom_err.so.2 (0x00007fde4fad0000)
+	libc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x00007fde4f70a000)
+	libnsl.so.1 => /lib/x86_64-linux-gnu/libnsl.so.1 (0x00007fde4f4ef000)
+	libaudit.so.1 => /lib/x86_64-linux-gnu/libaudit.so.1 (0x00007fde4f2cb000)
+	libdl.so.2 => /lib/x86_64-linux-gnu/libdl.so.2 (0x00007fde4f0c7000)
+	libpcre.so.3 => /lib/x86_64-linux-gnu/libpcre.so.3 (0x00007fde4ee88000)
+	/lib64/ld-linux-x86-64.so.2 (0x00007fde51b85000)
+	libpthread.so.0 => /lib/x86_64-linux-gnu/libpthread.so.0 (0x00007fde4ec6a000)
+	librt.so.1 => /lib/x86_64-linux-gnu/librt.so.1 (0x00007fde4ea62000)
+	libk5crypto.so.3 => /usr/lib/x86_64-linux-gnu/libk5crypto.so.3 (0x00007fde4e832000)
+	libkrb5support.so.0 => /usr/lib/x86_64-linux-gnu/libkrb5support.so.0 (0x00007fde4e627000)
+	libkeyutils.so.1 => /lib/x86_64-linux-gnu/libkeyutils.so.1 (0x00007fde4e423000)
+	libresolv.so.2 => /lib/x86_64-linux-gnu/libresolv.so.2 (0x00007fde4e207000)
+    </pre>
+    <p>
+      Secondly, it is possible to examine the file descriptors of a running process to check
+      for restricted rights.  For example, while an ssh client is in the middle of logging
+      in (i.e. has the password prompt up):
+    </p>
+    <pre>
+# <b>pstree -A -p `pgrep sshd | head -1`</b>
+sshd(8071)---sshd(9479)---sshd(9480)
+# <b>more /proc/9480/fdinfo/*</b>
+::::::::::::::
+/proc/9480/fdinfo/0
+::::::::::::::
+pos:	0
+flags:	0100002
+mnt_id:	18
+rights:	0x200000000000000	0x400000000000000
+ fcntls: 0x000000
+::::::::::::::
+/proc/9480/fdinfo/1
+::::::::::::::
+pos:	0
+flags:	0100002
+mnt_id:	18
+rights:	0x200000000000000	0x400000000000000
+ fcntls: 0x000000
+::::::::::::::
+/proc/9480/fdinfo/2
+::::::::::::::
+pos:	0
+flags:	0100002
+mnt_id:	18
+rights:	0x200000000000000	0x400000000000000
+ fcntls: 0x000000
+::::::::::::::
+/proc/9480/fdinfo/3
+::::::::::::::
+pos:	0
+flags:	02004002
+mnt_id:	8
+::::::::::::::
+/proc/9480/fdinfo/4
+::::::::::::::
+pos:	0
+flags:	02000002
+mnt_id:	8
+rights:	0x200000000000003	0x400000000000000
+ fcntls: 0x000000
+::::::::::::::
+/proc/9480/fdinfo/5
+::::::::::::::
+pos:	0
+flags:	01
+mnt_id:	9
+::::::::::::::
+/proc/9480/fdinfo/8
+::::::::::::::
+pos:	0
+flags:	02000001
+mnt_id:	9
+rights:	0x200000000000002	0x400000000000000
+ fcntls: 0x000000
+    </pre>
+
+  </body>
+</html>
