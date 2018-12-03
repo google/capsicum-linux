@@ -1,0 +1,313 @@
+<html>
+  <head>
+    <title>Capsicum Implementation Status</title>
+    <meta http-equiv="Content-Type" content="text/html; charset=iso-8859-1">
+    <meta name="author" content="David Drysdale">
+    <meta name="keywords" content="strings, Capsicum">
+    <link rel="stylesheet" href="pygments.css" />
+    <style>
+      .boxed { border: 1px solid black; }
+      .smaller { font-size: 80%; }
+      .done { text-decoration: line-through; }
+      .linux {
+        float:left;
+        width:48%;
+      }
+      .freebsd {
+        float:right;
+        width:48%;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Capsicum Implementation Status</h1>
+    <p>
+      This pages describes the current status of and roadmap for
+      the <a href="http://www.cl.cam.ac.uk/research/security/capsicum/">Capsicum security framework</a>.
+    </p>
+
+    <div class="linux">
+      <h2>Linux</h2>
+      <h3>Kernel Implementation</h3>
+      <p>
+        Kernel patches to add Capsicum support are maintained out-of-tree at
+        <a href="https://github.com/google/capsicum-linux">https://github.com/google/capsicum-linux</a>.
+        Two rounds of discussion on the Linux Kernel Mailing List (<a href="http://lkml.org">LKML</a>)
+        have occurred, in <a href="https://lkml.org/lkml/2014/6/30/170">June</a> and
+        <a href="https://lkml.org/lkml/2014/7/25/426">July 2014</a>.
+      </p>
+      <p>
+        The Capsicum kernel patches are divided into discrete chunks, so that individual pieces of functionality that
+        may be of use elsewhere can be picked up independently.  In particular, the following changes may be of
+        wider interest:
+      </p>
+      <ul>
+        <li><span class="done">The <tt>execveat</tt> system call, which is needed to allow an implementation of <tt>fexecve</tt> that does
+          not rely on the <tt>/proc</tt> filesystem (which is unavailable in Capsicum capability mode)</span>.  <i>This
+          was <a href="http://git.kernel.org/cgit/linux/kernel/git/torvalds/linux.git/commit/?id=51f39a1f0cea">merged</a>
+          in Linux v3.19.</i></li>
+        <li>Capsicum's <tt>openat</tt> behaviour, where paths that include <b><tt>..</tt></b> or
+          leading <b><tt>/</tt></b> are disallowed, is made available separately as a new <tt>O_BENEATH</tt> flag
+          for <tt>openat</tt>.  Discussed on the LKML in <a href="https://lkml.org/lkml/2014/11/3/274">November</a>
+          <a href="https://lkml.org/lkml/2014/11/4/218">2014</a> and <a href="https://lkml.org/lkml/2015/3/9/407">March
+          2015</a>; equivalent behaviour is also being <a href="https://reviews.freebsd.org/D2808">proposed</a> for
+          FreeBSD.</li>
+        <li>The export of additional <tt>unistd.h</tt>-like files that allow access to the system call numbers
+          for all x86 sub-architectures (amd64, i386 and x32) simultaneously.  This may help any userspace tools
+          that process system calls in a generic way, such as <tt>strace</tt>, the audit framework and seccomp-bpf.</li>
+        <li>In <a href="https://lkml.org/lkml/2015/3/12/1044">March</a>
+          <a href="https://lkml.org/lkml/2015/3/15/10">2015</a>, Josh Triplett and Thiago Macieira proposed a
+          new <tt>clone4</tt> system call and associated <tt>CLONE_FD</tt> flag, providing functionality analogous to
+          Capsicum's process descriptors.  LKML discussion led to an explicit aim of allowing process descriptor
+          functionality to be implemented in terms of these clonefds.  The <b>procdesc-<i>version</i></b> branch (for
+          versions >= 4.2) is therefore implemented this way.</li>
+      </ul>
+      <p>
+        The <a href="https://github.com/google/capsicum-linux/tree/capsicum-hooks-4.0"><b>capsicum-hooks-<i>version</i></b>
+        branch</a> is maintained as a patchset against the current upstream kernel that implements Capsicum capabilities
+        and capability mode;
+        the <a href="https://github.com/google/capsicum-linux/tree/procdesc-4.0"><b>procdesc-<i>version</i></b>
+        branch</a> implements process descriptors (and is almost completely orthogonal &ndash; only a small merge
+        patch is needed to join the two branches).  Note that both of these branches are frequently
+        rebased.
+      </p>
+      <p>
+        A test suite for Capsicum functionality is available at
+        <a href="https://github.com/google/capsicum-test">https://github.com/google/capsicum-test</a>.  This test suite
+        also includes an initial version of
+        the <a href="https://github.com/google/capsicum-test/tree/dev/libcaprights">Capsicum userspace support
+        library <tt>libcaprights</tt></a>, and
+        has <a href="https://github.com/google/capsicum-test/tree/dev/autoconf">sample autoconf macros</a> to allow
+        userspace programs to configure support for Capsicum in a way that is portable across Linux and FreeBSD.
+      </p>
+      <h3>Roadmap</h3>
+      <p>
+        In the short term, the Capsicum Linux project is focusing on the following areas.
+      </p>
+      <ul>
+        <li><b>Implement process descriptors in terms of clonefds</b>: Re-work the
+          previous <a href="https://github.com/google/capsicum-linux/tree/procdesc-3.19">draft implementation</a> of
+          process descriptors so that:
+          <ul>
+            <li class="done">it is implemented in terms of the <a href="https://lkml.org/lkml/2015/3/15/10">clonefd patchset</a>
+            proposed by Josh Triplett and Thiago Macieira</li>
+            <li>the <a href="https://026ea443ed06ead21d072d33ad6c79d43320ea4c.googledrive.com/host/0B9ALhQOmxxuGc1M5SlBMdE0wZG8/procdesc.html">suggested
+            semantics</a> for interactions with existing UNIX functionality are implemented.</li>
+          </ul>
+        </li>
+        <li><b>Demonstrate the utility of Capsicum</b>: Although the initial LKML discussions of Capsicum didn't induce
+          any immediate NACKs, there wasn't clear enough support to suggest a near-term merge of the feature.
+          Therefore, we aim to increase support by providing examples of the use of Capsicum in userspace; in particular
+          &hellip;</li>
+        <li><b>Implement library remoting with Capsicum</b>: One of the original target use-cases for Capsicum was to
+          make it possible for libraries to provide their interface with an implementation that lives in a separate
+          process.  This separate process can be Capsicum-sandboxed, and only provided with the specific capabilities
+          that are needed to perform its function.  This allows libraries that are particularly prone to vulnerabilities
+          (such as complex, memory-fiddling media libraries) to be isolated so that vulnerabilities in the library do
+          not affect the application using the library.</li>
+      </ul>
+      <p>
+        When these are done, we aim to re-visit LKML discussion of the kernel changes.
+      </p>
+
+      <h3>Application Support</h3>
+      <p>
+        An experimental <a href="http://askubuntu.com/questions/4983/what-are-ppas-and-how-do-i-use-them">personal
+        package archive</a> for Ubuntu 14.04 is available
+        at <a href="http://pkg.capsicum-linux.org">pkg.capsicum-linux.org</a>.  This PPA includes a pre-built kernel
+        including Capsicum support, together with a few Capsicumized applications (mostly generated by simple
+        adaptations of the equivalent FreeBSD Capsicum support):
+      </p>
+      <ul>
+        <li><b>OpenSSH</b>: Updated <tt>openssh-server</tt> package, adapted from FreeBSD variant.</li>
+        <li><b>tcpdump</b>: Updates trivially adapted from FreeBSD variant.</li>
+        <li><b>strings</b>: The <tt>binutils</tt> package holds a
+          <a href="http://capsicum-linux.blogspot.co.uk/2015/02/capsicumizing-strings.html">Capsicumized version</a> of
+          the <tt>strings</tt> application.</li>
+      </ul>
+    </div>
+
+    <div class="freebsd">
+      <h2>FreeBSD</h2>
+      <h3>Kernel Implementation</h3>
+      <p>
+        Capsicum support was included as of <a href="https://www.freebsd.org/releases/10.0R/relnotes.html#new">version
+          10.0</a> (Jan 2014).  (FreeBSD 9.x included an earlier version of Capsicum as an experimental feature; this
+          version of Capsicum is incompatible with the current version.)
+      </p>
+      <h3>Roadmap</h3>
+      <p>
+        Although FreeBSD has implemented process descriptors, the <tt>pdwait4</tt> system call is
+        <a href="http://fxr.watson.org/fxr/source/kern/syscalls.master#L928">not currently implemented</a>.  There has
+        also been
+        some <a href="https://lists.cam.ac.uk/pipermail/cl-capsicum-discuss/2014-March/thread.html">discussion</a> about
+        the appropriate
+        <a href="https://026ea443ed06ead21d072d33ad6c79d43320ea4c.googledrive.com/host/0B9ALhQOmxxuGc1M5SlBMdE0wZG8/procdesc.html">semantics</a>
+        of how process descriptors interact with other UNIX functionality.
+      </p>
+      <p>
+        Taken together, these mean that additional work on the FreeBSD implementation of process descriptors is
+        likely.
+      </p>
+
+    <h3>Application Support</h3>
+    <p>
+      The following external application programs include support for Capsicum:
+    </p>
+    <ul>
+      <li><a href="http://www.openssh.com/">OpenSSH</a>:
+        <a href="https://github.com/openssh/openssh-portable/commit/868ea1ea1c1bfdbe">supported</a>
+        since <a href="http://www.openssh.com/txt/release-6.5">version 6.5</a> (Jan 2014)</li>
+      <li><a href="http://www.tcpdump.org/">tcpdump</a>:
+        <a href="https://github.com/the-tcpdump-group/tcpdump/commit/c8275aaf91">supported</a>
+        in <a href="http://www.tcpdump.org/tcpdump-changes.txt">version 4.7.3</a>.</li>
+      <li><a href="http://tukaani.org/xz/">xz</a>: <a href="http://git.tukaani.org/?p=xz.git;a=commitdiff;h=1238381143a9a7ce84839c2582ccd56ff750a440">support
+      for mainline use-case</a> added in tip codebase</li>
+      <li><a href="https://github.com/brynet/file">file</a> (privsep version derived from
+      OpenBSD): <a href="https://github.com/brynet/file/commit/fb01af6b7946194e5a7f85e73d4208778266317e">support for
+      Capability mode</a> added in tip codebase.</li>
+    </ul>
+    <p>
+      Within the FreeBSD tree itself, the following applications include support for Capsicum:
+    </p>
+    <table border="1"><tbody>
+        <tr><th>Application</th><th>Description</th><th>Use</th><th>Commits</th></tr>
+        <tr>
+          <td><a href="https://www.freebsd.org/cgi/man.cgi?query=auditdistd&sektion=8">auditdistd(8)</a></td>
+          <td>Audit-trail distribution daemon</td>
+          <td>Worker processes are sandboxed using capability mode. The receiver process has append-only access to one
+          directory. It can create newer files and append data to them. It cannot modify already stored audit
+          records. It cannot read or modify audit trail files from other hosts.</td>
+          <td><a href="http://svnweb.freebsd.org/base?view=revision&revision=243730">r243730</a></td>
+        </tr>
+        <tr>
+          <td><a href="https://www.freebsd.org/cgi/man.cgi?query=ctld&sektion=8">ctld(8)</a></td>
+          <td>iSCSI target daemon</td>
+          <td>Uses Capsicum to protect itself during iSCSI Login Phase - as with the initiator, the Full Feature Phase
+          is performed in the kernel and thus cannot be sandboxed.</td>
+          <td><a href="http://svnweb.freebsd.org/base?view=revision&revision=255570">r255570</a></td>
+        </tr>
+        <tr>
+          <td><a href="https://www.freebsd.org/cgi/man.cgi?query=dhclient&sektion=8">dhclient(8)</a></td>
+          <td>DHCP client</td>
+          <td>
+            <ul>
+              <li>The unprivileged process can now only read from the routing socket.</li>
+              <li>It is no longer possible for the unprivileged process to send UDP packets to arbitrary destinations.</li>
+              <li>Unprivileged process can now only read from /dev/bpf and send SIOCGIFFLAGS and SIOCGIFMEDIA ioctls.</li>
+              <li>The unprivileged process can only overwrite lease file, it cannot read from it.</li>
+            </ul>
+          </td>
+          <td><a href="http://svnweb.freebsd.org/base?view=revision&revision=255219">r255219</a>,
+            <a href="http://svnweb.freebsd.org/base?view=revision&revision=252634">r252634</a></td>
+        </tr>
+        <tr>
+          <td><a href="https://www.freebsd.org/cgi/man.cgi?query=fetch&sektion=1">fetch(1)</a></td>
+          <td>Retrieve file by URL</td>
+          <td>Patch proposed on mailing list</td>
+          <td><a href="https://lists.cam.ac.uk/pipermail/cl-capsicum-discuss/2015-January/msg00000.html">Patch</a></td>
+        </tr>
+        <tr>
+          <td><a href="https://www.freebsd.org/cgi/man.cgi?query=fstyp&sektion=8&manpath=FreeBSD+10.1-RELEASE+and+Ports">fstyp(8)</a></td>
+          <td>Utility to determine filesystem type</td>
+          <td>Uses Capsicum to prevent malicious input (filesystem metadata) from doing anything bad.</td>
+          <td><a href="http://svnweb.freebsd.org/base?view=revision&revision=275680">r275680</a></td>
+        </tr>
+        <tr>
+          <td><a href="https://www.freebsd.org/cgi/man.cgi?query=hastctl&sektion=8">hastctl(8)</a></td>
+          <td>HAST control utility</td>
+          <td>Now sandboxed using capability mode.</td>
+          <td><a href="http://svnweb.freebsd.org/base?view=revision&revision=221899">r221899</a>,
+            <a href="http://svnweb.freebsd.org/base?view=revision&revision=219847">r219847</a></td>
+        </tr>
+        <tr>
+          <td><a href="https://www.freebsd.org/cgi/man.cgi?query=hastd&sektion=8">hastd(8)</a></td>
+          <td>High-availability storage daemon</td>
+          <td>The worker process is now sandboxed using capability mode. Access to local provider is limited to
+          pread(2), pwrite(2), flock(2) and DIOCGDELETE and DIOCGFLUSH ioctls. Access to GEOM Gate device is limited to
+          G_GATE_CMD_MODIFY, G_GATE_CMD_START, G_GATE_CMD_DONE and G_GATE_CMD_DESTROY ioctls (for primary node).</td>
+          <td><a href="http://svnweb.freebsd.org/base?view=revision&revision=255219">r255219</a>,
+            <a href="http://svnweb.freebsd.org/base?view=revision&revision=248297">r248297</a>,
+            <a href="http://svnweb.freebsd.org/base?view=revision&revision=223585">r223585</a>,
+            <a href="http://svnweb.freebsd.org/base?view=revision&revision=223584">r223584</a>,
+            <a href="http://svnweb.freebsd.org/base?view=revision&revision=221899">r221899</a>,
+            <a href="http://svnweb.freebsd.org/base?view=revision&revision=221898">r221898</a>,
+            <a href="http://svnweb.freebsd.org/base?view=revision&revision=219847">r219847</a></td>
+        </tr>
+        <tr>
+          <td><a href="https://www.freebsd.org/cgi/man.cgi?query=iscsid&sektion=8">iscsid(8)</a></td>
+          <td>iSCSI initiator daemon</td>
+          <td>Now sandboxed using capability mode.</td>
+          <td><a href="http://svnweb.freebsd.org/base?view=revision&revision=255570">r255570</a></td>
+        <tr>
+          <td><a href="https://www.freebsd.org/cgi/man.cgi?query=kdump&sektion=1">kdump(1)</a></td>
+          <td>kernel process tracing tool</td>
+          <td>Now sandboxed using capability mode. It is not sandboxed when -r option is used, which instructs
+          kdump(1) to convert numeric UIDs and GIDs into user and group names. With the casperd daemon and system.pwd
+          and system.grp services kdump(1) can be sandboxed even if -r option is used.</td>
+          <td><a href="http://svnweb.freebsd.org/base?view=revision&revision=255219">r255219</a>,
+            <a href="http://svnweb.freebsd.org/base?view=revision&revision=251073">r251073</a>,
+            <a href="http://svnweb.freebsd.org/base?view=revision&revision=247602">r247602</a></td>
+        </tr>
+        <tr>
+          <td><a href="https://www.freebsd.org/cgi/man.cgi?query=ngrep&sektion=8&manpath=FreeBSD+10.1-RELEASE+and+Ports">ngrep(8)</a></td>
+          <td>Network grep</td>
+          <td>FreeBSD port sandboxed using Capsicum</td>
+          <td><a href="https://svnweb.freebsd.org/ports?view=revision&revision=375232">r375232</a></td>
+        </tr>
+        <tr>
+          <td><a href="https://www.freebsd.org/cgi/man.cgi?query=ping&sektion=8">ping(8)</a></td>
+          <td>Send ICMP ECHO requests</td>
+          <td>Now sandboxed using capability mode</td>
+          <td><a href="http://svnweb.freebsd.org/base?view=revision&revision=261498">r261498</a></td>
+        </tr>
+        <tr>
+          <td><a href="https://www.freebsd.org/cgi/man.cgi?query=rwho&sektion=1">rwho(1)</a></td>
+          <td>RWho client tool</td>
+          <td>Now sandboxed using capability mode and has read-only access to one directory</td>
+          <td><a href="http://svnweb.freebsd.org/base?view=revision&revision=255219">r255219</a>,
+            <a href="http://svnweb.freebsd.org/base?view=revision&revision=252598">r252598</a></td>
+        </tr>
+        <tr>
+          <td><a href="https://www.freebsd.org/cgi/man.cgi?query=rwhod&sektion=8">rwhod(8)</a></td>
+          <td>RWho daemon</td>
+          <td>The receiver functionality is now running is separate process, which is
+            <a href="http://svnweb.freebsd.org/base/head/usr.sbin/rwhod/rwhod.c?revision=268004&view=markup#l367">sandboxed
+          using capability mode</a>
+          and has write-only access to one directory.</td>
+          <td><a href="http://svnweb.freebsd.org/base?view=revision&revision=255219">r255219</a>,
+            <a href="http://svnweb.freebsd.org/base?view=revision&revision=252605">r252605</a></td>
+        </tr>
+        <tr>
+          <td><a href="https://www.freebsd.org/cgi/man.cgi?query=tcpdump&sektion=1">tcpdump(1)</a></td>
+          <td>Packet capture tool</td>
+          <td>Now sandboxed using capability mode if -n option is used and -z and -V options are not used. With
+          casperd's system.dns service support it enter sandbox even without -n option.</td>
+          <td><a href="http://svnweb.freebsd.org/base?view=revision&revision=272451">r272451</a>,
+            <a href="http://svnweb.freebsd.org/base?view=revision&revision=255219">r255219</a>,
+            <a href="http://svnweb.freebsd.org/base?view=revision&revision=253004">r253004</a></td>
+        </tr>
+        <tr>
+          <td>uefisign(8)</td>
+          <td>UEFI Secure Boot binary signing utility</td>
+          <td>Is sandboxed so that all the code that parses PE structures runs compartmentalized, and without access to
+            the private key.</td>
+          <td><a href="http://svnweb.freebsd.org/base?view=revision&revision=279315">r279315</a></td>
+        </tr>
+        <tr>
+          <td><a href="https://www.freebsd.org/cgi/man.cgi?query=uniq&sektion=1">uniq(1)</a></td>
+          <td>Uniq command-line tool</td>
+          <td>Now sandboxed using capability mode</td>
+          <td><a href="http://svnweb.freebsd.org/base?view=revision&revision=255219">r255219</a>,
+            <a href="http://svnweb.freebsd.org/base?view=revision&revision=253457">r253457</a></td>
+        </tr>
+        <tr>
+          <td><a href="https://www.freebsd.org/cgi/man.cgi?query=units&sektion=1">units(1)</a></td>
+          <td>Unit conversion program</td>
+          <td>Now sandboxed using capability mode</td>
+          <td><a href="http://svnweb.freebsd.org/base?view=revision&revision=263940">r263940</a></td>
+        </tr>
+    </tbody></table>
+    </div>
+  </body>
+</html>
