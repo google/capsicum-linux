@@ -13,7 +13,7 @@
 
     <h2>Add the Repository</h2>
     <p>
-      The Capsicum package archive lives at <a href="http://pkg.capsicum-linux.org">pkg.capsicum-linux.org</a>, and holds
+      The Capsicum package archive lives at <a href="http://google.github.io/capsicum-linux/pkg">google.github.io/capsicum-linux/pkg</a>, and holds
       packages for Ubuntu Trusty (14.04).  The following steps are needed to use the archive.
     </p>
     <ul>
@@ -21,13 +21,13 @@
         the top (to give it priority):
         <pre>
           ## Capsicum Ubuntu APT repository
-          deb http://pkg.capsicum-linux.org/ubuntu trusty main
-          deb-src http://pkg.capsicum-linux.org/ubuntu trusty main
+          deb http://google.github.io/capsicum-linux/pkg/ubuntu trusty main
+          deb-src http://google.github.io/capsicum-linux/pkg/ubuntu trusty main
         </pre>
       </li>
       <li>Add the public signing key used for the Capsicum packages.
         <pre>
-          # wget -O - -q http://pkg.capsicum-linux.org/capsicum.gpg.key | apt-key add -
+          # wget -O - -q http://google.github.io/capsicum-linux/pkg/capsicum.gpg.key | apt-key add -
         </pre>
       </li>
       <li>Update the system's list of available packages with <b><tt>apt-get update</tt></b></li>
@@ -113,7 +113,7 @@
       Various Capsicumized application packages are available at the repo; to see what's available, run:
     </p>
 <pre>
-% awk '$1 == "Package:" { print $2 }' /var/lib/apt/lists/pkg.capsicum-linux.org_*_Packages
+% awk '$1 == "Package:" { print $2 }' /var/lib/apt/lists/google.github.io_capsicum-linux_pkg_*_Packages
 </pre>
     <p>
       Some particular Capsicumized applications are:
