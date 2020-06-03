@@ -1,10 +1,13 @@
 Capsicum Object-Capabilities on Linux
 =====================================
 
+**STATUS: This project is no longer maintained**, and is now out of date
+with the upstream Linux kernel. (However, Capsicum as a whole is still
+active as part of [FreeBSD](https://freebsd.org))
+
 This repository holds the kernel code for the Linux version of the
 [Capsicum](http://www.cl.cam.ac.uk/research/security/capsicum/)
-security framework. Overall status of the Capsicum for Linux project is described at
-[capsicum-linux.org](http://capsicum-linux.org/index.html).
+security framework.
 
 Topic Branches
 --------------
